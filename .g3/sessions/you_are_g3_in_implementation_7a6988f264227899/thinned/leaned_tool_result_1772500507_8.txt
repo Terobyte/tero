@@ -1,0 +1,12 @@
+Tool result: total 88
+drwxr-xr-x@  3 terobyte  staff     96 Mar  2 16:32 __pycache__
+drwxr-xr-x@ 11 terobyte  staff    352 Mar  2 20:14 .
+drwxr-xr-x@  4 terobyte  staff    128 Mar  2 16:12 ..
+-rw-r--r--@  1 terobyte  staff   6148 Mar  2 20:13 .DS_Store
+drwxr-xr-x@  5 terobyte  staff    160 Mar  2 16:32 .g3
+drwxr-xr-x@  3 terobyte  staff     96 Mar  2 16:14 config
+drwxr-xr-x@  4 terobyte  staff    128 Mar  2 16:20 data
+-rw-r--r--@  1 terobyte  staff  22741 Mar  2 16:29 gui.py
+-rw-r--r--@  1 terobyte  staff  11987 Mar  2 20:13 requirements.md
+drwxr-xr-x@  2 terobyte  staff     64 Mar  2 16:14 scripts
+drwxr-xr-x@  8 terobyte  staff    256 Mar  2 16:20 src

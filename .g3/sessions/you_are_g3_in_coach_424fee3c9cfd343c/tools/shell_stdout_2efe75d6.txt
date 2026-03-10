@@ -1,0 +1,162 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/terobyte/tmp/workspace
+plugins: anyio-4.12.0, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items
+
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier] FAILED [  4%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier] FAILED [  8%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier] FAILED [ 12%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier] FAILED [ 16%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier] FAILED [ 20%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter] FAILED [ 24%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter] FAILED [ 28%]
+tests/gui/test_apply_service.py::test_apply_job_async_returns_error_for_unsupported_ats FAILED [ 32%]
+tests/gui/test_apply_service.py::test_run_apply_thread_calls_on_done_with_result FAILED [ 36%]
+tests/gui/test_apply_service.py::test_run_apply_thread_handles_exception FAILED [ 40%]
+tests/gui/test_db_helpers.py::test_load_config_returns_dict_on_valid_file FAILED [ 44%]
+tests/gui/test_db_helpers.py::test_load_config_returns_empty_dict_on_missing_file FAILED [ 48%]
+tests/gui/test_db_helpers.py::test_load_queries_extracts_list FAILED     [ 52%]
+tests/gui/test_db_helpers.py::test_load_queries_default_on_empty_config FAILED [ 56%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_empty_when_no_db FAILED [ 60%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_applied_rows FAILED [ 64%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_handles_broken_raw_data FAILED [ 68%]
+tests/gui/test_db_helpers.py::test_save_applied_inserts_new_row FAILED   [ 72%]
+tests/gui/test_db_helpers.py::test_save_applied_upserts_existing_row FAILED [ 76%]
+tests/gui/test_db_helpers.py::test_save_applied_does_nothing_if_no_db FAILED [ 80%]
+tests/gui/test_scan_service.py::test_run_scan_async_calls_aggregator FAILED [ 84%]
+tests/gui/test_scan_service.py::test_run_scan_async_includes_bamboohr_when_in_providers FAILED [ 88%]
+tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done FAILED [ 92%]
+tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done_with_empty_on_exception FAILED [ 96%]
+tests/gui/test_scan_service.py::test_run_indeed5_async_limits_to_5_jobs FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_ test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter] _
+tests/gui/test_apply_service.py:35: in test_apply_job_async_routes_correctly
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+____________ test_apply_job_async_returns_error_for_unsupported_ats ____________
+tests/gui/test_apply_service.py:59: in test_apply_job_async_returns_error_for_unsupported_ats
+    from src.gui.apply_service import _apply_job_async
+E   ModuleNotFoundError: No module named 'src'
+_______________ test_run_apply_thread_calls_on_done_with_result ________________
+tests/gui/test_apply_service.py:73: in test_run_apply_thread_calls_on_done_with_result
+    from src.gui.apply_service import run_apply_thread
+E   ModuleNotFoundError: No module named 'src'
+___________________ test_run_apply_thread_handles_exception ____________________
+tests/gui/test_apply_service.py:89: in test_run_apply_thread_handles_exception
+    from src.gui.apply_service import run_apply_thread
+E   ModuleNotFoundError: No module named 'src'
+_________________ test_load_config_returns_dict_on_valid_file __________________
+tests/gui/test_db_helpers.py:55: in test_load_config_returns_dict_on_valid_file
+    from src.gui.db_helpers import load_config
+E   ModuleNotFoundError: No module named 'src'
+_____________ test_load_config_returns_empty_dict_on_missing_file ______________
+tests/gui/test_db_helpers.py:63: in test_load_config_returns_empty_dict_on_missing_file
+    from src.gui.db_helpers import load_config
+E   ModuleNotFoundError: No module named 'src'
+_______________________ test_load_queries_extracts_list ________________________
+tests/gui/test_db_helpers.py:71: in test_load_queries_extracts_list
+    from src.gui.db_helpers import load_config, load_queries
+E   ModuleNotFoundError: No module named 'src'
+__________________ test_load_queries_default_on_empty_config ___________________
+tests/gui/test_db_helpers.py:79: in test_load_queries_default_on_empty_config
+    from src.gui.db_helpers import load_queries
+E   ModuleNotFoundError: No module named 'src'
+_______________ test_fetch_applied_jobs_returns_empty_when_no_db _______________
+tests/gui/test_db_helpers.py:89: in test_fetch_applied_jobs_returns_empty_when_no_db
+    from src.gui.db_helpers import fetch_applied_jobs
+E   ModuleNotFoundError: No module named 'src'
+_________________ test_fetch_applied_jobs_returns_applied_rows _________________
+tests/gui/test_db_helpers.py:96: in test_fetch_applied_jobs_returns_applied_rows
+    from src.gui.db_helpers import fetch_applied_jobs
+E   ModuleNotFoundError: No module named 'src'
+_______________ test_fetch_applied_jobs_handles_broken_raw_data ________________
+tests/gui/test_db_helpers.py:121: in test_fetch_applied_jobs_handles_broken_raw_data
+    from src.gui.db_helpers import fetch_applied_jobs
+E   ModuleNotFoundError: No module named 'src'
+______________________ test_save_applied_inserts_new_row _______________________
+tests/gui/test_db_helpers.py:143: in test_save_applied_inserts_new_row
+    from src.gui.db_helpers import save_applied_to_db
+E   ModuleNotFoundError: No module named 'src'
+____________________ test_save_applied_upserts_existing_row ____________________
+tests/gui/test_db_helpers.py:158: in test_save_applied_upserts_existing_row
+    from src.gui.db_helpers import save_applied_to_db
+E   ModuleNotFoundError: No module named 'src'
+___________________ test_save_applied_does_nothing_if_no_db ____________________
+tests/gui/test_db_helpers.py:177: in test_save_applied_does_nothing_if_no_db
+    from src.gui.db_helpers import save_applied_to_db
+E   ModuleNotFoundError: No module named 'src'
+_____________________ test_run_scan_async_calls_aggregator _____________________
+tests/gui/test_scan_service.py:19: in test_run_scan_async_calls_aggregator
+    from src.gui.scan_service import _run_scan_async
+E   ModuleNotFoundError: No module named 'src'
+___________ test_run_scan_async_includes_bamboohr_when_in_providers ____________
+tests/gui/test_scan_service.py:42: in test_run_scan_async_includes_bamboohr_when_in_providers
+    from src.gui.scan_service import _run_scan_async
+E   ModuleNotFoundError: No module named 'src'
+______________________ test_run_scan_thread_calls_on_done ______________________
+tests/gui/test_scan_service.py:65: in test_run_scan_thread_calls_on_done
+    from src.gui.scan_service import run_scan_thread
+E   ModuleNotFoundError: No module named 'src'
+__________ test_run_scan_thread_calls_on_done_with_empty_on_exception __________
+tests/gui/test_scan_service.py:81: in test_run_scan_thread_calls_on_done_with_empty_on_exception
+    from src.gui.scan_service import run_scan_thread
+E   ModuleNotFoundError: No module named 'src'
+___________________ test_run_indeed5_async_limits_to_5_jobs ____________________
+tests/gui/test_scan_service.py:101: in test_run_indeed5_async_limits_to_5_jobs
+    from src.gui.scan_service import _run_indeed5_async
+E   ModuleNotFoundError: No module named 'src'
+=========================== short test summary info ============================
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_returns_error_for_unsupported_ats
+FAILED tests/gui/test_apply_service.py::test_run_apply_thread_calls_on_done_with_result
+FAILED tests/gui/test_apply_service.py::test_run_apply_thread_handles_exception
+FAILED tests/gui/test_db_helpers.py::test_load_config_returns_dict_on_valid_file
+FAILED tests/gui/test_db_helpers.py::test_load_config_returns_empty_dict_on_missing_file
+FAILED tests/gui/test_db_helpers.py::test_load_queries_extracts_list - Module...
+FAILED tests/gui/test_db_helpers.py::test_load_queries_default_on_empty_config
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_empty_when_no_db
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_applied_rows
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_handles_broken_raw_data
+FAILED tests/gui/test_db_helpers.py::test_save_applied_inserts_new_row - Modu...
+FAILED tests/gui/test_db_helpers.py::test_save_applied_upserts_existing_row
+FAILED tests/gui/test_db_helpers.py::test_save_applied_does_nothing_if_no_db
+FAILED tests/gui/test_scan_service.py::test_run_scan_async_calls_aggregator
+FAILED tests/gui/test_scan_service.py::test_run_scan_async_includes_bamboohr_when_in_providers
+FAILED tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done - M...
+FAILED tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done_with_empty_on_exception
+FAILED tests/gui/test_scan_service.py::test_run_indeed5_async_limits_to_5_jobs
+============================== 25 failed in 0.39s ==============================

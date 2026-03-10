@@ -1,0 +1,9 @@
+Tool result: total 80
+drwxr-xr-x@  8 terobyte  staff    256 Mar  3 12:35 .
+drwxr-xr-x@ 12 terobyte  staff    384 Mar  3 13:04 ..
+-rw-r--r--@  1 terobyte  staff   6148 Mar  3 12:22 .DS_Store
+drwxr-xr-x@  5 terobyte  staff    160 Mar  3 12:35 candidate
+-rw-r--r--@  1 terobyte  staff  24576 Mar  2 16:20 careerbot.db
+-rw-r--r--@  1 terobyte  staff   1040 Mar  3 12:35 custom_answers.json
+drwxr-xr-x@  2 terobyte  staff     64 Mar  2 16:13 screenshots
+-rw-r--r--@  1 terobyte  staff      3 Mar  3 12:35 unknown_questions.json

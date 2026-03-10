@@ -1,0 +1,368 @@
+Tool result: """
+Profile Interviewer - Telegram bot for profile setup via /setup command.
+
+Creates data/candidate/profile.yaml through an interactive interview
+with inline keyboard buttons for Yes/No questions.
+"""
+
+import asyncio
+import json
+import os
+import yaml
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any, Optional, Callable, Awaitable
+from dataclasses import dataclass, field
+
+
+@dataclass
+class InterviewQuestion:
+    """A single interview question."""
+    key: str
+    question: str
+    question_type: str  # "yes_no", "number", "text"
+    block: str
+    default: Any = None
+
+
+# Define all interview questions by block
+INTERVIEW_QUESTIONS = [
+    # Block 1: Certifications
+    InterviewQuestion("has_drivers_license", "У тебя есть водительские права?", "yes_no", "Сертификаты", False),
+    InterviewQuestion("has_comptia_aplus", "CompTIA A+?", "yes_no", "Сертификаты", False),
+    InterviewQuestion("has_security_plus", "Security+?", "yes_no", "Сертификаты", False),
+    InterviewQuestion("has_aws_cert", "AWS Certified?", "yes_no", "Сертификаты", False),
+    InterviewQuestion("has_bachelors", "Степень бакалавра?", "yes_no", "Сертификаты", False),
+    InterviewQuestion("has_masters", "Степень магистра?", "yes_no", "Сертификаты", False),
+    
+    # Block 2: Work Conditions
+    InterviewQuestion("work_weekends", "Готов работать в выходные?", "yes_no", "Условия работы", True),
+    InterviewQuestion("work_overtime", "Готов к переработкам?", "yes_no", "Условия работы", True),
+    InterviewQuestion("willing_to_relocate", "Готов к переезду?", "yes_no", "Условия работы", False),
+    InterviewQuestion("willing_to_travel", "Готов к командировкам?", "yes_no", "Условия работы", False),
+    InterviewQuestion("available_on_call", "Доступен on-call?", "yes_no", "Условия работы", True),
+    InterviewQuestion("work_nights", "Готов работать в ночную смену?", "yes_no", "Условия работы", False),
+    
+    # Block 3: Tech Experience (years)
+    InterviewQuestion("years_python", "Сколько лет опыта с Python? (0 если нет)", "number", "Технологии", 3),
+    InterviewQuestion("years_linux", "Linux? (0 если нет)", "number", "Технологии", 3),
+    InterviewQuestion("years_javascript", "JavaScript? (0 если нет)", "number", "Технологии", 1),
+    InterviewQuestion("years_sql", "SQL? (0 если нет)", "number", "Технологии", 2),
+    InterviewQuestion("years_docker", "Docker? (0 если нет)", "number", "Технологии", 1),
+    InterviewQuestion("years_git", "Git? (0 если нет)", "number", "Технологии", 2),
+    InterviewQuestion("years_java", "Java? (0 если нет)", "number", "Технологии", 0),
+    InterviewQuestion("years_react", "React? (0 если нет)", "number", "Технологии", 0),
+    InterviewQuestion("years_nodejs", "Node.js? (0 если нет)", "number", "Технологии", 0),
+    InterviewQuestion("years_networking", "Networking? (0 если нет)", "number", "Технологии", 2),
+    InterviewQuestion("years_windows_server", "Windows Server? (0 если нет)", "number", "Технологии", 1),
+    InterviewQuestion("years_active_directory", "Active Directory? (0 если нет)", "number", "Технологии", 1),
+    InterviewQuestion("years_office365", "Office 365? (0 если нет)", "number", "Технологии", 2),
+    InterviewQuestion("years_salesforce", "Salesforce? (0 если нет)", "number", "Технологии", 0),
+    InterviewQuestion("years_servicenow", "ServiceNow? (0 если нет)", "number", "Технологии", 0),
+    InterviewQuestion("years_vmware", "VMware? (0 если нет)", "number", "Технологии", 0),
+    
+    # Block 4: Personal Info
+    InterviewQuestion("first_name", "Имя:", "text", "Личные данные", "Tim"),
+    InterviewQuestion("last_name", "Фамилия (или инициал):", "text", "Личные данные", "J."),
+    InterviewQuestion("email", "Email:", "text", "Личные данные", "highskilltero1922@gmail.com"),
+    InterviewQuestion("phone", "Телефон:", "text", "Личные данные", "1-339-2095321"),
+    
+    # Block 5: Salary & Availability
+    InterviewQuestion("expected_salary_usd", "Ожидаемая зарплата (USD):", "number", "Зарплата", 60000),
+    InterviewQuestion("minimum_salary_usd", "Минимальная зарплата (USD):", "number", "Зарплата", 50000),
+]
+
+
+class ProfileInterviewer:
+    """
+    Telegram bot for profile setup via interactive interview.
+    
+    Usage:
+        # In your Telegram bot handler:
+        interviewer = ProfileInterviewer()
+        
+        # Start interview
+        await bot.send_message(chat_id, interviewer.start())
+        keyboard = interviewer.get_keyboard()
+        
+        # Handle answers
+        next_msg = interviewer.handle_answer(user_answer)
+        if next_msg:
+            await bot.send_message(chat_id, next_msg, reply_markup=interviewer.get_keyboard())
+        
+        # When complete
+        if interviewer.is_complete():
+            interviewer.save_profile()
+            await bot.send_message(chat_id, "✅ Профиль сохранён!")
+    """
+    
+    def __init__(self, profile_path: str = "data/candidate/profile.yaml"):
+        self.profile_path = Path(profile_path)
+        self.questions = INTERVIEW_QUESTIONS.copy()
+        self.current_index = 0
+        self.answers: Dict[str, Any] = {}
+        self.current_block: Optional[str] = None
+        self._started = False
+        
+    def start(self) -> str:
+        """Start the interview and return first question."""
+        self._started = True
+        self.current_index = 0
+        self.current_block = None
+        return self._get_next_message()
+    
+    def _get_next_message(self) -> str:
+        """Get the next question message."""
+        if self.current_index >= len(self.questions):
+            return self._get_completion_message()
+        
+        q = self.questions[self.current_index]
+        
+        # Announce new block
+        if self.current_block != q.block:
+            self.current_block = q.block
+            return f"\n📌 [БЛОК: {q.block}]\n\n{q.question}"
+        
+        return q.question
+    
+    def _get_completion_message(self) -> str:
+        """Get completion message."""
+        return "✅ Интервью завершено! Профиль будет сохранён в data/candidate/profile.yaml"
+    
+    def get_keyboard(self) -> Optional[Dict]:
+        """
+        Get inline keyboard for current question.
+        
+        Returns None for text/number questions (user types answer).
+        Returns keyboard dict for yes_no questions.
+        """
+        if self.current_index >= len(self.questions):
+            return None
+            
+        q = self.questions[self.current_index]
+        
+        if q.question_type == "yes_no":
+            return {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Да", "callback_data": "yes"},
+                        {"text": "❌ Нет", "callback_data": "no"},
+                        {"text": "⏭ Пропустить", "callback_data": "skip"}
+                    ]
+                ]
+            }
+        
+        return None
+    
+    def handle_answer(self, answer: str) -> Optional[str]:
+        """
+        Handle user answer and return next question.
+        
+        Args:
+            answer: User's answer (text, "yes", "no", "skip", or number)
+            
+        Returns:
+            Next question message or completion message
+        """
+        if self.current_index >= len(self.questions):
+            return None
+        
+        q = self.questions[self.current_index]
+        
+        # Parse answer based on question type
+        if q.question_type == "yes_no":
+            if answer == "yes":
+                self.answers[q.key] = True
+            elif answer == "no":
+                self.answers[q.key] = False
+            elif answer == "skip":
+                self.answers[q.key] = q.default
+            else:
+                # Text answer for yes_no (fallback)
+                self.answers[q.key] = answer.lower() in ("да", "yes", "y", "1", "true")
+        elif q.question_type == "number":
+            try:
+                self.answers[q.key] = int(answer.strip())
+            except ValueError:
+                self.answers[q.key] = q.default
+        else:  # text
+            self.answers[q.key] = answer.strip() or q.default
+        
+        # Move to next question
+        self.current_index += 1
+        return self._get_next_message()
+    
+    def is_complete(self) -> bool:
+        """Check if interview is complete."""
+        return self.current_index >= len(self.questions)
+    
+    def get_progress(self) -> tuple:
+        """Get current progress (current, total)."""
+        return (self.current_index, len(self.questions))
+    
+    def save_profile(self) -> bool:
+        """
+        Save collected answers to profile.yaml.
+        
+        Returns True on success.
+        """
+        if not self.is_complete():
+            return False
+        
+        # Build profile structure
+        profile = {
+            "# Создано Telegram-интервью": datetime.now().strftime("%Y-%m-%d"),
+            "# Редактировать вручную или пересоздать через /setup": "",
+            "": None,  # Empty line
+        }
+        
+        # Personal
+        profile["personal"] = {
+            "first_name": self.answers.get("first_name", "Tim"),
+            "last_name": self.answers.get("last_name", "J."),
+            "email": self.answers.get("email", "highskilltero1922@gmail.com"),
+            "phone": self.answers.get("phone", "1-339-2095321"),
+        }
+        
+        # Experience (years)
+        profile["experience"] = {
+            "total_years": 5,  # Calculated or default
+            "years_python": self.answers.get("years_python", 3),
+            "years_linux": self.answers.get("years_linux", 3),
+            "years_support": 3,  # Default
+            "years_javascript": self.answers.get("years_javascript", 1),
+            "years_sql": self.answers.get("years_sql", 2),
+            "years_docker": self.answers.get("years_docker", 1),
+            "years_git": self.answers.get("years_git", 2),
+            "years_java": self.answers.get("years_java", 0),
+            "years_react": self.answers.get("years_react", 0),
+            "years_nodejs": self.answers.get("years_nodejs", 0),
+            "years_networking": self.answers.get("years_networking", 2),
+            "years_windows_server": self.answers.get("years_windows_server", 1),
+            "years_active_directory": self.answers.get("years_active_directory", 1),
+            "years_office365": self.answers.get("years_office365", 2),
+            "years_vmware": self.answers.get("years_vmware", 0),
+            "years_salesforce": self.answers.get("years_salesforce", 0),
+            "years_servicenow": self.answers.get("years_servicenow", 0),
+        }
+        
+        # Certifications
+        profile["certifications"] = {
+            "has_drivers_license": self.answers.get("has_drivers_license", False),
+            "has_comptia_aplus": self.answers.get("has_comptia_aplus", False),
+            "has_security_plus": self.answers.get("has_security_plus", False),
+            "has_aws_cert": self.answers.get("has_aws_cert", False),
+            "has_bachelors": self.answers.get("has_bachelors", False),
+            "has_masters": self.answers.get("has_masters", False),
+        }
+        
+        # Work conditions
+        profile["work_conditions"] = {
+            "remote_only": True,
+            "willing_to_travel": self.answers.get("willing_to_travel", False),
+            "willing_to_relocate": self.answers.get("willing_to_relocate", False),
+            "work_weekends": self.answers.get("work_weekends", True),
+            "work_overtime": self.answers.get("work_overtime", True),
+            "available_on_call": self.answers.get("available_on_call", True),
+            "accept_hybrid": True,
+            "work_nights": self.answers.get("work_nights", False),
+        }
+        
+        # Work authorization
+        profile["work_auth"] = {
+            "authorized": True,
+            "requires_sponsorship": False,
+        }
+        
+        # Salary
+        profile["salary"] = {
+            "expected_usd": self.answers.get("expected_salary_usd", 60000),
+            "minimum_usd": self.answers.get("minimum_salary_usd", 50000),
+        }
+        
+        # Availability
+        profile["availability"] = {
+            "start_date": "immediately",
+            "notice_period_weeks": 0,
+        }
+        
+        # AI context
+        profile["ai_context"] = {
+            "# Читается AI при генерации open-ended ответов": "",
+            "skills_dir": "data/candidate/skills/",
+            "experience_dir": "data/candidate/experience/",
+            "identity_file": "data/candidate/identity.md",
+        }
+        
+        # Ensure directory exists
+        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write YAML
+        try:
+            # Custom representer for None (to make empty lines)
+            def none_representer(dumper, data):
+                return dumper.represent_scalar('tag:yaml.org,2002:null', '')
+            
+            yaml.add_representer(type(None), none_representer)
+            
+            with open(self.profile_path, 'w', encoding='utf-8') as f:
+                yaml.dump(profile, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            
+            return True
+        except Exception as e:
+            print(f"❌ Error saving profile: {e}")
+            return False
+    
+    def load_existing_answers(self) -> bool:
+        """
+        Load existing profile to pre-populate answers.
+        
+        Returns True if profile exists and was loaded.
+        """
+        if not self.profile_path.exists():
+            return False
+        
+        try:
+            with open(self.profile_path, 'r', encoding='utf-8') as f:
+                profile = yaml.safe_load(f)
+            
+            # Flatten profile into answers dict
+            for section in ['personal', 'experience', 'certifications', 'work_conditions', 'salary']:
+                if section in profile:
+                    self.answers.update(profile[section])
+            
+            return True
+        except Exception:
+            return False
+
+
+# For standalone testing
+if __name__ == "__main__":
+    print("🎯 Profile Interviewer Test")
+    print("=" * 50)
+    
+    interviewer = ProfileInterviewer()
+    
+    # Simulate interview
+    print(interviewer.start())
+    
+    while not interviewer.is_complete():
+        keyboard = interviewer.get_keyboard()
+        if keyboard:
+            print("\nKeyboard:", keyboard)
+            answer = input("Answer (yes/no/skip): ").strip()
+        else:
+            answer = input("Answer: ").strip()
+        
+        next_msg = interviewer.handle_answer(answer)
+        if next_msg:
+            print(f"\n{next_msg}")
+    
+    print("\n" + "=" * 50)
+    print("Saving profile...")
+    if interviewer.save_profile():
+        print("✅ Profile saved to data/candidate/profile.yaml")
+    else:
+        print("❌ Failed to save profile")
+
+🔍 366 lines read

@@ -1,0 +1,27 @@
+Tool result: src/ai/:
+total 24
+-rw-r--r--@ 1 terobyte  staff   460 Mar  8 22:51 __init__.py
+drwxr-xr-x@ 4 terobyte  staff   128 Mar  8 23:50 __pycache__
+drwxr-xr-x@ 5 terobyte  staff   160 Mar  8 23:05 .
+drwxr-xr-x@ 7 terobyte  staff   224 Mar  8 22:57 ..
+-rw-r--r--@ 1 terobyte  staff  4097 Mar  8 22:52 gemini_vision.py
+
+src/applier/:
+total 152
+-rw-r--r--@ 1 terobyte  staff   1323 Mar  8 22:50 __init__.py
+drwxr-xr-x@ 7 terobyte  staff    224 Mar  8 23:50 __pycache__
+drwxr-xr-x@ 8 terobyte  staff    256 Mar  8 23:29 .
+drwxr-xr-x@ 7 terobyte  staff    224 Mar  8 22:57 ..
+-rw-r--r--@ 1 terobyte  staff  26203 Mar  8 23:29 indeed_apply.py
+-rw-r--r--@ 1 terobyte  staff   4213 Mar  8 23:12 indeed_router.py
+-rw-r--r--@ 1 terobyte  staff  27679 Mar  8 23:03 selector_engine.py
+-rw-r--r--@ 1 terobyte  staff   8131 Mar  8 22:53 selector_health.py
+
+src/platforms/:
+total 72
+-rw-r--r--@ 1 terobyte  staff    128 Mar  8 22:50 __init__.py
+drwxr-xr-x@ 5 terobyte  staff    160 Mar  8 23:54 __pycache__
+drwxr-xr-x@ 6 terobyte  staff    192 Mar  8 23:11 .
+drwxr-xr-x@ 7 terobyte  staff    224 Mar  8 22:57 ..
+-rw-r--r--@ 1 terobyte  staff   2856 Mar  8 22:50 base_scraper.py
+-rw-r--r--@ 1 terobyte  staff  25469 Mar  9 00:01 indeed_scraper.py

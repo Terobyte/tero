@@ -1,0 +1,9 @@
+Tool result: total 88
+drwxr-xr-x@ 5 terobyte  staff    160 Mar  3 20:43 __pycache__
+drwxr-xr-x@ 8 terobyte  staff    256 Mar  3 20:38 .
+drwxr-xr-x@ 9 terobyte  staff    288 Mar  3 20:36 ..
+-rw-r--r--@ 1 terobyte  staff   6157 Mar  3 20:51 browser.py
+-rw-r--r--@ 1 terobyte  staff  16827 Mar  3 20:54 deep_research.py
+-rw-r--r--@ 1 terobyte  staff   6516 Mar  3 20:52 extractor.py
+-rw-r--r--@ 1 terobyte  staff   1109 Mar  3 20:38 plan.md
+-rw-r--r--@ 1 terobyte  staff    108 Mar  3 20:51 requirements.txt

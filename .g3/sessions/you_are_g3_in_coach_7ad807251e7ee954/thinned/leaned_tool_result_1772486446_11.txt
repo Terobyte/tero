@@ -1,0 +1,246 @@
+Tool result: """
+Database module for CareerBot.
+Handles SQLite operations for job storage and application tracking.
+"""
+import sqlite3
+import os
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+from contextlib import contextmanager
+import json
+from datetime import datetime
+
+
+class Database:
+    """SQLite database manager for job applications."""
+    
+    def __init__(self, db_path: str = "data/careerbot.db"):
+        self.db_path = db_path
+        # Ensure data directory exists
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+    
+    def _init_db(self):
+        """Initialize database schema."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    location TEXT,
+                    salary TEXT,
+                    url TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    raw_data TEXT,
+                    status TEXT DEFAULT 'new',
+                    applied_at TEXT,
+                    screenshot_path TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create indexes for common queries
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_jobs_status 
+                ON jobs(status)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_jobs_platform 
+                ON jobs(platform)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_jobs_company 
+                ON jobs(company)
+            """)
+            conn.commit()
+    
+    @contextmanager
+    def _get_connection(self):
+        """Get database connection with context manager."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+    
+    def add_job(self, job: Dict[str, Any]) -> bool:
+        """
+        Add a job to the database.
+        Returns True if inserted, False if already exists.
+        """
+        job_id = job.get('job_id')
+        if not job_id:
+            # Generate job_id from platform + company + title hash
+            import hashlib
+            unique_str = f"{job.get('platform', '')}:{job.get('company', '')}:{job.get('title', '')}:{job.get('url', '')}"
+            job_id = hashlib.md5(unique_str.encode()).hexdigest()[:12]
+            job['job_id'] = job_id
+        
+        with self._get_connection() as conn:
+            try:
+                conn.execute("""
+                    INSERT INTO jobs (job_id, title, company, location, salary, url, platform, raw_data, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')
+                """, (
+                    job_id,
+                    job.get('title', ''),
+                    job.get('company', ''),
+                    job.get('location', ''),
+                    job.get('salary', ''),
+                    job.get('url', ''),
+                    job.get('platform', ''),
+                    json.dumps(job.get('raw_data', {}))
+                ))
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                # Job already exists
+                return False
+    
+    def add_jobs_batch(self, jobs: List[Dict[str, Any]]) -> int:
+        """
+        Add multiple jobs to database.
+        Returns count of jobs inserted.
+        """
+        inserted = 0
+        for job in jobs:
+            if self.add_job(job):
+                inserted += 1
+        return inserted
+    
+    def get_job_by_id(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get a job by its ID."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            return dict(row) if row else None
+    
+    def get_random_job(self, status: str = 'new') -> Optional[Dict[str, Any]]:
+        """Get a random job with given status."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE status = ? ORDER BY RANDOM() LIMIT 1",
+                (status,)
+            ).fetchone()
+            return dict(row) if row else None
+    
+    def get_jobs_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """Get all jobs with given status."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at DESC",
+                (status,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_all_jobs(self) -> List[Dict[str, Any]]:
+        """Get all jobs."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_jobs_by_platform(self, platform: str) -> List[Dict[str, Any]]:
+        """Get all jobs from a specific platform."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE platform = ? ORDER BY created_at DESC",
+                (platform,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+    
+    def update_status(self, job_id: str, status: str, screenshot_path: Optional[str] = None) -> bool:
+        """Update job status and optionally add screenshot path."""
+        with self._get_connection() as conn:
+            now = datetime.now().isoformat()
+            
+            if status == 'applied':
+                if screenshot_path:
+                    conn.execute("""
+                        UPDATE jobs 
+                        SET status = ?, applied_at = ?, screenshot_path = ?, updated_at = ?
+                        WHERE job_id = ?
+                    """, (status, now, screenshot_path, now, job_id))
+                else:
+                    conn.execute("""
+                        UPDATE jobs 
+                        SET status = ?, applied_at = ?, updated_at = ?
+                        WHERE job_id = ?
+                    """, (status, now, now, job_id))
+            else:
+                conn.execute("""
+                    UPDATE jobs SET status = ?, updated_at = ? WHERE job_id = ?
+                """, (status, now, job_id))
+            
+            conn.commit()
+            return conn.execute("SELECT changes()").fetchone()[0] > 0
+    
+    def get_applied_jobs(self) -> List[Dict[str, Any]]:
+        """Get all applied jobs with proof information."""
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT job_id, title, company, location, url, platform, 
+                       applied_at, screenshot_path
+                FROM jobs 
+                WHERE status = 'applied' 
+                ORDER BY applied_at DESC
+            """).fetchall()
+            return [dict(row) for row in rows]
+    
+    def count_by_platform(self) -> Dict[str, int]:
+        """Get count of jobs per platform."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT platform, COUNT(*) as count FROM jobs GROUP BY platform"
+            ).fetchall()
+            return {row['platform']: row['count'] for row in rows}
+    
+    def count_by_status(self) -> Dict[str, int]:
+        """Get count of jobs per status."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as count FROM jobs GROUP BY status"
+            ).fetchall()
+            return {row['status']: row['count'] for row in rows}
+    
+    def delete_by_platform(self, platform: str) -> int:
+        """Delete all jobs from a specific platform. Returns count deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM jobs WHERE platform = ?", (platform,)
+            )
+            conn.commit()
+            return cursor.rowcount
+    
+    def delete_applied_without_screenshot(self) -> int:
+        """Delete applied jobs without screenshots. Returns count deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM jobs WHERE status = 'applied' AND screenshot_path IS NULL"
+            )
+            conn.commit()
+            return cursor.rowcount
+    
+    def clear_all(self):
+        """Clear all jobs from database."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM jobs")
+            conn.commit()
+
+
+# Singleton instance
+_db_instance: Optional[Database] = None
+
+def get_database() -> Database:
+    """Get singleton database instance."""
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = Database()
+    return _db_instance
+
+🔍 244 lines read

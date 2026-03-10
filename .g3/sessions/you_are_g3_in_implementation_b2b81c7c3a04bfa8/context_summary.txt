@@ -1,0 +1,11 @@
+201315-FNM, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+201315-YPc, sys,   0K 🟢, 📂 Working Directory: /Users/terobyte/tmp/workspace
+201315-eHp, usr,   3K 🟡, You are G3 in implementation mode. Read and implement the following requirements:  # CareerBot — Plan: GUI + Glassdoor R
+201318-WSS, ass,   0K 🟢, 
+201318-dwE, usr,   0K 🟢, Tool result: 
+201323-aQh, ass,   0K 🟢, I'll start by exploring the workspace structure to understand the current codebase.I'll start by exploring the workspace
+201323-qXL, usr,   0K 🟢, Tool result: ./gui.py ./src/database/db.py ./src/database/__init__.py ./src/platforms/jobspy_scraper.py ./src/platforms/
+201323-PkM, ass,   0K 🟢, 
+201323-TBD, usr,   0K 🟢, Tool result: total 72 drwxr-xr-x@  3 terobyte  staff     96 Mar  2 16:32 __pycache__ drwxr-xr-x@ 10 terobyte  staff    3
+
+--- TOTAL:   6K /  31K (19.4%) ---

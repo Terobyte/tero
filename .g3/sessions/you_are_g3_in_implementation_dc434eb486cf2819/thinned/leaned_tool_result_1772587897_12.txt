@@ -1,0 +1,104 @@
+Tool result: # Google Gemini Deep Research — Automation Script
+
+## Цель
+Python-скрипт, который открывает Chrome, запускает Deep Research на `gemini.google.com`, дожидается результата и сохраняет отчёт как `.md` файл в `~/Desktop/Personal Researchs/`.
+
+---
+
+## Использование
+
+```bash
+# Первый раз — сохранить сессию (логинишься вручную)
+python deep_research.py --login
+
+# Запустить исследование
+python deep_research.py "Твой запрос"
+```
+
+---
+
+## Структура проекта
+
+```
+gemini-research/
+├── deep_research.py     # точка входа (CLI)
+├── browser.py           # StealthBrowser (patchright, anti-detection)
+├── extractor.py         # парсинг отчёта → Markdown
+├── session.json         # сохранённая сессия Google (создаётся при --login)
+├── requirements.txt
+└── plan.md
+```
+
+---
+
+## Зависимости
+
+| Библиотека | Зачем |
+|---|---|
+| `patchright` | Playwright с анти-детектом (как в CareerBot) |
+| `html2text` / `markdownify` | Конвертация HTML ответа в Markdown |
+| `click` | CLI аргументы |
+| `loguru` | Логирование |
+| `python-slugify` | Безопасное имя файла из запроса |
+
+---
+
+## Как это работает — шаг за шагом
+
+### 1. Первый запуск (`--login`)
+- Открывается браузер (headed)
+- Переходит на `gemini.google.com`
+- Ждёт пока ты войдёшь в аккаунт вручную
+- Нажимаешь Enter в терминале → сессия сохраняется в `session.json`
+
+### 2. Запуск исследования
+1. Загрузить сессию из `session.json`
+2. Открыть `gemini.google.com/app`
+3. Нажать на переключатель модели (кнопка "Fast" / "Thinking")
+4. Выбрать **Deep Research** из дропдауна
+5. Вставить запрос в textarea
+6. Отправить (Enter)
+7. Нажать кнопку **"Start research"** (подтверждение плана)
+8. Polling каждые 30 сек → ждать пока Research закончится
+   - Детект окончания: исчезновение spinner / появление кнопки экспорта
+9. Извлечь HTML отчёта
+10. Конвертировать в Markdown (html2text)
+11. Сохранить: `~/Desktop/Personal Researchs/YYYY-MM-DD_<тема>.md`
+
+---
+
+## Файл результата
+
+**Формат имени:** `2026-03-03_quantum-entanglement.md`
+
+**Содержимое:**
+```markdown
+---
+date: 2026-03-03
+query: "Как работает квантовая запутанность"
+---
+
+# Как работает квантовая запутанность
+
+[полный отчёт Deep Research...]
+```
+
+---
+
+## Антидетект (Stealth)
+
+Используется **patchright** — та же библиотека что в CareerBot:
+- Патчит бинарник Chromium (скрывает `navigator.webdriver`)
+- Флаги: `--disable-blink-features=AutomationControlled`, Metal GPU (macOS)
+- Сессия через `storage_state` (cookies + localStorage) — Google не требует повторного логина
+
+---
+
+## Установка
+
+```bash
+pip install -r requirements.txt
+patchright install chromium
+```
+
+🔍 102 lines read

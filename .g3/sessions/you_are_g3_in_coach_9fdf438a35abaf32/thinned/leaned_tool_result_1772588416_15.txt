@@ -1,0 +1,606 @@
+Tool result: #!/usr/bin/env python3
+"""
+Google Gemini Deep Research Automation Script
+
+Usage:
+    # First time - save session (login manually)
+    python deep_research.py --login
+
+    # Run research
+    python deep_research.py "Your query"
+"""
+
+import sys
+from pathlib import Path
+from datetime import datetime
+
+import click
+from loguru import logger
+
+from browser import StealthBrowser
+from extractor import ReportExtractor
+
+# Configure logging
+logger.remove()
+logger.add(
+    sys.stderr,
+    format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{message}</cyan>",
+    level="INFO",
+)
+
+
+@click.command()
+@click.argument("query", required=False)
+@click.option("--login", is_flag=True, help="Login mode - save session after manual login")
+@click.option("--headless", is_flag=True, default=False, help="Run in headless mode (requires existing session)")
+@click.option("--timeout", default=60, type=int, help="Timeout in minutes for research completion")
+@click.option("--poll-interval", default=30, type=int, help="Polling interval in seconds")
+def main(query: str | None, login: bool, headless: bool, timeout: int, poll_interval: int):
+    """
+    Google Gemini Deep Research automation tool.
+
+    QUERY is the research question to send to Deep Research.
+    """
+    try:
+        if login:
+            handle_login()
+        elif query:
+            handle_research(query, headless, timeout, poll_interval)
+        else:
+            click.echo("Error: Either provide a QUERY or use --login")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)
+
+
+def handle_login():
+    """Handle login mode - open browser and save session."""
+    logger.info("Starting login mode...")
+    
+    browser = StealthBrowser()
+    browser.start(headless=False)
+    
+    try:
+        # Navigate to Gemini
+        logger.info("Navigating to gemini.google.com")
+        page = browser.page
+        page.goto("https://gemini.google.com", wait_until="networkidle")
+        
+        # Wait for user to login
+        click.echo("\n" + "=" * 60)
+        click.echo("Please login to your Google account in the browser.")
+        click.echo("After completing login, press ENTER to save session...")
+        click.echo("=" * 60 + "\n")
+        input()
+        
+        # Verify login by checking for logged-in elements
+        logger.info("Verifying login state...")
+        try:
+            # Wait a bit for page to stabilize
+            page.wait_for_timeout(2000)
+            
+            # Check if we're logged in by looking for UI elements
+            logged_in = False
+            try:
+                # Look for the main chat interface
+                page.wait_for_selector("textarea[aria-label]", timeout=5000)
+                logged_in = True
+            except:
+                pass
+            
+            if not logged_in:
+                logger.warning("Could not verify login state. Saving session anyway.")
+            
+            # Save session
+            browser.save_session()
+            logger.success("Session saved successfully!")
+            
+        except Exception as e:
+            logger.error(f"Failed to verify login: {e}")
+            raise
+            
+    finally:
+        browser.close()
+
+
+def handle_research(query: str, headless: bool, timeout_minutes: int, poll_interval: int):
+    """Handle research mode - execute Deep Research and save result."""
+    logger.info(f"Starting Deep Research for: {query}")
+    
+    browser = StealthBrowser()
+    
+    try:
+        # Check for existing session
+        session_file = Path("session.json")
+        if not session_file.exists():
+            logger.error("No session found. Please run with --login first.")
+            sys.exit(1)
+        
+        # Start browser and load session
+        browser.start(headless=headless)
+        browser.load_session()
+        
+        page = browser.page
+        
+        # Navigate to Gemini app
+        logger.info("Navigating to gemini.google.com/app")
+        page.goto("https://gemini.google.com/app", wait_until="networkidle")
+        page.wait_for_timeout(2000)
+        
+        # Step 1: Click model switcher (Fast/Thinking button)
+        logger.info("Clicking model switcher...")
+        model_switcher_clicked = click_model_switcher(page)
+        if not model_switcher_clicked:
+            logger.error("Could not find model switcher")
+            raise RuntimeError("Model switcher not found")
+        
+        page.wait_for_timeout(1000)
+        
+        # Step 2: Select Deep Research from dropdown
+        logger.info("Selecting Deep Research mode...")
+        deep_research_selected = select_deep_research(page)
+        if not deep_research_selected:
+            logger.error("Could not select Deep Research")
+            raise RuntimeError("Deep Research option not found")
+        
+        page.wait_for_timeout(1000)
+        
+        # Step 3: Enter query in textarea
+        logger.info("Entering query...")
+        query_entered = enter_query(page, query)
+        if not query_entered:
+            logger.error("Could not enter query")
+            raise RuntimeError("Failed to enter query")
+        
+        page.wait_for_timeout(500)
+        
+        # Step 4: Submit query (press Enter)
+        logger.info("Submitting query...")
+        submit_query(page)
+        page.wait_for_timeout(2000)
+        
+        # Step 5: Click "Start research" button
+        logger.info("Clicking 'Start research' button...")
+        start_research_clicked = click_start_research(page)
+        if not start_research_clicked:
+            logger.warning("Could not find 'Start research' button - research may have started automatically")
+        
+        # Step 6: Poll for completion
+        logger.info(f"Waiting for research to complete (timeout: {timeout_minutes} minutes)...")
+        completed = poll_for_completion(page, timeout_minutes * 60, poll_interval)
+        
+        if not completed:
+            logger.error("Research timed out")
+            raise RuntimeError("Research completion timeout")
+        
+        # Step 7: Extract report
+        logger.info("Extracting research report...")
+        report_html = extract_report_html(page)
+        
+        if not report_html:
+            logger.error("Could not extract report HTML")
+            raise RuntimeError("Failed to extract report")
+        
+        # Step 8: Convert to Markdown and save
+        logger.info("Converting to Markdown...")
+        extractor = ReportExtractor()
+        markdown = extractor.html_to_markdown(report_html)
+        
+        # Add frontmatter
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        full_markdown = f"""---
+date: {date_str}
+query: "{query}"
+---
+
+{markdown}
+"""
+        
+        # Save to file
+        output_path = get_output_path(query)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(full_markdown, encoding="utf-8")
+        
+        logger.success(f"Report saved to: {output_path}")
+        
+    finally:
+        browser.close()
+
+
+def click_model_switcher(page) -> bool:
+    """Click on the model switcher button (Fast/Thinking)."""
+    try:
+        # Try various selectors for the model switcher
+        selectors = [
+            # Button that shows current model name
+            "button[aria-label*='model']",
+            "button[aria-label*='Model']",
+            # Contains "Fast" or "Thinking" text
+            "//button[contains(., 'Fast')]",
+            "//button[contains(., 'Thinking')]",
+            "//button[contains(., 'Deep Research')]",
+            # Generic model selector button
+            "button[data-test-id='model-selector']",
+            "button[model-selector]",
+            # Try finding by role
+            "//button[@role='combobox']",
+        ]
+        
+        for selector in selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=1000):
+                    element.click()
+                    logger.debug(f"Clicked model switcher using selector: {selector}")
+                    return True
+            except:
+                continue
+        
+        # Fallback: look for any button containing model-related text
+        try:
+            buttons = page.locator("button").all()
+            for btn in buttons:
+                text = btn.text_content() or ""
+                if any(x in text.lower() for x in ["fast", "thinking", "model", "deep research"]):
+                    if btn.is_visible():
+                        btn.click()
+                        logger.debug(f"Clicked model switcher with text: {text}")
+                        return True
+        except:
+            pass
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Error clicking model switcher: {e}")
+        return False
+
+
+def select_deep_research(page) -> bool:
+    """Select Deep Research from the model dropdown."""
+    try:
+        # Wait for dropdown to appear
+        page.wait_for_timeout(500)
+        
+        # Try to find and click Deep Research option
+        selectors = [
+            "//button[contains(., 'Deep Research')]",
+            "//div[contains(., 'Deep Research')]",
+            "//li[contains(., 'Deep Research')]",
+            "//span[contains(., 'Deep Research')]",
+            # Menu item
+            "[role='menuitem']:has-text('Deep Research')",
+            "[role='option']:has-text('Deep Research')",
+        ]
+        
+        for selector in selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=1000):
+                    element.click()
+                    logger.debug(f"Selected Deep Research using selector: {selector}")
+                    return True
+            except:
+                continue
+        
+        # Fallback: search all interactive elements
+        try:
+            elements = page.locator("button, [role='menuitem'], [role='option'], li, div[role='button']").all()
+            for el in elements:
+                text = el.text_content() or ""
+                if "deep research" in text.lower() and el.is_visible():
+                    el.click()
+                    logger.debug(f"Selected Deep Research from element with text: {text}")
+                    return True
+        except:
+            pass
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Error selecting Deep Research: {e}")
+        return False
+
+
+def enter_query(page, query: str) -> bool:
+    """Enter the query in the textarea."""
+    try:
+        # Find textarea
+        textarea = page.locator("textarea[aria-label], textarea[placeholder], textarea").first
+        textarea.wait_for(state="visible", timeout=5000)
+        
+        # Clear and type
+        textarea.click()
+        textarea.fill(query)
+        
+        logger.debug("Query entered in textarea")
+        return True
+        
+    except Exception as e:
+        logger.debug(f"Error entering query: {e}")
+        return False
+
+
+def submit_query(page):
+    """Submit the query by pressing Enter."""
+    try:
+        # Press Enter in textarea
+        page.locator("textarea").first.press("Enter")
+        logger.debug("Pressed Enter to submit")
+    except:
+        # Fallback: click send button
+        try:
+            send_btn = page.locator("button[aria-label*='send'], button[aria-label*='Send']").first
+            send_btn.click()
+            logger.debug("Clicked send button")
+        except:
+            pass
+
+
+def click_start_research(page) -> bool:
+    """Click the 'Start research' confirmation button."""
+    try:
+        # Wait for potential confirmation dialog
+        page.wait_for_timeout(2000)
+        
+        # Try various selectors
+        selectors = [
+            "//button[contains(., 'Start research')]",
+            "//button[contains(., 'Start Research')]",
+            "//button[contains(., 'start research')]",
+            "//button[contains(., 'Начать исследование')]",
+            "//div[contains(., 'Start research') and @role='button']",
+            "[data-test-id='start-research']",
+        ]
+        
+        for selector in selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=2000):
+                    element.click()
+                    logger.debug(f"Clicked 'Start research' using selector: {selector}")
+                    return True
+            except:
+                continue
+        
+        # Fallback: search all buttons
+        try:
+            buttons = page.locator("button").all()
+            for btn in buttons:
+                text = btn.text_content() or ""
+                if "start research" in text.lower():
+                    if btn.is_visible():
+                        btn.click()
+                        logger.debug("Clicked 'Start research' button")
+                        return True
+        except:
+            pass
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Error clicking 'Start research': {e}")
+        return False
+
+
+def poll_for_completion(page, timeout_seconds: int, poll_interval: int) -> bool:
+    """Poll for research completion."""
+    import time
+    
+    start_time = time.time()
+    elapsed = 0
+    
+    while elapsed < timeout_seconds:
+        elapsed = time.time() - start_time
+        remaining = timeout_seconds - elapsed
+        logger.info(f"Waiting for completion... ({int(elapsed)}s elapsed, {int(remaining)}s remaining)")
+        
+        # Check for completion indicators
+        if is_research_complete(page):
+            logger.info("Research completed!")
+            return True
+        
+        # Check for error states
+        if has_error(page):
+            logger.error("Research encountered an error")
+            return False
+        
+        # Wait before next poll
+        time.sleep(poll_interval)
+    
+    return False
+
+
+def is_research_complete(page) -> bool:
+    """Check if the research has completed."""
+    try:
+        # Completion indicators:
+        # 1. Export button appears
+        # 2. Spinner disappears
+        # 3. Share button appears
+        
+        # Check for export/share buttons
+        export_selectors = [
+            "button[aria-label*='Export']",
+            "button[aria-label*='export']",
+            "button[aria-label*='Share']",
+            "button[aria-label*='share']",
+            "//button[contains(., 'Export')]",
+            "//button[contains(., 'Share')]",
+            "//button[contains(., 'Copy')]",
+        ]
+        
+        for selector in export_selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=500):
+                    logger.debug(f"Found completion indicator: {selector}")
+                    return True
+            except:
+                continue
+        
+        # Check if spinner is gone
+        spinner_selectors = [
+            "[role='progressbar']",
+            ".spinner",
+            ".loading",
+            "//div[contains(@class, 'spinner')]",
+            "//div[contains(@class, 'loading')]",
+        ]
+        
+        spinner_visible = False
+        for selector in spinner_selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=100):
+                    spinner_visible = True
+                    break
+            except:
+                continue
+        
+        # If no spinner and we have content, might be complete
+        if not spinner_visible:
+            # Check for substantial content
+            try:
+                content = page.locator("response-element, .response-content, [data-response]").first
+                if content.is_visible(timeout=500):
+                    # Check if it has substantial content
+                    text = content.text_content() or ""
+                    if len(text) > 500:  # Arbitrary threshold for "complete" report
+                        logger.debug("Found substantial content, research appears complete")
+                        return True
+            except:
+                pass
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Error checking completion: {e}")
+        return False
+
+
+def has_error(page) -> bool:
+    """Check if there's an error state."""
+    try:
+        error_selectors = [
+            "[role='alert']",
+            ".error",
+            "//div[contains(@class, 'error')]",
+            "//div[contains(., 'error')]",
+            "//div[contains(., 'Error')]",
+        ]
+        
+        for selector in error_selectors:
+            try:
+                if selector.startswith("//"):
+                    element = page.locator(f"xpath={selector}").first
+                else:
+                    element = page.locator(selector).first
+                
+                if element.is_visible(timeout=100):
+                    text = element.text_content() or ""
+                    if "error" in text.lower() or "failed" in text.lower():
+                        logger.warning(f"Found error: {text}")
+                        return True
+            except:
+                continue
+        
+        return False
+        
+    except:
+        return False
+
+
+def extract_report_html(page) -> str | None:
+    """Extract the HTML content of the research report."""
+    try:
+        # Try various selectors for the response content
+        selectors = [
+            "response-element",
+            ".response-element",
+            ".model-response-text",
+            "[data-test-id='response-content']",
+            ".response-content",
+            "article",
+            "[role='article']",
+            "main .content",
+        ]
+        
+        for selector in selectors:
+            try:
+                element = page.locator(selector).first
+                if element.is_visible(timeout=1000):
+                    html = element.inner_html()
+                    if html and len(html) > 100:
+                        logger.debug(f"Extracted HTML using selector: {selector}")
+                        return html
+            except:
+                continue
+        
+        # Fallback: get the main content area
+        try:
+            # Try to find the main response container
+            main = page.locator("main").first
+            if main:
+                return main.inner_html()
+        except:
+            pass
+        
+        # Last resort: get body content
+        try:
+            body = page.locator("body")
+            return body.inner_html()
+        except:
+            pass
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error extracting report HTML: {e}")
+        return None
+
+
+def get_output_path(query: str) -> Path:
+    """Generate the output file path."""
+    from slugify import slugify
+    
+    # Create filename with date and slugified query
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    slug = slugify(query, max_length=50)
+    
+    # Output directory
+    output_dir = Path.home() / "Desktop" / "Personal Researchs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    filename = f"{date_str}_{slug}.md"
+    return output_dir / filename
+
+
+if __name__ == "__main__":
+    main()
+
+🔍 604 lines read

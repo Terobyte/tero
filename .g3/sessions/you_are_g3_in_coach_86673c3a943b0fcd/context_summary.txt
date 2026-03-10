@@ -1,0 +1,58 @@
+210540-VQM, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+210540-iiZ, usr,   1K 🟡, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+210542-WOy, ass,   0K 🟢, 
+210542-YDG, usr,   0K 🟢, Tool result: total 64 drwxr-xr-x@  3 terobyte  staff    96 Mar  3 20:13 __pycache__ drwxr-xr-x@ 10 terobyte  staff   320
+210542-oOa, ass,   0K 🟢, 
+210542-YlN, usr,   0K 🟢, Tool result: ❌ Failed to read file 'requirements.txt': No such file or directory (os error 2)
+210544-Sgg, ass,   0K 🟢, 
+210544-rMG, usr,   0K 🟢, Tool result: total 64 drwxr-xr-x@  3 terobyte  staff    96 Mar  3 20:13 __pycache__ drwxr-xr-x@ 10 terobyte  staff   320
+210544-Kfk, ass,   0K 🟢, 
+210544-JSk, usr,   0K 🟢, Tool result: total 80 drwxr-xr-x@  5 terobyte  staff    160 Mar  3 21:05 __pycache__ drwxr-xr-x@  8 terobyte  staff    2
+210547-AQD, ass,   0K 🟢, 
+210547-sIn, usr,   0K 🟢, Tool result: # Core dependencies patchright>=0.1.0 click>=8.0.0 loguru>=0.7.0 html2text>=2020.1.16 python-slugify>=8.0.0
+210547-MoB, ass,   0K 🟢, 
+210547-GwN, usr,   5K 🟠, Tool result: #!/usr/bin/env python3 """ Google Gemini Deep Research Automation Script  Usage:     python deep_research.p
+210547-Qdg, ass,   0K 🟢, 
+210547-VPD, usr,   3K 🟡, Tool result: """ StealthBrowser - Anti-detection browser using patchright.  Provides headless/headed browser sessions wi
+210547-Cri, ass,   0K 🟢, 
+210547-ucz, usr,   1K 🟡, Tool result: """ Report Extractor Module Parses Deep Research HTML output and converts to Markdown """  from pathlib imp
+210604-qSD, ass,   0K 🟢, 
+210604-Bsq, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Work/gemini-research: No such file or directory
+210604-fKA, ass,   0K 🟢, 
+210604-Fdy, usr,   0K 🟢, Tool result: No session.json found
+210608-Bex, ass,   0K 🟢, 
+210608-Jbh, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace total 64 drwxr-xr-x@  3 terobyte  staff    96 Mar  3 20:13 __pycache__ drwxr-
+210632-qeB, ass,   0K 🟢, 
+210632-BHx, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+210632-IUw, ass,   0K 🟢, 
+210632-Cxi, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+210632-Wle, ass,   0K 🟢, 
+210632-MJt, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+210632-NLC, ass,   0K 🟢, 
+210632-Jad, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+210632-hpP, ass,   0K 🟢, 
+210632-AUh, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+210645-vjF, ass,   0K 🟢, 
+210645-ShO, usr,   0K 🟢, Tool result: Python 3.14.0
+210645-GHC, ass,   0K 🟢, 
+210645-iKa, usr,   0K 🟢, Tool result: patchright OK
+210645-BdK, ass,   0K 🟢, 
+210645-lmg, usr,   0K 🟢, Tool result: click OK
+210645-Ivz, ass,   0K 🟢, 
+210645-QoF, usr,   0K 🟢, Tool result: loguru OK
+210701-KHI, ass,   0K 🟢, 
+210701-HiU, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+210703-XJe, ass,   0K 🟢, 
+210703-Akx, usr,   0K 🟢, Tool result: html2text OK slugify OK
+210706-Itn, ass,   0K 🟢, 
+210706-pGW, usr,   0K 🟢, Tool result: Usage: deep_research.py [OPTIONS] [QUERY]    Google Gemini Deep Research Automation    Run with --login fir
+210727-VvL, ass,   0K 🟢, 
+210727-Eak, usr,   0K 🟢, Tool result: total 80 drwxr-xr-x@  5 terobyte  staff    160 Mar  3 21:07 __pycache__ drwxr-xr-x@  8 terobyte  staff    2
+210728-Brn, ass,   0K 🟢, 
+210728-jFS, usr,   0K 🟢, Tool result: StealthBrowser imported OK
+210811-itu, ass,   0K 🟢, Let me test the actual UI flow by loading the webdriver toolset and testing the login flow:Let me test the actual UI flo
+210811-jQE, usr,   0K 🟢, Tool result: ✅ Loaded toolset 'webdriver' with 15 tools:  ## webdriver_start  Start a Safari WebDriver session for brows
+210844-JnP, ass,   0K 🟢, 
+210844-RYH, usr,   0K 🟢, Tool result: ❌ Failed to connect to ChromeDriver after 10 attempts: Failed to connect to ChromeDriver  This might be bec
+
+--- TOTAL:  16K /  98K (17.3%) ---

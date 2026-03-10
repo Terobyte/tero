@@ -1,0 +1,581 @@
+Tool result: """
+Indeed Screening Handler - Handles screening questions on Indeed Apply forms.
+
+Detects and answers questions using a 3-tier system:
+1. AnswerBank (pattern matching)
+2. CustomAnswers (user-curated)
+3. AI Answerer (Gemini Flash with fallback)
+"""
+
+import asyncio
+import json
+import hashlib
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass, field
+import re
+
+
+@dataclass
+class Question:
+    """Represents a form question."""
+    text: str
+    type: str  # radio, select, text, number, checkbox, textarea
+    options: List[str] = field(default_factory=list)
+    element = None  # Playwright element
+    label_element = None
+    required: bool = False
+    
+    def get_id(self) -> str:
+        """Generate unique ID for this question."""
+        text_hash = hashlib.md5(self.text.encode()).hexdigest()[:8]
+        return f"q_{text_hash}"
+
+
+@dataclass
+class AIAnswer:
+    """AI-generated answer for a question."""
+    answer: str
+    confidence: str  # high, medium, low
+    reason: str
+
+
+class IndeedScreeningHandler:
+    """
+    Handles screening questions on Indeed Apply forms.
+    
+    Uses a 3-tier answer system:
+    1. AnswerBank - fast pattern matching
+    2. CustomAnswers - user-curated answers
+    3. AI Answerer - Gemini Flash fallback
+    
+    All unknown questions are logged for review.
+    """
+    
+    def __init__(
+        self,
+        answer_bank=None,
+        custom_answers_path: str = "data/custom_answers.json",
+        unknown_log_path: str = "data/unknown_questions.json",
+        profile_path: str = "data/candidate/profile.yaml"
+    ):
+        self.answer_bank = answer_bank
+        self.custom_answers_path = Path(custom_answers_path)
+        self.unknown_log_path = Path(unknown_log_path)
+        self.profile_path = Path(profile_path)
+        
+        # Load custom answers
+        self.custom_answers = self._load_custom_answers()
+        
+        # AI answerer (lazy load)
+        self._ai_answerer = None
+        
+    def _load_custom_answers(self) -> Dict[str, str]:
+        """Load user-curated answers from JSON."""
+        if self.custom_answers_path.exists():
+            try:
+                with open(self.custom_answers_path) as f:
+                    data = json.load(f)
+                    return data.get("answers", {})
+            except Exception:
+                pass
+        return {}
+    
+    def _save_custom_answers(self):
+        """Save custom answers to JSON."""
+        self.custom_answers_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.custom_answers_path, "w") as f:
+            json.dump({"answers": self.custom_answers}, f, indent=2)
+    
+    def _load_unknown_log(self) -> List[Dict]:
+        """Load unknown questions log."""
+        if self.unknown_log_path.exists():
+            try:
+                with open(self.unknown_log_path) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return []
+    
+    def _save_unknown_log(self, log: List[Dict]):
+        """Save unknown questions log."""
+        self.unknown_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.unknown_log_path, "w") as f:
+            json.dump(log, f, indent=2)
+    
+    async def find_all_questions(self, target) -> List[Question]:
+        """
+        Find all questions on current form step.
+        
+        Indeed uses:
+        - fieldset/legend for radio groups
+        - label/input pairs for other fields
+        - select dropdowns
+        
+        Args:
+            target: Playwright page or locator
+            
+        Returns:
+            List of Question objects
+        """
+        questions = []
+        
+        try:
+            # 1. Radio groups (fieldset > legend)
+            fieldsets = await target.locator("fieldset").all()
+            for fs in fieldsets:
+                try:
+                    # Get legend text
+                    legend = fs.locator("legend").first
+                    if await legend.count() > 0:
+                        text = await legend.text_content()
+                        text = text.strip() if text else ""
+                        
+                        if text:
+                            # Get radio options
+                            radios = await fs.locator("input[type='radio']").all()
+                            options = []
+                            
+                            for radio in radios:
+                                try:
+                                    # Get label for radio
+                                    radio_id = await radio.get_attribute("id")
+                                    if radio_id:
+                                        label = target.locator(f"label[for='{radio_id}']")
+                                        if await label.count() > 0:
+                                            opt_text = await label.text_content()
+                                            options.append(opt_text.strip() if opt_text else "")
+                                    else:
+                                        # Try parent label
+                                        parent = radio.locator("xpath=..")
+                                        parent_tag = await parent.evaluate("el => el.tagName")
+                                        if parent_tag == "LABEL":
+                                            opt_text = await parent.text_content()
+                                            options.append(opt_text.strip() if opt_text else "")
+                                except Exception:
+                                    continue
+                            
+                            # Check if required
+                            required = await fs.get_attribute("aria-required") == "true"
+                            required_class = "required" in (await fs.get_attribute("class") or "")
+                            
+                            questions.append(Question(
+                                text=text,
+                                type="radio",
+                                options=options,
+                                element=fs,
+                                required=required or required_class
+                            ))
+                except Exception as e:
+                    continue
+            
+            # 2. Select dropdowns
+            selects = await target.locator("select").all()
+            for sel in selects:
+                try:
+                    label_text = await self._get_label_for(sel, target)
+                    
+                    if label_text:
+                        # Get options
+                        option_elements = await sel.locator("option").all()
+                        options = []
+                        for opt in option_elements:
+                            opt_text = await opt.text_content()
+                            if opt_text and opt_text.strip():
+                                options.append(opt_text.strip())
+                        
+                        # Check required
+                        required = await sel.get_attribute("required") is not None
+                        
+                        
+                        questions.append(Question(
+                            text=label_text,
+                            type="select",
+                            options=options,
+                            element=sel,
+                            required=required
+                        ))
+                except Exception:
+                    continue
+            
+            # 3. Text/number inputs (excluding hidden and submit)
+            inputs = await target.locator("input:not([type='hidden']):not([type='submit']):not([type='radio']):not([type='checkbox'])").all()
+            for inp in inputs:
+                try:
+                    input_type = await inp.get_attribute("type") or "text"
+                    
+                    # Skip certain types
+                    if input_type in ["button", "reset", "image", "file"]:
+                        continue
+                    
+                    label_text = await self._get_label_for(inp, target)
+                    
+                    if label_text:
+                        # Check required
+                        required = await inp.get_attribute("required") is not None
+                        
+                        
+                        questions.append(Question(
+                            text=label_text,
+                            type=input_type if input_type in ["number", "email", "tel"] else "text",
+                            element=inp,
+                            required=required
+                        ))
+                except Exception:
+                    continue
+            
+            # 4. Textareas
+            textareas = await target.locator("textarea").all()
+            for ta in textareas:
+                try:
+                    label_text = await self._get_label_for(ta, target)
+                    
+                    if label_text:
+                        required = await ta.get_attribute("required") is not None
+                        
+                        questions.append(Question(
+                            text=label_text,
+                            type="textarea",
+                            element=ta,
+                            required=required
+                        ))
+                except Exception:
+                    continue
+            
+            # 5. Checkbox groups
+            checkboxes = await target.locator("input[type='checkbox']").all()
+            for cb in checkboxes:
+                try:
+                    label_text = await self._get_label_for(cb, target)
+                    
+                    if label_text:
+                        questions.append(Question(
+                            text=label_text,
+                            type="checkbox",
+                            element=cb,
+                            required=await cb.get_attribute("required") is not None
+                        ))
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            print(f"[Screening] Error finding questions: {e}")
+        
+        return questions
+    
+    async def _get_label_for(self, element, target) -> Optional[str]:
+        """Get label text for a form element."""
+        try:
+            # Try for="" attribute
+            el_id = await element.get_attribute("id")
+            if el_id:
+                label = target.locator(f"label[for='{el_id}']")
+                if await label.count() > 0:
+                    text = await label.text_content()
+                    return text.strip() if text else None
+            
+            # Try aria-label
+            aria_label = await element.get_attribute("aria-label")
+            if aria_label:
+                return aria_label.strip()
+            
+            # Try aria-labelledby
+            labelled_by = await element.get_attribute("aria-labelledby")
+            if labelled_by:
+                label_el = target.locator(f"#{labelled_by}")
+                if await label_el.count() > 0:
+                    text = await label_el.text_content()
+                    return text.strip() if text else None
+            
+            # Try parent label
+            parent = element.locator("xpath=ancestor::label")
+            if await parent.count() > 0:
+                text = await parent.first.text_content()
+                return text.strip() if text else None
+            
+            # Try placeholder
+            placeholder = await element.get_attribute("placeholder")
+            if placeholder:
+                return placeholder.strip()
+                
+        except Exception:
+            pass
+        
+        return None
+    
+    def answer_question(self, question: Question) -> Optional[str]:
+        """
+        Try to answer a question using pattern matching.
+        
+        Tries:
+        1. AnswerBank patterns
+        2. Custom answers
+        
+        Args:
+            question: Question to answer
+            
+        Returns:
+            Answer string or None if unknown
+        """
+        # Try AnswerBank first
+        if self.answer_bank:
+            answer = self.answer_bank.match_question(question.text)
+            if answer:
+                return answer
+        
+        # Try custom answers
+        if self.custom_answers:
+            answer = self._match_custom_answer(question.text)
+            if answer:
+                return answer
+        
+        return None
+    
+    def _match_custom_answer(self, question_text: str) -> Optional[str]:
+        """Match question against custom answers using keywords."""
+        question_lower = question_text.lower()
+        
+        # Map of keywords to custom answer keys
+        keyword_map = {
+            # Certifications
+            "driver": "has_drivers_license",
+            "comptia": "has_comptia_aplus",
+            "security+": "has_security_plus",
+            "aws": "has_aws_cert",
+            "bachelor": "has_bachelors",
+            "master": "has_masters",
+            
+            # Work conditions
+            "weekend": "work_weekends",
+            "overtime": "work_overtime",
+            "travel": "willing_to_travel",
+            "relocate": "willing_to_relocate",
+            "on.call": "available_on_call",
+            "remote": "prefer_remote",
+            "hybrid": "accept_hybrid",
+            
+            # Tech years
+            "java": "years_java",
+            "react": "years_react",
+            "node": "years_nodejs",
+            "networking": "years_networking",
+            "windows server": "years_windows_server",
+            "active directory": "years_active_directory",
+            "office 365": "years_office365",
+            "salesforce": "years_salesforce",
+            "servicenow": "years_servicenow",
+            "vmware": "years_vmware",
+        }
+        
+        for keyword, key in keyword_map.items():
+            if keyword in question_lower:
+                return self.custom_answers.get(key)
+        
+        return None
+    
+    async def get_ai_answer(
+        self,
+        question: Question,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Optional[AIAnswer]:
+        """Get AI-generated answer for unknown question."""
+        if not self._ai_answerer:
+            try:
+                from .ai_answerer import AIAnswerer
+                self._ai_answerer = AIAnswerer(profile_path=str(self.profile_path))
+            except Exception as e:
+                print(f"[Screening] Could not load AI answerer: {e}")
+                return None
+        
+        try:
+            return await self._ai_answerer.ask(
+                question=question.text,
+                field_type=question.type,
+                options=question.options,
+                context=context
+            )
+        except Exception as e:
+            print(f"[Screening] AI error: {e}")
+            return None
+    
+    def log_unknown(
+        self,
+        question: Question,
+        answer: Optional[str],
+        source: str = "unknown",
+        context: Optional[Dict[str, Any]] = None
+    ):
+        """Log unknown question for review."""
+        log = self._load_unknown_log()
+        
+        # Check if question already logged
+        q_id = question.get_id()
+        existing = next((q for q in log if q.get("id") == q_id), None)
+        
+        if existing:
+            existing["times_seen"] = existing.get("times_seen", 1) + 1
+            existing["last_seen"] = datetime.now().isoformat()
+        else:
+            entry = {
+                "id": q_id,
+                "question": question.text,
+                "field_type": question.type,
+                "options": question.options,
+                "answer": answer,
+                "source": source,  # pattern, custom, ai, unknown
+                "status": "pending_review" if source == "ai" else "needs_answer",
+                "context": context,
+                "first_seen": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "times_seen": 1,
+                "my_answer": None  # User fills this manually
+            }
+            log.append(entry)
+        
+        self._save_unknown_log(log)
+    
+    async def handle_all_questions(
+        self,
+        target,
+        page=None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Handle all screening questions on current form step.
+        
+        Args:
+            target: Playwright locator or page
+            page: Playwright page (optional, for screenshot)
+            context: Additional context (job info, company, etc.)
+            
+        Returns:
+            Dict with results: total, answered, unknown, errors
+        """
+        results = {
+            "total": 0,
+            "answered": 0,
+            "unknown": 0,
+            "errors": [],
+            "questions": []
+        }
+        
+        questions = await self.find_all_questions(target)
+        results["total"] = len(questions)
+        
+        for q in questions:
+            try:
+                answer = self.answer_question(q)
+                source = "pattern"
+                
+                if not answer:
+                    # Try AI
+                    ai_answer = await self.get_ai_answer(q, context)
+                    if ai_answer:
+                        answer = ai_answer.answer
+                        source = "ai"
+                        
+                        # Cache AI answer
+                        self._cache_ai_answer(q, ai_answer)
+                
+                if answer:
+                    # Fill the answer
+                    success = await self._fill_answer(target, q, answer)
+                    if success:
+                        results["answered"] += 1
+                        results["questions"].append({
+                            "text": q.text,
+                            "answer": answer,
+                            "source": source,
+                            "success": True
+                        })
+                        
+                        # Log if from AI
+                        if source == "ai":
+                            self.log_unknown(q, answer, source="ai", context=context)
+                    else:
+                        results["errors"].append({
+                            "question": q.text,
+                            "error": "Could not fill answer"
+                        })
+                else:
+                    results["unknown"] += 1
+                    results["questions"].append({
+                        "text": q.text,
+                        "answer": None,
+                        "source": "unknown",
+                        "success": False
+                    })
+                    
+                    # Log unknown
+                    self.log_unknown(q, None, source="unknown", context=context)
+                    
+            except Exception as e:
+                results["errors"].append({
+                    "question": q.text,
+                    "error": str(e)
+                })
+        
+        return results
+    
+    def _cache_ai_answer(self, question: Question, ai_answer: AIAnswer):
+        """Cache AI answer in custom_answers.json."""
+        key = question.get_id()
+        self.custom_answers[key] = ai_answer.answer
+        self._save_custom_answers()
+    
+    async def _fill_answer(self, target, question: Question, answer: str) -> bool:
+        """Fill answer into form element."""
+        try:
+            element = question.element
+            
+            if question.type == "radio":
+                # Find and click the correct radio option
+                if question.options:
+                    for i, opt in enumerate(question.options):
+                        if opt.lower() == answer.lower():
+                            # Click the radio at index i
+                            radios = await element.locator("input[type='radio']").all()
+                            if i < len(radios):
+                                await radios[i].click()
+                                return True
+                
+                # Try by label text
+                radio = element.locator(f"input[type='radio']").filter(
+                    has_text=re.compile(answer, re.IGNORECASE)
+                )
+                if await radio.count() > 0:
+                    await radio.first.click()
+                    return True
+                    
+            elif question.type == "select":
+                # Select option by value
+                await element.select_option(label=answer)
+                return True
+                
+            elif question.type in ["text", "number", "email", "tel"]:
+                # Clear and fill
+                await element.fill("")
+                await element.fill(answer)
+                return True
+                
+            elif question.type == "textarea":
+                await element.fill("")
+                await element.fill(answer)
+                return True
+                
+            elif question.type == "checkbox":
+                # Check if answer is yes/true
+                should_check = answer.lower() in ["yes", "true", "1", "checked"]
+                is_checked = await element.is_checked()
+                
+                if should_check != is_checked:
+                    await element.click()
+                return True
+                
+        except Exception as e:
+            print(f"[Screening] Error filling answer: {e}")
+            
+        return False
+
+🔍 579 lines read

@@ -1,0 +1,213 @@
+Tool result: """
+Report extractor - converts HTML to Markdown.
+"""
+
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from html2text import HTML2Text
+from slugify import slugify
+
+
+class ReportExtractor:
+    """Extracts and converts Deep Research reports to Markdown."""
+    
+    def __init__(self, output_dir: Path):
+        """
+        Initialize the extractor.
+        
+        Args:
+            output_dir: Directory to save reports
+        """
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Configure html2text
+        self.converter = HTML2Text()
+        self.converter.ignore_links = False
+        self.converter.ignore_images = False
+        self.converter.ignore_emphasis = False
+        self.converter.body_width = 0  # No wrapping
+        self.converter.unicode_snob = True
+        self.converter.skip_internal_links = False
+    
+    def html_to_markdown(self, html: str) -> str:
+        """
+        Convert HTML content to Markdown.
+        
+        Args:
+            html: HTML content
+            
+        Returns:
+            Markdown text
+        """
+        # Clean up the HTML
+        html = self._clean_html(html)
+        
+        # Convert to markdown
+        markdown = self.converter.handle(html)
+        
+        # Clean up the markdown
+        markdown = self._clean_markdown(markdown)
+        
+        return markdown.strip()
+    
+    def _clean_html(self, html: str) -> str:
+        """Clean up HTML before conversion."""
+        # Remove script and style tags
+        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Remove comments
+        html = re.sub(r'<!--.*?-->', '', html, flags=re.DOTALL)
+        
+        # Remove empty paragraphs
+        html = re.sub(r'<p>\s*</p>', '', html, flags=re.IGNORECASE)
+        
+        # Remove empty divs
+        html = re.sub(r'<div>\s*</div>', '', html, flags=re.IGNORECASE)
+        
+        return html
+    
+    def _clean_markdown(self, markdown: str) -> str:
+        """Clean up the converted markdown."""
+        # Remove excessive newlines
+        markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+        
+        # Remove leading/trailing whitespace on lines
+        lines = [line.rstrip() for line in markdown.split('\n')]
+        markdown = '\n'.join(lines)
+        
+        return markdown
+    
+    def generate_filename(self, query: str, date: Optional[datetime] = None) -> Path:
+        """
+        Generate a filename for the report.
+        
+        Args:
+            query: The research query
+            date: Date for the report (defaults to today)
+            
+        Returns:
+            Path to the output file
+        """
+        if date is None:
+            date = datetime.now()
+        
+        # Create a slug from the query
+        slug = slugify(query, max_length=50)
+        
+        # Format: YYYY-MM-DD_query-slug.md
+        date_str = date.strftime('%Y-%m-%d')
+        filename = f"{date_str}_{slug}.md"
+        
+        return self.output_dir / filename
+    
+    def save_report(
+        self,
+        query: str,
+        content: str,
+        date: Optional[datetime] = None,
+    ) -> Path:
+        """
+        Save a research report as Markdown.
+        
+        Args:
+            query: The original research query
+            content: The report content (HTML or Markdown)
+            date: Date for the report (defaults to now)
+            
+        Returns:
+            Path to the saved file
+        """
+        if date is None:
+            date = datetime.now()
+        
+        # Generate filename
+        filepath = self.generate_filename(query, date)
+        
+        # Check if content is HTML or already markdown
+        if '<' in content and '>' in content:
+            # Looks like HTML, convert it
+            markdown = self.html_to_markdown(content)
+        else:
+            markdown = content
+        
+        # Create frontmatter
+        frontmatter = f"""---
+date: {date.strftime('%Y-%m-%d')}
+query: "{query.replace('"', '\\"')}"
+---
+
+"""
+        
+        # Add title
+        title = f"# {query}\n\n"
+        
+        # Combine all parts
+        full_content = frontmatter + title + markdown
+        
+        # Write to file
+        filepath.write_text(full_content, encoding='utf-8')
+        
+        return filepath
+    
+    def extract_from_page(self, page) -> str:
+        """
+        Extract the report HTML from a loaded Gemini page.
+        
+        Args:
+            page: Playwright page object
+            
+        Returns:
+            Extracted HTML content
+        """
+        # Wait for the response container to be present
+        # The response is typically in a response-response element
+        # or similar container
+        
+        # Try different selectors that might contain the response
+        selectors = [
+            # Main response container
+            '.response-container',
+            '.model-response',
+            'response-container',
+            # Fallback - the main content area
+            '[data-response-content]',
+            '.conversation-container',
+        ]
+        
+        for selector in selectors:
+            try:
+                element = page.query_selector(selector)
+                if element:
+                    html = element.inner_html()
+                    if html and len(html) > 100:
+                        return html
+            except Exception:
+                continue
+        
+        # Last resort: get the entire main content area
+        try:
+            # Try to get the last response in the conversation
+            html = page.evaluate('''
+                () => {
+                    // Find all response elements
+                    const responses = document.querySelectorAll('.response-container, response-container, [data-response-content]');
+                    if (responses.length > 0) {
+                        // Return the last one (most recent)
+                        return responses[responses.length - 1].innerHTML;
+                    }
+                    
+                    // Fallback: find the main content
+                    const main = document.querySelector('main') || document.body;
+                    return main.innerHTML;
+                }
+            ''')
+            return html or ''
+        except Exception:
+            return ''
+
+🔍 211 lines read

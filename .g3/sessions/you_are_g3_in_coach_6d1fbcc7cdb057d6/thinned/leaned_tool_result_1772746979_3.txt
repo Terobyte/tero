@@ -1,0 +1,370 @@
+Tool result: ✅ Code search completed
+{
+  "searches": [
+    {
+      "name": "form_pattern_store",
+      "matches": [
+        {
+          "file": "src/applier/form_pattern_store.py",
+          "line": 22,
+          "column": 7,
+          "text": "FormPatternStore",
+          "captures": {
+            "name": "FormPatternStore"
+          }
+        },
+        {
+          "file": "src/applier/bamboohr_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "BambooHRApplier",
+          "captures": {
+            "name": "BambooHRApplier"
+          }
+        },
+        {
+          "file": "src/applier/indeed_screening.py",
+          "line": 26,
+          "column": 7,
+          "text": "FormQuestion",
+          "captures": {
+            "name": "FormQuestion"
+          }
+        },
+        {
+          "file": "src/applier/indeed_screening.py",
+          "line": 66,
+          "column": 7,
+          "text": "IndeedScreeningHandler",
+          "captures": {
+            "name": "IndeedScreeningHandler"
+          }
+        },
+        {
+          "file": "src/applier/universal_ai_filler.py",
+          "line": 17,
+          "column": 7,
+          "text": "FormAction",
+          "captures": {
+            "name": "FormAction"
+          }
+        },
+        {
+          "file": "src/applier/universal_ai_filler.py",
+          "line": 24,
+          "column": 7,
+          "text": "UniversalAIFiller",
+          "captures": {
+            "name": "UniversalAIFiller"
+          }
+        },
+        {
+          "file": "src/applier/human_review.py",
+          "line": 20,
+          "column": 7,
+          "text": "HumanReviewPrompter",
+          "captures": {
+            "name": "HumanReviewPrompter"
+          }
+        },
+        {
+          "file": "src/applier/workday_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "WorkdayApplier",
+          "captures": {
+            "name": "WorkdayApplier"
+          }
+        },
+        {
+          "file": "src/applier/answer_bank.py",
+          "line": 25,
+          "column": 7,
+          "text": "AnswerBank",
+          "captures": {
+            "name": "AnswerBank"
+          }
+        },
+        {
+          "file": "src/applier/lever_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "LeverApplier",
+          "captures": {
+            "name": "LeverApplier"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 66,
+          "column": 7,
+          "text": "AIAnswer",
+          "captures": {
+            "name": "AIAnswer"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 75,
+          "column": 7,
+          "text": "AIAnswerer",
+          "captures": {
+            "name": "AIAnswerer"
+          }
+        },
+        {
+          "file": "src/applier/indeed_apply.py",
+          "line": 22,
+          "column": 7,
+          "text": "IndeedApply",
+          "captures": {
+            "name": "IndeedApply"
+          }
+        },
+        {
+          "file": "src/applier/ashby_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "AshbyApplier",
+          "captures": {
+            "name": "AshbyApplier"
+          }
+        }
+      ],
+      "match_count": 14,
+      "files_searched": 11
+    },
+    {
+      "name": "human_review",
+      "matches": [
+        {
+          "file": "src/applier/form_pattern_store.py",
+          "line": 22,
+          "column": 7,
+          "text": "FormPatternStore",
+          "captures": {
+            "name": "FormPatternStore"
+          }
+        },
+        {
+          "file": "src/applier/bamboohr_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "BambooHRApplier",
+          "captures": {
+            "name": "BambooHRApplier"
+          }
+        },
+        {
+          "file": "src/applier/indeed_screening.py",
+          "line": 26,
+          "column": 7,
+          "text": "FormQuestion",
+          "captures": {
+            "name": "FormQuestion"
+          }
+        },
+        {
+          "file": "src/applier/indeed_screening.py",
+          "line": 66,
+          "column": 7,
+          "text": "IndeedScreeningHandler",
+          "captures": {
+            "name": "IndeedScreeningHandler"
+          }
+        },
+        {
+          "file": "src/applier/universal_ai_filler.py",
+          "line": 17,
+          "column": 7,
+          "text": "FormAction",
+          "captures": {
+            "name": "FormAction"
+          }
+        },
+        {
+          "file": "src/applier/universal_ai_filler.py",
+          "line": 24,
+          "column": 7,
+          "text": "UniversalAIFiller",
+          "captures": {
+            "name": "UniversalAIFiller"
+          }
+        },
+        {
+          "file": "src/applier/human_review.py",
+          "line": 20,
+          "column": 7,
+          "text": "HumanReviewPrompter",
+          "captures": {
+            "name": "HumanReviewPrompter"
+          }
+        },
+        {
+          "file": "src/applier/workday_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "WorkdayApplier",
+          "captures": {
+            "name": "WorkdayApplier"
+          }
+        },
+        {
+          "file": "src/applier/answer_bank.py",
+          "line": 25,
+          "column": 7,
+          "text": "AnswerBank",
+          "captures": {
+            "name": "AnswerBank"
+          }
+        },
+        {
+          "file": "src/applier/lever_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "LeverApplier",
+          "captures": {
+            "name": "LeverApplier"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 66,
+          "column": 7,
+          "text": "AIAnswer",
+          "captures": {
+            "name": "AIAnswer"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 75,
+          "column": 7,
+          "text": "AIAnswerer",
+          "captures": {
+            "name": "AIAnswerer"
+          }
+        },
+        {
+          "file": "src/applier/indeed_apply.py",
+          "line": 22,
+          "column": 7,
+          "text": "IndeedApply",
+          "captures": {
+            "name": "IndeedApply"
+          }
+        },
+        {
+          "file": "src/applier/ashby_apply.py",
+          "line": 18,
+          "column": 7,
+          "text": "AshbyApplier",
+          "captures": {
+            "name": "AshbyApplier"
+          }
+        }
+      ],
+      "match_count": 14,
+      "files_searched": 11
+    },
+    {
+      "name": "ask_variants",
+      "matches": [
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 87,
+          "column": 9,
+          "text": "__init__",
+          "captures": {
+            "name": "__init__"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 116,
+          "column": 9,
+          "text": "_load_json",
+          "captures": {
+            "name": "_load_json"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 126,
+          "column": 9,
+          "text": "_save_cache",
+          "captures": {
+            "name": "_save_cache"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 132,
+          "column": 9,
+          "text": "_hash_question",
+          "captures": {
+            "name": "_hash_question"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 140,
+          "column": 9,
+          "text": "gemini",
+          "captures": {
+            "name": "gemini"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 151,
+          "column": 9,
+          "text": "get_bank_answer",
+          "captures": {
+            "name": "get_bank_answer"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 183,
+          "column": 9,
+          "text": "get_cached_answer",
+          "captures": {
+            "name": "get_cached_answer"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 195,
+          "column": 9,
+          "text": "set_cached_answer",
+          "captures": {
+            "name": "set_cached_answer"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 215,
+          "column": 15,
+          "text": "ask",
+          "captures": {
+            "name": "ask"
+          }
+        },
+        {
+          "file": "src/applier/ai_answerer.py",
+          "line": 289,
+          "column": 15,
+          "text": "ask_variants",
+          "captures": {
+            "name": "ask_variants"
+          }
+        }
+      ],
+      "match_count": 10,
+      "files_searched": 1
+    }
+  ],
+  "total_matches": 38,
+  "total_files_searched": 23
+}
