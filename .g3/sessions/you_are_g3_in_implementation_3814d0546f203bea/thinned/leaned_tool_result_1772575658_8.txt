@@ -1,0 +1,451 @@
+Tool result: """
+High-Effort Pipeline for Resume Tailoring.
+
+5-step pipeline that evaluates resume-job fit from multiple perspectives:
+|     = ATS System
+||    = HR Coordinator
+|||   = Senior Recruiter
+||||  = Hiring Manager
+||||| = Devil's Advocate
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional, Callable
+
+
+@dataclass
+class PipelineContext:
+    """Context passed through the pipeline steps."""
+    job: Dict[str, Any]
+    draft_resume: Optional[str] = None
+    ats_edits: Optional[Dict] = None
+    hr_critique: Optional[Dict] = None
+    devil_critique: Optional[Dict] = None
+    final_resume: Optional[str] = None
+    ats_score_before: float = 0.0
+    ats_score_after: float = 0.0
+    hr_score: float = 0.0
+
+
+@dataclass
+class HighEffortResult:
+    """Result of the high-effort pipeline."""
+    job_title: str
+    company: str
+    steps_completed: List[str]
+    initial_resume: str
+    final_resume: str
+    hr_score_before: float = 0.0
+    hr_score_after: float = 0.0
+    keywords_injected: List[str] = field(default_factory=list)
+    ats_keywords_injected: bool = False
+
+
+class HighEffortPipeline:
+    """
+    5-step resume tailoring pipeline.
+    
+    Each step calls Claude (passed as claude_client callable) with specific prompts.
+    """
+    
+    def __init__(self, claude_client: Callable):
+        """
+        Initialize the pipeline.
+        
+        Args:
+            claude_client: Async callable that takes (prompt, system_prompt) and returns str
+        """
+        self.claude_client = claude_client
+        self.context: Optional[PipelineContext] = None
+    
+    async def run(self, job: Dict[str, Any], resume: str) -> HighEffortResult:
+        """
+        Run the full 5-step pipeline.
+        
+        Args:
+            job: Dict with title, company, description
+            resume: Current resume text
+            
+        Returns:
+            HighEffortResult with final tailored resume
+        """
+        self.context = PipelineContext(job=job, draft_resume=resume)
+        steps_completed = []
+        
+        # Step 1: ATS Analysis
+        try:
+            await self._step_ats_analysis()
+            steps_completed.append("ats_analysis")
+        except Exception as e:
+            print(f"ATS analysis failed: {e}")
+        
+        # Step 2: HR Critique
+        try:
+            await self._step_hr_critique()
+            steps_completed.append("hr_critique")
+        except Exception as e:
+            print(f"HR critique failed: {e}")
+        
+        # Step 3: Keyword Injection
+        try:
+            await self._step_keyword_injection()
+            steps_completed.append("keyword_injection")
+        except Exception as e:
+            print(f"Keyword injection failed: {e}")
+        
+        # Step 4: Devil's Advocate
+        try:
+            await self._step_devil_advocate()
+            steps_completed.append("devil_advocate")
+        except Exception as e:
+            print(f"Devil's advocate failed: {e}")
+        
+        # Step 5: Final Polish
+        try:
+            await self._step_final_polish()
+            steps_completed.append("final_polish")
+        except Exception as e:
+            print(f"Final polish failed: {e}")
+        
+        return HighEffortResult(
+            job_title=job.get("title", "Unknown"),
+            company=job.get("company", "Unknown"),
+            steps_completed=steps_completed,
+            initial_resume=resume,
+            final_resume=self.context.final_resume or resume,
+            hr_score_before=self.context.hr_score,
+            hr_score_after=self.context.hr_score,
+            keywords_injected=[],
+            ats_keywords_injected=bool(self.context.ats_edits)
+        )
+    
+    async def _step_ats_analysis(self):
+        """Step 1: ATS keyword analysis."""
+        prompt = f"""Analyze this resume against the job description for ATS keyword matching.
+
+JOB: {self.context.job.get('title', '')} at {self.context.job.get('company', '')}
+
+JOB DESCRIPTION:
+{self.context.job.get('description', 'No description')[:2000]}
+
+RESUME:
+{self.context.draft_resume}
+
+Return JSON with:
+- ats_score: 0-100
+- present_keywords: list of keywords found in resume
+- missing_keywords: list of important keywords missing
+- suggestions: list of specific edits to improve ATS score"""
+
+        result = await self.claude_client(prompt)
+        # Parse and store in self.context.ats_edits
+        self.context.ats_edits = {"raw": result}
+    
+    async def _step_hr_critique(self):
+        """Step 2: HR perspective critique."""
+        prompt = f"""Review this resume from an HR coordinator's perspective.
+
+JOB: {self.context.job.get('title', '')} at {self.context.job.get('company', '')}
+
+RESUME:
+{self.context.draft_resume}
+
+Evaluate:
+1. Does this read like a real human wrote it?
+2. Are there specific achievements or only generic phrases?
+3. Any red flags or concerns?
+
+Return JSON with:
+- hr_score: 0-10
+- authenticity: assessment of genuine vs AI-generated feel
+- concerns: list of issues
+- verdict: pass to recruiter or reject"""
+
+        result = await self.claude_client(prompt)
+        self.context.hr_critique = {"raw": result}
+    
+    async def _step_keyword_injection(self):
+        """Step 3: Inject missing keywords naturally."""
+        if not self.context.ats_edits:
+            return
+        
+        prompt = f"""Inject missing keywords into this resume NATURALLY.
+
+RESUME:
+{self.context.draft_resume}
+
+MISSING KEYWORDS (from ATS analysis):
+{self.context.ats_edits.get('raw', '')}
+
+Rules:
+1. Only add keywords that are TRUE for this candidate
+2. Integrate naturally into existing sentences
+3. Don't keyword stuff or make it awkward
+4. Keep the same overall structure
+
+Return the updated resume text."""
+
+        result = await self.claude_client(prompt)
+        self.context.draft_resume = result
+    
+    async def _step_devil_advocate(self):
+        """Step 4: Devil's advocate review."""
+        prompt = f"""Be a brutal, skeptical senior recruiter. Find EVERY reason NOT to hire this candidate.
+
+RESUME:
+{self.context.draft_resume}
+
+JOB: {self.context.job.get('title', '')} at {self.context.job.get('company', '')}
+
+Find:
+1. Employment gaps and their explanations
+2. Claims without numbers/evidence
+3. Clichés and buzzwords
+4. Inconsistencies
+5. Red flags that will come up in interviews
+
+Return JSON with:
+- red_flags: list of {type, severity, detail}
+- biggest_concern: the #1 issue
+- interview_risks: what might trip them up
+- verdict: ready to submit or needs work"""
+
+        result = await self.claude_client(prompt)
+        self.context.devil_critique = {"raw": result}
+    
+    async def _step_final_polish(self):
+        """Step 5: Final polish and formatting."""
+        prompt = f"""Do a final polish of this resume.
+
+RESUME:
+{self.context.draft_resume}
+
+Check for:
+1. Consistent formatting
+2. Clear section headers
+3. Active voice
+4. No typos or grammar issues
+5. Professional tone
+
+Return the final polished resume text."""
+
+        result = await self.claude_client(prompt)
+        self.context.final_resume = result
+
+
+# ─── TailoringRunner ────────────────────────────────────────────────────────
+
+import asyncio
+import json as _json
+from pathlib import Path as _Path
+
+
+class TailoringRunner:
+    """
+    5-уровневая оценка соответствия резюме вакансии.
+    Каждый уровень = один вызов Gemini со своей ролью.
+
+    |     = ATS System
+    ||    = HR Coordinator
+    |||   = Senior Recruiter
+    ||||  = Hiring Manager
+    ||||| = Devil's Advocate
+    """
+
+    ROLES = [
+        ("ats",       "|",     "ATS System"),
+        ("hr",        "||",    "HR Coordinator"),
+        ("recruiter", "|||",   "Senior Recruiter"),
+        ("manager",   "||||",  "Hiring Manager"),
+        ("devil",     "|||||", "Devil's Advocate"),
+    ]
+
+    PROMPTS = {
+        "ats": {
+            "system": (
+                "You are a strict ATS (Applicant Tracking System) bot. "
+                "You ONLY look at exact keyword matches. Tone, humanity, "
+                "and writing quality are irrelevant. Score 0-100 purely on "
+                "keyword coverage. Be objective and machine-like."
+            ),
+            "task": (
+                "Compare the candidate profile against the job description.\n"
+                "Return ONLY valid JSON (no markdown):\n"
+                '{"ats_score": 72, '
+                '"present_keywords": ["Python", "Linux"], '
+                '"missing_keywords": ["Terraform", "Kubernetes"], '
+                '"verdict": "Passes ATS filter"}'
+            ),
+        },
+        "hr": {
+            "system": (
+                "You are an HR coordinator doing the first human screen. "
+                "You see hundreds of resumes per week and instantly recognize "
+                "AI-generated content. Evaluate: does this read like a real human "
+                "wrote it? Are there specific achievements or only generic phrases? "
+                "Score 0-10 for human authenticity."
+            ),
+            "task": (
+                "Evaluate the candidate profile against the job description.\n"
+                "Return ONLY valid JSON (no markdown):\n"
+                '{"hr_score": 7, '
+                '"ai_suspicion": "low", '
+                '"authenticity_issues": ["vague impact claims"], '
+                '"would_pass_on": true, '
+                '"verdict": "Genuine experience, pass to recruiter"}'
+            ),
+        },
+        "recruiter": {
+            "system": (
+                "You are a senior technical recruiter with 10+ years experience. "
+                "You evaluate career trajectory, skills progression, and realistic fit. "
+                "Does the experience level match the role? Is the career story coherent? "
+                "Are the claimed years of experience credible? Score 0-10 for overall fit."
+            ),
+            "task": (
+                "Evaluate the candidate's career fit for this role.\n"
+                "Return ONLY valid JSON (no markdown):\n"
+                '{"fit_score": 8, '
+                '"career_coherence": "strong", '
+                '"experience_credibility": "Years match claimed skills", '
+                '"concerns": ["Gap in 2023"], '
+                '"verdict": "Strong technical background, recommend interview"}'
+            ),
+        },
+        "manager": {
+            "system": (
+                "You are the hiring manager for this role. You care deeply about "
+                "technical skills and whether this person would succeed on your team. "
+                "Can they do the job on day one? Do they understand the domain? "
+                "Are technical skills real or just buzzwords? Score 0-10."
+            ),
+            "task": (
+                "Assess whether the candidate can do this job.\n"
+                "Return ONLY valid JSON (no markdown):\n"
+                '{"technical_score": 7, '
+                '"day_one_ready": true, '
+                '"domain_understanding": "strong", '
+                '"interview_questions": ["Describe your Kubernetes experience"], '
+                '"verdict": "Solid candidate, would bring in for technical screen"}'
+            ),
+        },
+        "devil": {
+            "system": (
+                "You are a skeptical senior recruiter looking for EVERY reason "
+                "NOT to hire this candidate. Find: employment gaps, claims without "
+                "numbers, clichés, inconsistencies, things that will raise red flags "
+                "in interviews. Be brutal, specific, and ruthless."
+            ),
+            "task": (
+                "Find all weaknesses and red flags in this candidate profile.\n"
+                "Return ONLY valid JSON (no markdown):\n"
+                '{"red_flags": ['
+                '{"type": "missing_proof", "severity": "medium", "detail": "improved without numbers"}], '
+                '"biggest_concern": "Vague impact claims", '
+                '"verdict": "Needs quantified achievements before submitting"}'
+            ),
+        },
+    }
+
+    def __init__(self, job: Dict[str, Any], profile_context: str):
+        """
+        Args:
+            job: Dict с полями title, company, description
+            profile_context: Текст из profile.yaml + skills/*.md
+        """
+        from src.ai.llm_client import GeminiClient
+        self._gemini = GeminiClient()
+        self.job = job
+        self.profile_context = profile_context
+
+    def _build_prompt(self, role_key: str) -> str:
+        cfg = self.PROMPTS[role_key]
+        job_desc = self.job.get("description", "No description available")
+        job_title = self.job.get("title", "")
+        company = self.job.get("company", "")
+
+        return (
+            f"SYSTEM ROLE: {cfg['system']}\n\n"
+            f"JOB: {job_title} at {company}\n"
+            f"JOB DESCRIPTION:\n{job_desc[:3000]}\n\n"
+            f"CANDIDATE PROFILE:\n{self.profile_context[:2000]}\n\n"
+            f"TASK: {cfg['task']}"
+        )
+
+    @staticmethod
+    def _parse_json(text: str) -> Dict[str, Any]:
+        """Убрать markdown-обёртку и распарсить JSON."""
+        text = text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        try:
+            return _json.loads(text.strip())
+        except _json.JSONDecodeError:
+            return {"error": f"JSON parse failed: {text[:200]}"}
+
+    async def _run_step_async(self, role_key: str) -> tuple:
+        """Асинхронный вызов одного шага. Возвращает (role_key, result)."""
+        text = await self._gemini.generate(self._build_prompt(role_key))
+        return role_key, self._parse_json(text)
+
+    def run_all_parallel(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Запустить все 5 ролей ПАРАЛЛЕЛЬНО через asyncio.gather.
+        Шаги независимы — каждый видит один и тот же job + profile.
+        Возвращает {role_key: result_dict}.
+        Вызывать из threading.Thread (НЕ из main thread).
+        """
+        async def _gather():
+            tasks = [
+                self._run_step_async(role_key)
+                for role_key, _, _ in self.ROLES
+            ]
+            return await asyncio.gather(*tasks)
+
+        loop = asyncio.new_event_loop()
+        try:
+            pairs = loop.run_until_complete(_gather())
+        finally:
+            loop.close()
+        return dict(pairs)
+
+
+def load_profile_context() -> str:
+    """Загрузить профиль + навыки в текст для промпта."""
+    lines = []
+
+    # profile.yaml
+    profile_path = _Path("data/candidate/profile.yaml")
+    if profile_path.exists():
+        try:
+            import yaml
+            p = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+            personal = p.get("personal", {})
+            if personal:
+                lines.append(f"Name: {personal.get('first_name', '')} {personal.get('last_name', '')}")
+            exp = p.get("experience", {})
+            if exp:
+                exp_lines = [f"  {k.replace('years_','').replace('_',' ')}: {v} years"
+                             for k, v in exp.items() if k.startswith("years_") and v]
+                lines.append("Experience:\n" + "\n".join(exp_lines))
+            sal = p.get("salary", {})
+            if sal:
+                lines.append(f"Expected salary: ${sal.get('expected_usd', 0):,}")
+        except Exception:
+            pass
+
+    # skills/*.md
+    skills_dir = _Path("data/candidate/skills")
+    if skills_dir.exists():
+        for md_file in sorted(skills_dir.glob("*.md"))[:5]:  # первые 5
+            try:
+                content = md_file.read_text(encoding="utf-8")[:600]
+                lines.append(f"\n--- {md_file.stem} ---\n{content}")
+            except Exception:
+                pass
+
+    return "\n".join(lines) or "Profile not available"
+
+🔍 449 lines read

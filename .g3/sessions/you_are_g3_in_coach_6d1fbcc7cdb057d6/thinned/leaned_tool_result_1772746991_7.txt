@@ -1,0 +1,154 @@
+Tool result: # src/applier/human_review.py
+"""
+Human-in-Loop Review Prompter.
+
+Показывает интерактивное меню с вариантами ответов AI.
+Пользователь выбирает 1-4 или пишет своё (5).
+Всё асинхронно через asyncio.to_thread (не блокирует event loop).
+"""
+
+import asyncio
+import textwrap
+import os
+from typing import Optional, List
+from loguru import logger
+
+
+BOX_WIDTH = 70
+
+
+class HumanReviewPrompter:
+    """
+    Показывает меню вариантов ответа и ждёт выбора пользователя.
+    Работает в тех случаях, когда AI-уверенность низкая или
+    тип поля — textarea (открытый вопрос).
+    """
+
+    def __init__(self, bot_mode: bool = False):
+        """
+        Initialize the prompter.
+        
+        Args:
+            bot_mode: If True, skip interactive prompts and auto-select best variant.
+                      Also reads from BOT_MODE env var if not explicitly set.
+        """
+        self.bot_mode = bot_mode or os.getenv("BOT_MODE", "").lower() in ("1", "true", "yes")
+
+    async def prompt(
+        self,
+        question: str,
+        field_type: str,
+        variants: List[str],       # 1-4 варианта от AI
+        company: str = "",
+        job_title: str = "",
+        default_idx: int = 0,      # какой вариант AI считает лучшим (0-based)
+    ) -> str:
+        """
+        Показать меню вариантов → вернуть выбранный текст.
+
+        В bot_mode сразу возвращает variants[default_idx].
+        
+        Args:
+            question: The question text to display
+            field_type: Type of field (textarea, text, select, etc.)
+            variants: List of answer variants from AI (usually 4)
+            company: Company name for context
+            job_title: Job title for context
+            default_idx: Index of the best variant (0-based)
+            
+        Returns:
+            Selected answer text, or empty string if skipped
+        """
+        if self.bot_mode or not variants:
+            return variants[default_idx] if variants else ""
+
+        return await asyncio.to_thread(
+            self._blocking_prompt,
+            question, field_type, variants, company, job_title, default_idx
+        )
+
+    def _blocking_prompt(
+        self,
+        question: str,
+        field_type: str,
+        variants: List[str],
+        company: str,
+        job_title: str,
+        default_idx: int,
+    ) -> str:
+        """Синхронный терминальный UI (запускается в отдельном потоке)."""
+        write_own_num = len(variants) + 1  # динамически: 5 при 4 вариантах, 4 при 3, etc.
+        self._print_header(question, field_type, company, job_title)
+
+        for i, v in enumerate(variants, start=1):
+            self._print_option(i, v)
+        self._print_write_own(write_own_num)
+        self._print_footer(default_idx + 1, write_own_num)
+
+        while True:
+            try:
+                raw = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                # headless / прерван → взять дефолт
+                print(f"  → автовыбор [{default_idx+1}]")
+                return variants[default_idx]
+
+            if raw == "":
+                return variants[default_idx]           # Enter = дефолт
+            if raw.lower() in ("s", "skip", "п", "пропустить"):
+                return ""                              # пропустить поле
+            if raw == str(write_own_num):              # динамический номер "написать своё"
+                return self._ask_custom()
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(variants):
+                    return variants[idx]
+            except ValueError:
+                pass
+            print(f"  ⚠️  Введи число 1-{write_own_num} или s = пропустить")
+
+    def _ask_custom(self) -> str:
+        print()
+        print("  ✏️  Введи свой ответ (пустая строка = пропустить):")
+        print("  > ", end="", flush=True)
+        try:
+            return input().strip()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    # ── Rendering ──────────────────────────────────────────────────────────
+
+    def _print_header(self, question: str, field_type: str, company: str, job_title: str):
+        bar = "═" * BOX_WIDTH
+        print(f"\n╔{bar}╗")
+        label_parts = [f"[{field_type}]"]
+        if company:
+            label_parts.append(f"Компания: {company}")
+        if job_title:
+            label_parts.append(f"Вакансия: {job_title}")
+        meta = " | ".join(label_parts)
+        q_wrapped = textwrap.wrap(question, width=BOX_WIDTH - 2)
+        print(f"║  ❓ ВОПРОС")
+        for line in q_wrapped:
+            print(f"║  {line}")
+        print(f"║  {meta}")
+        print(f"╠{bar}╣")
+
+    def _print_option(self, num: int, text: str):
+        prefix = f"  {num}) "
+        wrapped = textwrap.wrap(text, width=BOX_WIDTH - len(prefix))
+        indent = " " * len(prefix)
+        for i, line in enumerate(wrapped):
+            leader = prefix if i == 0 else indent
+            print(f"║{leader}{line}")
+
+    def _print_write_own(self, num: int):
+        """Печатает опцию 'написать своё' с динамическим номером."""
+        print(f"║  {num}) ✏️  Написать своё")
+
+    def _print_footer(self, default_num: int, write_own_num: int):
+        bar = "═" * BOX_WIDTH
+        print(f"╚{bar}╝")
+        print(f"  Выбор [1-{write_own_num}] (Enter = {default_num}, s = пропустить): ", end="", flush=True)
+
+🔍 152 lines read

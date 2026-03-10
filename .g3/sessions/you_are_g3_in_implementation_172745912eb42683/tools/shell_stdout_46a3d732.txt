@@ -1,0 +1,617 @@
+"""
+IndeedScraper - SERP-first job scraping with JSON-LD and HTML fallback.
+
+Phase 1 of the Indeed MTD implementation.
+Strategy: Direct Indeed search (primary) + optional SERP enhancement + JSON-LD extraction.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import random
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus, urlparse, parse_qs
+
+import httpx
+
+from .base_scraper import BaseScraper, Job
+
+logger = logging.getLogger(__name__)
+
+
+# Mobile headers for direct Indeed access (less likely to be blocked)
+MOBILE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 IndeedApp/242.0",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "x-requested-with": "com.indeed.android.jobsearch",
+    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": '"Chromium";v="120", "Android";v="13"',
+    "sec-ch-ua-mobile": "?1",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+}
+
+# Desktop headers for SERP
+DESKTOP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+# Rate limiting
+MAX_RPM = 10  # Max requests per minute
+
+
+def gaussian_delay(mean: float = 3.0, std: float = 2.0) -> float:
+    """Generate a Gaussian-distributed delay with minimum floor."""
+    delay = random.gauss(mean, std)
+    return max(1.0, min(delay, 10.0))  # Clamp between 1-10 seconds
+
+
+class IndeedScraper(BaseScraper):
+    """Indeed job scraper with direct search, JSON-LD parsing, and HTML fallback.
+    
+    Strategy:
+    1. Primary: Direct Indeed search with mobile headers
+    2. For each URL: Extract JobPosting from JSON-LD
+    3. Fallback: Parse HTML meta tags + mosaic-data when JSON-LD missing
+    4. Optional: SERP enhancement via Google (ENABLE_SERP=true)
+    """
+    
+    @property
+    def platform_name(self) -> str:
+        return "indeed"
+    
+    def __init__(self) -> None:
+        self._client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+            headers=MOBILE_HEADERS,
+        )
+        self._request_times: List[float] = []  # Track for rate limiting
+        self._enable_serp = os.environ.get("ENABLE_SERP", "").lower() == "true"
+    
+    async def search_jobs(
+        self,
+        query: str,
+        location: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Job]:
+        """
+        Search for jobs on Indeed.
+        
+        Args:
+            query: Search query (e.g., "software engineer")
+            location: Optional location filter (e.g., "Remote", "San Francisco, CA")
+            filters: Optional platform-specific filters:
+                - job_type: "fulltime", "parttime", "contract", "internship"
+                - experience_level: "entry_level", "mid_level", "senior_level"
+                - date_posted: "1", "3", "7", "14" (days)
+                - remote: True/False
+        
+        Returns:
+            List of Job objects matching the search
+        """
+        jobs: List[Job] = []
+        
+        # ── Primary: Direct Indeed search ──────────────────────────────────────
+        try:
+            direct_urls = await self._search_indeed_direct(query, location, filters)
+            logger.info(f"Direct Indeed search found {len(direct_urls)} job URLs")
+            
+            # Fetch each job page and parse
+            for url in direct_urls[:20]:  # Limit to first 20
+                await self._rate_limit()
+                
+                try:
+                    job = await self._fetch_job_jsonld(url)
+                    if job:
+                        jobs.append(job)
+                    else:
+                        # Fallback to HTML parsing
+                        job = await self._fetch_job_html(url)
+                        if job:
+                            jobs.append(job)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch job {url}: {e}")
+                    continue
+                
+                await asyncio.sleep(gaussian_delay(1.0, 0.5))
+        
+        except Exception as e:
+            logger.error(f"Direct Indeed search failed: {e}")
+        
+        # ── Optional: SERP enhancement ────────────────────────────────────────
+        if self._enable_serp:
+            try:
+                serp_urls = await self._serp_discover(query, location)
+                logger.info(f"SERP discovery found {len(serp_urls)} additional URLs")
+                
+                # Fetch new URLs not already in results
+                seen_urls = {j.url for j in jobs}
+                for url in serp_urls[:10]:
+                    if url in seen_urls:
+                        continue
+                    
+                    await self._rate_limit()
+                    
+                    try:
+                        job = await self._fetch_job_jsonld(url)
+                        if job:
+                            jobs.append(job)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch SERP job {url}: {e}")
+                        continue
+                    
+                    await asyncio.sleep(gaussian_delay(2.0, 1.0))
+            
+            except Exception as e:
+                logger.warning(f"SERP enhancement failed: {e}")
+        
+        logger.info(f"Indeed search complete: {len(jobs)} jobs found")
+        return jobs
+    
+    async def apply(
+        self,
+        job: Job,
+        resume_path: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Not implemented - use IndeedApplier for applying."""
+        raise NotImplementedError("Use IndeedApplier, not IndeedScraper, for applications")
+    
+    async def close(self) -> None:
+        """Clean up HTTP client."""
+        await self._client.aclose()
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PRIMARY: Direct Indeed Search
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _search_indeed_direct(
+        self,
+        query: str,
+        location: Optional[str],
+        filters: Optional[Dict[str, Any]],
+    ) -> List[str]:
+        """
+        Search Indeed directly with mobile headers.
+        
+        Returns:
+            List of job URLs
+        """
+        # Build Indeed search URL
+        base_url = "https://www.indeed.com/jobs"
+        params = {
+            "q": query,
+            "l": location or "",
+        }
+        
+        # Apply filters
+        if filters:
+            if "job_type" in filters:
+                params["jt"] = filters["job_type"]
+            if "experience_level" in filters:
+                params["explvl"] = filters["experience_level"]
+            if "date_posted" in filters:
+                params["fromage"] = filters["date_posted"]
+            if filters.get("remote"):
+                params["remote"] = "1"
+        
+        await self._rate_limit()
+        
+        try:
+            response = await self._client.get(base_url, params=params)
+            response.raise_for_status()
+            
+            # Extract job URLs from search results
+            urls = self._parse_search_results(response.text)
+            return urls
+        
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Indeed search HTTP error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Indeed search failed: {e}")
+            return []
+    
+    def _parse_search_results(self, html: str) -> List[str]:
+        """Extract job URLs from Indeed search results HTML."""
+        urls: List[str] = []
+        
+        # Pattern 1: job cards with data-jk attribute
+        jk_pattern = r'data-jk="([a-f0-9]+)"'
+        for match in re.finditer(jk_pattern, html):
+            job_key = match.group(1)
+            urls.append(f"https://www.indeed.com/viewjob?jk={job_key}")
+        
+        # Pattern 2: href links to /viewjob
+        href_pattern = r'href="(/viewjob\?[^"]+)"'
+        for match in re.finditer(href_pattern, html):
+            path = match.group(1)
+            if "jk=" in path:
+                urls.append(f"https://www.indeed.com{path}")
+        
+        # Dedupe
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            # Normalize URL
+            if "jk=" in url:
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query)
+                jk = qs.get("jk", [""])[0]
+                if jk and jk not in seen:
+                    seen.add(jk)
+                    unique_urls.append(f"https://www.indeed.com/viewjob?jk={jk}")
+        
+        return unique_urls
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # JSON-LD EXTRACTION
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _fetch_job_jsonld(self, url: str) -> Optional[Job]:
+        """
+        Fetch job page and extract JobPosting from JSON-LD.
+        
+        Returns:
+            Job object if JSON-LD found, None otherwise
+        """
+        await self._rate_limit()
+        
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            
+            html = response.text
+            
+            # Find JSON-LD script tags
+            jsonld_pattern = r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>'
+            
+            for match in re.finditer(jsonld_pattern, html, re.DOTALL):
+                try:
+                    data = json.loads(match.group(1))
+                    
+                    # Handle @graph format
+                    if isinstance(data, dict) and "@graph" in data:
+                        for item in data["@graph"]:
+                            if item.get("@type") == "JobPosting":
+                                return self._parse_jsonld_to_job(item, url)
+                    
+                    # Handle direct JobPosting
+                    if isinstance(data, dict) and data.get("@type") == "JobPosting":
+                        return self._parse_jsonld_to_job(data, url)
+                    
+                    # Handle array format
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict) and item.get("@type") == "JobPosting":
+                                return self._parse_jsonld_to_job(item, url)
+                
+                except json.JSONDecodeError:
+                    continue
+            
+            # No JSON-LD JobPosting found
+            return None
+        
+        except Exception as e:
+            logger.debug(f"JSON-LD fetch failed for {url}: {e}")
+            return None
+    
+    def _parse_jsonld_to_job(self, data: Dict[str, Any], url: str) -> Job:
+        """Parse JSON-LD JobPosting to Job dataclass."""
+        
+        # Validate @type - must be JobPosting
+        if data.get("@type") != "JobPosting":
+            return None
+        
+        # Title
+        title = data.get("title", "")
+        
+        # Company
+        hiring_org = data.get("hiringOrganization", {})
+        if isinstance(hiring_org, dict):
+            company = hiring_org.get("name", "")
+        else:
+            company = str(hiring_org)
+        
+        # Location
+        job_location = data.get("jobLocation", {})
+        if isinstance(job_location, dict):
+            address = job_location.get("address", {})
+            if isinstance(address, dict):
+                locality = address.get("addressLocality", "")
+                region = address.get("addressRegion", "")
+                country = address.get("addressCountry", "")
+                location = ", ".join(filter(None, [locality, region, country]))
+            else:
+                location = str(address)
+        else:
+            location = str(job_location)
+        
+        # Description
+        description = data.get("description", "")
+        
+        # Posted date
+        posted_date = None
+        date_posted = data.get("datePosted", "")
+        if date_posted:
+            try:
+                # ISO 8601 format
+                posted_date = datetime.fromisoformat(date_posted.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        
+        # Salary
+        salary = None
+        base_salary = data.get("baseSalary", {})
+        if isinstance(base_salary, dict):
+            value = base_salary.get("value", {})
+            if isinstance(value, dict):
+                min_val = value.get("minValue")
+                max_val = value.get("maxValue")
+                currency = base_salary.get("currency", "USD")
+                unit = base_salary.get("unitText", "YEAR")
+                if min_val and max_val:
+                    # Format: "$100,000 - $150,000/year"
+                    currency_symbol = "$" if currency == "USD" else f"{currency} "
+                    min_formatted = f"{int(min_val):,}"
+                    max_formatted = f"{int(max_val):,}"
+                    unit_formatted = unit.lower() if unit else "year"
+                    salary = f"{currency_symbol}{min_formatted} - {currency_symbol}{max_formatted}/{unit_formatted}"
+                elif min_val:
+                    currency_symbol = "$" if currency == "USD" else f"{currency} "
+                    min_formatted = f"{int(min_val):,}"
+                    unit_formatted = unit.lower() if unit else "year"
+                    salary = f"{currency_symbol}{min_formatted}/{unit_formatted}"
+        
+        # Employment type
+        job_type = None
+        emp_type = data.get("employmentType", [])
+        if isinstance(emp_type, list) and emp_type:
+            job_type = ", ".join(emp_type)
+        elif isinstance(emp_type, str):
+            job_type = emp_type
+        
+        return Job(
+            url=url,
+            title=title,
+            company=company,
+            location=location,
+            description=description,
+            posted_date=posted_date,
+            salary=salary,
+            job_type=job_type,
+            platform="indeed",
+            raw_data=data,
+        )
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # HTML FALLBACK
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _fetch_job_html(self, url: str) -> Optional[Job]:
+        """
+        Fetch job page and parse from HTML meta tags + mosaic-data.
+        
+        Fallback when JSON-LD is missing.
+        """
+        await self._rate_limit()
+        
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            
+            return self._parse_html_fallback(response.text, url)
+        
+        except Exception as e:
+            logger.debug(f"HTML fallback fetch failed for {url}: {e}")
+            return None
+    
+    def _parse_html_fallback(self, html: str, url: str) -> Optional[Job]:
+        """Parse job from HTML when JSON-LD is missing."""
+        
+        data: Dict[str, Any] = {}
+        
+        # ── Meta tags ───────────────────────────────────────────────────────────
+        # Title
+        title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', html)
+        if title_match:
+            data["title"] = title_match.group(1)
+        else:
+            # Try h1 tag
+            h1_match = re.search(r'<h1[^>]*class="[^"]*jobsearch-JobInfoHeader-title[^"]*"[^>]*>([^<]+)</h1>', html)
+            if h1_match:
+                data["title"] = h1_match.group(1).strip()
+        
+        # Description
+        desc_match = re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']', html)
+        if desc_match:
+            data["description"] = desc_match.group(1)
+        
+        # ── Mosaic data (Indeed's internal JSON blob) ────────────────────────────
+        mosaic_pattern = r'<script[^>]*id=["\']mosaic-data["\'][^>]*>(.*?)</script>'
+        mosaic_match = re.search(mosaic_pattern, html, re.DOTALL)
+        
+        if mosaic_match:
+            try:
+                mosaic_data = json.loads(mosaic_match.group(1))
+                
+                # Extract job info from mosaic
+                if "jobInfo" in mosaic_data:
+                    job_info = mosaic_data["jobInfo"]
+                    if "title" not in data and "jobTitle" in job_info:
+                        data["title"] = job_info["jobTitle"]
+                    if "company" not in data and "companyName" in job_info:
+                        data["company"] = job_info["companyName"]
+                    if "location" not in data and "formattedLocation" in job_info:
+                        data["location"] = job_info["formattedLocation"]
+                
+                # Extract from mosaic-ui-job-search-results
+                if "mosaicUI" in mosaic_data:
+                    ui = mosaic_data["mosaicUI"]
+                    if "JobSearchResults" in ui:
+                        results = ui["JobSearchResults"]
+                        if isinstance(results, list) and results:
+                            job = results[0]
+                            if "title" not in data and "jobTitle" in job:
+                                data["title"] = job["jobTitle"]
+                            if "company" not in data and "company" in job:
+                                data["company"] = job["company"]
+                            if "location" not in data and "location" in job:
+                                data["location"] = job["location"]
+            
+            except json.JSONDecodeError:
+                pass
+        
+        # ── Standard HTML selectors ──────────────────────────────────────────────
+        # Company
+        if "company" not in data:
+            company_match = re.search(
+                r'<span[^>]*class="[^"]*companyName[^"]*"[^>]*>([^<]+)</span>',
+                html
+            )
+            if company_match:
+                data["company"] = company_match.group(1).strip()
+        
+        # Location
+        if "location" not in data:
+            location_match = re.search(
+                r'<span[^>]*class="[^"]*jobsearch-JobInfoHeader-subtitle[^"]*"[^>]*>([^<]+)</span>',
+                html
+            )
+            if location_match:
+                data["location"] = location_match.group(1).strip()
+        
+        # ── Validate minimum fields ─────────────────────────────────────────────
+        if not data.get("title"):
+            return None
+        
+        return Job(
+            url=url,
+            title=data.get("title", ""),
+            company=data.get("company", "Unknown"),
+            location=data.get("location", ""),
+            description=data.get("description", ""),
+            platform="indeed",
+            raw_data=data,
+        )
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # OPTIONAL: SERP DISCOVERY
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _serp_discover(
+        self,
+        query: str,
+        location: Optional[str],
+    ) -> List[str]:
+        """
+        Discover Indeed job URLs via Google SERP.
+        
+        Optional enhancement - requires ENABLE_SERP=true.
+        Falls back gracefully on errors.
+        """
+        if not self._enable_serp:
+            return []
+        
+        urls: List[str] = []
+        
+        # Build Google search query
+        search_query = f'site:indeed.com/viewjob "{query}"'
+        if location:
+            search_query += f' "{location}"'
+        
+        google_url = "https://www.google.com/search"
+        params = {
+            "q": search_query,
+            "num": 20,
+        }
+        
+        headers = DESKTOP_HEADERS.copy()
+        
+        for attempt in range(3):
+            try:
+                await self._rate_limit()
+                
+                response = await self._client.get(
+                    google_url,
+                    params=params,
+                    headers=headers,
+                )
+                
+                if response.status_code == 429:
+                    backoff = 2 ** attempt * 5  # 5s, 10s, 20s
+                    logger.warning(f"Google 429 - backoff {backoff}s (attempt {attempt + 1}/3)")
+                    await asyncio.sleep(backoff)
+                    continue
+                
+                response.raise_for_status()
+                
+                # Extract indeed.com URLs
+                url_pattern = r'href="https?://(?:www\.)?indeed\.com/(?:viewjob|rc/clk)\?[^"]*"'
+                for match in re.finditer(url_pattern, response.text):
+                    url = match.group(0)[6:-1]  # Remove href=" and trailing "
+                    # Normalize URL
+                    if "jk=" in url:
+                        parsed = urlparse(url.replace("&amp;", "&"))
+                        qs = parse_qs(parsed.query)
+                        jk = qs.get("jk", [""])[0]
+                        if jk:
+                            urls.append(f"https://www.indeed.com/viewjob?jk={jk}")
+                
+                break  # Success
+            
+            except httpx.HTTPStatusError as e:
+                logger.warning(f"SERP HTTP error (attempt {attempt + 1}/3): {e}")
+            except Exception as e:
+                logger.warning(f"SERP discovery error (attempt {attempt + 1}/3): {e}")
+        
+        # Dedupe
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            if "jk=" in url:
+                parsed = urlparse(url)
+                qs = parse_qs(parsed.query)
+                jk = qs.get("jk", [""])[0]
+                if jk and jk not in seen:
+                    seen.add(jk)
+                    unique_urls.append(url)
+        
+        return unique_urls
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # RATE LIMITING
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _rate_limit(self) -> None:
+        """Enforce rate limiting (max requests per minute)."""
+        now = time.monotonic()
+        
+        # Remove timestamps older than 1 minute
+        self._request_times = [t for t in self._request_times if now - t < 60]
+        
+        # Check if we're at the limit
+        if len(self._request_times) >= MAX_RPM:
+            sleep_time = 60 - (now - self._request_times[0])
+            if sleep_time > 0:
+                logger.debug(f"Rate limiting: sleeping {sleep_time:.1f}s")
+                await asyncio.sleep(sleep_time)
+        
+        # Record this request
+        self._request_times.append(time.monotonic())
+
+
+# For convenience - import time is used in rate limiting
+import time

@@ -1,0 +1,42 @@
+Tool result: {
+  "answers": {
+    "has_drivers_license": "No",
+    "has_comptia_aplus": "No",
+    "has_security_plus": "No",
+    "has_aws_cert": "No",
+    "has_bachelors": "No",
+    "has_masters": "No",
+    "has_ccna": "No",
+    "has_pmp": "No",
+    "work_weekends": "Yes",
+    "work_overtime": "Yes",
+    "willing_to_travel": "No",
+    "available_on_call": "Yes",
+    "prefer_remote": "Yes",
+    "accept_hybrid": "Yes",
+    "willing_to_relocate": "No",
+    "work_nights": "No",
+    "years_java": "0",
+    "years_react": "1",
+    "years_nodejs": "0",
+    "years_networking": "2",
+    "years_windows_server": "1",
+    "years_active_directory": "1",
+    "years_office365": "2",
+    "years_salesforce": "0",
+    "years_servicenow": "0",
+    "years_vmware": "1",
+    "years_kubernetes": "0",
+    "years_azure": "0",
+    "years_gcp": "0",
+    "years_terraform": "0",
+    "years_ansible": "0",
+    "years_jenkins": "0",
+    "comfortable_fast_paced": "Yes",
+    "work_independently": "Yes",
+    "handle_ambiguity": "Yes",
+    "customer_facing_ok": "Yes"
+  }
+}
+
+🔍 40 lines read

@@ -1,0 +1,660 @@
+Tool result: """
+SelectorEngine - Self-healing 4-tier element resolution system.
+
+Phase 0 of the Indeed MTD implementation - replaces fragile hardcoded CSS selectors
+with a resilient resolution chain: cached → semantic → structural → LLM.
+
+This module is the FOUNDATION for all other phases.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
+
+if TYPE_CHECKING:
+    from patchright.async_api import Page, Frame, Locator
+
+from .selector_health import SelectorHealthMonitor
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class IntentConfig:
+    """Configuration for finding an element by intent.
+    
+    Attributes:
+        semantic: Aria/text-based selectors (most resilient)
+        structural: CSS/data-testid selectors (fragile, break on MTD rotation)
+        llm_hint: Human-readable description for Tier 4 LLM discovery
+        search_target: Where to search - "page" (main page) or "target" (iframe/form context)
+    """
+    semantic: List[str] = field(default_factory=list)
+    structural: List[str] = field(default_factory=list)
+    llm_hint: str = ""
+    search_target: str = "page"  # "page" or "target"
+    
+    def as_selector_string(self) -> str:
+        """Merge all selectors into one comma-separated string for direct locator use."""
+        return ", ".join(self.semantic + self.structural)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INTENT REGISTRY - All 13 intents for Indeed apply flow + login
+# ═══════════════════════════════════════════════════════════════════════════════
+
+INTENT_REGISTRY: Dict[str, IntentConfig] = {
+    # ── Apply flow ────────────────────────────────────────────────────────────
+    "apply_button": IntentConfig(
+        semantic=[
+            "button:has-text('Apply now')",
+            "button:has-text('Apply')",
+            "button[aria-label*='apply' i]",
+            "a:has-text('Apply now')",
+        ],
+        structural=[
+            "button[data-testid='apply-button']",
+            "button.ia-IndeedApplyButton",
+            "button[id*='apply']",
+            "[data-testid='jobapply-button']",
+        ],
+        llm_hint="A prominent button to start the job application",
+        search_target="page",
+    ),
+    "continue_button": IntentConfig(
+        semantic=[
+            "button[aria-label='Continue']",
+            "button[aria-label='Next']",
+            "button:has-text('Continue')",
+            "button:has-text('Next')",
+            "button:has-text('Continue applying')",
+        ],
+        structural=[
+            # Smart Apply (smartapply.indeed.com/beta)
+            "[data-testid='IA-NavActionBarButton-Forward']",
+            "[class*='NavActionBar'] button[type='button']:last-child",
+            # Legacy Indeed Apply
+            "button[data-testid='continue-button']",
+            "button[data-tn-element='continueButton']",
+        ],
+        llm_hint="A button to go to the next step of the application form",
+        search_target="target",
+    ),
+    "submit_button": IntentConfig(
+        semantic=[
+            "button[aria-label='Submit your application']",
+            "button:has-text('Submit your application')",
+            "button:has-text('Submit')",
+            "button:has-text('Apply now')",
+        ],
+        structural=[
+            "[data-testid='IA-NavActionBarButton-Submit']",
+            "button[data-testid='submit-button']",
+            "button[type='submit']",
+        ],
+        llm_hint="The final submit button for the job application",
+        search_target="target",
+    ),
+    "iframe_apply": IntentConfig(
+        semantic=[
+            "iframe[title*='Apply' i]",
+            "iframe[title*='Indeed' i]",
+        ],
+        structural=[
+            "iframe[id='indeedapply-iframe']",
+            "iframe[src*='apply.indeed.com']",
+            "iframe[src*='smartapply.indeed.com']",
+        ],
+        llm_hint="An iframe containing the job application form",
+        search_target="page",
+    ),
+    
+    # ── Resume ────────────────────────────────────────────────────────────────
+    "resume_card": IntentConfig(
+        semantic=[
+            "[class*='ResumeCard']",
+            "label[for*='resume' i]",
+            "[aria-label*='resume' i]",
+            "div:has-text('resume')",
+        ],
+        structural=[
+            "[data-testid='FileResumeCard']",
+            "[data-testid='resume-card']",
+            ".ia-ResumeCard",
+            "[data-tn-element='resumeCard']",
+        ],
+        llm_hint="A card showing a previously uploaded resume to select",
+        search_target="target",
+    ),
+    "resume_upload": IntentConfig(
+        semantic=[
+            "button:has-text('Upload')",
+            "button:has-text('Upload resume')",
+            "label:has-text('Upload')",
+            "input[type='file']",
+        ],
+        structural=[
+            "[data-testid='upload-resume-button']",
+            "label:has-text('Upload')",
+            "input[accept*='.pdf']",
+            "input[accept*='.doc']",
+        ],
+        llm_hint="A button or input to upload a new resume file",
+        search_target="target",
+    ),
+    
+    # ── Form fields ───────────────────────────────────────────────────────────
+    "phone_input": IntentConfig(
+        semantic=[
+            "input[type='tel']",
+            "input[placeholder*='phone' i]",
+            "input[aria-label*='phone' i]",
+        ],
+        structural=[
+            "input[name='phoneNumber']",
+            "input[data-testid='phoneNumberInput']",
+            "input[id*='phone']",
+        ],
+        llm_hint="Phone number input field",
+        search_target="target",
+    ),
+    "cover_letter_input": IntentConfig(
+        semantic=[
+            "textarea[placeholder*='cover' i]",
+            "textarea[aria-label*='cover' i]",
+        ],
+        structural=[
+            "textarea[name='coverletter']",
+            "textarea[data-testid='coverLetterText']",
+            "textarea[id*='cover']",
+        ],
+        llm_hint="Cover letter text area",
+        search_target="target",
+    ),
+    
+    # ── Success / Error detection ─────────────────────────────────────────────
+    "success_indicator": IntentConfig(
+        semantic=[
+            "h1:has-text('Application submitted')",
+            "h1:has-text('Application sent')",
+            "div:has-text('application has been submitted')",
+            "[role='dialog']:has-text('submitted')",
+        ],
+        structural=[
+            "[data-testid='application-submitted']",
+            "[data-testid='success-message']",
+        ],
+        llm_hint="An element confirming the application was successfully submitted",
+        search_target="page",
+    ),
+    "already_applied": IntentConfig(
+        semantic=[
+            "div:has-text('already applied')",
+            "[role='dialog']:has-text('applied')",
+            "div:has-text('You have already submitted')",
+            "div:has-text('already applied to this job')",
+        ],
+        structural=[
+            "[data-testid='already-applied']",
+            "[class*='applied']",
+        ],
+        llm_hint="A message saying the user already applied to this job",
+        search_target="page",
+    ),
+    "job_expired": IntentConfig(
+        semantic=[
+            "div:has-text('no longer available')",
+            "div:has-text('expired')",
+            "div:has-text('This job has been filled')",
+            "div:has-text('This position is no longer')",
+        ],
+        structural=[],
+        llm_hint="A message indicating the job posting has expired or been removed",
+        search_target="page",
+    ),
+    
+    # ── Login (GUI only) ──────────────────────────────────────────────────────
+    "login_email": IntentConfig(
+        semantic=["input[type='email']"],
+        structural=[
+            "input[name='__email']",
+            "input[id='ifl-InputFormField-3']",
+        ],
+        llm_hint="Email input on Indeed login page",
+        search_target="page",
+    ),
+    "login_password": IntentConfig(
+        semantic=["input[type='password']"],
+        structural=[
+            "input[name='__password']",
+            "input[id='ifl-InputFormField-5']",
+        ],
+        llm_hint="Password input on Indeed login page",
+        search_target="page",
+    ),
+    "login_submit": IntentConfig(
+        semantic=["button:has-text('Sign in')"],
+        structural=["button[type='submit']"],
+        llm_hint="Sign in button on Indeed login page",
+        search_target="page",
+    ),
+    "logged_in_indicator": IntentConfig(
+        semantic=["[aria-label='Account menu']"],
+        structural=[
+            "[data-testid='JobSearchInput']",
+            ".gnav-header-user",
+            "[data-testid='user-menu']",
+        ],
+        llm_hint="An element visible only when logged in to Indeed",
+        search_target="page",
+    ),
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HONEYPOT DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+HONEYPOT_CHECK_JS = """
+(el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.display === 'none' || style.visibility === 'hidden'
+        || parseFloat(style.opacity) < 0.01
+        || (rect.width === 0 && rect.height === 0)
+        || rect.left < -500 || rect.top < -500
+        || el.getAttribute('aria-hidden') === 'true';
+}
+"""
+
+
+class SelectorEngine:
+    """
+    Self-healing element finder with 4-tier resolution and honeypot filtering.
+    
+    Tier 1: Cached selector (previous success)
+    Tier 2: Semantic selectors (ARIA, text, role)
+    Tier 3: Structural selectors (data-testid, CSS classes)
+    Tier 4: LLM discovery (Gemini Flash)
+    
+    Cache TTL: 24 hours
+    Concurrent-safe: Uses asyncio.Lock for all cache operations
+    """
+    
+    CACHE_TTL_SECONDS = 86400  # 24 hours
+    CACHE_FILE = Path(__file__).parent.parent.parent / "data" / "selector_cache.json"
+    
+    def __init__(
+        self,
+        health_monitor: Optional[SelectorHealthMonitor] = None,
+    ) -> None:
+        """
+        Initialize SelectorEngine.
+        
+        Args:
+            health_monitor: Optional health monitor for tracking stats.
+                           If None, stats are not recorded.
+        """
+        self._health = health_monitor
+        self._cache: Dict[str, Dict[str, Any]] = {}  # {intent: {selector: str, ts: float}}
+        self._cache_lock = asyncio.Lock()
+        
+        # Ensure data directory exists
+        self.CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load persisted cache
+        self.load_cache()
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PUBLIC API
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def find(
+        self,
+        target,  # Page or Frame from patchright
+        intent: str,
+        context: str = "",
+        visible_only: bool = True,
+        skip_honeypots: bool = True,
+    ):
+        """
+        Find a single element matching the intent using 4-tier resolution.
+        
+        Args:
+            target: Playwright Page or Frame to search within
+            intent: Intent key from INTENT_REGISTRY (e.g., "apply_button")
+            context: Optional context string for debugging/logging
+            visible_only: If True, only return visible elements
+            skip_honeypots: If True, filter out honeypot elements
+            
+        Returns:
+            Locator or None if not found
+        """
+        if intent not in INTENT_REGISTRY:
+            logger.error(f"Unknown intent: {intent}")
+            return None
+        
+        config = INTENT_REGISTRY[intent]
+        start_time = time.monotonic()
+        
+        # ── Tier 1: Cached selector ─────────────────────────────────────────────
+        cached_selector = await self._get_cached_selector(intent)
+        if cached_selector:
+            locator = target.locator(cached_selector).first
+            try:
+                if await locator.count() > 0:
+                    if await locator.is_visible():
+                        # Check honeypot
+                        if skip_honeypots and await self._is_honeypot(locator):
+                            logger.debug(f"Cached selector for '{intent}' is a honeypot, skipping")
+                        else:
+                            self._record_hit(intent, 1, cached_selector)
+                            logger.debug(f"Tier 1 (cached) resolved '{intent}' in {time.monotonic() - start_time:.3f}s")
+                            return locator
+            except Exception as e:
+                logger.debug(f"Cached selector for '{intent}' failed: {e}")
+        
+        # ── Tier 2: Semantic selectors ──────────────────────────────────────────
+        for selector in config.semantic:
+            locator = target.locator(selector).first
+            try:
+                if await locator.count() > 0 and await locator.is_visible():
+                    if skip_honeypots and await self._is_honeypot(locator):
+                        continue
+                    await self._cache_selector(intent, selector)
+                    self._record_hit(intent, 2, selector)
+                    logger.debug(f"Tier 2 (semantic) resolved '{intent}' in {time.monotonic() - start_time:.3f}s")
+                    return locator
+            except Exception as e:
+                logger.debug(f"Semantic selector '{selector}' failed for '{intent}': {e}")
+                continue
+        
+        # ── Tier 3: Structural selectors ────────────────────────────────────────
+        for selector in config.structural:
+            locator = target.locator(selector).first
+            try:
+                if await locator.count() > 0 and await locator.is_visible():
+                    if skip_honeypots and await self._is_honeypot(locator):
+                        continue
+                    await self._cache_selector(intent, selector)
+                    self._record_hit(intent, 3, selector)
+                    logger.debug(f"Tier 3 (structural) resolved '{intent}' in {time.monotonic() - start_time:.3f}s")
+                    return locator
+            except Exception as e:
+                logger.debug(f"Structural selector '{selector}' failed for '{intent}': {e}")
+                continue
+        
+        # ── Tier 4: LLM Discovery ───────────────────────────────────────────────
+        llm_locator = await self._llm_discover(target, intent, config.llm_hint)
+        if llm_locator:
+            try:
+                if await llm_locator.count() > 0 and await llm_locator.is_visible():
+                    if skip_honeypots and await self._is_honeypot(llm_locator):
+                        logger.warning(f"Tier 4 LLM found honeypot for '{intent}'")
+                    else:
+                        # Get the selector string from the locator
+                        selector_str = f"[llm-discovered:{intent}]"
+                        await self._cache_selector(intent, selector_str)
+                        self._record_hit(intent, 4, selector_str)
+                        logger.debug(f"Tier 4 (LLM) resolved '{intent}' in {time.monotonic() - start_time:.3f}s")
+                        return llm_locator
+            except Exception as e:
+                logger.debug(f"Tier 4 LLM locator for '{intent}' failed: {e}")
+        
+        # ── No element found ────────────────────────────────────────────────────
+        self._record_miss(intent)
+        logger.warning(f"No element found for intent '{intent}' (context: {context})")
+        return None
+    
+    async def find_all(
+        self,
+        target,  # Page or Frame from patchright
+        intent: str,
+        context: str = "",
+        skip_honeypots: bool = True,
+    ) -> List:
+        """
+        Find ALL visible, non-honeypot elements matching the intent.
+        
+        Uses Tier 2 (semantic) and Tier 3 (structural) only.
+        Skips Tier 1 (cache) and Tier 4 (LLM) - not useful for multi-element collection.
+        
+        Each locator is individually filtered through honeypot detection.
+        
+        Args:
+            target: Playwright Page or Frame to search within
+            intent: Intent key from INTENT_REGISTRY
+            context: Optional context string for debugging/logging
+            skip_honeypots: If True, filter out honeypot elements
+            
+        Returns:
+            List of Locators (empty list if none found)
+        """
+        if intent not in INTENT_REGISTRY:
+            logger.error(f"Unknown intent: {intent}")
+            return []
+        
+        config = INTENT_REGISTRY[intent]
+        all_locators: List = []
+        seen_elements = set()  # Track by element handle to dedupe
+        
+        # Try semantic selectors
+        for selector in config.semantic:
+            try:
+                locators = target.locator(selector).all()
+                for locator in locators:
+                    if await locator.count() > 0 and await locator.is_visible():
+                        if skip_honeypots and await self._is_honeypot(locator):
+                            continue
+                        # Dedupe by element handle
+                        handle = await locator.element_handle()
+                        if handle not in seen_elements:
+                            seen_elements.add(handle)
+                            all_locators.append(locator)
+            except Exception as e:
+                logger.debug(f"Semantic selector '{selector}' for find_all '{intent}': {e}")
+                continue
+        
+        # Try structural selectors
+        for selector in config.structural:
+            try:
+                locators = target.locator(selector).all()
+                for locator in locators:
+                    if await locator.count() > 0 and await locator.is_visible():
+                        if skip_honeypots and await self._is_honeypot(locator):
+                            continue
+                        # Dedupe by element handle
+                        handle = await locator.element_handle()
+                        if handle not in seen_elements:
+                            seen_elements.add(handle)
+                            all_locators.append(locator)
+            except Exception as e:
+                logger.debug(f"Structural selector '{selector}' for find_all '{intent}': {e}")
+                continue
+        
+        logger.debug(f"find_all('{intent}') found {len(all_locators)} elements (context: {context})")
+        return all_locators
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PRIVATE HELPERS
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    async def _is_honeypot(self, locator) -> bool:
+        """
+        Check if an element is a honeypot (hidden/decoy).
+        
+        Checks:
+        - display: none
+        - visibility: hidden
+        - opacity < 0.01
+        - zero size (width=0 and height=0)
+        - off-screen (left < -500 or top < -500)
+        - aria-hidden="true"
+        
+        Args:
+            locator: Playwright Locator to check
+            
+        Returns:
+            True if honeypot, False if legitimate
+        """
+        try:
+            result = await locator.evaluate(HONEYPOT_CHECK_JS)
+            return bool(result)
+        except Exception as e:
+            logger.debug(f"Honeypot check failed: {e}")
+            return False  # Assume legitimate on error
+    
+    async def _llm_discover(
+        self,
+        target,
+        intent: str,
+        hint: str,
+    ):
+        """
+        Use Gemini Flash to visually discover an element.
+        
+        Called only after Tiers 1-3 fail. Wrapped in 10s timeout.
+        
+        Args:
+            target: Playwright Page or Frame
+            intent: Intent key
+            hint: Human-readable description from IntentConfig.llm_hint
+            
+        Returns:
+            Locator or None
+        """
+        # Check LLM budget
+        if self._health and not self._health.llm_budget_ok():
+            logger.warning(f"LLM budget exhausted, skipping Tier 4 for '{intent}'")
+            return None
+        
+        # Import gemini_find_element lazily (avoid import errors if not installed)
+        try:
+            from ..ai.gemini_vision import gemini_find_element
+        except ImportError:
+            logger.debug("gemini_vision module not available for Tier 4")
+            return None
+        
+        try:
+            async with asyncio.timeout(10.0):
+                screenshot = await target.screenshot(type="png")
+                selector = await gemini_find_element(screenshot, hint)
+                
+                if selector:
+                    locator = target.locator(selector).first
+                    if await locator.count() > 0:
+                        # Increment LLM call counter
+                        if self._health:
+                            self._health.increment_llm_call()
+                        return locator
+        except asyncio.TimeoutError:
+            logger.warning(f"Tier 4 LLM timeout for intent='{intent}' (>10s)")
+        except Exception as e:
+            logger.warning(f"Tier 4 LLM error for intent='{intent}': {e}")
+        
+        return None
+    
+    async def _get_cached_selector(self, intent: str) -> Optional[str]:
+        """Get cached selector if valid (not expired)."""
+        async with self._cache_lock:
+            if intent not in self._cache:
+                return None
+            
+            entry = self._cache[intent]
+            age = time.time() - entry.get("ts", 0)
+            
+            if age > self.CACHE_TTL_SECONDS:
+                # Expired - invalidate
+                del self._cache[intent]
+                return None
+            
+            return entry.get("selector")
+    
+    async def _cache_selector(self, intent: str, selector: str) -> None:
+        """Cache a working selector for an intent."""
+        async with self._cache_lock:
+            self._cache[intent] = {
+                "selector": selector,
+                "ts": time.time(),
+            }
+        # Debounced save
+        self.save_cache()
+    
+    def _record_hit(self, intent: str, tier: int, selector: str) -> None:
+        """Record a successful resolution to health monitor."""
+        if self._health:
+            self._health.record(intent, tier, selector, miss=False)
+    
+    def _record_miss(self, intent: str) -> None:
+        """Record a failed resolution to health monitor."""
+        if self._health:
+            self._health.record(intent, 0, "", miss=True)
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PERSISTENCE
+    # ─────────────────────────────────────────────────────────────────────────────
+    
+    def save_cache(self) -> None:
+        """Persist cache to data/selector_cache.json."""
+        try:
+            data = {
+                "cache": self._cache,
+                "saved_at": time.time(),
+            }
+            # Use sync write (called from async context, but file I/O is fast)
+            with open(self.CACHE_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save selector cache: {e}")
+    
+    def load_cache(self) -> None:
+        """Restore cache from data/selector_cache.json."""
+        if not self.CACHE_FILE.exists():
+            return
+        
+        try:
+            with open(self.CACHE_FILE, "r") as f:
+                data = json.load(f)
+            
+            self._cache = data.get("cache", {})
+            
+            # Remove expired entries
+            now = time.time()
+            expired = [
+                intent for intent, entry in self._cache.items()
+                if now - entry.get("ts", 0) > self.CACHE_TTL_SECONDS
+            ]
+            for intent in expired:
+                del self._cache[intent]
+            
+            logger.debug(f"Loaded {len(self._cache)} cached selectors ({len(expired)} expired)")
+        except Exception as e:
+            logger.warning(f"Failed to load selector cache: {e}")
+            self._cache = {}
+    
+    def get_health_report(self) -> Dict[str, Any]:
+        """Get health report from monitor (if available)."""
+        if self._health:
+            return self._health.get_report()
+        return {"error": "No health monitor configured"}
+    
+    def clear_cache(self, intent: Optional[str] = None) -> None:
+        """
+        Clear cached selectors.
+        
+        Args:
+            intent: If provided, clear only this intent's cache.
+                   If None, clear all cached selectors.
+        """
+        if intent:
+            self._cache.pop(intent, None)
+        else:
+            self._cache.clear()
+        self.save_cache()
+🔍 659 lines read

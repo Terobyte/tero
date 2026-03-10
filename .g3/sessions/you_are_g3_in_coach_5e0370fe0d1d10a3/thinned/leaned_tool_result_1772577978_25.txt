@@ -1,0 +1,13 @@
+Tool result: 174:        self.qa_btn = tk.Button(
+179:            command=self._open_qa_review,
+181:        self.qa_btn.pack(side=tk.LEFT, padx=(8, 0))
+250:        self.tailor_btn = tk.Button(
+256:            command=self._evaluate_tailoring,
+258:        self.tailor_btn.pack(side=tk.LEFT, padx=(8, 0))
+796:    def _evaluate_tailoring(self):
+928:    def _open_qa_review(self):
+1118:        # ── Вкладка: Резюме ──────────────────────────────────────────────────────────
+1119:        t_resume = make_scroll_tab("📄 Резюме")
+1131:                resume_info_var.set("❌ Резюме не загружено")
+1152:            self.status_var.set(f"✅ Резюме загружено: {RESUME_PATH}")
+1158:                messagebox.showwarning("Не найдено", "Резюме не загружено")

@@ -1,0 +1,541 @@
+Tool result: """
+Workday job application module with screenshot proof.
+
+Workday uses consistent data-automation-id attributes for form fields,
+making it relatively straightforward to automate.
+
+Key data-automation-id attributes:
+- Navigation: bottom-navigation-next-btn, bottom-navigation-back-btn
+- Personal Info: firstName, lastName, email, phoneNumber, addressLine1, city, etc.
+- Education: schoolName, degree, fieldOfStudy, startDateYear, endDateYear
+- Experience: jobTitle, company, startDate, endDate, currentlyEmployed, jobDescription
+- Success: thanksPageSection
+- Errors: errorMessage
+"""
+
+import asyncio
+import os
+import re
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+
+from playwright.async_api import Page, Browser
+
+# Add project root to path for imports
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from src.database.db import Database
+
+
+logger = logging.getLogger(__name__)
+
+
+class WorkdayApplier:
+    """Apply to jobs on Workday platform with screenshot capture."""
+    
+    PLATFORM = "workday"
+    
+    # Workday step names (from data-automation-id='formHeader')
+    STEPS = {
+        "My Information": "_fill_personal_info",
+        "My Experience": "_fill_experience", 
+        "My Education": "_fill_education",
+        "Application Questions": "_fill_custom_questions",
+        "Voluntary Disclosures": "_fill_disclosures",
+        "Review": "_review_and_submit",
+        "Additional Info": "_fill_additional_info",
+    }
+    
+    def __init__(self, headless: bool = False):
+        """
+        Initialize Workday applier.
+        
+        Args:
+            headless: Run browser in headless mode (default False for Workday anti-bot)
+        """
+        self.headless = headless
+        self.db = Database()
+        self.browser: Browser = None
+        self.page: Page = None
+        self.user_data: Dict[str, Any] = {}
+        
+    def _get_screenshot_path(self, company: str, job_id: str) -> str:
+        """Generate screenshot file path."""
+        safe_company = "".join(c if c.isalnum() else "_" for c in company)[:30]
+        filename = f"workday_{safe_company}_{job_id}.png"
+        
+        screenshots_dir = Path(__file__).parent.parent.parent / "data" / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        
+        return str(screenshots_dir / filename)
+    
+    async def _get_current_step(self) -> Optional[str]:
+        """
+        Get the current wizard step from Workday form header.
+        
+        Returns:
+            Step name like "My Information" or None if not found
+        """
+        try:
+            step_header = self.page.locator("[data-automation-id='formHeader']")
+            if await step_header.count() > 0:
+                step_name = await step_header.text_content()
+                return step_name.strip() if step_name else None
+        except Exception as e:
+            logger.warning(f"Could not get current step: {e}")
+        return None
+    
+    async def _click_next(self) -> bool:
+        """
+        Click the Next/Submit button.
+        
+        Returns:
+            True if button was clicked successfully
+        """
+        try:
+            next_btn = self.page.locator("[data-automation-id='bottom-navigation-next-btn']")
+            if await next_btn.count() > 0:
+                await next_btn.first.click()
+                await self.page.wait_for_timeout(1000)
+                return True
+        except Exception as e:
+            logger.error(f"Could not click Next: {e}")
+        return False
+    
+    async def _fill_text_field(self, field_id: str, value: str) -> bool:
+        """
+        Fill a text field by data-automation-id.
+        
+        Args:
+            field_id: The data-automation-id attribute value
+            value: Value to fill
+            
+        Returns:
+            True if field was filled successfully
+        """
+        if not value:
+            return False
+            
+        try:
+            # Try input with the data-automation-id
+            locator = self.page.locator(f"[data-automation-id='{field_id}'] input")
+            if await locator.count() > 0:
+                await locator.first.fill(str(value))
+                return True
+            
+            # Try direct input
+            locator = self.page.locator(f"input[data-automation-id='{field_id}']")
+            if await locator.count() > 0:
+                await locator.first.fill(str(value))
+                return True
+            
+            # Try textarea
+            locator = self.page.locator(f"textarea[data-automation-id='{field_id}']")
+            if await locator.count() > 0:
+                await locator.first.fill(str(value))
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Could not fill {field_id}: {e}")
+        return False
+    
+    async def _select_dropdown(self, field_id: str, value: str) -> bool:
+        """
+        Select an option from a dropdown.
+        
+        Args:
+            field_id: The data-automation-id attribute value
+            value: Value to select (text or value)
+            
+        Returns:
+            True if selection was made successfully
+        """
+        if not value:
+            return False
+            
+        try:
+            # Workday dropdowns use selectWidget
+            dropdown = self.page.locator(f"[data-automation-id='{field_id}']")
+            if await dropdown.count() > 0:
+                # Try standard select first
+                select = dropdown.locator("select")
+                if await select.count() > 0:
+                    await select.first.select_option(label=value)
+                    return True
+                
+                # Workday custom dropdowns - need to click to open
+                await dropdown.first.click()
+                await self.page.wait_for_timeout(500)
+                
+                # Then click the option
+                option = self.page.locator(f"[data-automation-id='{field_id}'] li:has-text('{value}')")
+                if await option.count() > 0:
+                    await option.first.click()
+                    return True
+                    
+                # Try by data-automation-id for option
+                option = self.page.locator(f"[data-automation-id*='{value.lower().replace(' ', '_')}']")
+                if await option.count() > 0:
+                    await option.first.click()
+                    return True
+                    
+        except Exception as e:
+            logger.warning(f"Could not select {field_id}: {e}")
+        return False
+    
+    async def _check_checkbox(self, field_id: str, check: bool = True) -> bool:
+        """
+        Check or uncheck a checkbox.
+        
+        Args:
+            field_id: The data-automation-id attribute value
+            check: True to check, False to uncheck
+            
+        Returns:
+            True if checkbox state was set successfully
+        """
+        try:
+            checkbox = self.page.locator(f"[data-automation-id='{field_id}'] input[type='checkbox']")
+            if await checkbox.count() > 0:
+                if check:
+                    await checkbox.first.check()
+                else:
+                    await checkbox.first.uncheck()
+                return True
+        except Exception as e:
+            logger.warning(f"Could not check {field_id}: {e}")
+        return False
+    
+    async def _upload_file(self, field_id: str, file_path: str) -> bool:
+        """
+        Upload a file.
+        
+        Args:
+            field_id: The data-automation-id attribute value or container
+            file_path: Path to file to upload
+            
+        Returns:
+            True if file was uploaded successfully
+        """
+        if not file_path or not os.path.exists(file_path):
+            return False
+            
+        try:
+            # Try standard file input
+            file_input = self.page.locator(f"[data-automation-id='{field_id}'] input[type='file']")
+            if await file_input.count() > 0:
+                await file_input.first.set_input_files(file_path)
+                return True
+            
+            # Try direct file input
+            file_input = self.page.locator("input[type='file']")
+            if await file_input.count() > 0:
+                await file_input.first.set_input_files(file_path)
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Could not upload to {field_id}: {e}")
+        return False
+    
+    async def _fill_personal_info(self) -> bool:
+        """
+        Fill the Personal Information step.
+        
+        Fields: firstName, lastName, email, phoneNumber, 
+                addressLine1, city, stateProvince, postalCode, country
+        """
+        logger.info("Filling Personal Information...")
+        
+        personal_fields = {
+            "firstName": self.user_data.get("first_name", ""),
+            "lastName": self.user_data.get("last_name", ""),
+            "email": self.user_data.get("email", ""),
+            "phoneNumber": self.user_data.get("phone", ""),
+            "addressLine1": self.user_data.get("address", ""),
+            "city": self.user_data.get("city", ""),
+            "stateProvince": self.user_data.get("state", ""),
+            "postalCode": self.user_data.get("postal_code", ""),
+        }
+        
+        for field_id, value in personal_fields.items():
+            if value:
+                await self._fill_text_field(field_id, value)
+        
+        # Country is typically a dropdown
+        country = self.user_data.get("country", "United States")
+        await self._select_dropdown("country", country)
+        
+        return True
+    
+    async def _fill_education(self) -> bool:
+        """
+        Fill the Education step.
+        
+        Fields: schoolName, degree, fieldOfStudy, gpa, startDateYear, endDateYear
+        """
+        logger.info("Filling Education...")
+        
+        education = self.user_data.get("education", {})
+        if isinstance(education, list) and len(education) > 0:
+            education = education[0]
+        
+        if not education:
+            # Skip this step if no education data
+            return True
+        
+        fields = {
+            "schoolName": education.get("school", ""),
+            "degree": education.get("degree", ""),
+            "fieldOfStudy": education.get("field", ""),
+            "gpa": education.get("gpa", ""),
+        }
+        
+        for field_id, value in fields.items():
+            if value:
+                await self._fill_text_field(field_id, str(value))
+        
+        # Years are typically dropdowns
+        if education.get("start_year"):
+            await self._select_dropdown("startDateYear", str(education["start_year"]))
+        if education.get("end_year"):
+            await self._select_dropdown("endDateYear", str(education["end_year"]))
+        
+        return True
+    
+    async def _fill_experience(self) -> bool:
+        """
+        Fill the Experience (Work History) step.
+        
+        Fields: jobTitle, company, startDate, endDate, 
+                currentlyEmployed, jobDescription
+        """
+        logger.info("Filling Experience...")
+        
+        experience = self.user_data.get("experience", {})
+        if isinstance(experience, list) and len(experience) > 0:
+            experience = experience[0]
+        
+        if not experience:
+            # Skip if no experience data
+            return True
+        
+        fields = {
+            "jobTitle": experience.get("title", ""),
+            "company": experience.get("company", ""),
+            "jobDescription": experience.get("description", ""),
+        }
+        
+        for field_id, value in fields.items():
+            if value:
+                await self._fill_text_field(field_id, str(value))
+        
+        # Dates
+        if experience.get("start_date"):
+            await self._fill_text_field("startDate", experience["start_date"])
+        if experience.get("end_date"):
+            await self._fill_text_field("endDate", experience["end_date"])
+        
+        # Currently employed checkbox
+        if experience.get("currently_employed"):
+            await self._check_checkbox("currentlyEmployed", True)
+        
+        return True
+    
+    async def _fill_custom_questions(self) -> bool:
+        """
+        Fill custom questions from the employer.
+        
+        Handles radio buttons, checkboxes, text inputs, and dropdowns
+        by matching question labels to answers from user data.
+        """
+        logger.info("Filling Custom Questions...")
+        
+        # Get custom question answers from user data
+        custom_answers = self.user_data.get("custom_questions", {})
+        
+        try:
+            # Handle radio button groups
+            radio_groups = await self.page.locator("[data-automation-id='radioGroup']").all()
+            for group in radio_groups:
+                try:
+                    label = await group.locator("label").first.text_content()
+                    if label:
+                        label_clean = label.strip().lower()
+                        # Look for answer in custom_answers
+                        answer = None
+                        for key, value in custom_answers.items():
+                            if key.lower() in label_clean or label_clean in key.lower():
+                                answer = value
+                                break
+                        
+                        if answer:
+                            # Find and click the matching radio option
+                            options = await group.locator("input[type='radio']").all()
+                            for option in options:
+                                option_label = await option.evaluate("el => el.closest('label')?.textContent || ''")
+                                if answer.lower() in option_label.lower():
+                                    await option.click()
+                                    break
+                except Exception as e:
+                    logger.warning(f"Could not fill radio group: {e}")
+            
+            # Handle text inputs
+            text_inputs = await self.page.locator("[data-automation-id='textInput'] input").all()
+            for inp in text_inputs:
+                try:
+                    label = await inp.evaluate("el => el.closest('.form-group')?.querySelector('label')?.textContent || ''")
+                    if label:
+                        label_clean = label.strip().lower()
+                        answer = None
+                        for key, value in custom_answers.items():
+                            if key.lower() in label_clean or label_clean in key.lower():
+                                answer = value
+                                break
+                        if answer:
+                            await inp.fill(str(answer))
+                except Exception:
+                    pass
+            
+            # Handle dropdowns
+            selects = await self.page.locator("[data-automation-id='selectWidget']").all()
+            for select in selects:
+                try:
+                    # Workday dropdowns need special handling
+                    label = await select.evaluate("el => el.closest('.form-group')?.querySelector('label')?.textContent || ''")
+                    if label:
+                        label_clean = label.strip().lower()
+                        answer = None
+                        for key, value in custom_answers.items():
+                            if key.lower() in label_clean or label_clean in key.lower():
+                                answer = value
+                                break
+                        if answer:
+                            # Open dropdown and select
+                            await select.click()
+                            await self.page.wait_for_timeout(300)
+                            option = self.page.locator(f"li:has-text('{answer}')")
+                            if await option.count() > 0:
+                                await option.first.click()
+                except Exception:
+                    pass
+                    
+        except Exception as e:
+            logger.warning(f"Error filling custom questions: {e}")
+        
+        return True
+    
+    async def _fill_disclosures(self) -> bool:
+        """
+        Fill voluntary disclosures (gender, race, veteran status, etc.).
+        
+        Typically optional - can skip or auto-fill based on user preferences.
+        """
+        logger.info("Filling Voluntary Disclosures...")
+        
+        disclosures = self.user_data.get("disclosures", {})
+        
+        if not disclosures:
+            # Skip voluntary disclosures if not provided
+            return True
+        
+        # Gender
+        if disclosures.get("gender"):
+            await self._select_dropdown("gender", disclosures["gender"])
+        
+        # Race/Ethnicity
+        if disclosures.get("race"):
+            await self._select_dropdown("race", disclosures["race"])
+        
+        # Veteran status
+        if disclosures.get("veteran"):
+            await self._select_dropdown("veteranStatus", disclosures["veteran"])
+        
+        # Disability
+        if disclosures.get("disability"):
+            await self._select_dropdown("disabilityStatus", disclosures["disability"])
+        
+        return True
+    
+    async def _fill_additional_info(self) -> bool:
+        """
+        Fill additional info step (if present).
+        
+        Handles resume upload and other supplementary information.
+        """
+        logger.info("Filling Additional Info...")
+        
+        # Upload resume if provided
+        resume_path = self.user_data.get("resume_path")
+        if resume_path and os.path.exists(resume_path):
+            # Try resume upload button/dropdown first
+            await self._upload_file("resume", resume_path)
+        
+        # LinkedIn URL
+        linkedin = self.user_data.get("linkedin_url")
+        if linkedin:
+            await self._fill_text_field("linkedin", linkedin)
+        
+        # Website/Portfolio
+        website = self.user_data.get("website_url")
+        if website:
+            await self._fill_text_field("website", website)
+        
+        return True
+    
+    async def _review_and_submit(self) -> bool:
+        """
+        Review the application and submit.
+        """
+        logger.info("Reviewing and Submitting...")
+        
+        # Click submit on the review page
+        submitted = await self._click_next()
+        
+        if submitted:
+            # Wait for confirmation
+            await self.page.wait_for_timeout(3000)
+        
+        return submitted
+    
+    async def _handle_validation_errors(self) -> bool:
+        """
+        Check for validation errors and handle them.
+        
+        Returns:
+            True if there were errors (and we waited), False if no errors
+        """
+        try:
+            errors = await self.page.locator("[data-automation-id='errorMessage']").all()
+            if errors:
+                logger.warning(f"⚠️ Workday: {len(errors)} unfilled fields - waiting 60s for manual input")
+                await asyncio.sleep(60)
+                return True
+        except Exception:
+            pass
+        return False
+    
+    async def _check_success(self) -> bool:
+        """
+        Check if the application was submitted successfully.
+        
+        Returns:
+            True if success indicators found
+        """
+        try:
+            # Check for thank you page
+            thanks = self.page.locator("[data-automation-id='thanksPageSection']")
+            if await thanks.count() > 0:
+                return True
+            
+            # Check URL
+            if "thank" in self.page.url.lower() or "success" in self.page.url.lower():
+                return True
+            
+            # Check page content
+            content = await self.page.content()
+            success_indicators = [
+                "thank you for a
+🔍 540 lines read (truncated, chars 0-20160 of 29084, context 23%)

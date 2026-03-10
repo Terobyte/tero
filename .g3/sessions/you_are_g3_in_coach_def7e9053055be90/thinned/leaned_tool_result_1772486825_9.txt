@@ -1,0 +1,196 @@
+Tool result: """
+JobSpy-based scraper for Indeed (NO Glassdoor).
+
+This module provides job scraping functionality using the jobspy library.
+Glassdoor has been permanently removed from the site list.
+"""
+
+import json
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+from pathlib import Path
+
+try:
+    from jobspy import scrape_jobs
+except ImportError:
+    scrape_jobs = None
+
+from src.database.db import Database
+
+
+class JobSpyScraper:
+    """Scraper for Indeed jobs using jobspy library."""
+    
+    # Site names - Glassdoor is EXCLUDED
+    # Only Indeed is supported via jobspy
+    SITES = ["indeed"]
+    
+    def __init__(self, db: Optional[Database] = None):
+        """Initialize the scraper.
+        
+        Args:
+            db: Database instance for storing jobs
+        """
+        self.db = db or Database()
+        
+    def scrape(
+        self,
+        search_term: str,
+        location: str = "Remote",
+        results_wanted: int = 50,
+        hours_old: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Scrape jobs from Indeed.
+        
+        Args:
+            search_term: Job title or keywords to search
+            location: Location to search in
+            results_wanted: Maximum number of results to return
+            hours_old: Only jobs posted within this many hours
+            
+        Returns:
+            List of job dictionaries
+        """
+        if scrape_jobs is None:
+            raise ImportError(
+                "jobspy is not installed. Install with: pip install jobspy"
+            )
+        
+        jobs_found = []
+        
+        for site in self.SITES:
+            try:
+                print(f"Scraping {site} for '{search_term}'...")
+                
+                jobs_df = scrape_jobs(
+                    site_name=[site],
+                    search_term=search_term,
+                    location=location,
+                    results_wanted=results_wanted,
+                    hours_old=hours_old,
+                    country="USA",
+                )
+                
+                if jobs_df is not None and not jobs_df.empty:
+                    for _, row in jobs_df.iterrows():
+                        job = self._parse_job(row, site)
+                        if job:
+                            # Save to database
+                            job_id = self._save_to_db(job)
+                            job['job_id'] = job_id
+                            jobs_found.append(job)
+                            
+                    print(f"Found {len(jobs_df)} jobs from {site}")
+                else:
+                    print(f"No jobs found from {site}")
+                    
+            except Exception as e:
+                print(f"Error scraping {site}: {e}")
+                continue
+                
+        return jobs_found
+    
+    def _parse_job(self, row, site: str) -> Optional[Dict[str, Any]]:
+        """Parse a job row from jobspy results.
+        
+        Args:
+            row: Pandas Series with job data
+            site: Site name (indeed)
+            
+        Returns:
+            Parsed job dictionary or None if invalid
+        """
+        try:
+            job = {
+                'title': str(row.get('title', '')),
+                'company': str(row.get('company', '')),
+                'location': str(row.get('location', 'Remote')),
+                'url': str(row.get('job_url', '')),
+                'description': str(row.get('description', '')),
+                'platform': site,
+                'salary': self._extract_salary(row),
+                'date_posted': row.get('date_posted', datetime.now()),
+                'raw_data': json.dumps({
+                    'platform': site,
+                    'job_id_external': str(row.get('job_id', '')),
+                    'is_remote': row.get('is_remote', False),
+                    'job_type': str(row.get('job_type', '')),
+                    'job_level': str(row.get('job_level', '')),
+                }),
+            }
+            
+            # Validate required fields
+            if not job['title'] or not job['url']:
+                return None
+                
+            return job
+            
+        except Exception as e:
+            print(f"Error parsing job: {e}")
+            return None
+    
+    def _extract_salary(self, row) -> str:
+        """Extract salary from job row.
+        
+        Args:
+            row: Pandas Series with job data
+            
+        Returns:
+            Formatted salary string
+        """
+        try:
+            min_salary = row.get('min_amount')
+            max_salary = row.get('max_amount')
+            currency = row.get('currency', 'USD')
+            interval = row.get('interval', 'yearly')
+            
+            if min_salary and max_salary:
+                return f"{min_salary} - {max_salary} {currency} ({interval})"
+            elif min_salary:
+                return f"{min_salary} {currency} ({interval})"
+            else:
+                return ""
+                
+        except Exception:
+            return ""
+    
+    def _save_to_db(self, job: Dict[str, Any]) -> str:
+        """Save job to database.
+        
+        Args:
+            job: Job dictionary
+            
+        Returns:
+            Job ID from database
+        """
+        success = self.db.add_job(job)
+        if success:
+            return job.get('job_id')
+        return None
+
+
+def scrape_indeed(
+    search_term: str,
+    location: str = "Remote",
+    results_wanted: int = 50,
+    db: Optional[Database] = None,
+) -> List[Dict[str, Any]]:
+    """Convenience function to scrape Indeed jobs.
+    
+    Args:
+        search_term: Job title or keywords
+        location: Location to search
+        results_wanted: Maximum results
+        db: Database instance
+        
+    Returns:
+        List of found jobs
+    """
+    scraper = JobSpyScraper(db=db)
+    return scraper.scrape(
+        search_term=search_term,
+        location=location,
+        results_wanted=results_wanted,
+    )
+
+🔍 194 lines read

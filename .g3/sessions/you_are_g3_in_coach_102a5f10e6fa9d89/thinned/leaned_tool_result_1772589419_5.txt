@@ -1,0 +1,10 @@
+Tool result: total 48
+drwxr-xr-x@ 3 terobyte  staff    96 Mar  3 20:13 __pycache__
+drwxr-xr-x@ 9 terobyte  staff   288 Mar  3 20:36 .
+drwxr-xr-x@ 4 terobyte  staff   128 Mar  2 16:12 ..
+-rw-r--r--@ 1 terobyte  staff  6148 Mar  3 20:31 .DS_Store
+-rw-r--r--@ 1 terobyte  staff  2780 Mar  3 13:04 .env.example
+drwxr-xr-x@ 5 terobyte  staff   160 Mar  3 17:58 .g3
+-rw-r--r--@ 1 terobyte  staff  4459 Mar  3 20:36 extractor.py
+drwxr-xr-x@ 8 terobyte  staff   256 Mar  3 20:38 gemini-research
+-rw-r--r--@ 1 terobyte  staff  3570 Mar  3 20:06 requirements.md

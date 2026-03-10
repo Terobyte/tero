@@ -1,0 +1,100 @@
+Tool result: """Base scraper interface for job platforms."""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class Job:
+    """Represents a job listing from any platform."""
+    
+    url: str
+    title: str
+    company: str
+    location: str
+    description: str = ""
+    posted_date: Optional[datetime] = None
+    salary: Optional[str] = None
+    job_type: Optional[str] = None  # full-time, part-time, contract, etc.
+    platform: str = "unknown"
+    raw_data: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert job to dictionary for serialization."""
+        return {
+            "url": self.url,
+            "title": self.title,
+            "company": self.company,
+            "location": self.location,
+            "description": self.description,
+            "posted_date": self.posted_date.isoformat() if self.posted_date else None,
+            "salary": self.salary,
+            "job_type": self.job_type,
+            "platform": self.platform,
+            "raw_data": self.raw_data,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Job":
+        """Create Job from dictionary."""
+        if data.get("posted_date"):
+            data["posted_date"] = datetime.fromisoformat(data["posted_date"])
+        return cls(**data)
+
+
+class BaseScraper(ABC):
+    """Abstract base class for job platform scrapers."""
+    
+    @property
+    @abstractmethod
+    def platform_name(self) -> str:
+        """Return the name of this job platform (e.g., 'indeed', 'greenhouse')."""
+        pass
+    
+    @abstractmethod
+    async def search_jobs(
+        self,
+        query: str,
+        location: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Job]:
+        """
+        Search for jobs matching the query.
+        
+        Args:
+            query: Search query (e.g., "software engineer")
+            location: Optional location filter
+            filters: Optional platform-specific filters
+            
+        Returns:
+            List of Job objects matching the search
+        """
+        pass
+    
+    @abstractmethod
+    async def apply(
+        self,
+        job: Job,
+        resume_path: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Apply to a job listing.
+        
+        Args:
+            job: Job object to apply to
+            resume_path: Path to resume file
+            **kwargs: Additional platform-specific arguments
+            
+        Returns:
+            Dict with 'success' key and optional 'error', 'open_url' keys
+        """
+        pass
+    
+    async def close(self) -> None:
+        """Clean up resources (optional override)."""
+        pass
+🔍 99 lines read

@@ -1,0 +1,226 @@
+Tool result: """
+Lever application module with screenshot proof.
+Handles job applications via Lever platform with Playwright automation.
+"""
+
+import os
+import sys
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from playwright.async_api import async_playwright, Page, Browser
+from src.database.db import Database
+
+
+class LeverApplier:
+    """Apply to jobs on Lever platform with screenshot proof."""
+    
+    def __init__(self, headless: bool = True):
+        self.headless = headless
+        self.screenshot_dir = Path("data/screenshots")
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        self.db = Database()
+    
+    async def apply(
+        self,
+        job_url: str,
+        job_id: str,
+        company: str,
+        position: str,
+        user_data: dict
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Apply to a Lever job posting.
+        
+        Args:
+            job_url: URL of the Lever job posting
+            job_id: Unique job identifier from database
+            company: Company name
+            position: Job position/title
+            user_data: Dictionary with user information:
+                - full_name: str
+                - email: str
+                - phone: str (optional)
+                - resume_path: str
+                - cover_letter_path: str (optional)
+                - linkedin_url: str (optional)
+                - website_url: str (optional)
+        
+        Returns:
+            Tuple of (success: bool, screenshot_path: Optional[str])
+        """
+        screenshot_path = None
+        
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=self.headless)
+                context = await browser.new_context()
+                page = await context.new_page()
+                
+                # Navigate to job posting
+                await page.goto(job_url, wait_until="networkidle")
+                
+                # Wait for application form
+                await page.wait_for_selector('form, .application-form, #apply-form', timeout=15000)
+                
+                # Fill in basic information
+                await self._fill_text_field(page, 'input[name="name"], input[placeholder*="name"], input[id*="name"]', user_data.get('full_name', ''))
+                await self._fill_text_field(page, 'input[name="email"], input[type="email"]', user_data.get('email', ''))
+                await self._fill_text_field(page, 'input[name="phone"], input[type="tel"]', user_data.get('phone', ''))
+                
+                # Upload resume
+                resume_path = user_data.get('resume_path')
+                if resume_path and os.path.exists(resume_path):
+                    resume_input = await page.query_selector('input[type="file"][name*="resume"], input[type="file"][accept*="pdf"]')
+                    if resume_input:
+                        await resume_input.set_input_files(resume_path)
+                
+                # Upload cover letter (optional)
+                cover_letter_path = user_data.get('cover_letter_path')
+                if cover_letter_path and os.path.exists(cover_letter_path):
+                    cl_input = await page.query_selector('input[type="file"][name*="cover"], input[type="file"][accept*="cover"]')
+                    if cl_input:
+                        await cl_input.set_input_files(cover_letter_path)
+                
+                # Fill optional URLs
+                await self._fill_text_field(page, 'input[name*="linkedin"], input[placeholder*="LinkedIn"]', user_data.get('linkedin_url', ''))
+                await self._fill_text_field(page, 'input[name*="website"], input[name*="portfolio"]', user_data.get('website_url', ''))
+                
+                # Handle custom questions (Lever-specific)
+                await self._handle_custom_questions(page)
+                
+                # Submit application
+                submit_button = await page.query_selector('button[type="submit"], input[type="submit"], .btn-submit, button:has-text("Apply")')
+                if submit_button:
+                    await submit_button.click()
+                else:
+                    # Try clicking by text
+                    await page.click('text=Submit')
+                
+                # Wait for confirmation
+                await page.wait_for_selector('.application-success, .thank-you, .confirmation, text="Application submitted"', timeout=30000)
+                
+                # Take screenshot of success page
+                screenshot_filename = f"lever_{company}_{job_id}.png"
+                screenshot_filename = self._sanitize_filename(screenshot_filename)
+                screenshot_path = str(self.screenshot_dir / screenshot_filename)
+                await page.screenshot(path=screenshot_path, full_page=True)
+                
+                await browser.close()
+                
+                # Update database
+                self.db.update_status(
+                    job_id=job_id,
+                    status='applied',
+                    screenshot_path=screenshot_path
+                )
+                
+                return True, screenshot_path
+                
+        except Exception as e:
+            print(f"Error applying to Lever job {job_id}: {e}")
+            return False, None
+    
+    async def _fill_text_field(self, page: Page, selector: str, value: str) -> None:
+        """Fill a text field if value is provided and field exists."""
+        if not value:
+            return
+        try:
+            element = await page.query_selector(selector)
+            if element:
+                await element.fill(value)
+        except Exception:
+            pass  # Field might not exist on this form
+    
+    async def _handle_custom_questions(self, page: Page) -> None:
+        """Handle Lever-specific custom questions."""
+        try:
+            # Handle dropdown questions
+            dropdowns = await page.query_selector_all('select')
+            for dropdown in dropdowns:
+                try:
+                    # Select first non-empty option
+                    options = await dropdown.query_selector_all('option')
+                    for option in options[1:]:  # Skip first empty option
+                        value = await option.get_attribute('value')
+                        if value:
+                            await dropdown.select_option(value=value)
+                            break
+                except Exception:
+                    continue
+            
+            # Handle checkbox questions (e.g., "Are you legally authorized?")
+            checkboxes = await page.query_selector_all('input[type="checkbox"]')
+            for checkbox in checkboxes:
+                try:
+                    # Check required checkboxes (usually legal authorization)
+                    await checkbox.check()
+                except Exception:
+                    continue
+            
+            # Handle radio button groups
+            radio_groups = await page.query_selector_all('input[type="radio"]')
+            handled_names = set()
+            for radio in radio_groups:
+                try:
+                    name = await radio.get_attribute('name')
+                    if name and name not in handled_names:
+                        # Select first radio in each group
+                        await radio.click()
+                        handled_names.add(name)
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            print(f"Warning: Could not handle all custom questions: {e}")
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """Remove or replace invalid filename characters."""
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        return filename
+
+
+async def main():
+    """Test function for Lever applier."""
+    applier = LeverApplier(headless=False)
+    
+    # Example job data
+    job_url = "https://jobs.lever.co/example-company/example-job-id"
+    job_id = "test-job-123"
+    company = "Example Company"
+    position = "Software Engineer"
+    
+    user_data = {
+        'full_name': 'John Doe',
+        'email': 'john.doe@example.com',
+        'phone': '+1234567890',
+        'resume_path': 'data/resume.pdf',
+        'linkedin_url': 'https://linkedin.com/in/johndoe'
+    }
+    
+    success, screenshot = await applier.apply(
+        job_url=job_url,
+        job_id=job_id,
+        company=company,
+        position=position,
+        user_data=user_data
+    )
+    
+    if success:
+        print(f"✅ Application submitted successfully!")
+        print(f"📸 Screenshot saved: {screenshot}")
+    else:
+        print("❌ Application failed")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+
+🔍 224 lines read

@@ -1,0 +1,32 @@
+Tool result: """Applier module - handles job application automation with self-healing selectors.
+
+Uses PEP 562 lazy imports to avoid loading browser-dependent modules (patchright)
+when only scan-only functionality is needed.
+"""
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Only for type checkers — never executed at runtime
+    from .selector_engine import SelectorEngine, INTENT_REGISTRY, IntentConfig
+    from .selector_health import SelectorHealthMonitor
+
+__all__ = ["SelectorEngine", "SelectorHealthMonitor", "INTENT_REGISTRY", "IntentConfig"]
+
+
+def __getattr__(name: str):
+    """Lazy-load browser-dependent modules only when first accessed (PEP 562)."""
+    if name in ("SelectorEngine", "INTENT_REGISTRY", "IntentConfig"):
+        from .selector_engine import SelectorEngine, INTENT_REGISTRY, IntentConfig
+        globals().update(
+            SelectorEngine=SelectorEngine,
+            INTENT_REGISTRY=INTENT_REGISTRY,
+            IntentConfig=IntentConfig,
+        )
+        return globals()[name]
+    if name == "SelectorHealthMonitor":
+        from .selector_health import SelectorHealthMonitor
+        globals()["SelectorHealthMonitor"] = SelectorHealthMonitor
+        return SelectorHealthMonitor
+    raise AttributeError(f"module 'src.applier' has no attribute {name!r}")
+🔍 31 lines read

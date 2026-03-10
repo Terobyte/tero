@@ -1,0 +1,352 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/terobyte/tmp/workspace
+plugins: anyio-4.12.0, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items
+
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier] FAILED [  4%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier] FAILED [  8%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier] FAILED [ 12%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier] FAILED [ 16%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier] FAILED [ 20%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter] FAILED [ 24%]
+tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter] FAILED [ 28%]
+tests/gui/test_apply_service.py::test_apply_job_async_returns_error_for_unsupported_ats FAILED [ 32%]
+tests/gui/test_apply_service.py::test_run_apply_thread_calls_on_done_with_result FAILED [ 36%]
+tests/gui/test_apply_service.py::test_run_apply_thread_handles_exception FAILED [ 40%]
+tests/gui/test_db_helpers.py::test_load_config_returns_dict_on_valid_file FAILED [ 44%]
+tests/gui/test_db_helpers.py::test_load_config_returns_empty_dict_on_missing_file FAILED [ 48%]
+tests/gui/test_db_helpers.py::test_load_queries_extracts_list FAILED     [ 52%]
+tests/gui/test_db_helpers.py::test_load_queries_default_on_empty_config FAILED [ 56%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_empty_when_no_db FAILED [ 60%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_applied_rows FAILED [ 64%]
+tests/gui/test_db_helpers.py::test_fetch_applied_jobs_handles_broken_raw_data FAILED [ 68%]
+tests/gui/test_db_helpers.py::test_save_applied_inserts_new_row FAILED   [ 72%]
+tests/gui/test_db_helpers.py::test_save_applied_upserts_existing_row FAILED [ 76%]
+tests/gui/test_db_helpers.py::test_save_applied_does_nothing_if_no_db FAILED [ 80%]
+tests/gui/test_scan_service.py::test_run_scan_async_calls_aggregator FAILED [ 84%]
+tests/gui/test_scan_service.py::test_run_scan_async_includes_bamboohr_when_in_providers FAILED [ 88%]
+tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done FAILED [ 92%]
+tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done_with_empty_on_exception FAILED [ 96%]
+tests/gui/test_scan_service.py::test_run_indeed5_async_limits_to_5_jobs FAILED [100%]
+
+=================================== FAILURES ===================================
+_ test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier] _
+
+ats_type = 'ashby', platform = '', expected_module = 'src.applier.ashby_apply'
+expected_class = 'AshbyApplier'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier] _
+
+ats_type = 'greenhouse', platform = ''
+expected_module = 'src.applier.greenhouse_apply'
+expected_class = 'GreenhouseApplier'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier] _
+
+ats_type = 'lever', platform = '', expected_module = 'src.applier.lever_apply'
+expected_class = 'LeverApplier'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier] _
+
+ats_type = 'bamboohr', platform = ''
+expected_module = 'src.applier.bamboohr_apply'
+expected_class = 'BambooHRApplier'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier] _
+
+ats_type = 'workday', platform = ''
+expected_module = 'src.applier.workday_apply', expected_class = 'WorkdayApplier'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter] _
+
+ats_type = '', platform = 'indeed'
+expected_module = 'src.applier.indeed_router', expected_class = 'IndeedRouter'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+_ test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter] _
+
+ats_type = 'unknown', platform = ''
+expected_module = 'src.applier.indeed_router', expected_class = 'IndeedRouter'
+
+    @pytest.mark.parametrize("ats_type,platform,expected_module,expected_class", [
+        ("ashby",      "",          "src.applier.ashby_apply",         "AshbyApplier"),
+        ("greenhouse", "",          "src.applier.greenhouse_apply",     "GreenhouseApplier"),
+        ("lever",      "",          "src.applier.lever_apply",          "LeverApplier"),
+        ("bamboohr",   "",          "src.applier.bamboohr_apply",       "BambooHRApplier"),
+        ("workday",    "",          "src.applier.workday_apply",        "WorkdayApplier"),
+        ("",           "indeed",    "src.applier.indeed_router",        "IndeedRouter"),
+        ("unknown",    "",          "src.applier.indeed_router",        "IndeedRouter"),
+    ])
+    @pytest.mark.asyncio
+    async def test_apply_job_async_routes_correctly(ats_type, platform, expected_module, expected_class):
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:35: ModuleNotFoundError
+____________ test_apply_job_async_returns_error_for_unsupported_ats ____________
+
+    @pytest.mark.asyncio
+    async def test_apply_job_async_returns_error_for_unsupported_ats():
+>       from src.gui.apply_service import _apply_job_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:59: ModuleNotFoundError
+_______________ test_run_apply_thread_calls_on_done_with_result ________________
+
+    def test_run_apply_thread_calls_on_done_with_result():
+>       from src.gui.apply_service import run_apply_thread
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:73: ModuleNotFoundError
+___________________ test_run_apply_thread_handles_exception ____________________
+
+    def test_run_apply_thread_handles_exception():
+>       from src.gui.apply_service import run_apply_thread
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_apply_service.py:89: ModuleNotFoundError
+_________________ test_load_config_returns_dict_on_valid_file __________________
+
+tmp_config = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_load_config_returns_dict_0/config/settings.json')
+
+    def test_load_config_returns_dict_on_valid_file(tmp_config):
+>       from src.gui.db_helpers import load_config
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:55: ModuleNotFoundError
+_____________ test_load_config_returns_empty_dict_on_missing_file ______________
+
+tmp_path = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_load_config_returns_empty0')
+
+    def test_load_config_returns_empty_dict_on_missing_file(tmp_path):
+>       from src.gui.db_helpers import load_config
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:63: ModuleNotFoundError
+_______________________ test_load_queries_extracts_list ________________________
+
+tmp_config = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_load_queries_extracts_lis0/config/settings.json')
+
+    def test_load_queries_extracts_list(tmp_config):
+>       from src.gui.db_helpers import load_config, load_queries
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:71: ModuleNotFoundError
+__________________ test_load_queries_default_on_empty_config ___________________
+
+    def test_load_queries_default_on_empty_config():
+>       from src.gui.db_helpers import load_queries
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:79: ModuleNotFoundError
+_______________ test_fetch_applied_jobs_returns_empty_when_no_db _______________
+
+tmp_path = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_fetch_applied_jobs_return0')
+
+    def test_fetch_applied_jobs_returns_empty_when_no_db(tmp_path):
+>       from src.gui.db_helpers import fetch_applied_jobs
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:89: ModuleNotFoundError
+_________________ test_fetch_applied_jobs_returns_applied_rows _________________
+
+tmp_db = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_fetch_applied_jobs_return1/careerbot.db')
+
+    def test_fetch_applied_jobs_returns_applied_rows(tmp_db):
+>       from src.gui.db_helpers import fetch_applied_jobs
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:96: ModuleNotFoundError
+_______________ test_fetch_applied_jobs_handles_broken_raw_data ________________
+
+tmp_db = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_fetch_applied_jobs_handle0/careerbot.db')
+
+    def test_fetch_applied_jobs_handles_broken_raw_data(tmp_db):
+>       from src.gui.db_helpers import fetch_applied_jobs
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:121: ModuleNotFoundError
+______________________ test_save_applied_inserts_new_row _______________________
+
+tmp_db = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_save_applied_inserts_new_0/careerbot.db')
+
+    def test_save_applied_inserts_new_row(tmp_db):
+>       from src.gui.db_helpers import save_applied_to_db
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:143: ModuleNotFoundError
+____________________ test_save_applied_upserts_existing_row ____________________
+
+tmp_db = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_save_applied_upserts_exis0/careerbot.db')
+
+    def test_save_applied_upserts_existing_row(tmp_db):
+>       from src.gui.db_helpers import save_applied_to_db
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:158: ModuleNotFoundError
+___________________ test_save_applied_does_nothing_if_no_db ____________________
+
+tmp_path = PosixPath('/private/var/folders/dp/v0tcq3nd30v26pyl0rm4bz4w0000gn/T/pytest-of-terobyte/pytest-25/test_save_applied_does_nothing0')
+
+    def test_save_applied_does_nothing_if_no_db(tmp_path):
+>       from src.gui.db_helpers import save_applied_to_db
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_db_helpers.py:177: ModuleNotFoundError
+_____________________ test_run_scan_async_calls_aggregator _____________________
+
+    @pytest.mark.asyncio
+    async def test_run_scan_async_calls_aggregator():
+>       from src.gui.scan_service import _run_scan_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_scan_service.py:19: ModuleNotFoundError
+___________ test_run_scan_async_includes_bamboohr_when_in_providers ____________
+
+    @pytest.mark.asyncio
+    async def test_run_scan_async_includes_bamboohr_when_in_providers():
+>       from src.gui.scan_service import _run_scan_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_scan_service.py:42: ModuleNotFoundError
+______________________ test_run_scan_thread_calls_on_done ______________________
+
+    def test_run_scan_thread_calls_on_done():
+>       from src.gui.scan_service import run_scan_thread
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_scan_service.py:65: ModuleNotFoundError
+__________ test_run_scan_thread_calls_on_done_with_empty_on_exception __________
+
+    def test_run_scan_thread_calls_on_done_with_empty_on_exception():
+>       from src.gui.scan_service import run_scan_thread
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_scan_service.py:81: ModuleNotFoundError
+___________________ test_run_indeed5_async_limits_to_5_jobs ____________________
+
+    @pytest.mark.asyncio
+    async def test_run_indeed5_async_limits_to_5_jobs():
+>       from src.gui.scan_service import _run_indeed5_async
+E       ModuleNotFoundError: No module named 'src'
+
+tests/gui/test_scan_service.py:101: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[ashby--src.applier.ashby_apply-AshbyApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[greenhouse--src.applier.greenhouse_apply-GreenhouseApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[lever--src.applier.lever_apply-LeverApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[bamboohr--src.applier.bamboohr_apply-BambooHRApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[workday--src.applier.workday_apply-WorkdayApplier]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[-indeed-src.applier.indeed_router-IndeedRouter]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_routes_correctly[unknown--src.applier.indeed_router-IndeedRouter]
+FAILED tests/gui/test_apply_service.py::test_apply_job_async_returns_error_for_unsupported_ats
+FAILED tests/gui/test_apply_service.py::test_run_apply_thread_calls_on_done_with_result
+FAILED tests/gui/test_apply_service.py::test_run_apply_thread_handles_exception
+FAILED tests/gui/test_db_helpers.py::test_load_config_returns_dict_on_valid_file
+FAILED tests/gui/test_db_helpers.py::test_load_config_returns_empty_dict_on_missing_file
+FAILED tests/gui/test_db_helpers.py::test_load_queries_extracts_list - Module...
+FAILED tests/gui/test_db_helpers.py::test_load_queries_default_on_empty_config
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_empty_when_no_db
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_returns_applied_rows
+FAILED tests/gui/test_db_helpers.py::test_fetch_applied_jobs_handles_broken_raw_data
+FAILED tests/gui/test_db_helpers.py::test_save_applied_inserts_new_row - Modu...
+FAILED tests/gui/test_db_helpers.py::test_save_applied_upserts_existing_row
+FAILED tests/gui/test_db_helpers.py::test_save_applied_does_nothing_if_no_db
+FAILED tests/gui/test_scan_service.py::test_run_scan_async_calls_aggregator
+FAILED tests/gui/test_scan_service.py::test_run_scan_async_includes_bamboohr_when_in_providers
+FAILED tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done - M...
+FAILED tests/gui/test_scan_service.py::test_run_scan_thread_calls_on_done_with_empty_on_exception
+FAILED tests/gui/test_scan_service.py::test_run_indeed5_async_limits_to_5_jobs
+============================== 25 failed in 0.11s ==============================

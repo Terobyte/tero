@@ -1,0 +1,152 @@
+Tool result: """
+Ashby job application module with screenshot proof.
+"""
+import asyncio
+import os
+from pathlib import Path
+from urllib.parse import urlparse
+from playwright.async_api import async_playwright
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from src.database.db import Database
+
+
+class AshbyApplier:
+    """Handles job applications via Ashby platform with screenshot capture."""
+    
+    PLATFORM = "ashby"
+    SCREENSHOT_DIR = Path("data/screenshots")
+    
+    def __init__(self, headless: bool = True):
+        self.headless = headless
+        self.db = Database()
+        self.SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def _generate_screenshot_path(self, company: str, job_id: str) -> Path:
+        """Generate screenshot filename."""
+        safe_company = company.replace(" ", "_").replace("/", "_")[:30]
+        safe_job_id = job_id[:12]
+        return self.SCREENSHOT_DIR / f"{self.PLATFORM}_{safe_company}_{safe_job_id}.png"
+    
+    async def apply(self, job_url: str, job_id: str, company: str) -> dict:
+        """
+        Apply to a job via Ashby and capture screenshot proof.
+        
+        Args:
+            job_url: URL to the job application page
+            job_id: Unique job identifier
+            company: Company name for screenshot naming
+            
+        Returns:
+            dict with 'success', 'screenshot_path', 'error' keys
+        """
+        result = {
+            "success": False,
+            "screenshot_path": None,
+            "error": None
+        }
+        
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=self.headless)
+                context = await browser.new_context()
+                page = await context.new_page()
+                
+                # Navigate to job page
+                await page.goto(job_url, wait_until="networkidle", timeout=60000)
+                
+                # Wait for page to load
+                await page.wait_for_timeout(2000)
+                
+                # Fill application form (basic implementation)
+                # Note: Ashby forms vary by company, this is a generic approach
+                try:
+                    # Look for apply button/form
+                    apply_button = await page.query_selector('button:has-text("Apply"), a:has-text("Apply")')
+                    if apply_button:
+                        await apply_button.click()
+                        await page.wait_for_timeout(2000)
+                    
+                    # Check for success indicator
+                    # Ashby typically shows "Application submitted" message
+                    success_selectors = [
+                        'text="Application submitted"',
+                        'text="Thank you for applying"',
+                        'text="Your application has been received"',
+                        '.application-success',
+                        '[data-testid="application-success"]'
+                    ]
+                    
+                    submitted = False
+                    for selector in success_selectors:
+                        try:
+                            element = await page.query_selector(selector)
+                            if element:
+                                submitted = True
+                                break
+                        except:
+                            continue
+                    
+                    if not submitted:
+                        # Try to submit form if buttons exist
+                        submit_btn = await page.query_selector('button[type="submit"], input[type="submit"]')
+                        if submit_btn:
+                            await submit_btn.click()
+                            await page.wait_for_timeout(5000)
+                    
+                except Exception as form_error:
+                    # Form interaction failed, but we'll still take a screenshot
+                    result["error"] = f"Form interaction: {str(form_error)}"
+                
+                # Always capture screenshot
+                screenshot_path = self._generate_screenshot_path(company, job_id)
+                await page.screenshot(path=str(screenshot_path), full_page=True)
+                
+                result["screenshot_path"] = str(screenshot_path)
+                result["success"] = True
+                
+                # Update database with screenshot path
+                self.db.update_status(job_id, "applied", str(screenshot_path))
+                
+                await browser.close()
+                
+        except Exception as e:
+            result["error"] = str(e)
+            
+        return result
+
+
+def apply_to_job(job_url: str, job_id: str, company: str, headless: bool = True) -> dict:
+    """
+    Synchronous wrapper for Ashby application.
+    
+    Args:
+        job_url: URL to the job application page
+        job_id: Unique job identifier  
+        company: Company name
+        headless: Run browser in headless mode
+        
+    Returns:
+        dict with application result
+    """
+    applier = AshbyApplier(headless=headless)
+    return asyncio.run(applier.apply(job_url, job_id, company))
+
+
+if __name__ == "__main__":
+    # Test application
+    import sys
+    
+    if len(sys.argv) < 4:
+        print("Usage: python ashby_apply.py <job_url> <job_id> <company>")
+        sys.exit(1)
+    
+    url = sys.argv[1]
+    jid = sys.argv[2]
+    company = sys.argv[3]
+    
+    result = apply_to_job(url, jid, company, headless=False)
+    print(f"Result: {result}")
+
+🔍 150 lines read

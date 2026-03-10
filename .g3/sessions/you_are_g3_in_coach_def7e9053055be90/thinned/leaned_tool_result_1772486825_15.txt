@@ -1,0 +1,178 @@
+Tool result: """
+Greenhouse application module with screenshot proof.
+"""
+import os
+from pathlib import Path
+from datetime import datetime
+from playwright.async_api import async_playwright
+from src.database.db import Database
+
+
+SCREENSHOTS_DIR = Path(__file__).parent.parent.parent / "data" / "screenshots"
+
+
+async def apply_to_greenhouse(job: dict, user_profile: dict) -> dict:
+    """
+    Apply to a Greenhouse job posting.
+    
+    Args:
+        job: Job dict with keys: id, title, company, url
+        user_profile: User profile dict with personal info
+    
+    Returns:
+        dict with keys: success (bool), screenshot_path (str|None), error (str|None)
+    """
+    # Ensure screenshots directory exists
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    
+    result = {
+        "success": False,
+        "screenshot_path": None,
+        "error": None
+    }
+    
+    job_id = job.get("id", "unknown")
+    company = job.get("company", "unknown").replace(" ", "_").replace("/", "_")
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
+            page = await context.new_page()
+            
+            # Navigate to job URL
+            await page.goto(job.get("url", ""), timeout=60000)
+            await page.wait_for_load_state("networkidle")
+            
+            # Fill application form
+            # Name fields
+            try:
+                await page.fill('input[name="first_name"]', user_profile.get("first_name", ""))
+                await page.fill('input[name="last_name"]', user_profile.get("last_name", ""))
+            except Exception:
+                pass  # Fields might not exist
+            
+            # Email
+            try:
+                await page.fill('input[name="email"]', user_profile.get("email", ""))
+            except Exception:
+                pass
+            
+            # Phone
+            try:
+                await page.fill('input[name="phone"]', user_profile.get("phone", ""))
+            except Exception:
+                pass
+            
+            # Location
+            try:
+                await page.fill('input[name="location"]', user_profile.get("location", ""))
+            except Exception:
+                pass
+            
+            # Resume upload
+            resume_path = user_profile.get("resume_path")
+            if resume_path and os.path.exists(resume_path):
+                try:
+                    resume_input = await page.query_selector('input[type="file"][name="resume"]')
+                    if resume_input:
+                        await resume_input.set_input_files(resume_path)
+                except Exception:
+                    pass
+            
+            # LinkedIn URL
+            try:
+                await page.fill('input[name="linkedin"]', user_profile.get("linkedin_url", ""))
+            except Exception:
+                pass
+            
+            # Cover letter
+            try:
+                await page.fill('textarea[name="cover_letter"]', user_profile.get("cover_letter", ""))
+            except Exception:
+                pass
+            
+            # Handle custom questions (if any)
+            # Try to find and fill common questions
+            try:
+                # "Why do you want to work here?"
+                why_work = await page.query_selector('textarea[name*="why"]')
+                if why_work:
+                    await why_work.fill(user_profile.get("why_work_here", ""))
+            except Exception:
+                pass
+            
+            # Click submit button
+            # Greenhouse uses different submit button patterns
+            submit_selectors = [
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button:has-text("Submit")',
+                'button:has-text("Apply")'
+            ]
+            
+            submitted = False
+            for selector in submit_selectors:
+                try:
+                    submit_btn = await page.query_selector(selector)
+                    if submit_btn:
+                        await submit_btn.click()
+                        submitted = True
+                        break
+                except Exception:
+                    continue
+            
+            if not submitted:
+                result["error"] = "Could not find submit button"
+                await browser.close()
+                return result
+            
+            # Wait for confirmation
+            await page.wait_for_timeout(3000)
+            
+            # Check for success indicators
+            page_content = await page.content()
+            success_indicators = [
+                "Application submitted",
+                "Thank you for applying",
+                "application has been received",
+                "successfully submitted"
+            ]
+            
+            is_success = any(ind.lower() in page_content.lower() for ind in success_indicators)
+            
+            if is_success:
+                # Take screenshot as proof
+                screenshot_filename = f"greenhouse_{company}_{job_id}.png"
+                screenshot_path = SCREENSHOTS_DIR / screenshot_filename
+                await page.screenshot(path=str(screenshot_path))
+                
+                result["success"] = True
+                result["screenshot_path"] = str(screenshot_path)
+                
+                # Update database
+                db = Database()
+                db.update_status(
+                    job_id=job_id,
+                    status="applied",
+                    screenshot_path=str(screenshot_path)
+                )
+            else:
+                result["error"] = "Application may not have been submitted successfully"
+            
+            await browser.close()
+            
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+
+def apply_to_greenhouse_sync(job: dict, user_profile: dict) -> dict:
+    """
+    Synchronous wrapper for Greenhouse application.
+    """
+    import asyncio
+    return asyncio.run(apply_to_greenhouse(job, user_profile))
+
+🔍 176 lines read
