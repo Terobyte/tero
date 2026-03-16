@@ -1,0 +1,7 @@
+Tool result: ./src/applier/indeed_apply.py:33:from src.stealth.audio_captcha_solver import AudioCaptchaSolver
+./src/applier/indeed_apply.py:503:          1. AudioCaptchaSolver  → если checkbox доступен (редко, но возможно)
+./src/applier/indeed_apply.py:510:        # ── Попытка 1: AudioCaptchaSolver ──────────────────────────────────
+./src/applier/indeed_apply.py:511:        from src.stealth.audio_captcha_solver import AudioCaptchaSolver
+./src/applier/indeed_apply.py:513:            solver = AudioCaptchaSolver()
+./src/applier/indeed_apply.py:518:                logger.info("✅ reCAPTCHA: AudioCaptchaSolver решил!")
+./src/applier/indeed_apply.py:520:            logger.debug(f"AudioCaptchaSolver: {e}")

@@ -1,0 +1,26 @@
+135342-MqT, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+135342-ojV, usr,  27K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+135346-uKz, ass,   0K 🟢, 
+135346-Dip, usr,   0K 🟢, Tool result: ./tests/test_features_2_7.py ./tests/__init__.py ./tests/test_cost_tracker.py ./main.py ./src/pkb/__init__.
+135346-eif, ass,   0K 🟢, 
+135346-cXE, usr,   0K 🟢, Tool result: total 72 -rw-r--r--@ 1 terobyte  staff    220 Mar 14 13:04 __init__.py drwxr-xr-x@ 6 terobyte  staff    192
+135346-JZz, ass,   0K 🟢, 
+135346-Typ, usr,   0K 🟢, Tool result: total 168 -rw-r--r--@  1 terobyte  staff     90 Mar 14 12:28 __init__.py drwxr-xr-x@ 11 terobyte  staff    
+135346-DrN, ass,   0K 🟢, 
+135346-qQD, usr,   0K 🟢, Tool result: total 96 -rw-r--r--@  1 terobyte  staff    114 Mar 14 12:37 __init__.py drwxr-xr-x@ 10 terobyte  staff    3
+135349-eZR, ass,   0K 🟢, 
+135349-huJ, usr,   4K 🟡, Tool result: """ AI Cost Tracking — отслеживание расходов на LLM API.  Паттерн: Singleton + ContextVar для job_id без из
+135349-yyX, ass,   0K 🟢, 
+135349-jZw, usr,   4K 🟡, Tool result: # src/ai/knowledge_base.py """ VectorKnowledgeBase — ChromaDB-backed персистентная база знаний кандидата.  
+135349-dri, ass,   0K 🟢, 
+135349-cvz, usr,   2K 🟡, Tool result: # src/ai/gap_recommender.py """ GapRecommender — рекомендации как закрыть пробелы в опыте.  Input: GapAnaly
+135349-UBH, ass,   0K 🟢, 
+135349-VaP, usr,   2K 🟡, Tool result: # src/ai/nlg.py """ NaturalLanguageGenerator — генерация уникальных ответов на screening вопросы.  Ключевые
+135352-jHN, ass,   0K 🟢, 
+135352-RQr, usr,   2K 🟡, Tool result: # src/ai/match_rate.py """ MatchRateCalculator — оценка соответствия JD и профиля кандидата.  Возвращает де
+135352-QmC, ass,   0K 🟢, 
+135352-vDx, usr,   1K 🟡, Tool result: # src/ai/embeddings.py """ EmbeddingsPipeline — RAG pipeline поверх VectorKnowledgeBase.  Отвечает за: 1. И
+135352-fVh, ass,   0K 🟢, 
+135352-FGM, usr,   4K 🟡, Tool result: # src/ai/llm_client.py """ LLM Client — унифицированный интерфейс для LLM провайдеров.  Поддерживает: - Kim
+
+--- TOTAL:  52K /  98K (53.1%) ---

@@ -1,0 +1,204 @@
+Tool result: # src/learning/ab_tester.py
+"""
+ABTester — epsilon-greedy A/B тестирование вариантов резюме/cover letter.
+
+Алгоритм:
+- Epsilon-greedy: 10% времени — случайный вариант (exploration)
+- 90% — лучший по Wilson score (exploitation)
+- Wilson score учитывает малые выборки корректно
+
+Usage:
+    tester = ABTester()
+    
+    # Зарегистрировать варианты
+    tester.register("cover_letter_style", ["formal", "friendly", "concise"])
+    
+    # Выбрать вариант для вакансии
+    variant = tester.choose("cover_letter_style")  # -> "formal"
+    
+    # Записать результат (после получения отклика от работодателя)
+    tester.record_outcome("cover_letter_style", variant, success=True)
+    
+    # Посмотреть статистику
+    stats = tester.stats("cover_letter_style")
+"""
+from __future__ import annotations
+
+import json
+import math
+import random
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from loguru import logger
+
+AB_DATA_PATH = Path("data/ab_tests.json")
+
+
+@dataclass
+class VariantStats:
+    """Статистика одного варианта."""
+    name: str
+    trials: int = 0
+    successes: int = 0
+
+    @property
+    def success_rate(self) -> float:
+        return self.successes / self.trials if self.trials > 0 else 0.0
+
+    @property
+    def wilson_score(self) -> float:
+        """
+        Wilson score interval (нижняя граница).
+        Корректно работает на малых выборках.
+        Чем больше trials — тем точнее.
+        """
+        if self.trials == 0:
+            return 0.0
+        n = self.trials
+        p = self.successes / n
+        z = 1.96  # 95% confidence
+        denominator = 1 + z**2 / n
+        center = (p + z**2 / (2 * n)) / denominator
+        spread = z * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denominator
+        return center - spread  # нижняя граница = консервативная оценка
+
+
+@dataclass
+class Experiment:
+    """Один A/B эксперимент."""
+    name: str
+    variants: dict[str, VariantStats] = field(default_factory=dict)
+    epsilon: float = 0.1  # вероятность exploration
+
+
+class ABTester:
+    """
+    Epsilon-greedy A/B тестер.
+
+    Сохраняет состояние в data/ab_tests.json между запусками.
+    """
+
+    def __init__(self, data_path: Path = AB_DATA_PATH, epsilon: float = 0.1):
+        self._path = Path(data_path)  # Convert to Path in case string is passed
+        self._epsilon = epsilon
+        self._experiments: dict[str, Experiment] = self._load()
+
+    def register(self, name: str, variants: list[str]) -> None:
+        """Зарегистрировать эксперимент с вариантами."""
+        if name not in self._experiments:
+            exp = Experiment(name=name, epsilon=self._epsilon)
+            for v in variants:
+                exp.variants[v] = VariantStats(name=v)
+            self._experiments[name] = exp
+            self._save()
+            logger.info(f"A/B: registered '{name}' with {len(variants)} variants")
+        else:
+            # Добавить новые варианты если появились
+            for v in variants:
+                if v not in self._experiments[name].variants:
+                    self._experiments[name].variants[v] = VariantStats(name=v)
+            self._save()
+
+    def choose(self, name: str) -> Optional[str]:
+        """
+        Выбрать вариант (epsilon-greedy).
+        
+        Returns: название выбранного варианта или None если эксперимент не найден.
+        """
+        exp = self._experiments.get(name)
+        if not exp or not exp.variants:
+            return None
+
+        # Exploration: случайный вариант
+        if random.random() < exp.epsilon:
+            chosen = random.choice(list(exp.variants.keys()))
+            logger.debug(f"A/B '{name}': exploration → '{chosen}'")
+            return chosen
+
+        # Exploitation: лучший по Wilson score
+        chosen = max(exp.variants.values(), key=lambda v: v.wilson_score).name
+        logger.debug(
+            f"A/B '{name}': exploit → '{chosen}' "
+            f"(score={exp.variants[chosen].wilson_score:.3f})"
+        )
+        return chosen
+
+    def record_outcome(self, name: str, variant: str, success: bool) -> None:
+        """Записать результат эксперимента."""
+        exp = self._experiments.get(name)
+        if not exp:
+            logger.warning(f"A/B: experiment '{name}' not found")
+            return
+        vs = exp.variants.get(variant)
+        if not vs:
+            logger.warning(f"A/B: variant '{variant}' not in '{name}'")
+            return
+        vs.trials += 1
+        if success:
+            vs.successes += 1
+        self._save()
+        logger.info(
+            f"A/B '{name}/{variant}': {'✅' if success else '❌'} "
+            f"({vs.successes}/{vs.trials} = {vs.success_rate:.0%})"
+        )
+
+    def stats(self, name: str) -> dict:
+        """Полная статистика эксперимента."""
+        exp = self._experiments.get(name)
+        if not exp:
+            return {}
+        return {
+            "experiment": name,
+            "variants": {
+                v: {
+                    "trials": vs.trials,
+                    "successes": vs.successes,
+                    "rate": f"{vs.success_rate:.0%}",
+                    "wilson": f"{vs.wilson_score:.3f}",
+                }
+                for v, vs in exp.variants.items()
+            },
+            "leader": max(exp.variants.values(), key=lambda v: v.wilson_score).name
+            if exp.variants else None,
+        }
+
+    def all_stats(self) -> dict:
+        """Статистика всех экспериментов."""
+        return {name: self.stats(name) for name in self._experiments}
+
+    def _load(self) -> dict[str, Experiment]:
+        if not self._path.exists():
+            return {}
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            result = {}
+            for name, data in raw.items():
+                exp = Experiment(name=name, epsilon=data.get("epsilon", self._epsilon))
+                for v_name, v_data in data.get("variants", {}).items():
+                    exp.variants[v_name] = VariantStats(
+                        name=v_name,
+                        trials=v_data.get("trials", 0),
+                        successes=v_data.get("successes", 0),
+                    )
+                result[name] = exp
+            return result
+        except Exception as e:
+            logger.warning(f"A/B: load failed: {e}")
+            return {}
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        for name, exp in self._experiments.items():
+            data[name] = {
+                "epsilon": exp.epsilon,
+                "variants": {
+                    v: {"trials": vs.trials, "successes": vs.successes}
+                    for v, vs in exp.variants.items()
+                },
+            }
+        self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+🔍 202 lines read

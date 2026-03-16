@@ -1,0 +1,120 @@
+Tool result: # Indeed Form Question-Answering System - Environment Variables
+# Copy this file to .env and fill in your values
+
+# ============================================
+# API Keys (Required for AI answering)
+# ============================================
+
+# Gemini API Key (Primary AI provider)
+# Get yours at: https://makersuite.google.com/app/apikey
+GEMINI_API_KEY=
+
+# Anthropic API Key (Fallback AI provider - optional)
+# Get yours at: https://console.anthropic.com/
+ANTHROPIC_API_KEY=
+
+# Telegram Bot Token (For profile setup via /setup command)
+# Get yours at: https://t.me/botfather
+TELEGRAM_BOT_TOKEN=
+
+# ============================================
+# Candidate Personal Info
+# ============================================
+
+APPLICANT_FIRST_NAME=Tim
+APPLICANT_LAST_NAME=J.
+APPLICANT_EMAIL=your.email@example.com
+APPLICANT_PHONE=1-XXX-XXXXXXX
+
+# ============================================
+# Certifications (Yes/No)
+# ============================================
+
+HAS_DRIVERS_LICENSE=No
+HAS_COMPTIA_A_PLUS=No
+HAS_SECURITY_PLUS=No
+HAS_AWS_CERT=No
+HAS_BACHELORS_DEGREE=No
+HAS_MASTERS_DEGREE=No
+HAS_CCNA=No
+HAS_PMP=No
+HAS_AZURE_CERT=No
+HAS_GCP_CERT=No
+
+# ============================================
+# Work Conditions (Yes/No)
+# ============================================
+
+WILLING_TO_TRAVEL=No
+WILLING_TO_RELOCATE=No
+WORK_WEEKENDS=Yes
+WORK_OVERTIME=Yes
+WORK_NIGHTS=No
+AVAILABLE_ON_CALL=Yes
+PREFER_REMOTE=Yes
+ACCEPT_HYBRID=Yes
+
+# ============================================
+# Tech Experience (Years - numeric)
+# ============================================
+
+YEARS_PYTHON=3
+YEARS_JAVA=0
+YEARS_REACT=1
+YEARS_NODEJS=0
+YEARS_JAVASCRIPT=1
+YEARS_DOCKER=1
+YEARS_KUBERNETES=0
+YEARS_SQL=2
+YEARS_GIT=2
+YEARS_LINUX=3
+YEARS_NETWORKING=2
+YEARS_WINDOWS_SERVER=1
+YEARS_ACTIVE_DIRECTORY=1
+YEARS_OFFICE365=2
+YEARS_SALESFORCE=0
+YEARS_SERVICENOW=0
+YEARS_VMWARE=1
+YEARS_AZURE=0
+YEARS_GCP=0
+YEARS_TERRAFORM=0
+YEARS_ANSIBLE=0
+YEARS_JENKINS=0
+
+# ============================================
+# Work Authorization
+# ============================================
+
+AUTHORIZED_TO_WORK_US=Yes
+REQUIRES_SPONSORSHIP=No
+
+# ============================================
+# Salary Expectations (USD)
+# ============================================
+
+EXPECTED_SALARY_USD=60000
+MINIMUM_SALARY_USD=50000
+
+# ============================================
+# Availability
+# ============================================
+
+START_DATE=immediately
+NOTICE_PERIOD_WEEKS=0
+
+# ============================================
+# Comfort Questions (Yes/No)
+# ============================================
+
+COMFORTABLE_FAST_PACED=Yes
+WORK_INDEPENDENTLY=Yes
+HANDLE_AMBIGUITY=Yes
+CUSTOMER_FACING_OK=Yes
+
+# ============================================
+# Cover Letter (Optional)
+# ============================================
+
+APPLICANT_COVER_LETTER=
+
+🔍 118 lines read

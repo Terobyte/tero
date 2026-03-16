@@ -1,0 +1,22 @@
+135413-BMt, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+135413-jfT, usr,  27K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+135417-mFl, ass,   0K 🟢, 
+135417-HAd, usr,   0K 🟢, Tool result: ./tests/test_features_2_7.py ./tests/__init__.py ./tests/test_cost_tracker.py ./main.py ./src/pkb/__init__.
+135417-wDY, ass,   0K 🟢, 
+135417-zHT, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@  1 terobyte  staff  306 Mar 14 13:04 __init__.py drwxr-xr-x@  3 terobyte  staff   96 Ma
+135419-KtW, ass,   0K 🟢, 
+135419-wMS, usr,   4K 🟡, Tool result: """ AI Cost Tracking — отслеживание расходов на LLM API.  Паттерн: Singleton + ContextVar для job_id без из
+135419-XBw, ass,   0K 🟢, 
+135419-XXu, usr,   4K 🟡, Tool result: # src/ai/knowledge_base.py """ VectorKnowledgeBase — ChromaDB-backed персистентная база знаний кандидата.  
+135419-VKY, ass,   0K 🟢, 
+135419-MlJ, usr,   2K 🟡, Tool result: # src/ai/gap_recommender.py """ GapRecommender — рекомендации как закрыть пробелы в опыте.  Input: GapAnaly
+135419-MvA, ass,   0K 🟢, 
+135419-BtS, usr,   2K 🟡, Tool result: # src/ai/nlg.py """ NaturalLanguageGenerator — генерация уникальных ответов на screening вопросы.  Ключевые
+135422-JLY, ass,   0K 🟢, 
+135422-ctg, usr,   1K 🟡, Tool result: # src/ai/embeddings.py """ EmbeddingsPipeline — RAG pipeline поверх VectorKnowledgeBase.  Отвечает за: 1. И
+135422-MUa, ass,   0K 🟢, 
+135422-EUX, usr,   2K 🟡, Tool result: # src/ai/match_rate.py """ MatchRateCalculator — оценка соответствия JD и профиля кандидата.  Возвращает де
+135422-pYp, ass,   0K 🟢, 
+135422-VED, usr,   0K 🟢, Tool result: # src/applier/universal_screening/snapshot.py """ StepSnapshot — снэпшот DOM-состояния формы перед/после fi
+
+--- TOTAL:  47K /  98K (48.4%) ---

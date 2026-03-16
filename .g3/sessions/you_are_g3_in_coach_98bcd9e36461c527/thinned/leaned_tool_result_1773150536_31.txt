@@ -1,0 +1,294 @@
+Tool result: # src/applier/indeed_router.py
+"""
+Indeed Router — для вакансий с unknown ATS.
+
+Стратегия:
+1. Открываем apply_url в patchright (stealth браузер)
+2. Ждём загрузки и редиретов (компания может использовать custom domain)
+3. Определяем ATS через HTML (detect_from_page из ATSDetector)
+4. Роутим к нужному applier
+5. Если ATS всё ещё unknown — пробуем LLM semantic fallback (до 8 шагов)
+6. Если LLM не помог — возвращаем open_url для ручного заполнения
+"""
+
+import asyncio
+import re
+import urllib.parse
+from pathlib import Path
+from typing import Any, Dict, Optional, TYPE_CHECKING
+from loguru import logger
+
+from src.stealth.browser_stealth import StealthBrowser
+from src.stealth.timing_engine import gaussian_delay
+from src.applier.ats_detector import ATSDetector
+from src.applier.universal_ai_filler import UniversalAIFiller
+from src.applier.form_pattern_store import FormPatternStore
+from src.applier.universal_screening import UniversalScreeningHandler
+from src.platforms.base_scraper import Job
+
+if TYPE_CHECKING:
+    from src.applier.selector_engine import SelectorEngine
+    from src.applier.selector_health import SelectorHealthMonitor
+
+INDEED_COOKIES = Path("data/indeed_cookies.json")
+
+
+class IndeedRouter:
+    """
+    Роутер для Indeed-вакансий и вакансий с unknown ATS.
+
+    Открывает страницу в stealth-браузере, определяет ATS по HTML,
+    затем передаёт управление соответствующему applier.
+    """
+
+    def __init__(
+        self,
+        selector_engine: Optional["SelectorEngine"] = None,
+        health_monitor: Optional["SelectorHealthMonitor"] = None,
+    ) -> None:
+        """
+        Args:
+            selector_engine: Shared SelectorEngine instance (Phase 4 injection).
+                            If None, IndeedApplier creates its own.
+            health_monitor: Shared SelectorHealthMonitor instance.
+                           If None, no health tracking.
+        """
+        self.selector = selector_engine
+        self.health = health_monitor
+
+    async def route_and_apply(self, job: Job) -> Dict[str, Any]:
+        """
+        Определить ATS из HTML страницы и запустить нужный applier.
+
+        Args:
+            job: Job объект с apply_url (может быть custom domain)
+
+        Returns:
+            dict: {"success": bool, "error": str?, "ats_detected": str}
+        """
+        # Для Indeed-вакансий открываем job.url (indeed.com/viewjob),
+        # а не apply_url — он может быть Greenhouse/Lever URL'ом с 403/404.
+        # Реальный ATS определяется после клика "Apply" в браузере.
+        if getattr(job, "platform", "") == "indeed":
+            url = job.url or job.apply_url
+        else:
+            url = job.apply_url or job.url
+
+        if not url:
+            return {"success": False, "error": "no_url"}
+
+        logger.info(f"🔍 IndeedRouter: определяем ATS для {job.company} → {url[:60]}...")
+
+        try:
+            storage = str(INDEED_COOKIES) if INDEED_COOKIES.exists() else None
+            if storage:
+                logger.debug("IndeedRouter: загружаем сохранённую сессию Indeed")
+            else:
+                logger.warning("⚠️ IndeedRouter: нет cookies — нажми '🔑 Indeed Login' в GUI")
+
+            async with StealthBrowser(headed=True) as browser:
+                async with await browser.new_context(storage_state=storage) as ctx:
+                    page = await browser.new_page(ctx)
+
+                    await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                    await asyncio.sleep(gaussian_delay(2.0, 3.5))  # ждём редиректы
+
+                    detector = ATSDetector()
+                    ats = await detector.detect_from_page(page)
+                    final_url = page.url
+
+                    logger.info(f"🎯 IndeedRouter: ATS определён → {ats} (URL: {final_url[:60]}...)")
+
+                    # Обновляем job с найденным ATS
+                    job.ats_type = ats
+                    if final_url != url:
+                        job.apply_url = final_url
+
+                    # Если остались на indeed.com — это Indeed Easy Apply.
+                    # Приоритет URL над HTML-сигнатурами (HTML может содержать ссылки на Greenhouse
+                    # в тексте описания, но настоящий apply через встроенную форму Indeed).
+                    if "indeed.com" in final_url:
+                        if ats != "unknown":
+                            logger.info(
+                                f"ℹ️ IndeedRouter: HTML сигнатура '{ats}' игнорируется — "
+                                f"страница на indeed.com → Indeed Easy Apply"
+                            )
+                        from src.applier.indeed import IndeedApplier
+
+                        # Phase 4: degradation-aware apply
+                        alerts = self.health.check_degradation() if self.health else []
+                        if alerts:
+                            logger.warning(f"⚠️ IndeedRouter: деградировавшие селекторы: {[a.intent for a in alerts]}")
+
+                        job.apply_url = final_url
+                        result = await IndeedApplier(
+                            selector_engine=self.selector,
+                            health_monitor=self.health,
+                        ).apply_on_page(job, page)
+
+                        if not result.get("success") and alerts:
+                            result.setdefault("open_url", final_url)
+                            result["degraded_selectors"] = [a.intent for a in alerts]
+                        return result
+
+                    elif ats == "greenhouse":
+                        from src.applier.greenhouse import GreenhouseApplier
+                        return await GreenhouseApplier().apply_http(job)
+
+                    elif ats == "lever":
+                        from src.applier.lever_apply import LeverApplier
+                        return await LeverApplier().apply(job)
+
+                    elif ats == "ashby":
+                        from src.applier.ashby_apply import AshbyApplier
+                        return await AshbyApplier().apply(job)
+
+                    elif ats == "bamboohr":
+                        from src.applier.bamboohr_apply import BambooHRApplier
+                        return await BambooHRApplier().apply(job)
+
+                    elif ats == "workday":
+                        from src.applier.workday_apply import WorkdayApplier
+                        return await WorkdayApplier().apply(job)
+
+                    elif ats == "smartrecruiters":
+                        from src.applier.smartrecruiters_apply import SmartRecruitersApplier
+                        return await SmartRecruitersApplier().apply_http(job)
+
+                    else:
+                        # ATS неизвестен → пробуем LLM semantic fallback (Task 5)
+                        domain = re.sub(r"^www\.", "", urllib.parse.urlparse(final_url).netloc)
+                        logger.info(
+                            f"🤖 IndeedRouter: ATS не определён ({domain}) — "
+                            f"пробуем LLM fallback до 8 шагов..."
+                        )
+
+                        analyzer = UniversalAIFiller()
+                        store = FormPatternStore()
+                        screening = UniversalScreeningHandler()  # загружает profile.yaml
+                        saved_fps: list[str] = []
+
+                        for unk_step in range(8):
+                            snapshot = await analyzer.extract_semantic_snapshot(page)
+                            labels = [q["label"] for q in snapshot.get("questions", [])]
+                            fp = store.fingerprint_step(labels)
+
+                            if fp == "no_questions":
+                                logger.debug(f"Unknown ATS шаг {unk_step}: вопросов нет — пропускаем")
+                            else:
+                                # Кэшированный паттерн → быстро и бесплатно
+                                actions = store.load_pattern(domain, fp, unk_step)
+                                source = "pattern"
+                                if not actions:
+                                    actions = await analyzer.analyze_and_map(
+                                        page, screening.profile, snapshot=snapshot
+                                    )
+                                    source = "gemini"
+
+                                if actions:
+                                    filled = await analyzer.execute_actions(page, actions)
+                                    if filled > 0:
+                                        logger.info(
+                                            f"✅ Unknown ATS ({source}): заполнил {filled} полей, "
+                                            f"шаг {unk_step}"
+                                        )
+                                        if source == "gemini":
+                                            store.save_pattern(domain, fp, unk_step, actions)
+                                            saved_fps.append(fp)
+                                else:
+                                    logger.debug(f"Unknown ATS шаг {unk_step}: LLM не вернул actions")
+
+                            nav = await self._click_generic_nav(page)
+                            await asyncio.sleep(gaussian_delay(2.0, 3.5))
+
+                            # Проверяем успех по конкретным фразам (не "thank you" — слишком широко)
+                            try:
+                                content = (await page.content()).lower()
+                                if any(s in content for s in [
+                                    "application submitted", "thank you for your application",
+                                    "successfully applied", "your application has been received",
+                                ]):
+                                    if saved_fps:
+                                        store.confirm_all_pending(domain, saved_fps)
+                                        logger.info(
+                                            f"📚 Confirmed {len(saved_fps)} patterns для {domain}"
+                                        )
+                                    logger.success(
+                                        f"✅ IndeedRouter: unknown ATS подача успешна ({domain})"
+                                    )
+                                    return {
+                                        "success": True,
+                                        "platform": "unknown",
+                                        "ats_detected": ats,
+                                    }
+                            except Exception:
+                                pass
+
+                            if nav == "none":
+                                logger.debug("Unknown ATS: нет кнопки Continue/Submit — стоп")
+                                break
+
+                        # LLM тоже не помог
+                        logger.warning(
+                            f"⚠️ IndeedRouter: ATS не определён — LLM тоже не помог. "
+                            f"Открой вручную: {final_url[:60]}"
+                        )
+                        return {
+                            "success": False,
+                            "error": "ats_unknown",
+                            "open_url": final_url,
+                        }
+
+        except asyncio.TimeoutError:
+            logger.error(f"❌ IndeedRouter: timeout для {url}")
+            return {"success": False, "error": "timeout", "url": url}
+        except Exception as e:
+            logger.error(f"❌ IndeedRouter error: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _click_generic_nav(self, page) -> str:
+        """
+        Generic Continue/Submit для unknown ATS.
+
+        НЕ использует Indeed-specific селекторы — только универсальные.
+        Returns: "submitted" | "continued" | "none"
+        """
+        submit_sels = [
+            "button[type='submit']",
+            "input[type='submit']",
+            "button:has-text('Submit')",
+            "button:has-text('Apply')",
+            "button:has-text('Send Application')",
+            "button:has-text('Send')",
+        ]
+        continue_sels = [
+            "button:has-text('Next')",
+            "button:has-text('Continue')",
+            "button:has-text('Save and continue')",
+            "button:has-text('Save & Continue')",
+            "button:has-text('Proceed')",
+        ]
+
+        for sel in submit_sels:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0 and await btn.is_visible() and not await btn.is_disabled():
+                    await btn.click()
+                    logger.debug(f"🔘 _click_generic_nav: Submit [{sel}]")
+                    return "submitted"
+            except Exception:
+                pass
+
+        for sel in continue_sels:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click()
+                    logger.debug(f"🔘 _click_generic_nav: Continue [{sel}]")
+                    return "continued"
+            except Exception:
+                pass
+
+        return "none"
+
+🔍 292 lines read

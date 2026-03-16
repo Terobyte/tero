@@ -1,0 +1,664 @@
+Tool result: # src/applier/greenhouse/combobox_engine.py
+"""
+React Combobox Driver — multi-strategy form filler for Greenhouse dropdowns.
+
+743 lines of nested logic refactored into a clean class with testable methods.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+from loguru import logger
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page, ElementHandle
+
+from src.stealth.timing_engine import gaussian_delay
+from .combobox_js import (
+    GET_OPTS_JS,
+    FIND_OTHER_OPTION_JS,
+    FIND_SCHOOL_OTHER_JS,
+    GET_MENU_OPTS_JS,
+    GET_HIGHLIGHTED_OPT_JS,
+    CLICK_BY_TEXT_JS,
+)
+from .utils import get_label
+
+
+class ReactComboboxDriver:
+    """Isolated driver for a single React combobox element.
+    
+    Each strategy is a separate method for testability.
+    Usage:
+        driver = ReactComboboxDriver(page, element, label_hint="Country")
+        success = await driver.fill("United States")
+    """
+
+    def __init__(self, page: Page, element: ElementHandle, label_hint: str = "") -> None:
+        self.page = page
+        self.element = element
+        self.label_hint = label_hint or "?"
+        self._log = logger.bind(module="greenhouse.combobox_engine")
+
+    async def fill(self, value: str) -> bool:
+        """Entry point — try strategies in order until one succeeds."""
+        if not value:
+            return False
+
+        # Scroll into view first
+        try:
+            await self.element.scroll_into_view_if_needed()
+            await asyncio.sleep(0.3)
+        except Exception:
+            pass
+
+        # Strategy 0: focus + ArrowDown (official keyboard API)
+        if await self._try_direct_input(value):
+            return True
+
+        # Strategy 2: Type text → filter → select
+        if await self._try_dropdown_search(value):
+            return True
+
+        # Strategy 3: ArrowDown navigation
+        if await self._try_scroll_and_pick(value):
+            return True
+
+        # Strategy 4: JS fallback
+        if await self._try_js_fallback(value):
+            return True
+
+        self._log.warning(
+            f"⚠️ Combobox '{self.label_hint[:40]}': '{value}' not found in list"
+        )
+        return False
+
+    async def _wait_for_listbox(self, timeout_ms: int = 3500) -> bool:
+        """Wait for listbox options to appear."""
+        try:
+            await self.page.wait_for_selector(
+                "[role='listbox'] [role='option'], "
+                "[role='option'], "
+                "[class*='menu'] [class*='-option'], "
+                "[class*='option--is-focused'], "
+                "[class*='option--is-selected']",
+                timeout=timeout_ms,
+                state="attached",
+            )
+            return True
+        except Exception:
+            return False
+
+    async def _get_options(self) -> List[dict]:
+        """Get all visible options from dropdown."""
+        return await self.page.evaluate(GET_OPTS_JS, self.element)
+
+    async def _pick_option(self, opts: List[dict], value: str) -> bool:
+        """Click first matching option. Returns True if successful."""
+        val_lower = value.lower()
+
+        for exact in (True, False):
+            for opt in opts:
+                t = opt["text"].lower()
+                if exact:
+                    matched = t == val_lower
+                else:
+                    # word-boundary: "male" won't match "female"
+                    matched = bool(re.search(r'\b' + re.escape(val_lower) + r'\b', t))
+
+                if matched:
+                    # Method 1: Playwright role click
+                    try:
+                        await self.page.get_by_role(
+                            "option", name=opt["text"], exact=True
+                        ).first.click(timeout=2000)
+                        await asyncio.sleep(gaussian_delay(0.3, 0.5))
+                        self._log.info(
+                            f"✅ Combobox '{self.label_hint[:40]}': "
+                            f"'{value}' → option '{opt['text']}'"
+                        )
+                        return True
+                    except Exception:
+                        pass
+
+                    # Method 2: JS click by id
+                    if opt.get("id"):
+                        try:
+                            await self.page.evaluate(
+                                f"document.getElementById('{opt['id']}').click()"
+                            )
+                            await asyncio.sleep(gaussian_delay(0.2, 0.4))
+                            self._log.info(
+                                f"✅ Combobox '{self.label_hint[:40]}' (JS id): '{opt['text']}'"
+                            )
+                            return True
+                        except Exception:
+                            pass
+
+                    # Method 3: JS click by text
+                    try:
+                        clicked = await self.page.evaluate(CLICK_BY_TEXT_JS, opt["text"])
+                        if clicked:
+                            await asyncio.sleep(gaussian_delay(0.3, 0.5))
+                            self._log.info(
+                                f"✅ Combobox '{self.label_hint[:40]}' (JS text): '{opt['text']}'"
+                            )
+                            return True
+                    except Exception:
+                        pass
+
+                    # Method 4: Coordinate click (bbox)
+                    try:
+                        if await self._click_by_bbox(opt["text"], "[role='option'], [class*='-option']"):
+                            await asyncio.sleep(gaussian_delay(0.3, 0.5))
+                            self._log.info(
+                                f"✅ Combobox '{self.label_hint[:40]}' (bbox): '{opt['text']}'"
+                            )
+                            return True
+                    except Exception:
+                        pass
+        return False
+
+    async def _click_by_bbox(self, text: str, selectors: str) -> bool:
+        """Find element by text and click via coordinates."""
+        try:
+            bbox = await self.page.evaluate("""
+                (args) => {
+                    const [text, sel] = args;
+                    for (const el of document.querySelectorAll(sel)) {
+                        if (el.offsetParent === null) continue;
+                        const t = (el.innerText || el.textContent || '').trim();
+                        if (t.toLowerCase() === text.toLowerCase()) {
+                            el.scrollIntoView({block: 'center', behavior: 'instant'});
+                            const r = el.getBoundingClientRect();
+                            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+                        }
+                    }
+                    return null;
+                }
+            """, [text, selectors])
+            if bbox:
+                await self.page.mouse.click(bbox["x"], bbox["y"])
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def _try_direct_input(self, value: str) -> bool:
+        """Strategy 0+1: focus+ArrowDown → JS click control → look for option."""
+        try:
+            await self.element.focus()
+            await asyncio.sleep(0.2)
+            await self.page.keyboard.press("ArrowDown")
+            await asyncio.sleep(gaussian_delay(0.5, 0.8))
+
+            if await self._wait_for_listbox(3000):
+                opts = await self._get_options()
+                self._log.debug(f"Combobox '{self.label_hint[:40]}': str.0 (focus+↓) — {len(opts)} options")
+                if opts and await self._pick_option(opts, value):
+                    return True
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+            else:
+                self._log.debug(f"Combobox '{self.label_hint[:40]}': str.0 — no listbox, str.1")
+
+            # Strategy 1: JS click on .select__control
+            await self.page.evaluate("""
+                (el) => {
+                    const control = el.closest('[class*="control"]') ||
+                                    el.closest('[class*="Select"]') ||
+                                    el.parentElement?.closest('[class*="container"]');
+                    if (control) control.click();
+                    else el.click();
+                }
+            """, self.element)
+            await asyncio.sleep(gaussian_delay(0.4, 0.7))
+
+            if await self._wait_for_listbox(3000):
+                opts = await self._get_options()
+                if opts and await self._pick_option(opts, value):
+                    return True
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.2)
+
+            # Strategy 1.5: Type "Other" to find Other option
+            if await self._try_other_first(value):
+                return True
+        except Exception as e:
+            self._log.debug(f"_try_direct_input: {e}")
+
+        return False
+
+    async def _try_other_first(self, value: str) -> bool:
+        """Strategy 1.5: Type 'Other' to find Other option quickly."""
+        OTHER_KW = (
+            "other", "not listed", "i don't see", "don't see",
+            "none of the above", "not in the list"
+        )
+
+        await self.element.focus()
+        await asyncio.sleep(0.2)
+        await self.element.fill("")
+        await self.element.type("Other", delay=60)
+        await asyncio.sleep(gaussian_delay(0.8, 1.5))
+
+        other_result = await self.page.evaluate(FIND_OTHER_OPTION_JS)
+
+        if other_result:
+            self._log.info(
+                f"Combobox '{self.label_hint[:40]}': str.1.5 — found '{other_result['text']}'"
+            )
+
+            clicked = False
+            if other_result.get("x") and other_result.get("y"):
+                try:
+                    await self.page.mouse.click(other_result["x"], other_result["y"])
+                    await asyncio.sleep(gaussian_delay(0.3, 0.5))
+                    clicked = True
+                except Exception:
+                    pass
+
+            if not clicked:
+                try:
+                    await self.page.locator('[class*="-option"], [role="option"]') \
+                        .filter(has_text=other_result["text"]) \
+                        .first.click(timeout=2000)
+                    clicked = True
+                except Exception:
+                    pass
+
+            if not clicked:
+                try:
+                    await self.page.get_by_role(
+                        "option", name=other_result["text"], exact=True
+                    ).first.click(timeout=2000)
+                    clicked = True
+                except Exception:
+                    pass
+
+            if clicked:
+                await asyncio.sleep(gaussian_delay(0.5, 0.8))
+                self._log.info(
+                    f"✅ Combobox '{self.label_hint[:40]}': '{value}' not in list → "
+                    f"Other '{other_result['text']}'"
+                )
+                await self._fill_after_other(value)
+                return True
+
+        return False
+
+    async def _try_dropdown_search(self, value: str) -> bool:
+        """Strategy 2: Type text → filter → select."""
+        try:
+            await self.element.focus()
+            await asyncio.sleep(0.2)
+            await self.element.fill("")
+            await self.element.type(value, delay=50)
+            await asyncio.sleep(gaussian_delay(1.5, 2.5))
+
+            # Check for "I don't see my school" button
+            school_other = await self.page.evaluate(FIND_SCHOOL_OTHER_JS, self.element)
+            if school_other:
+                self._log.info(
+                    f"Combobox '{self.label_hint[:40]}': found '{school_other['text']}' button"
+                )
+                clicked = False
+                if school_other.get("x") and school_other.get("y"):
+                    try:
+                        await self.page.mouse.click(school_other["x"], school_other["y"])
+                        await asyncio.sleep(0.3)
+                        clicked = True
+                    except Exception:
+                        pass
+
+                if not clicked:
+                    try:
+                        clicked = await self.page.evaluate(CLICK_BY_TEXT_JS, school_other["text"])
+                    except Exception:
+                        pass
+
+                if clicked:
+                    await asyncio.sleep(gaussian_delay(0.4, 0.7))
+                    self._log.info(
+                        f"✅ Combobox '{self.label_hint[:40]}': '{value}' not in list → "
+                        f"'{school_other['text']}'"
+                    )
+                    await self._fill_after_other(value)
+                    return True
+
+            if await self._wait_for_listbox(4000):
+                opts = await self._get_options()
+                if opts:
+                    self._log.debug(
+                        f"Combobox '{self.label_hint[:40]}': str.2 — {len(opts)} options"
+                    )
+                    if await self._pick_option(opts, value):
+                        return True
+
+                    # Single option fallback
+                    if len(opts) == 1:
+                        try:
+                            await self.page.get_by_role(
+                                "option", name=opts[0]["text"], exact=True
+                            ).first.click(timeout=2000)
+                            await asyncio.sleep(0.3)
+                            self._log.info(
+                                f"✅ Combobox '{self.label_hint[:40]}' (str.2 single): '{opts[0]['text']}'"
+                            )
+                            return True
+                        except Exception:
+                            pass
+                else:
+                    # No options found — look for "Other" in visible menu
+                    if await self._find_and_click_other_in_menu(value):
+                        return True
+
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            self._log.debug(f"_try_dropdown_search: {e}")
+
+        return False
+
+    async def _find_and_click_other_in_menu(self, value: str) -> bool:
+        """Look for Other option when regular search returned 0 results."""
+        OTHER_KW = (
+            "other", "not listed", "i don't see", "don't see",
+            "none of the above", "not in the list"
+        )
+
+        opts = await self.page.evaluate(GET_VISIBLE_OPTS_JS)
+        self._log.debug(
+            f"Combobox '{self.label_hint[:40]}': str.2 — 0 options, menu: {[o['text'] for o in opts[:5]]}"
+        )
+
+        for opt in opts:
+            if any(kw in opt["text"].lower() for kw in OTHER_KW):
+                clicked = False
+                if opt.get("x") and opt.get("y"):
+                    try:
+                        await self.page.mouse.click(opt["x"], opt["y"])
+                        await asyncio.sleep(0.3)
+                        clicked = True
+                    except Exception:
+                        pass
+
+                if not clicked:
+                    try:
+                        await self.page.get_by_role("option", name=opt["text"], exact=True).first.click(timeout=2000)
+                        clicked = True
+                    except Exception:
+                        pass
+
+                if clicked:
+                    await asyncio.sleep(gaussian_delay(0.4, 0.7))
+                    self._log.info(f"✅ Combobox '{self.label_hint[:40]}': str.2 Other → '{opt['text']}'")
+                    await self._fill_after_other(value)
+                    return True
+        return False
+
+    async def _try_scroll_and_pick(self, value: str) -> bool:
+        """Strategy 3: ArrowDown × N + Enter keyboard navigation."""
+        try:
+            await self.element.fill("")
+            await asyncio.sleep(0.2)
+            await self.page.keyboard.press("ArrowDown")
+            await asyncio.sleep(0.5)
+
+            last_opt = ""
+            for i in range(20):
+                highlighted = await self.page.evaluate(GET_HIGHLIGHTED_OPTION_JS)
+                val_lower = value.lower()
+                h_lower = highlighted.lower() if highlighted else ""
+                matched = (h_lower == val_lower) or bool(
+                    re.search(r'\b' + re.escape(val_lower) + r'\b', h_lower)
+                )
+
+                if highlighted and matched:
+                    await self.page.keyboard.press("Enter")
+                    await asyncio.sleep(0.3)
+                    self._log.info(f"✅ Combobox '{self.label_hint[:40]}' (keyboard nav): '{highlighted}'")
+                    return True
+
+                if highlighted == last_opt and i > 2:
+                    break
+                last_opt = highlighted
+                await self.page.keyboard.press("ArrowDown")
+                await asyncio.sleep(0.15)
+        except Exception:
+            pass
+
+        return False
+
+    async def _try_js_fallback(self, value: str) -> bool:
+        """Strategy 4: JS dispatch change event as last resort."""
+        OTHER_KEYWORDS = (
+            "other", "not listed", "i don't see", "none of the above",
+            "not in the list"
+        )
+
+        try:
+            await self.element.fill("")
+            await asyncio.sleep(0.3)
+            await self.page.evaluate("""
+                (el) => {
+                    const control = el.closest('[class*="control"]') ||
+                                    el.closest('[class*="Select"]') ||
+                                    el.parentElement?.closest('[class*="container"]');
+                    if (control) control.click();
+                    else el.click();
+                }
+            """, self.element)
+            await asyncio.sleep(gaussian_delay(0.6, 1.0))
+
+            other_opts = []
+            if await self._wait_for_listbox(3000):
+                other_opts = await self._get_options()
+
+            if not other_opts:
+                await self.element.type("other", delay=50)
+                await asyncio.sleep(gaussian_delay(0.8, 1.2))
+                if await self._wait_for_listbox(2500):
+                    other_opts = await self._get_options()
+
+            for opt in other_opts:
+                if any(kw in opt["text"].lower() for kw in OTHER_KEYWORDS):
+                    clicked = False
+                    try:
+                        await self.page.get_by_role(
+                            "option", name=opt["text"], exact=True
+                        ).first.click(timeout=2000)
+                        clicked = True
+                    except Exception:
+                        pass
+
+                    if not clicked and opt.get("id"):
+                        try:
+                            await self.page.evaluate(
+                                f"document.getElementById('{opt['id']}').click()"
+                            )
+                            clicked = True
+                        except Exception:
+                            pass
+
+                    if not clicked:
+                        try:
+                            clicked = await self.page.evaluate("""
+                                (text) => {
+                                    const sel = "[role='option'], [class*='-option']";
+                                    for (const el of document.querySelectorAll(sel)) {
+                                        if (el.innerText.trim() === text && el.offsetParent !== null) {
+                                            el.click();
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                }
+                            """, opt["text"])
+                        except Exception:
+                            pass
+
+                    if clicked:
+                        await asyncio.sleep(gaussian_delay(0.5, 0.8))
+                        self._log.info(
+                            f"✅ Combobox '{self.label_hint[:40]}': "
+                            f"'{value}' not found → fallback '{opt['text']}'"
+                        )
+                        await self._fill_after_other(value)
+                        return True
+
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            self._log.debug(f"_try_js_fallback: {e}")
+
+        return False
+
+    async def _fill_after_other(self, value: str) -> bool:
+        """After selecting 'Other', find the appeared text input and fill it."""
+        try:
+            await asyncio.sleep(gaussian_delay(0.4, 0.7))
+
+            text_inp_id = await self.page.evaluate("""
+                (el) => {
+                    const container = el.closest(
+                        '[class*="education"], [class*="section"], fieldset, ' +
+                        '[class*="group"], [class*="row"], form'
+                    ) || el.parentElement;
+                    if (!container) return null;
+                    const candidates = container.querySelectorAll(
+                        'input[type="text"], input:not([type]):not([role="combobox"])'
+                    );
+                    for (const inp of candidates) {
+                        if (inp === el) continue;
+                        if (inp.offsetParent === null) continue;
+                        if (inp.value.trim()) continue;
+                        return inp.id || inp.name || '__found__';
+                    }
+                    return null;
+                }
+            """, self.element)
+
+            if not text_inp_id:
+                return False
+
+            if text_inp_id == '__found__':
+                await self.page.evaluate("""
+                    (el) => {
+                        const container = el.closest(
+                            '[class*="education"], [class*="section"], fieldset, ' +
+                            '[class*="group"], [class*="row"], form'
+                        ) || el.parentElement;
+                        if (!container) return;
+                        const candidates = container.querySelectorAll(
+                            'input[type="text"], input:not([type]):not([role="combobox"])'
+                        );
+                        for (const inp of candidates) {
+                            if (inp === el || inp.offsetParent === null || inp.value.trim()) continue;
+                            inp.focus();
+                            inp.value = '';
+                            break;
+                        }
+                    }
+                """, self.element)
+                await self.page.keyboard.type(value, delay=40)
+                self._log.info(f"✅ After 'Other' ({self.label_hint[:30]}): fill field → '{value}'")
+                return True
+
+            sel = f"#{text_inp_id}" if not text_inp_id.startswith('[') else f"[name='{text_inp_id}']"
+            text_el = await self.page.query_selector(sel)
+            if text_el and await text_el.is_visible():
+                await text_el.fill(value)
+                await asyncio.sleep(0.3)
+                self._log.info(f"✅ After 'Other' ({self.label_hint[:30]}): #{text_inp_id} → '{value}'")
+                return True
+        except Exception as e:
+            self._log.debug(f"_fill_after_other: {e}")
+
+        return False
+
+
+# Public helper functions (thin wrappers over driver)
+
+async def fill(page: Page, selector: str, value: str) -> None:
+    """Fill a combobox by selector."""
+    if not value:
+        return
+    try:
+        el = await page.query_selector(selector)
+        if el and await el.is_visible() and await el.is_enabled():
+            await fill_combobox_el(page, el, value, label_hint=selector)
+    except Exception as e:
+        logger.debug(f"greenhouse fill: {selector} → {e}")
+
+
+async def fill_combobox(page: Page, selector: str, value: str) -> None:
+    """Fill a React combobox by selector."""
+    if not value:
+        return
+    try:
+        el = await page.query_selector(selector)
+        if el and await el.is_visible() and await el.is_enabled():
+            await fill_combobox_el(page, el, value, label_hint=selector)
+    except Exception as e:
+        logger.debug(f"greenhouse fill_combobox wrapper: {selector} → {e}")
+
+
+async def fill_combobox_el(page: Page, element: ElementHandle, value: str, label_hint: str = "") -> bool:
+    """Fill a React combobox element directly."""
+    driver = ReactComboboxDriver(page, element, label_hint)
+    return await driver.fill(value)
+
+
+async def fill_after_other(page: Page, combobox_el: ElementHandle, value: str, hint: str = "") -> bool:
+    """After selecting 'Other' in combobox, fill the appeared text input."""
+    driver = ReactComboboxDriver(page, combobox_el, hint)
+    return await driver._fill_after_other(value)
+
+
+async def fill_select_native(element: ElementHandle, value: str) -> None:
+    """Fill a native <select> element."""
+    if not value:
+        return
+    try:
+        options = await element.evaluate(
+            "el => Array.from(el.options).map(o => ({value: o.value, text: o.text}))"
+        )
+        for opt in options:
+            if value.lower() in opt["text"].lower() or value.lower() in opt["value"].lower():
+                await element.select_option(value=opt["value"])
+                await asyncio.sleep(gaussian_delay(0.2, 0.4))
+                return
+        await element.select_option(label=value)
+    except Exception as e:
+        logger.debug(f"fill_select_native: {e}")
+
+
+async def click_by_bbox(page: Page, text: str, selectors: str) -> bool:
+    """Find element by text and click via coordinates."""
+    try:
+        bbox = await page.evaluate("""
+            (args) => {
+                const [text, sel] = args;
+                for (const el of document.querySelectorAll(sel)) {
+                    if (el.offsetParent === null) continue;
+                    const t = (el.innerText || el.textContent || '').trim();
+                    if (t.toLowerCase() === text.toLowerCase()) {
+                        el.scrollIntoView({block: 'center', behavior: 'instant'});
+                        const r = el.getBoundingClientRect();
+                        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+                    }
+                }
+                return null;
+            }
+        """, [text, selectors])
+        if bbox:
+            await page.mouse.click(bbox["x"], bbox["y"])
+            return True
+    except Exception:
+        pass
+    return False
+🔍 663 lines read

@@ -1,0 +1,67 @@
+Tool result: # src/applier/universal_screening/policy.py
+"""
+CriticalQuestionPolicy — финальный gate перед Submit/Continue.
+Блокирует переход если есть критические ошибки.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from loguru import logger
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.applier.universal_screening.batch_validator import Correction
+
+
+@dataclass
+class PolicyDecision:
+    allow_continue: bool
+    blocking_corrections: list["Correction"]
+    reason: str = ""
+
+
+class CriticalQuestionPolicy:
+    """
+    Gate policy: блокировать Continue если есть неисправленные critical errors.
+
+    Usage:
+        policy = CriticalQuestionPolicy()
+        decision = policy.evaluate(corrections, fixed_questions)
+        if not decision.allow_continue:
+            raise RuntimeError(decision.reason)
+    """
+
+    def evaluate(
+        self,
+        corrections: list["Correction"],
+        fixed_questions: list[str],
+    ) -> PolicyDecision:
+        """
+        Оценить можно ли продолжить.
+
+        Args:
+            corrections: Все коррекции от BatchValidator
+            fixed_questions: question_text успешно исправленных вопросов
+        """
+        critical_unfixed = [
+            c for c in corrections
+            if c.severity == "critical" and c.question_text not in fixed_questions
+        ]
+
+        if critical_unfixed:
+            reasons = "; ".join(
+                f"'{c.question_text[:30]}' ({c.reason})"
+                for c in critical_unfixed
+            )
+            logger.error(f"🚫 Policy BLOCK: {len(critical_unfixed)} critical unfixed: {reasons}")
+            return PolicyDecision(
+                allow_continue=False,
+                blocking_corrections=critical_unfixed,
+                reason=f"{len(critical_unfixed)} critical screening errors: {reasons}",
+            )
+
+        if corrections:
+            logger.info(f"✅ Policy PASS: all {len(corrections)} corrections applied")
+
+        return PolicyDecision(allow_continue=True, blocking_corrections=[])
+
+🔍 65 lines read

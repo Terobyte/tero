@@ -1,0 +1,88 @@
+092020-Qmv, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+092020-IgI, usr,  35K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+092024-lxG, ass,   0K 🟢, 
+092024-PCc, usr,   0K 🟢, Tool result: src/platforms/base_scraper.py src/platforms/indeed_api.py src/platforms/linkedin_voyager.py src/applier/uni
+092024-oKE, ass,   0K 🟢, 
+092024-wxk, usr,   0K 🟢, Tool result: tests/platforms/test_linkedin_voyager.py tests/platforms/test_indeed_api.py tests/platforms/__init__.py tes
+092024-YbG, ass,   0K 🟢, 
+092024-Vjz, usr,   0K 🟢, Tool result: total 56 -rw-r--r--@ 1 terobyte  staff    53 Mar 14 08:48 __init__.py drwxr-xr-x@ 6 terobyte  staff   192 M
+092024-zLv, ass,   0K 🟢, 
+092024-iXq, usr,   0K 🟢, Tool result: total 56 drwxr-xr-x@ 5 terobyte  staff    160 Mar 14 09:19 __pycache__ drwxr-xr-x@ 6 terobyte  staff    192
+092026-Jij, ass,   0K 🟢, 
+092026-tHm, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092026-yCR, ass,   0K 🟢, 
+092026-sRH, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092026-MlQ, ass,   0K 🟢, 
+092026-nXw, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092028-dgw, ass,   0K 🟢, 
+092028-rKZ, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092028-SlS, ass,   0K 🟢, 
+092028-sLn, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092028-VCA, ass,   0K 🟢, 
+092028-qPx, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092031-acc, ass,   0K 🟢, 
+092031-kGf, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092031-Uoj, ass,   0K 🟢, 
+092031-rRG, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_4d98d2d9eaabbbeb/thinned/leaned_tool
+092031-ezs, ass,   0K 🟢, 
+092031-uDZ, usr,   2K 🟡, Tool result: # src/applier/semantic_answer_bank.py """ SemanticAnswerBank — extension of AnswerBank with BERT embeddings
+092034-Knj, ass,   0K 🟢, 
+092034-aep, usr,   0K 🟢, Tool result: total 8 drwxr-xr-x@  3 terobyte  staff    96 Mar 14 08:59 . drwxr-xr-x@ 14 terobyte  staff   448 Mar 14 08:
+092034-kUM, ass,   0K 🟢, 
+092034-wba, usr,   0K 🟢, Tool result: total 24 drwxr-xr-x@  4 terobyte  staff   128 Mar 14 09:01 . drwxr-xr-x@ 14 terobyte  staff   448 Mar 14 08
+092034-Nlq, ass,   0K 🟢, 
+092034-XxH, usr,   1K 🟡, Tool result: # src/platforms/base_scraper.py """ Base scraper utilities and shared data classes.  Provides the Job datac
+092036-jyu, ass,   0K 🟢, 
+092036-lnD, usr,   1K 🟡, Tool result: """Tests for WebRTC leak prevention.""" """ Тесты: WebRTC не сливает IP при использовании флагов блокировки
+092036-uaO, ass,   0K 🟢, 
+092036-SHN, usr,   1K 🟡, Tool result: # tests/applier/test_batch_validator.py """ Tests for screening batch validation. Run: pytest tests/applier
+092036-zbC, ass,   0K 🟢, 
+092036-FxL, usr,   2K 🟡, Tool result: """ Tests for LinkedIn Voyager API client. Run: pytest tests/platforms/test_linkedin_voyager.py -v """ impo
+092039-wtt, ass,   0K 🟢, 
+092039-BTX, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/workspace/applyment: No such file or directory
+092040-LAJ, ass,   0K 🟢, 
+092040-BEs, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace total 224 drwxr-xr-x@ 14 terobyte  staff    448 Mar 14 08:48 . drwxr-xr-x@  4
+092044-sxq, ass,   0K 🟢, 
+092044-uZu, usr,   0K 🟢, Tool result: # Job Application Bot - Core Dependencies  # Web/HTTP httpx>=0.27.0 playwright>=1.40.0  # AI/ML openai>=1.0
+092044-bHb, ass,   0K 🟢, 
+092044-wVm, usr,   0K 🟢, Tool result: ❌ bash: python: command not found
+092045-xfy, ass,   0K 🟢, 
+092045-ZhZ, usr,   0K 🟢, Tool result: Python 3.14.0
+092048-LkX, ass,   0K 🟢, 
+092048-hXW, usr,   0K 🟢, Tool result: 
+092052-dmU, ass,   0K 🟢, 
+092052-gtA, usr,   1K 🟡, Tool result: ============================= test session starts ============================== platform darwin -- Python 
+092055-Qjv, ass,   0K 🟢, 
+092055-kkT, usr,   0K 🟢, Tool result: # tests/platforms/test_indeed_api.py """ Tests for Indeed API client. Run: pytest tests/platforms/test_inde
+092055-eDh, ass,   0K 🟢, 
+092055-fMN, usr,   0K 🟢, Tool result: # tests/applier/test_semantic_answer_bank.py """ Tests for SemanticAnswerBank. Run: pytest tests/applier/te
+092055-WhR, ass,   0K 🟢, 
+092055-kTN, usr,   0K 🟢, Tool result: """ Tests for Canvas noise injection. Run: pytest tests/stealth/test_canvas_noise.py -v -m slow """ import 
+092055-Nqe, ass,   0K 🟢, 
+092055-Xfi, usr,   0K 🟢, Tool result: """ Tests for AudioContext fingerprint spoofing. Run: pytest tests/stealth/test_audio_spoofing.py -v """ im
+092055-vyc, ass,   0K 🟢, 
+092055-awB, usr,   0K 🟢, Tool result: """ Tests: Battery API spoofing. Run: pytest tests/stealth/test_battery_spoof.py -v """ import pytest   def
+092102-Klq, ass,   0K 🟢, 
+092102-uul, usr,   3K 🟡, Tool result: # src/applier/answer_bank.py """ AnswerBank — keyword-based answer lookup for screening questions.  Provide
+092102-dfu, ass,   0K 🟢, 
+092102-BTF, usr,   1K 🟡, Tool result: # src/applier/universal_screening/question_intent.py """ QuestionIntentClassifier - classifies screening qu
+092102-QLj, ass,   0K 🟢, 
+092102-vUn, usr,   0K 🟢, Tool result: {   "critical": ["work_authorization", "visa_sponsorship", "security_clearance", "criminal_history"],   "im
+092106-PpL, ass,   0K 🟢, 
+092106-yBD, usr,   2K 🟡, Tool result: """ Stealth Browser - Anti-detection Playwright wrapper.  Provides a browser instance with stealth configur
+092106-FIt, ass,   0K 🟢, 
+092106-TsI, usr,   2K 🟡, Tool result: # src/stealth/fingerprint_scripts.py """ JS-скрипты для спуфинга fingerprint API.  ВАЖНО: Не используй add_
+092106-aUQ, ass,   0K 🟢, 
+092106-UUb, usr,   1K 🟡, Tool result: # src/stealth/geo_consistency.py """ GeoConsistencyValidator — проверяет соответствие IP геолокации и брауз
+092123-esP, ass,   0K 🟢, 
+092123-jLN, usr,   0K 🟢, Tool result: ============================= test session starts ============================== platform darwin -- Python 
+092123-XYl, ass,   0K 🟢, 
+092123-JTC, usr,   1K 🟡, Tool result: #!/usr/bin/env python3 # scripts/collect_cdx_slugs.py """ Собирает ATS-слаги из Common Crawl CDX API.  Запу
+092126-Fcx, ass,   0K 🟢, 
+092126-wlL, usr,   0K 🟢, Tool result: #!/usr/bin/env python3 # scripts/validate_slugs.py """ Валидирует slugs — делает HEAD-запрос к ATS API.  За
+092126-ojg, ass,   0K 🟢, 
+092126-lUZ, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+092134-dJR, ass,   0K 🟢, 
+092134-vda, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@ 1 terobyte  staff   27 Mar 14 09:14 __init__.py drwxr-xr-x@ 3 terobyte  staff   96 Mar 
+
+--- TOTAL:  71K /  98K (72.7%) ---

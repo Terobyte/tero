@@ -1,0 +1,100 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/terobyte/tmp/workspace
+plugins: anyio-4.12.0, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 24 items
+
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_work_authorization_detected PASSED [  4%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_visa_sponsorship_detected PASSED [  8%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_case_insensitive PASSED [ 12%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_normal_question_returns_none PASSED [ 16%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_is_critical_security_clearance PASSED [ 20%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_relocation_is_important_not_critical PASSED [ 25%]
+tests/applier/test_batch_validator.py::TestSessionContext::test_critical_answers_filter PASSED [ 29%]
+tests/applier/test_batch_validator.py::TestSessionContext::test_to_dict PASSED [ 33%]
+tests/applier/test_batch_validator.py::TestBatchValidator::test_no_corrections_for_good_answers PASSED [ 37%]
+tests/applier/test_batch_validator.py::TestBatchValidator::test_critical_error_returned PASSED [ 41%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_us_state_timezone_mapping PASSED [ 45%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_from_ip_api_response PASSED [ 50%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_from_region_fallback PASSED [ 54%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_unknown_region_returns_none PASSED [ 58%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_check_consistent_timezone PASSED [ 62%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_check_mismatch_detected PASSED [ 66%]
+tests/stealth/test_canvas_noise.py::test_canvas_noise_script_generated PASSED [ 70%]
+tests/stealth/test_canvas_noise.py::test_canvas_noise_different_seeds_differ PASSED [ 75%]
+tests/stealth/test_canvas_noise.py::test_canvas_hash_differs_across_sessions FAILED [ 79%]
+tests/stealth/test_audio_spoofing.py::test_audio_noise_script_contains_audiobuffer PASSED [ 83%]
+tests/stealth/test_audio_spoofing.py::test_different_seeds_different_script PASSED [ 87%]
+tests/stealth/test_audio_spoofing.py::test_audio_fingerprint_differs PASSED [ 91%]
+tests/stealth/test_battery_spoof.py::test_battery_script_generated PASSED [ 95%]
+tests/stealth/test_battery_spoof.py::test_battery_looks_like_laptop FAILED [100%]
+
+=================================== FAILURES ===================================
+___________________ test_canvas_hash_differs_across_sessions ___________________
+
+    @pytest.mark.asyncio
+    @pytest.mark.slow
+    async def test_canvas_hash_differs_across_sessions():
+        """
+        Canvas hash should be different in two independent sessions.
+        """
+        from src.stealth.browser_stealth import StealthBrowser
+        from src.stealth.fingerprint_scripts import inject_fingerprint_protection
+    
+        hashes = []
+        for _ in range(2):
+            async with StealthBrowser(headed=False) as browser:
+                ctx = await browser.new_context()
+                page = await browser.new_page(ctx)
+                await page.goto("about:blank")
+                await inject_fingerprint_protection(page)
+    
+                canvas_hash = await page.evaluate("""() => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 200; canvas.height = 50;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ff6600';
+                    ctx.fillRect(0, 0, 200, 50);
+                    ctx.fillStyle = '#069';
+                    ctx.font = '14px Arial';
+                    ctx.fillText('fingerprint test', 10, 30);
+                    return canvas.toDataURL();
+                }""")
+                hashes.append(canvas_hash)
+                await ctx.close()
+    
+>       assert hashes[0] != hashes[1], (
+            "Canvas hash identical in two sessions — noise injection not working!"
+        )
+E       AssertionError: Canvas hash identical in two sessions — noise injection not working!
+E       assert 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAyCAYAAAAZUZThAAAIdklEQVR4AeyZC3SUxRXHf4RnoFGSgKkJGBQtAgYRS7UFIw/x8JJCA9TUA/JGmiBJk6A1arGFIhYpAnqohKr0AahQPAiegDVWkXpEUCRRHoIYkAiKICQhEEmc+8VdN8sm2V03ZL/kXjLfd2fuzJ07/5n/zHxLSPkUyjUpBroGPK+BEFQUAUWgSgSUIFVCowZFAJQgugoUgWoQUIJUA46aFIFaJIiCqwjYHwEliP3nUEdQiwgoQWoRXHVtfwSUIPafQx1BLSKgBKlFcNW1/RGwJ0Hsj7uOwCYIKEFsMlEaZt0goASpG9y1V5sgoASxyURpmHWDgBKkbnDXXm2CgBLEbaI0qwi4IqAEcUVDdUXADQEliBsgmlUEXBFQgriioboi4IaATwQpoxEf0I4NxJFPJB9yOWdo6uYyOLNHaG1ijkBFEfAFAZ8IMpshXM9DDCWZl4mjK7MQwmADeYhh3MNdXkX6X65lJglV1q3JXkXDC4qLaM40E1Me0RfYtCA4EPCJIGu4gTG8TamZ1rH8n5VkcTXHgmMkNUQxmS1m0WfXUKvC/Hd6cYA2FRkPz5rsHpp4LMongqXEcx6fpsGjLy2sHQS8npneZnnJabGO7gwgla8JZS4DkavLYcKtk2U1P+Xn3MclPMFQkpFyvpMNxHE7KZbtLiaSxigeYDgOWUVPbiTTsvcljXeJdZjoTypzGUR7HkXiyCUGOcmepA9yikn57xhFCRXXPYlxJFOR3TmK+cgizKYLa+iByB+4g1kmJZGI2DvxR56iDyILuI31dEPqxpMuRZWSJ/sxwhjLeMtXR+aQyXDO0gQRiWk8d1s26WsYSQj5BL/hTJMqjDDvF6mIzSrQR9AgEOJtJBlkcxmnGUgeqbyKLAAhTDHNkEUg+p1M5lb2MZf/sIE4Mkiw3OcSzVCSKaUxC3gByctC+5RIy76WG0hkEtfyOYtYzSla0JMHOES4Zd9GB5MbTjz7uIovjLUU6S+ZREaynenkkEVvMkhA5DitkAW+iS4MNTXbc4J8IthPWzEj+iPGspP2zGEd13AMIYt8U/VnN105Qk8Oks5m3MXd/g0hDCCFHDrxIBtMBDv4M4PIYCQiC+nPs/wC6Wchq5Hr1DjGEUopU3g...Rvco2Vb0Ep8m3zI0r4Ey85UySFuJPKauDycPWZa2qLqQsF8vrBSU626pw47FfypVXtDj5wxi4nhBAwnCJWcDP7aYtcvT41xHiSlcgpImSxGpqH//Q0jfWvVhG4KASZxv+Qa9SvmYx8kMvbdVTJ5CB3+SfoTz4RyIdtKqMJpZTqRL45XqUzr3AdM0lArnFhlFTXxCubfB/kEc07dMCTuNqHsAvp837T+1Y6sosYEpnERhNTBMXIeCZwN7IhfM6lHCQSkQ4cR/yILv+vUmBsomsKLgR8JkgjD/E3omIPdLU5yqR6bz5mJVnILp/APcipIR/78hZ7OpuYTg4pjCaWuSymH/MMlfqxGxEhSghlolZKMZxgACkMNq07U8BzPIuIaxyS9zY52o3gffYShVyFTtECd3G1N+E8r7CIzwinFzPpxsPIqbKMfyAY3Mtr9GMP8aQTwzyWGk2waMtpYjlOL/aTxigW0Q+V4EPAJ4Ls4WEy2WiNQn7pKWcqN/EJHfkC0XtyEIeksZmjZlFIXnZ42S3zmGXVW8UyCmlBFKcQEQIsYhVnSeIw95klk4n8MiU2SeJHCCS6a5rPi8bDDE6SwsssQXZyjEzgLasfXGQ5K9jIYqvkGZ5D6luZ7x7lTGUMb1u5YeykmGSKmM4lXHgiudtlke8nk2OkU8i9iG/5HhFn0n4dT3GKGcjYviYF+XDHSBPK2MJjnCCV2bxkSoLwr4GH5BNB/MXqEOHIyfEXbmc93ZArxwHaMJIdlVwKiWr67qjUwGSEFJdyxmiB/QullJacq9KpJ7ucCq0MzT01kjhlbHKquNtbU0xjytyLNR8ECFwUgkzkLZawkhw68Vt+QwlNjf44Pcj3C4KWnOMW9hFWxWL0y6k2UgQ8IHBRCCK7YxKvI1ecQ9zP8zxNH/bir8hPum8wn84U+OtC2ykCXiFwUQjiVSRaSREIQgSUIEE4KQ0lJDuMUwlih1nSGOsMASVInUGvHdsBASWIHWZJY6wzBJQgdQa9dmwHBJQgdpgljdFXBAJWXwkSMCjVUX1EQAlSH2dVxxQwBJQgAYNSHdVHBJQg9XFWdUwBQ0AJEjAo1VF9ROBCgtTHUeqYFAE/EVCC+AmcNmsYCChBGsY86yj9REAJ4idw2qxhIPAtAAAA//8Gk45QAAAABklEQVQDANFSAMGr0b1qAAAAAElFTkSuQmCC' != 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAyCAYAAAAZUZThAAAIdklEQVR4AeyZC3SUxRXHf4RnoFGSgKkJGBQtAgYRS7UFIw/x8JJCA9TUA/JGmiBJk6A1arGFIhYpAnqohKr0AahQPAiegDVWkXpEUCRRHoIYkAiKICQhEEmc+8VdN8sm2V03ZL/kXjLfd2fuzJ07/5n/zHxLSPkUyjUpBroGPK+BEFQUAUWgSgSUIFVCowZFAJQgugoUgWoQUIJUA46aFIFaJIiCqwjYHwEliP3nUEdQiwgoQWoRXHVtfwSUIPafQx1BLSKgBKlFcNW1/RGwJ0Hsj7uOwCYIKEFsMlEaZt0goASpG9y1V5sgoASxyURpmHWDgBKkbnDXXm2CgBLEbaI0qwi4IqAEcUVDdUXADQEliBsgmlUEXBFQgriioboi4IaATwQpoxEf0I4NxJFPJB9yOWdo6uYyOLNHaG1ijkBFEfAFAZ8IMpshXM9DDCWZl4mjK7MQwmADeYhh3MNdXkX6X65lJglV1q3JXkXDC4qLaM40E1Me0RfYtCA4EPCJIGu4gTG8TamZ1rH8n5VkcTXHgmMkNUQxmS1m0WfXUKvC/Hd6cYA2FRkPz5rsHpp4LMongqXEcx6fpsGjLy2sHQS8npneZnnJabGO7gwgla8JZS4DkavLYcKtk2U1P+Xn3MclPMFQkpFyvpMNxHE7KZbtLiaSxigeYDgOWUVPbiTTsvcljXeJdZjoTypzGUR7HkXiyCUGOcmepA9yikn57xhFCRXXPYlxJFOR3TmK+cgizKYLa+iByB+4g1kmJZGI2DvxR56iDyILuI31dEPqxpMuRZWSJ/sxwhjLeMtXR+aQyXDO0gQRiWk8d1s26WsYSQj5BL/hTJMqjDDvF6mIzSrQR9AgEOJtJBlkcxmnGUgeqbyKLAAhTDHNkEUg+p1M5lb2MZf/sIE4Mkiw3OcSzVCSKaUxC3gByctC+5RIy76WG0hkEtfyOYtYzSla0JMHOES4Zd9GB5MbTjz7uIovjLUU6S+ZREaynenkkEVvMkhA5DitkAW+iS4MNTXbc4J8IthPWzEj+iPGspP2zGEd13AMIYt8U/VnN105Qk8Oks5m3MXd/g0hDCCFHDrxIBtMBDv4M4PIYCQiC+nPs/wC6Wchq5Hr1DjGEUopU3g...Rvco2Vb0Ep8m3zI0r4Ey85UySFuJPKauDycPWZa2qLqQsF8vrBSU626pw47FfypVXtDj5wxi4nhBAwnCJWcDP7aYtcvT41xHiSlcgpImSxGpqH//Q0jfWvVhG4KASZxv+Qa9SvmYx8kMvbdVTJ5CB3+SfoTz4RyIdtKqMJpZTqRL45XqUzr3AdM0lArnFhlFTXxCubfB/kEc07dMCTuNqHsAvp837T+1Y6sosYEpnERhNTBMXIeCZwN7IhfM6lHCQSkQ4cR/yILv+vUmBsomsKLgR8JkgjD/E3omIPdLU5yqR6bz5mJVnILp/APcipIR/78hZ7OpuYTg4pjCaWuSymH/MMlfqxGxEhSghlolZKMZxgACkMNq07U8BzPIuIaxyS9zY52o3gffYShVyFTtECd3G1N+E8r7CIzwinFzPpxsPIqbKMfyAY3Mtr9GMP8aQTwzyWGk2waMtpYjlOL/aTxigW0Q+V4EPAJ4Ls4WEy2WiNQn7pKWcqN/EJHfkC0XtyEIeksZmjZlFIXnZ42S3zmGXVW8UyCmlBFKcQEQIsYhVnSeIw95klk4n8MiU2SeJHCCS6a5rPi8bDDE6SwsssQXZyjEzgLasfXGQ5K9jIYqvkGZ5D6luZ7x7lTGUMb1u5YeykmGSKmM4lXHgiudtlke8nk2OkU8i9iG/5HhFn0n4dT3GKGcjYviYF+XDHSBPK2MJjnCCV2bxkSoLwr4GH5BNB/MXqEOHIyfEXbmc93ZArxwHaMJIdlVwKiWr67qjUwGSEFJdyxmiB/QullJacq9KpJ7ucCq0MzT01kjhlbHKquNtbU0xjytyLNR8ECFwUgkzkLZawkhw68Vt+QwlNjf44Pcj3C4KWnOMW9hFWxWL0y6k2UgQ8IHBRCCK7YxKvI1ecQ9zP8zxNH/bir8hPum8wn84U+OtC2ykCXiFwUQjiVSRaSREIQgSUIEE4KQ0lJDuMUwlih1nSGOsMASVInUGvHdsBASWIHWZJY6wzBJQgdQa9dmwHBJQgdpgljdFXBAJWXwkSMCjVUX1EQAlSH2dVxxQwBJQgAYNSHdVHBJQg9XFWdUwBQ0AJEjAo1VF9ROBCgtTHUeqYFAE/EVCC+AmcNmsYCChBGsY86yj9REAJ4idw2qxhIPAtAAAA//8Gk45QAAAABklEQVQDANFSAMGr0b1qAAAAAElFTkSuQmCC'
+
+tests/stealth/test_canvas_noise.py:56: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-03-14 09:36:41.110 | DEBUG    | src.stealth.browser_stealth:__aenter__:93 - StealthBrowser launched (headed=False)
+2026-03-14 09:36:41.119 | DEBUG    | src.stealth.browser_stealth:new_context:130 - New context created (tz=America/New_York, locale=en-US)
+2026-03-14 09:36:41.495 | DEBUG    | src.stealth.browser_stealth:__aexit__:102 - StealthBrowser closed
+2026-03-14 09:36:42.106 | DEBUG    | src.stealth.browser_stealth:__aenter__:93 - StealthBrowser launched (headed=False)
+2026-03-14 09:36:42.122 | DEBUG    | src.stealth.browser_stealth:new_context:130 - New context created (tz=America/New_York, locale=en-US)
+2026-03-14 09:36:42.372 | DEBUG    | src.stealth.browser_stealth:__aexit__:102 - StealthBrowser closed
+________________________ test_battery_looks_like_laptop ________________________
+
+    @pytest.mark.asyncio
+    @pytest.mark.slow
+    async def test_battery_looks_like_laptop():
+        """getBattery() should return realistic laptop values."""
+        from src.stealth.browser_stealth import StealthBrowser
+        from src.stealth.fingerprint_scripts import battery_spoof_script
+    
+        async with StealthBrowser(headed=False) as browser:
+            ctx = await browser.new_context()
+            page = await browser.new_page(ctx)
+            await page.goto("about:blank")
+            await page.evaluate(battery_spoof_script())
+    
+>           result = await page.evaluate("""async () => {
+                const b = await navigator.getBattery();
+                return {level: b.level, charging: b.charging, chargingTime: b.chargingTime};
+            }""")

@@ -1,0 +1,927 @@
+{
+  "context_window": {
+    "conversation_history": [
+      {
+        "content": "You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.\n\nWhen a task is complete, provide a summary of what was accomplished.\n\nFor shell commands: Use the shell tool with the exact command needed. Always use `rg` (ripgrep) instead of `grep` - it's faster, has better defaults, and respects .gitignore. Avoid commands that produce a large amount of output, and consider piping those outputs to files.\nIf you create temporary files for verification, place these in a subdir named 'tmp'. Do NOT pollute the current dir.\n\nUse `code_search` for definitions, `rg` for everything else.\n\n# Task Management with Plan Mode\n\n**REQUIRED for all multi-step tasks.**\n\nPlan Mode is a cognitive forcing system that prevents:\n- Attention collapse\n- False claims of completeness\n- Happy-path-only implementations\n- Duplication/contradiction with existing code\n\n## Workflow\n\n1. **Draft**: Call `plan_read` to check for existing plan, then `plan_write` with the plan YAML\n2. **Approval**: Ask user to approve before starting work (\"'approve', or edit plan?\"). In non-interactive mode (autonomous/one-shot), plans auto-approve on write.\n3. **Execute**: Implement items, updating plan with `plan_write` to mark progress\n4. **Complete**: When all items are done/blocked, verification runs automatically\n\n## Plan Schema\n\nEach plan item MUST have:\n- `id`: Stable identifier (e.g., \"I1\", \"I2\")\n- `description`: What will be done\n- `state`: todo | doing | done | blocked\n- `touches`: Paths/modules this affects (forces \"where does this live?\")\n- `checks`: Required perspectives:\n  - `happy`: {desc, target} - Normal successful operation\n  - `negative`: [{desc, target}, ...] - Error handling, invalid input (>=1 required)\n  - `boundary`: [{desc, target}, ...] - Edge cases, limits (>=1 required)\n- `evidence`: (required when done) File:line refs, test names\n- `notes`: (required when done) Short implementation explanation\n\n## Rules\n\nWhen drafting a plan, you MUST:\n- Keep items ~7 by default\n- Commit to where the work will live (touches)\n- Provide all three checks (happy, negative, boundary)\n\nWhen updating a plan:\n- Cannot remove items from an approved plan (mark as blocked instead)\n- Must provide evidence and notes when marking item as done\n\n## Example Plan\n\n```\nplan_write(\n  plan: \"\n    plan_id: csv-import-feature\n    items:\n      - id: I1\n        description: Add CSV import for comic book metadata\n        state: todo\n        touches: [src/import, src/library]\n        checks:\n          happy:\n            desc: Valid CSV imports 3 comics\n            target: import::csv\n          negative:\n            - desc: Missing column errors with MissingColumn\n              target: import::csv\n          boundary:\n            - desc: Empty file yields empty import without error\n              target: import::csv\n  \",\n)\n```\n\nWhen marking done, add `evidence` and `notes` to the item.\n\n## Action Envelope\n\nBefore marking the last plan item done, call `write_envelope` with facts about completed work. The envelope captures what was actually built so it can be verified against invariants in `analysis/rulespec.yaml` if present. The tool writes the envelope and runs datalog verification automatically.\n\n```yaml\ntype: code_change\nfacts:\n  csv_importer:\n    capabilities: [handle_headers, handle_tsv, handle_quoted_fields]\n    file: \"src/import/csv.rs\"\n    tests: [\"test_valid_csv\", \"test_tsv_import\", \"test_missing_column\"]\n  api_changes:\n    breaking: false\n    new_endpoints: [\"/api/import/csv\"]\n  breaking_changes: null  # Use null to assert something is explicitly absent\n```\n\n**Rules:**\n- All fact groups MUST go under the top-level `facts:` key. No other top-level keys except envelope metadata (e.g. `type:`)\n- Use file paths as evidence values so the validator can check them: `\"src/foo.rs\"`, `\"src/foo.rs:42\"`, `\"tests/bar.rs::test_name\"`\n- Free-form notes are allowed alongside file paths (e.g. `notes: \"Refactored from old module\"`)\n- Selectors in `analysis/rulespec.yaml` (e.g., `csv_importer.capabilities`) are evaluated against envelope facts\n- Use dot notation for nested access: `api_changes.breaking`\n- Use `null` to explicitly assert absence (for `not_exists` predicates)\n- `write_envelope` verifies facts against `analysis/rulespec.yaml` (if present) and `plan_verify()` confirms the envelope was written\n\n# Workspace Memory\n\nMemory is auto-loaded at startup. Call `remember` at end of turn when you discover code locations worth noting.\n\n\n# Available Toolsets\n\nYou can dynamically load additional tools using `load_toolset`. The tool will return the full definitions so you learn how to use them.\n\n<available_toolsets>\n  <toolset>\n    <name>webdriver</name>\n    <description>Browser automation via Safari WebDriver. Start sessions, navigate, find elements, click, type, execute JavaScript, take screenshots.</description>\n  </toolset>\n  <toolset>\n    <name>research</name>\n    <description>Initiate web-based research on a topic. This tool is ASYNCHRONOUS - it spawns a research agent in the background and returns immediately with a research_id. Results are automatically injected into the conversation when ready.</description>\n  </toolset>\n</available_toolsets>\n",
+        "role": "system"
+      },
+      {
+        "content": "You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, actionable feedback.\n\nREQUIREMENTS:\n# Refactoring Plan — `greenhouse_apply.py`, `indeed_apply.py` & `indeed_screening.py`\n\n> **Дата создания:** 2026-03-09\n> **Статус:** В планировании\n> **Цель:** Разбить два монолитных applier-файла на узкоспециализированные модули\n\n---\n\n## Текущее состояние (актуально)\n\n| Файл | Строк | Байт | Основные проблемы |\n|------|-------|------|-------------------|\n| `greenhouse_apply.py` | **1768** | 96KB | 1 класс + 24 метода в одном файле |\n| `indeed_apply.py` | **1133** | 56KB | Captcha + form filling + selectors вперемешку |\n| `indeed_screening.py` | **933** | 40KB | Question discovery (5 стратегий) + answer routing + fill mechanics в одном классе |\n\n> **Примечание:** С момента написания старого `REFACTORING_PLAN.md` (07.03) Greenhouse вырос\n> ещё на **+349 строк** (1419 → 1768). Этот план конкретизирует Фазы 2, 3 и добавляет Фазу C.\n\n---\n\n## Фаза A — Разбивка `greenhouse_apply.py` (1768 строк)\n\n### Анализ зоны ответственности\n\nФайл сейчас содержит **7 несвязанных концептов**:\n\n| Концепт | Методы | Строк |\n|---------|--------|-------|\n| URL parsing | `_parse_greenhouse_url`, `_page_url` | ~20 |\n| Main workflow | `apply_http` | ~149 |\n| Pre-submit validation | `_find_empty_required_fields` | ~160 |\n| Email security code | `_handle_security_code` | ~106 |\n| File upload | `_upload_file`, `_upload_resume`, `_upload_cover_letter` | ~60 |\n| Custom questions (AI) | `_fill_custom_questions`, `_fill_radios_universal` | ~200 |\n| Combobox engine | `_fill_combobox`, `_fill_combobox_el`, `_fill_after_other`, `_fill_select_native`, `_click_by_bbox` | **~750** |\n| HITL / label utils | `_hitl_for_field`, `_get_label` | ~45 |\n\n> `_fill_combobox_el` — **743 строки** только для React combobox логики. Это самый большой метод.\n\n---\n\n### Целевая структура\n\n```\nsrc/applier/greenhouse/\n├── __init__.py           # re-export: from .applier import GreenhouseApplier\n├── applier.py            # GreenhouseApplier + apply_http workflow         (~250 строк)\n├── utils.py              # get_label — общая утилита (Greenhouse + validator)  (~30 строк)\n├── validator.py          # _find_empty_required_fields + pre-submit checks  (~180 строк)\n├── security.py           # _handle_security_code + GmailCodeReader           (~120 строк)\n├── form_filler.py        # _fill_custom_questions + _fill_radios_universal   (~230 строк)\n├── combobox_engine.py    # ReactComboboxDriver + fill_combobox + helpers     (~500 строк)\n├── combobox_js.py        # JS-шаблоны для page.evaluate (GET_OPTS_JS и т.д.)  (~200 строк)\n└── file_uploader.py      # _upload_resume + _upload_cover_letter + _upload_file (~80 строк)\n```\n\n**Цель:** Максимальный файл ≤ 500 строк (сейчас 1768), большинство ≤ 250 строк.\n\n---\n\n### Контекстный объект подачи: `ApplyContext`\n\n> ⚠️ **Проблема «паровоза аргументов»:** простой перенос методов в функции (`fill_custom_questions(page, bank, ai, hitl, ctx)`) не решает проблему — «паровоз» просто переезжает из метода в модульные функции.\n>\n> **Решение: `ApplyContext` dataclass** — передаётся одним объектом во всё дерево вызовов.\n\n```python\n# greenhouse/context.py (~30 строк)\nfrom __future__ import annotations\nfrom dataclasses import dataclass\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Optional\n\nif TYPE_CHECKING:\n    from playwright.async_api import Page\n    from src.platforms.base_scraper import Job\n    from src.applier.answer_bank import AnswerBank\n\n@dataclass\nclass ApplyContext:\n    page: Page                      # Playwright Page (typed!)\n    job: Job                        # Job dataclass\n    answer_bank: AnswerBank         # AnswerBank instance\n    screenshots_dir: Path\n    bot_mode: bool = False\n    profile: Optional[dict] = None  # profile.yaml dict\n    job_id: str = \"\"                # correlation ID для логов (hash URL)\n```\n\n> ⚠️ **TYPE_CHECKING guard:** Типы `Page`, `Job`, `AnswerBank` импортируются только для type checkers.\n> В runtime зависимостей на Playwright нет — `context.py` можно импортировать без браузера.\n\nВсе функции в `greenhouse/` принимают `ctx: ApplyContext` вместо 4–5 отдельных аргументов:\n```python\n# До (паровоз):\nasync def handle_security_code(page, job, answer_bank, screenshots_dir) -> bool: ...\n\n# После (контекст):\nasync def handle_security_code(ctx: ApplyContext) -> bool: ...\n```\n\n> ⚠️ **Lifecycle объекта `page`:** если `apply_http` пересоздаёт или переходит на новую страницу в процессе (навигация между шагами), `page` может инвалидироваться. Хранить `page` в `ApplyContext` — правильно: все функции обращаются к `ctx.page`, а не к локальной копии, полученной в момент вызова. Никаких `p = ctx.page` в начале функции с дальнейшим использованием `p` — только `ctx.page` напрямую.\n\n---\n\n### Детальный план по файлам\n\n#### `greenhouse/__init__.py` (NEW)\n```python\nfrom .applier import GreenhouseApplier\n\n__all__ = [\"GreenhouseApplier\"]\n```\n\n---\n\n#### `greenhouse/applier.py` (NEW — ~250 строк)\n\n**Переносим из `greenhouse_apply.py`:**\n- Все `import`-ы (переписать на относительные)\n- Константы: `RESUME_PATH`, `COVER_LETTER_PATH`, `SCREENSHOTS_DIR`, `SELECTORS`\n- `_parse_greenhouse_url()` (standalone функция)\n- Класс `GreenhouseApplier`:\n  - `__init__`\n  - `_page_url`\n  - `apply_http` (основной workflow, ~149 строк)\n\n**Зависимости (импортировать из соседних модулей):**\n```python\nfrom .validator import find_empty_required_fields\nfrom .security import handle_security_code\nfrom .form_filler import fill_custom_questions\nfrom .file_uploader import upload_resume, upload_cover_letter\n```\n\n> ⚠️ **Важно:** `apply_http` разбивается **без изменения логики**. Просто вызовы `self._метод()`\n> заменяются на `await метод(page, ...)` из импортированных модулей.\n\n---\n\n#### `greenhouse/utils.py` (NEW — ~30 строк)\n\n**Переносим:** `_get_label` (строки 1751–1767) — **общая утилита** для label-резолюции.\n\n> ⚠️ **Почему не в `combobox_engine.py`:** `_get_label` нужна и валидатору, и form_filler, и combobox.\n> Если оставить в `combobox_engine.py` — `validator.py` получит циклический coupling.\n> Отдельный `utils.py` убирает callbacks и делает зависимости явными.\n\n```python\nasync def get_label(page, element) -> str:\n    \"\"\"Получить текст label для элемента формы (по for/aria/ancestor).\"\"\"\n    ...\n```\n\n---\n\n#### `greenhouse/validator.py` (NEW — ~180 строк)\n\n**Переносим:** `_find_empty_required_fields` (строки 253–412)\n\nСигнатура после рефакторинга (standalone функция):\n```python\nfrom .utils import get_label\n\nasync def find_empty_required_fields(page) -> list[str]:\n    \"\"\"Найти все видимые обязательные поля которые пустые.\"\"\"\n    ...\n```\n\n> Больше никакого `get_label_fn` callback — `validator.py` импортирует `get_label` из `utils.py` напрямую.\n\n---\n\n#### `greenhouse/security.py` (NEW — ~120 строк)\n\n**Переносим:** `_handle_security_code` (строки 414–519)\n\n```python\nfrom src.applier.gmail_reader import GmailCodeReader\nfrom src.stealth.timing_engine import gaussian_delay\nfrom .context import ApplyContext\n\nasync def handle_security_code(ctx: ApplyContext) -> bool:\n    \"\"\"Обработать email verification (security code) от Greenhouse.\n    \n    Использует ctx.page, ctx.job, ctx.answer_bank, ctx.screenshots_dir.\n    \"\"\"\n    ...\n```\n\n> ✅ **Исправлено противоречие:** строка 88 и этот блок теперь оба используют `ctx: ApplyContext`.\n\n---\n\n#### `greenhouse/form_filler.py` (NEW — ~230 строк)\n\n**Переносим:**\n- `_fill_custom_questions` (строки 614–783) — **AS-IS, без изменения бизнес-логики**\n- `_fill_radios_universal` (строки 785–861)\n\n> 🚨 **ВАЖНО: `_fill_custom_questions` переносится БЕЗ замены на `AnswerRouter`.**\n>\n> **Причина:** текущая реализация использует **batch AI** (`asyncio.gather`) — сканирует ВСЕ поля, потом\n> отправляет их пачкой в Gemini. `AnswerRouter` работает **per-question** (один вызов AI на вопрос).\n> Замена batch → per-question — это **изменение бизнес-логики**, которое:\n> 1. Увеличит latency (N вызовов вместо 1)\n> 2. Увеличит стоимость API\n> 3. Нарушит принцип «без изменения поведения»\n>\n> **Будущее (Phase 2, отдельный PR):** унификация через `BatchAnswerRouter` с методом\n> `answer_batch(questions: list[Question]) -> list[str]`. Но это — отдельная задача.\n\n```python\nfrom .combobox_engine import fill_combobox_el, fill_select_native\nfrom .utils import get_label\nfrom .context import ApplyContext\n\nasync def fill_custom_questions(ctx: ApplyContext) -> None:\n    \"\"\"Greenhouse custom questions — batch AI пайплайн.\n    \n    Переносим AS-IS из greenhouse_apply.py. Использует:\n    - ctx.answer_bank для AnswerBank lookup\n    - ctx.page для DOM-операций\n    - self.ai / self._hitl из GreenhouseApplier (передаются дополнительно)\n    \"\"\"\n    ...\n\nasync def fill_radios_universal(ctx: ApplyContext) -> None:\n    \"\"\"Радио-кнопки на Greenhouse — batch AI.\"\"\"\n    ...\n```\n\n> ✅ **Принцип:** на этом шаге `form_filler.py` — это точная копия логики из `greenhouse_apply.py`,\n> только вместо `self.page` → `ctx.page`, `self.bank` → `ctx.answer_bank`.\n\n---\n\n#### `greenhouse/file_uploader.py` (NEW — ~80 строк)\n\n**Переносим:**\n- `_upload_file` (строки 555–572)\n- `_upload_resume` (строки 574–589)\n- `_upload_cover_letter` (строки 591–612)\n\n```python\nasync def upload_file(page, selector: str, file_path: Path) -> None: ...\nasync def upload_resume(page, file_path: Path) -> None: ...\nasync def upload_cover_letter(page, file_path: Path) -> None: ...\n```\n\n---\n\n#### `greenhouse/combobox_js.py` (NEW — ~200 строк)\n\n**JS-шаблоны для `page.evaluate()`** — вынесены из `_fill_combobox_el` для читаемости:\n\n```python\n# Все JS-строки как Python-константы\nGET_OPTS_JS = \"\"\"...\"\"\"\nFIND_OTHER_OPTION_JS = \"\"\"...\"\"\"\nFIND_SCHOOL_OTHER_JS = \"\"\"...\"\"\"\nCLICK_BY_TEXT_JS = \"\"\"...\"\"\"\nOPEN_CONTROL_JS = \"\"\"...\"\"\"\n```\n\n> ✅ **Бонус:** JS-шаблоны можно тестировать отдельно через `page.evaluate()` в Playwright-тестах.\n> Изменения в JS логике не требуют чтения 500 строк Python кода.\n\n---\n\n#### `greenhouse/combobox_engine.py` (NEW — ~500 строк, было ~780)\n\n**Переносим:**\n- `_fill_combobox` — wrapper (строки 536–553)\n- `_fill_combobox_el` — основной движок ~743 строки (978–1721)\n- `_fill_after_other` (863–929)\n- `_fill_select_native` (931–947)\n- `_click_by_bbox` (949–976)\n- `_fill` — простой helper (521–534)\n\n> ⚠️ **`_get_label` сюда НЕ идёт** — перенесена в `utils.py` (см. выше) для устранения\n> циклического coupling с `validator.py`.\n\n> 🚨 **Честный статус этого шага: РЕИНЖИНИРИНГ, не просто рефакторинг.**\n>\n> Переписывание 743 строк вложенных замыканий в класс `ReactComboboxDriver` меняет области видимости переменных и способ мутации состояния. Принцип «без изменения поведения» здесь условен — риск регрессии близок к 100% без покрытия.\n>\n> **Обязательное предусловие (Шаг 10a):** перед началом переписывания написать Playwright e2e-тесты на **существующий** код `_fill_combobox_el`. Тесты должны проверять реальный браузер с мок-страницей, содержащей React combobox. Только при зелёных e2e-тестах переходить к рефакторингу.\n>\n> ```bash\n> # tests/e2e/test_combobox_baseline.py — тесты на СТАРЫЙ код\n> # Запустить до и после рефакторинга — результат должен совпадать\n> pytest tests/e2e/test_combobox_baseline.py -v\n> ```\n\n**Целевая архитектура после реинжиниринга:**\n\n```python\nfrom .combobox_js import GET_OPTS_JS, FIND_OTHER_OPTION_JS, CLICK_BY_TEXT_JS\nfrom .utils import get_label\n\nclass ReactComboboxDriver:\n    \"\"\"Изолированный драйвер для одного React combobox-элемента.\"\"\"\n\n    def __init__(self, page, element, label_hint: str = \"\") -> None:\n        self.page = page\n        self.element = element\n        self.label_hint = label_hint\n\n    async def fill(self, value: str) -> bool:\n        \"\"\"Точка входа — пробует стратегии по очереди, возвращает True при успехе.\"\"\"\n        return (\n            await self._try_direct_input(value)\n            or await self._try_dropdown_search(value)\n            or await self._try_other_fallback(value)\n            or await self._try_scroll_and_pick(value)\n            or await self._try_js_fallback(value)\n        )\n\n    async def _wait_for_listbox(self, timeout: int = 3000) -> bool: ...\n    async def _try_direct_input(self, value: str) -> bool:\n        \"\"\"Стратегия 0+1: focus+ArrowDown → JS-клик control → ищем опцию.\"\"\"\n        ...\n    async def _try_dropdown_search(self, value: str) -> bool:\n        \"\"\"Стратегия 2: ввод текста → фильтрация.\"\"\"\n        ...\n    async def _try_other_fallback(self, value: str) -> bool:\n        \"\"\"Стратегия 1.5: ввести 'other' → кликнуть Other → _fill_after_other.\"\"\"\n        ...\n    async def _try_scroll_and_pick(self, value: str) -> bool:\n        \"\"\"Стратегия 3: открыть без ввода → скроллить listbox → найти опцию.\"\"\"\n        ...\n    async def _try_js_fallback(self, value: str) -> bool:\n        \"\"\"Стратегия 4: JS dispatch change event как последний resort.\"\"\"\n        ...\n    async def _pick_option(self, opts: list) -> bool:\n        \"\"\"Кликнуть первую подходящую опцию (exact → word-boundary).\"\"\"\n        ...\n\n# Публичные хелперы (тонкие обёртки над драйвером):\nasync def fill(page, selector: str, value: str) -> None: ...\nasync def fill_combobox(page, selector: str, value: str) -> None: ...\nasync def fill_combobox_el(page, element, value: str, label_hint: str = \"\") -> None:\n    return await ReactComboboxDriver(page, element, label_hint).fill(value)\nasync def fill_after_other(page, combobox_el, value: str, hint: str = \"\") -> None: ...\nasync def fill_select_native(element, value: str) -> None: ...\nasync def click_by_bbox(page, text: str, selectors: str) -> None: ...\n```\n\n> ✅ JS-шаблоны вынесены в `combobox_js.py` → `combobox_engine.py` уменьшен с ~780 до ~500 строк.\n\n> ✅ Каждая стратегия — отдельный тестируемый метод. `fill()` — цепочка, а не 700-строчный God Method.\n> `_try_direct_input(mock_page, mock_el)` можно тестировать изолированно, без запуска остальных стратегий.\n\n---\n\n### Файлы которые нужно обновить после рефакторинга Greenhouse\n\n> ⚠️ **Полная карта потребителей** — обновить все до удаления `greenhouse_apply.py`.\n\n| Файл | Тип импорта | Что меняется |\n|------|-------------|-------------|\n| `src/applier/__init__.py` | **НЕ ТРОГАТЬ** | ⚠️ Сейчас НЕ экспортирует `GreenhouseApplier`. Добавлять в `__getattr__` (PEP 562), НЕ в top-level import — иначе сломает lazy loading |\n| `src/applier/queue_manager.py` (в `_apply_greenhouse`) | lazy (внутри функции) | `from src.applier.greenhouse import GreenhouseApplier` |\n| `src/applier/easy_apply.py` (в `_apply_external`) | lazy | `from src.applier.greenhouse import GreenhouseApplier` |\n| `src/applier/indeed_router.py` (в `_route_to_ats`) | lazy | `from src.applier.greenhouse import GreenhouseApplier` |\n| `src/platforms/greenhouse_scraper.py` (в `apply`) | lazy | `from src.applier.greenhouse import GreenhouseApplier` |\n| `src/gui/apply_service.py` (в `apply_greenhouse`) | lazy | `from src.applier.greenhouse import GreenhouseApplier` |\n| `src/bot/ats_test_menu.py` (в `_run_test`) | lazy | `from src.applier.greenhouse import GreenhouseApplier` |\n| **`src/bot/its_check_bot.py:32`** | **⚡ TOP-LEVEL** | **Обновить первым — сломается при старте бота** |\n| **Удалить** `src/applier/greenhouse_apply.py` | — | После обновления всех 8 потребителей и проверки тестов |\n\n> ⚠️ **`src/applier/__init__.py`:** сейчас НЕ содержит `GreenhouseApplier` / `IndeedApplier` в `__all__`.\n> Все потребители делают lazy import напрямую (`from src.applier.greenhouse_apply import ...`).\n> Если добавить `from .greenhouse import GreenhouseApplier` в top-level `__init__.py` —\n> весь пакет `greenhouse/` (с Playwright) загрузится при `import src.applier`, что сломает скрапер-бота.\n> **Решение:** добавить в `__getattr__` (PEP 562) по аналогии с `SelectorEngine`.\n\n---\n\n## Фаза B — Разбивка `indeed_apply.py` (1133 строки)\n\n### Анализ зоны ответственности\n\n| Концепт | Методы | Строк |\n|---------|--------|-------|\n| Константы/конфиг | `IA` dict, env vars | ~70 |\n| Auth/Login | `_ensure_logged_in` | ~15 |\n| Main workflow | `apply`, `apply_on_page` | ~260 |\n| Frame detection | `_find_apply_frame`, `_click_apply` | ~60 |\n| Captcha (Full stack) | `_solve_visible_captcha`, `_solve_indeed_captcha_2captcha`, `_install_captcha_interceptor`, `_extract_sitekey` | **~350** |\n| Form filling | `_fill_fields`, `_fill_field`, `_handle_radios` | ~115 |\n| Navigation | `_click_continue_or_submit`, `_has_submit_button` | ~90 |\n| Loop utilities | `_semantic_fingerprint`, `_is_success`, `_dump_frame_html` | ~55 |\n| File upload | `_upload_resume` | ~70 |\n| **LLM fallback** | **`UniversalAIFiller`** (из `universal_ai_filler.py`) | **~10 (использование)** |\n| **Pattern store** | **`FormPatternStore`** (из `form_pattern_store.py`) | **~5 (использование)** |\n\n---\n\n### Целевая структура\n\n```\nsrc/applier/indeed/\n├── __init__.py           # re-export: from .applier import IndeedApplier\n├── applier.py            # IndeedApplier + apply + apply_on_page           (~300 строк)\n├── captcha.py            # Весь captcha stack (sitekey, 2captcha, interceptor) (~380 строк)\n├── config.py             # IA dict — только CSS-константы, никакого кода    (~70 строк)\n├── locators.py           # _click_apply + _find_apply_frame (Playwright-функции) (~50 строк)\n├── form_filler.py        # _fill_fields + _fill_field + _handle_radios        (~130 строк)\n└── navigation.py         # _click_continue_or_submit + _has_submit_button + _is_success + utils (~120 строк)\n```\n\n> ⚠️ **Разделение config.py / locators.py (п.7 критики):** `IA` dict — это конфигурация (данные), `click_apply` — это Playwright-манипуляция (код). Они не должны жить в одном файле.\n> - `config.py` содержит только константы — можно импортировать без загрузки браузера, тестировать тривиально.\n> - `locators.py` содержит только функции поиска и взаимодействия.\n\n**Цель:** Максимальный файл ≤ 380 строк (сейчас 1133).\n\n---\n\n### Детальный план по файлам\n\n#### `indeed/__init__.py` (NEW)\n```python\nfrom .applier import IndeedApplier\n\n__all__ = [\"IndeedApplier\"]\n```\n\n---\n\n#### `indeed/config.py` (NEW — ~70 строк) ← бывший selectors.py, ТОЛЬКО данные\n\n**Переносим:**\n- `IA` dict (строки 55–123) — все CSS-константы\n\n```python\n# Конфигурация: только данные, никакого кода, никакого Playwright\nIA: dict = {\n    \"apply_button\": \"...\",\n    \"frame_selector\": \"...\",\n    # ...\n}\n```\n\n> **Принцип:** `config.py` — это YAML/JSON в Python-синтаксисе. Можно импортировать и тестировать без браузера.\n\n---\n\n#### `indeed/locators.py` (NEW — ~50 строк) ← бывший selectors.py, ТОЛЬКО функции\n\n**Переносим:**\n- `_click_apply` (764–789) — кнопка Apply\n- `_find_apply_frame` (791–821) — поиск iframe\n\n```python\nfrom .config import IA\n\nasync def click_apply(page, selector_engine=None) -> bool: ...\nasync def find_apply_frame(page, selector_engine=None): ...\n```\n\n> 🔒 **`ia_legacy.py` — FROZEN, не трогать.** В `src/applier/ia_legacy.py` уже существует идентичный `IA` dict («Legacy rollback safety net для USE_SELECTOR_ENGINE=false»).\n> **НЕ импортировать `IA` из `indeed/config.py` в `ia_legacy.py`** — это сломает назначение fallback.\n> Дублирование здесь — это благо: `ia_legacy.py` — подушка безопасности с хардкоженными константами.\n> Если `selector_engine` изменит selector — `ia_legacy` не сломается. Именно это и нужно.\n\n---\n\n#### `indeed/captcha.py` (NEW — ~380 строк)\n\n**Переносим (самый изолированный блок):**\n- `_extract_sitekey` (420–465)\n- `_solve_visible_captcha` (498–578)\n- `_solve_indeed_captcha_2captcha` (590–668)\n- `_install_captcha_interceptor` (670–759)\n\n```python\nfrom src.stealth.audio_captcha_solver import AudioCaptchaSolver  # ← не забыть!\n\nasync def extract_sitekey(page, target=None) -> Optional[str]: ...\nasync def solve_visible_captcha(page, target, selector_engine=None) -> bool: ...\nasync def solve_indeed_captcha_2captcha(sitekey: str, page_url: str) -> Optional[str]: ...\nasync def install_captcha_interceptor(page, token: str) -> None: ...\n```\n\n> ✅ **Низкий риск** — captcha методы полностью независимы от остальной логики.\n> Зависимости: `httpx`, `asyncio`, `loguru`, `StealthBrowser` (через `selector_engine`),\n> `AudioCaptchaSolver` (из `src.stealth.audio_captcha_solver`).\n\n---\n\n#### `indeed/form_filler.py` (NEW — ~130 строк)\n\n**Переносим:**\n- `_upload_resume` (823–893)\n- `_fill_fields` (895–956)\n- `_fill_field` (958–978)\n- `_handle_radios` (980–1009)\n\n```python\nasync def upload_resume(target, resume_path: Path) -> None: ...\nasync def fill_fields(target, bank, screening, page=None, context=None) -> None: ...\nasync def fill_field(target, selector: str, value: str, page=None) -> None: ...\nasync def handle_radios(target, screening) -> None: ...\n```\n\n---\n\n#### `indeed/navigation.py` (NEW — ~120 строк)\n\n**Переносим:**\n- `_has_submit_button` (1011–1023)\n- `_click_continue_or_submit` (1025–1098)\n- `_is_success` (1100–1119)\n- `_semantic_fingerprint` (467–496)\n- `_dump_frame_html` (1121–1132)\n\n```python\nasync def has_submit_button(target) -> bool: ...\nasync def click_continue_or_submit(target, page, selector_engine=None) -> str: ...\nasync def is_success(page, selector_engine=None) -> bool: ...\nasync def semantic_fingerprint(target) -> str: ...\nasync def dump_frame_html(target, label: str) -> None: ...\n```\n\n---\n\n#### `indeed/applier.py` (NEW — ~300 строк)\n\n**Оставляем здесь:**\n- Env vars: `RESUME_PATH`, `INDEED_COOKIES`, `TWOCAPTCHA_KEY`, etc.\n- Класс `IndeedApplier`:\n  - `__init__` (с injection SelectorEngine/HealthMonitor)\n  - `_ensure_logged_in`\n  - `apply` (standalone flow)\n  - `apply_on_page` (main loop + LLM fallback)\n\n**Импортирует из соседних модулей:**\n```python\nfrom .config import IA\nfrom .locators import click_apply, find_apply_frame\nfrom .captcha import solve_visible_captcha, install_captcha_interceptor\nfrom .form_filler import upload_resume, fill_fields\nfrom .navigation import click_continue_or_submit, is_success, semantic_fingerprint\n\n# Внешние зависимости — НЕ забыть перенести из indeed_apply.py:\nfrom src.applier.universal_ai_filler import UniversalAIFiller    # LLM fallback\nfrom src.applier.form_pattern_store import FormPatternStore      # паттерн-матчинг\nfrom src.applier.universal_screening import UniversalScreeningHandler\n```\n\n> ⚠️ **`UniversalAIFiller` и `FormPatternStore`** используются в `apply_on_page` как LLM fallback\n> (строка 278 оригинала). Без них `IndeedApplier` потеряет способность обрабатывать\n> нестандартные формы.\n\n---\n\n### Файлы которые нужно обновить после рефакторинга Indeed\n\n| Файл | Тип импорта | Что меняется |\n|------|-------------|-------------|\n| `src/applier/__init__.py` | **НЕ ТРОГАТЬ** | Добавить в `__getattr__` (PEP 562) — НЕ в top-level |\n| **`src/applier/indeed_router.py:26`** | **⚡ TOP-LEVEL** | **`IndeedScreeningHandler` — обновить первым, сломается при импорте!** |\n| `src/applier/indeed_router.py:116,135` (в `_route_to_ats`) | lazy | `IndeedApplier` и `GreenhouseApplier` |\n| `src/applier/ia_legacy.py` | **Не трогать** | Остаётся FROZEN (см. выше) |\n| **Удалить** `src/applier/indeed_apply.py` | — | После проверки тестов |\n\n> ⚠️ **`indeed_router.py:26`** содержит **top-level import** `from src.applier.indeed_screening import IndeedScreeningHandler`.\n> Это НЕ lazy — при удалении `indeed_screening.py` модуль сломается **при импорте**.\n> Обновить наравне с `its_check_bot.py`.\n\n---\n\n## Фаза C — Разбивка `indeed_screening.py` (933 строки)\n\n> 🚨 **Переименование в рамках этой фазы:** `IndeedScreeningHandler` — ложное название. Класс уже сейчас используется BambooHR, Workday, Lever, Ashby. «Потом» не наступает — фиксируем правильное имя сразу.\n> - Пакет: `src/applier/universal_screening/`\n> - Класс: `UniversalScreeningHandler`\n> - Обратная совместимость: `IndeedScreeningHandler = UniversalScreeningHandler` алиас в `__init__.py` — убрать после обновления всех 6 потребителей.\n\n### Анализ зоны ответственности\n\nФайл сейчас содержит **4 несвязанных концепта** в одном классе `UniversalScreeningHandler` (ныне `IndeedScreeningHandler`):\n\n| Концепт | Методы | Строк |\n|---------|--------|-------|\n| Модели и HITL helpers | `Question` dataclass, `_is_hitl_needed`, `_is_hitl_question` | ~20 |\n| Поиск вопросов на странице | `find_all_questions`, `_get_label_for_element` | **~340** |\n| Механика клика radio/select/checkbox | `_click_radio_option`, `_fill_radio`, `_fill_select`, `_fill_checkbox` | **~235** |\n| Routing ответов (3-уровневый pipeline) | `answer_question`, `handle_all_questions`, `_load_skills_context`, `_answer_open_ended` | ~340 |\n\n> **Примечание:** `find_all_questions` содержит 5 разных стратегий обнаружения радио-вопросов (fieldset, ARIA, name-group, select, text/checkbox/textarea). Это главная «толстая» часть файла — 340 строк DOM-работы.\n\n---\n\n### Целевая структура\n\n```\nsrc/applier/universal_screening/\n├── __init__.py           # UniversalScreeningHandler + алиас IndeedScreeningHandler\n├── models.py             # Question dataclass + is_hitl_needed + is_hitl_question    (~30 строк)\n├── question_finder.py    # find_all_questions + _get_label_for_element               (~360 строк)\n├── radio_filler.py       # click_radio_option + fill_radio + fill_select + fill_checkbox (~230 строк)\n├── answer_router.py      # класс AnswerRouter (делегат зависимостей)                 (~150 строк)\n└── handler.py            # UniversalScreeningHandler (тонкий фасад)                  (~80 строк)\n```\n\n**Цель:** Максимальный файл ≤ 360 строк (сейчас 933), большинство ≤ 150 строк.\n\n---\n\n### Детальный план по файлам\n\n#### `universal_screening/__init__.py` (NEW)\n```python\nfrom .handler import UniversalScreeningHandler\nfrom .models import Question\n\n# Backward compat alias — удалить после обновления всех 6 потребителей\nIndeedScreeningHandler = UniversalScreeningHandler\n\n__all__ = [\"UniversalScreeningHandler\", \"IndeedScreeningHandler\", \"Question\"]\n```\n\n---\n\n#### `universal_screening/models.py` (NEW — ~30 строк)\n\n**Переносим:**\n- `_is_hitl_needed` (строки 25–29) — standalone функция\n- `_is_hitl_question` (строки 32–40) — standalone функция\n- `Question` dataclass (строки 43–50)\n\n```python\nfrom dataclasses import dataclass\nfrom typing import Any, List\n\n@dataclass\nclass Question:\n    text: str\n    field_type: str  # radio, select, text, number, checkbox, textarea\n    options: List[str]\n    element: Any\n    required: bool = True\n\ndef is_hitl_needed(field_type: str, question_text: str) -> bool: ...\ndef is_hitl_question(text: str) -> bool: ...\n```\n\n---\n\n#### `universal_screening/question_finder.py` (NEW — ~360 строк)\n\n**Переносим:**\n- `find_all_questions` (строки 87–426) — весь DOM-поиск (5 стратегий)\n- `_get_label_for_element` (строки 428–477) — helper для label-резолюции\n\nСтратегии обнаружения вопросов (сохраняем порядок):\n1. fieldset > legend (стандарт + 4 источника для legend)\n2. `[role='radiogroup']` / `[role='group']` (ARIA-группы)\n3. `input[type=radio]` сгруппированные по `name` (Indeed consent)\n4. `<select>` элементы\n5. `input[type=text/number]`, `input[type=checkbox]`, `<textarea>`\n\n```python\nasync def find_all_questions(page) -> list[Question]: ...\nasync def get_label_for_element(element, page) -> Optional[str]: ...\n```\n\n> ⚠️ **Важно:** `find_all_questions` возвращает `List[Question]` — `page` передаётся как аргумент, не `self.page`.\n>\n> **Контракт мока `page` (для тестов):** каждый модуль использует только часть из ~200 методов Playwright Page. Документируем явно:\n> - `question_finder.py` использует: `query_selector_all`, `evaluate`, `inner_text`\n> - `radio_filler.py` использует: `evaluate`, `dispatch_event`, `click`, `wait_for_selector`\n> - `combobox_engine.py` использует: `query_selector`, `fill`, `bounding_box`, `wait_for_selector`, `evaluate`\n>\n> `AsyncMock()` молча проглатывает вызовы неизвестных методов — тест будет зелёным при сломанном коде. Используем `spec=Page` или реальный Playwright: `browser.new_page() → page.set_content(html)`.\n\n---\n\n#### `universal_screening/radio_filler.py` (NEW — ~230 строк)\n\n**Переносим:**\n- `_click_radio_option` (строки 686–785) — 5-шаговая стратегия клика (aria-radio, label JS click, label Playwright, force-click, JS checked)\n- `_fill_radio` (строки 787–909) — matching ответа к radio-опции (4 прохода: exact label, exact value, partial, file-extension fallback)\n- `_fill_select` (строки 911–925) — fallback-цепочка label→value→partial\n- `_fill_checkbox` (строки 927–933)\n\n```python\nasync def click_radio_option(radio) -> bool: ...\nasync def fill_radio(element, answer: str, page=None) -> bool: ...\nasync def fill_select(element, answer: str) -> None: ...\nasync def fill_checkbox(element, answer: str) -> None: ...\n```\n\n> ✅ **Нет зависимостей** от `AnswerBank`/`AIAnswerer` — все функции работают только с Playwright-элементами.\n\n---\n\n#### `universal_screening/answer_router.py` (NEW — ~120 строк)\n\n**Переносим:**\n- `answer_question` (строки 479–579) — 3-уровневый pipeline (AnswerBank → cache → AI + HITL)\n- `_load_skills_context` (строки 581–601) — загрузка `data/candidate/skills/*.md`\n- `_answer_open_ended` (строки 603–617) — DEPRECATED, удалить, вызовов нет\n\n> ⚠️ **`handle_all_questions` сюда НЕ идёт.** «Router» принимает `Question` DTO и возвращает `str`. Он не знает о Playwright, DOM и страницах. DOM-оркестрация (find → answer → fill loop) — это зона `UniversalScreeningHandler` (см. `handler.py` ниже).\n\n**Паттерн: чистая бизнес-логика без зависимости от браузера.**\n\nЗависимости (`AnswerBank`, `AIAnswerer`, `HumanReviewPrompter`) принимаются один раз в `__init__` — и не прокидываются по всему дереву вызовов.\n\n```python\nclass AnswerRouter:\n    def __init__(\n        self,\n        answer_bank: AnswerBank,\n        ai_answerer: AIAnswerer,\n        hitl: HumanReviewPrompter,\n    ) -> None: ...\n\n    async def answer_question(\n        self, question: Question, context: Optional[dict] = None\n    ) -> Optional[str]:\n        \"\"\"AnswerBank → cache → AI + HITL pipeline. Возвращает str, никакого DOM.\"\"\"\n        ...\n\n    async def _load_skills_context(self, question_text: str) -> str: ...\n```\n\n> ✅ **Тестируемость:** `await AnswerRouter(mock_bank, mock_ai, mock_hitl).answer_question(question)` — чистый юнит-тест, `page` вообще не нужен.\n\n---\n\n#### `universal_screening/handler.py` (NEW — ~120 строк)\n\n**Оставляем здесь** `UniversalScreeningHandler` — он владеет **DOM-оркестрацией** (find → answer → fill loop), которую `AnswerRouter` намеренно не содержит.\n\n- Создаёт `AnswerRouter` из своих зависимостей один раз в `__init__`\n- `_load_profile()` — загрузка `profile.yaml` (перенести из `IndeedScreeningHandler.__init__`)\n- `handle_all_questions` живёт **здесь** — это единственное место с доступом к `page` + `router` + `radio_filler` одновременно\n\n```python\nfrom pathlib import Path\nimport yaml\nfrom .question_finder import find_all_questions\nfrom .answer_router import AnswerRouter\nfrom .radio_filler import fill_radio, fill_select, fill_checkbox\n\nclass UniversalScreeningHandler:\n    def __init__(self, profile=None, bot_mode=False):\n        if profile is None:\n            profile = self._load_profile()  # ← восстановлена!\n        self.profile = profile\n        self.answer_bank = AnswerBank(profile)\n        self.ai_answerer = AIAnswerer(profile)\n        self._hitl = HumanReviewPrompter(bot_mode=bot_mode)\n        self._router = AnswerRouter(self.answer_bank, self.ai_answerer, self._hitl)\n\n    def _load_profile(self) -> dict:\n        \"\"\"Load profile from data/candidate/profile.yaml.\"\"\"\n        path = Path(\"data/candidate/profile.yaml\")\n        if path.exists():\n            return yaml.safe_load(path.read_text()) or {}\n        return {}\n\n    async def find_all_questions(self, page) -> list[Question]:\n        return await find_all_questions(page)\n\n    async def answer_question(self, question, context=None) -> Optional[str]:\n        return await self._router.answer_question(question, context)\n\n    async def handle_all_questions(self, page, context=None) -> int:\n        \"\"\"DOM-оркестрация: find → answer → fill. Роутер DOM не видит.\"\"\"\n        questions = await find_all_questions(page)\n        filled = 0\n        for q in questions:\n            answer = await self._router.answer_question(q, context)\n            if answer is None:\n                continue\n            if q.field_type == \"radio\":\n                await fill_radio(q.element, answer, page)\n            elif q.field_type == \"select\":\n                await fill_select(q.element, answer)\n            elif q.field_type == \"checkbox\":\n                await fill_checkbox(q.element, answer)\n            else:\n                await q.element.fill(answer)\n            filled += 1\n        return filled\n```\n\n> ✅ `AnswerRouter` тестируется без браузера. `handler.py` тестируется с мок-страницей. Разделение чёткое.\n> ✅ **`_load_profile` восстановлена** — без неё `AnswerBank(None)` получит пустой профиль,\n> потеряв данные из `profile.yaml` (имя, телефон, адрес и т.д.).\n\n---\n\n### Файлы которые нужно обновить после рефакторинга Screening\n\nШаг 1 — создать пакет, импорт через алиас (все потребители продолжают работать).\nШаг 2 — обновить каждый потребитель на `UniversalScreeningHandler`.\nШаг 3 — удалить алиас из `__init__.py`.\n\n| Файл | Текущий импорт | После обновления |\n|------|---------------|-----------------|\n| `src/applier/indeed_apply.py:35` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| `src/applier/indeed_router.py:26` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| `src/applier/bamboohr_apply.py:24` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| `src/applier/workday_apply.py:23` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| `src/applier/lever_apply.py:30` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| `src/applier/ashby_apply.py:23` | `IndeedScreeningHandler` | `UniversalScreeningHandler` |\n| **Удалить** `src/applier/indeed_screening.py` | — | После обновления всех 6 потребителей |\n\n---\n\n## Порядок выполнения\n\n```\nШаг 0:  grep-аудит перед стартом\n   │     grep -rn \"from.*greenhouse_apply import\" . --include=\"*.py\"\n   │     grep -rn \"from.*indeed_apply import\" . --include=\"*.py\"\n   │     grep -rn \"from.*indeed_screening import\" . --include=\"*.py\"\n   │     grep -rn \"_answer_open_ended\" . --include=\"*.py\"   # проверка DEPRECATED\n   │     grep -rn \"AudioCaptchaSolver\" . --include=\"*.py\"   # зависимость captcha\n   │     grep -rn \"UniversalAIFiller\" . --include=\"*.py\"    # LLM fallback зависимость\n   │     git tag pre-refactor  ← ОБЯЗАТЕЛЬНО (rollback safety net)\n   │\nШаг 1: Создать src/applier/config.py (общие RESUME_PATH, COVER_LETTER_PATH, SCREENSHOTS_DIR)\n   │\nШаг 2: Фаза C — universal_screening/models.py + question_finder.py\n   │            + собрать HTML-фикстуры + написать Playwright-тесты (НЕ AsyncMock)\n   │\nШаг 3: Фаза C — universal_screening/radio_filler.py     (изолированная механика клика)\n   │\nШаг 4: Фаза C — universal_screening/answer_router.py    (класс AnswerRouter — только str, no page)\n   │            ⚠️ _answer_open_ended — НЕ переносить, удалить (DEPRECATED, вызовов нет)\n   │\nШаг 5: Фаза C — universal_screening/handler.py + __init__.py (с алиасом IndeedScreeningHandler)\n   │            handler.py владеет DOM-loop (find → answer → fill)\n   │            ⚠️ handler.py содержит _load_profile() — восстановить из IndeedScreeningHandler!\n   │\nШаг 6: Обновить 5 из 6 потребителей на UniversalScreeningHandler\n   │     ⚠️ indeed_apply.py НЕ обновляем — он удаляется в Шаге 9 (избегаем двойной работы)\n   │     ⚠️ indeed_router.py:26 — TOP-LEVEL import! Обновить ОБЯЗАТЕЛЬНО\n   │\nШаг 7: Фаза B — indeed/captcha.py   (самый изолированный, низкий риск)\n   │     ⚠️ Не забыть AudioCaptchaSolver — зависимость _solve_visible_captcha\n   │\nШаг 8: Фаза B — indeed/config.py + indeed/locators.py + indeed/navigation.py\n   │\nШаг 9: Фаза B — indeed/form_filler.py + indeed/applier.py + __init__.py\n   │     ⚠️ indeed/applier.py сразу импортирует UniversalScreeningHandler (пропускаем промежуточный шаг)\n   │     ⚠️ Не забыть перенести UniversalAIFiller + FormPatternStore в indeed/applier.py\n   │     Удалить src/applier/indeed_apply.py\n   │\nШаг 10: Обновить импорты (queue_manager, indeed_router)\n   │\nШаг 10.5: Smoke-test перед удалением alias\n   │      grep -rn \"IndeedScreeningHandler\" . --include=\"*.py\" | grep -v \"# alias\"\n   │      ← должно вернуть 0 результатов, иначе НЕ удалять алиас\n   │\nШаг 11: ⚡ БЛОКИРУЮЩИЙ — написать e2e-тесты на СТАРЫЙ _fill_combobox_el\n   │      tests/e2e/test_combobox_baseline.py — реальный браузер, мок-страница с React combobox\n   │      pytest tests/e2e/test_combobox_baseline.py -v  ← должны быть зелёными\n   │\nШаг 12: Фаза A — greenhouse/combobox_js.py (JS-шаблоны) + greenhouse/combobox_engine.py\n   │     РЕИНЖИНИРИНГ — только при зелёных e2e\n   │     ReactComboboxDriver: fill() → _try_direct_input / _try_dropdown_search / _try_js_fallback\n   │     pytest tests/e2e/test_combobox_baseline.py -v  ← проверить после\n   │\nШаг 13: Фаза A — greenhouse/utils.py + greenhouse/validator.py + greenhouse/security.py\n   │\nШаг 14: Фаза A — greenhouse/form_filler.py (переносит batch AI AS-IS, без замены на AnswerRouter)\n   │            + greenhouse/file_uploader.py + greenhouse/context.py (ApplyContext)\n   │\nШаг 15: Фаза A — greenhouse/applier.py + __init__.py\n   │\nШаг 16: Обновить импорты (its_check_bot ПЕРВЫМ, затем queue_manager, easy_apply, indeed_router,\n   │      greenhouse_scraper, apply_service, ats_test_menu)\n   │      ⚠️ НЕ добавлять top-level import в src/applier/__init__.py — использовать __getattr__ (PEP 562)\n   │      Удалить src/applier/greenhouse_apply.py\n   │\nШаг 17: pytest + ручная проверка по одной вакансии на каждой платформе\n```\n\n> **Почему Screening перед Indeed?** `indeed_screening.py` — хорошо изолирован, даёт уверенность в паттерне.\n>\n> **Почему Indeed перед Greenhouse?** Combobox (Шаг 11–12) требует e2e-тестов как предусловия — это самый рискованный шаг. Делаем его последним с максимальной подготовкой.\n>\n> **Шаг 6 vs 9:** `indeed_apply.py` — намеренно пропускаем обновление, файл будет пересоздан как `indeed/applier.py` в Шаге 9. Двойная работа исключена.\n>\n> **Шаг 10.5 (NEW):** smoke-test перед удалением alias `IndeedScreeningHandler` — проверяем что все потребители обновлены. Без этого один пропущенный файл → `ImportError` в runtime.\n>\n> **О порядке C → B:** Фаза B (`indeed/captcha.py`) затрагивает 2 файла и безопаснее по количеству потребителей. Фаза C затрагивает 6 потребителей. Обоснование C первой: `indeed_screening.py` не имеет зависимостей от browser-контекста (только AnswerBank/AI/HITL) — проще всего отработать паттерн «класс → несколько модулей» на нём. Если порядок неприемлем — Фазу B (captcha-only) можно безопасно поднять первой без последствий.\n\n---\n\n## Принципы рефакторинга\n\n1. **Без изменения поведения** — только структурные изменения, никакой новой логики (кроме явно помеченного: combobox → `ReactComboboxDriver`). `_fill_custom_questions` переносится AS-IS с batch AI.\n2. **Один шаг — один PR/коммит** — не смешивать несколько шагов; одна feature-ветка, мелкие коммиты\n3. **Тест после каждого шага** — `pytest tests/` зелёный перед продолжением\n4. **Сохранять публичный API** — `GreenhouseApplier` и `IndeedApplier` остаются публичным интерфейсом\n5. **Grep перед удалением** — для каждого удаляемого файла/метода: `grep -rn \"ИМЯ\" . --include=\"*.py\"` перед удалением\n\n---\n\n## Обработка ошибок при разбивке на модули\n\nПри разделении монолита теряется единый `try/except` контекст. Playwright регулярно кидает `StaleElementReferenceError`, `TimeoutError`, `TargetClosedError`.\n\n**Правило:** каждый модуль обрабатывает только свои исключения, recovery-стратегия — на уровне вызывающего.\n\n```\ngreenhouse/applier.py (apply_http)\n └── try/except на весь workflow → screenshot + log + re-raise\n      ├── validator.py → пробрасывает исключения наверх\n      ├── form_filler.py → ловит TimeoutError на уровне поля, логирует, продолжает\n      └── combobox_engine.py → ловит StaleElement, retry × 2, затем пробрасывает\n```\n\n**Retry-стратегия для DOM-операций:**\n- Playwright TimeoutError → 1 retry с увеличенным timeout, затем fallback\n- StaleElementReference → 1 retry с повторным `query_selector`, затем skip поля\n- TargetClosedError → пробрасывается наверх немедленно (страница закрыта)\n\n**Correlation ID:** добавить в `ApplyContext.job_id` (хэш URL вакансии) — прокидывать в каждый log-вызов, чтобы в `bot.log` можно было `grep` по одной заявке.\n\n---\n\n## Соглашение по логированию\n\n```python\n# В каждом модуле — именованный логгер:\nfrom loguru import logger\n_log = logger.bind(module=\"greenhouse.combobox_engine\")\n\n# В вызовах — всегда job_id из контекста:\n_log.debug(\"fill_combobox_el: trying value={value}\", value=value, job_id=ctx.job_id)\n```\n\nФормат имени логгера: `{пакет}.{файл}` — позволяет фильтровать в loguru по `filter=\"greenhouse\"`.\n\n---\n\n## Общие константы: `src/applier/config.py` (NEW)\n\n`RESUME_PATH` и другие env vars сейчас будут продублированы в `greenhouse/applier.py` и `indeed/applier.py`. Исправление:\n\n```python\n# src/applier/config.py — единый источник истины для env vars\nimport os\nfrom pathlib import Path\n\nRESUME_PATH = Path(os.getenv(\"RESUME_PATH\", \"data/resume.pdf\"))\nCOVER_LETTER_PATH = Path(os.getenv(\"COVER_LETTER_PATH\", \"data/cover_letter.pdf\"))\nSCREENSHOTS_DIR = Path(os.getenv(\"SCREENSHOTS_DIR\", \"data/screenshots\"))\n```\n\nОба пакета (`greenhouse/`, `indeed/`) импортируют из `src.applier.config`, не определяют своё.\n\n---\n\n## Git-стратегия и откат\n\n**Одна feature-ветка `refactor/applier-split`, мелкие коммиты по одному шагу.**\n\n```bash\n# ⚡ ОБЯЗАТЕЛЬНО: создать tag перед стартом для полного rollback\ngit tag pre-refactor\n\ngit checkout -b refactor/applier-split\n# Шаг 0: grep-аудит → коммит \"chore: applier split pre-audit\"\n# Шаг 1: config.py → коммит \"refactor: extract shared applier config\"\n# Шаг 2-5: Фаза C → несколько коммитов \"refactor(screening): extract question_finder\" и т.д.\n# ...\n```\n\n**Rollback по шагу:** каждый шаг — отдельный коммит. `git revert HEAD` возвращает ровно один шаг.\n\n**Полный rollback:** `git checkout pre-refactor` — возвращает на состояние до рефакторинга.\n`git revert` для 17 шагов подряд — это 17 revert-ов. Tag проще и безопаснее.\n\n**Smoke-test после каждого коммита:**\n```bash\npython -c \"from src.applier.greenhouse_apply import GreenhouseApplier; print('OK')\"\npython -c \"from src.applier.indeed_apply import IndeedApplier; print('OK')\"\n# После Фазы C:\npython -c \"from src.applier.universal_screening import UniversalScreeningHandler; print('OK')\"\n```\n\n**Если шаг 12 (combobox) сломал Greenhouse:** `git revert` одного коммита, старый код возвращается. e2e-тесты из Шага 11 помогут найти что именно сломалось.\n\n---\n\n## Circular imports и TYPE_CHECKING\n\nПри создании пакетов с перекрёстными зависимостями (например, `greenhouse/form_filler.py` импортирует из `universal_screening/`) риск circular import высок.\n\n**Правило:** для аннотаций типов использовать `TYPE_CHECKING`:\n```python\nfrom __future__ import annotations\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from src.applier.universal_screening.answer_router import AnswerRouter\n    from src.applier.greenhouse.context import ApplyContext\n\n# В runtime — только конкретные зависимости, которые реально нужны\n```\n\n**Проверка на circular import после каждой фазы:**\n```bash\npython -c \"import src.applier.greenhouse; import src.applier.universal_screening\"\n```\n\n---\n\n## Верификация\n\n### Юнит-тесты на HTML-дампах (создать в рамках Фазы C)\n\nГлавный бонус выноса `find_all_questions` в чистую функцию — тестирование оффлайн без браузера.\n\n> ⚠️ **Ограничение статичного HTML:** современные ATS используют React — HTML меняется после кликов (раскрытые списки, динамические вопросы при выборе радио). Статичный `page.content()` покрывает только нулевое состояние формы.\n>\n> **Рекомендация:** использовать `browser.new_page() → page.set_content(html)` (реальный Playwright), а HTML-фикстуры делать с минимальным JS для реакции на клики. `AsyncMock()` молча проглатывает неизвестные методы — зелёный тест при сломанном коде.\n\n**Три уровня тестов:**\n\n| Уровень | Инструмент | Покрывает |\n|---------|-----------|-----------|\n| Юнит (без браузера) | `AsyncMock` + статичный HTML | Парсинг нулевого состояния, field_type detection |\n| Интеграция (Playwright) | `page.set_content(html_with_js)` | Клики, динамические вопросы, fill mechanics |\n| E2E (живая страница) | Реальная вакансия в тест-режиме | Полный прогон с реальным Indeed/Greenhouse |\n\n**Шаг 1 — Собрать HTML-дампы** (3–4 реальные страницы с формами):\n```bash\n# Во время ручного прогона записать страницы:\nawait page.content()  # сохранить в tests/fixtures/indeed_form_*.html\n```\n\nНужны варианты: radio-вопросы, select, text+number, смешанный, consent-чекбокс.\n\n**Шаг 2 — Написать тесты** (`tests/test_universal_screening.py`):\n```python\nimport pytest\n# Используем реальный Playwright, не AsyncMock — иначе молчаливые false-positives\nfrom playwright.async_api import async_playwright\n\n@pytest.fixture\nasync def page_with_html(load_fixture):\n    async with async_playwright() as p:\n        browser = await p.chromium.launch()\n        page = await browser.new_page()\n        html = load_fixture(\"indeed_form_radio.html\")\n        await page.set_content(html)\n        yield page\n        await browser.close()\n\n@pytest.mark.asyncio\nasync def test_find_radio_questions(page_with_html):\n    questions = await find_all_questions(page_with_html)\n    assert len(questions) >= 2\n    assert questions[0].field_type == \"radio\"\n```\n\n> ✅ Когда Indeed изменит вёрстку — тест упадёт **сразу**, без ручного прогона по живой вакансии.\n\n---\n\n### Автоматические тесты\n```bash\n# После каждого шага:\npytest tests/ -x -v\n\n# Только screening-тесты:\npytest tests/ -k \"screening or combobox or question_finder\" -v\n```\n\n### Ручная проверка (после полного рефакторинга)\n1. Запустить GUI (`python gui.py`)\n2. Найти 1 вакансию на Greenhouse → нажать Apply → убедиться что форма заполняется и подаётся\n3. Найти 1 вакансию на Indeed Easy Apply → нажать Apply → убедиться что проходит шаги формы\n4. Проверить логи в `bot.log` — не должно быть `ImportError` и `AttributeError`\n\n---\n\n## Чеклист выполнения\n\n### Предварительный аудит (ДО старта любой фазы)\n- [ ] `git tag pre-refactor` — **обязательный** safety net\n- [ ] `grep -rn \"from.*greenhouse_apply import\" . --include=\"*.py\"` — проверить всех потребителей\n- [ ] `grep -rn \"from.*indeed_apply import\" . --include=\"*.py\"`\n- [ ] `grep -rn \"from.*indeed_screening import\" . --include=\"*.py\"`\n- [ ] `grep -rn \"_answer_open_ended\" . --include=\"*.py\"` — подтвердить что вызовов нет → удалить\n- [ ] `grep -rn \"AudioCaptchaSolver\" . --include=\"*.py\"` — зафиксировать зависимость captcha\n- [ ] `grep -rn \"UniversalAIFiller\" . --include=\"*.py\"` — зафиксировать LLM fallback\n- [ ] Создать `src/applier/config.py` (общие RESUME_PATH, COVER_LETTER_PATH, SCREENSHOTS_DIR)\n\n### Фаза C — Universal Screening (бывший Indeed Screening)\n- [ ] Создать `src/applier/universal_screening/__init__.py` (с алиасом `IndeedScreeningHandler`)\n- [ ] Создать `src/applier/universal_screening/models.py` (dataclass `Question` + HITL helpers)\n- [ ] Создать `src/applier/universal_screening/question_finder.py` (все 5 стратегий поиска)\n- [ ] Создать `src/applier/universal_screening/radio_filler.py` (click_radio_option + fill_radio)\n- [ ] Создать `src/applier/universal_screening/answer_router.py` (класс `AnswerRouter` — возвращает `str`, не работает с `page`)\n- [ ] ⚠️ **Удалить `_answer_open_ended`** — DEPRECATED, grep подтвердил 0 вызовов\n- [ ] Создать `src/applier/universal_screening/handler.py` (`UniversalScreeningHandler` — DOM-loop + `_load_profile()`!)\n- [ ] Собрать 3–4 HTML-дампа реальных Indeed-форм → `tests/fixtures/indeed_form_*.html`\n- [ ] Написать `tests/test_universal_screening.py` (Playwright `page.set_content()`, не AsyncMock)\n- [ ] `pytest tests/` — зелёный\n- [ ] Обновить **5 потребителей** на `UniversalScreeningHandler` (`indeed_apply.py` — пропустить, удаляется в Фазе B)\n- [ ] ⚠️ **`indeed_router.py:26`** — TOP-LEVEL import, обновить **обязательно** наравне с другими\n- [ ] Удалить `src/applier/indeed_screening.py`\n- [ ] Smoke-test: `grep -rn \"IndeedScreeningHandler\" . --include=\"*.py\" | grep -v \"# alias\"` → 0 результатов\n- [ ] Удалить алиас `IndeedScreeningHandler` из `universal_screening/__init__.py` (после Фазы B)\n\n### Фаза B — Indeed\n- [ ] Создать `src/applier/indeed/__init__.py`\n- [ ] Создать `src/applier/indeed/config.py` (только `IA` dict — никаких функций)\n- [ ] Создать `src/applier/indeed/locators.py` (`click_apply` + `find_apply_frame` — только Playwright-функции)\n- [ ] `src/applier/ia_legacy.py` — **не трогать** (frozen fallback, намеренное дублирование)\n- [ ] Создать `src/applier/indeed/captcha.py` (перенести все 4 captcha метода + `AudioCaptchaSolver`!)\n- [ ] Создать `src/applier/indeed/form_filler.py` (upload + fill + radios)\n- [ ] Создать `src/applier/indeed/navigation.py` (continue/submit/success/fingerprint)\n- [ ] Создать `src/applier/indeed/applier.py` (IndeedApplier + `UniversalScreeningHandler` + `UniversalAIFiller` + `FormPatternStore`)\n- [ ] Обновить `src/applier/indeed_router.py:26` (TOP-LEVEL `IndeedScreeningHandler`!) и `:116,135` (lazy `IndeedApplier`/`GreenhouseApplier`)\n- [ ] `pytest tests/` — зелёный\n- [ ] Удалить `src/applier/indeed_apply.py`\n\n### Фаза A — Greenhouse\n- [ ] ⚡ **БЛОКИРУЮЩИЙ:** написать `tests/e2e/test_combobox_baseline.py` на СУЩЕСТВУЮЩИЙ `_fill_combobox_el`\n- [ ] `pytest tests/e2e/test_combobox_baseline.py -v` — зелёный (baseline зафиксирован)\n- [ ] Создать `src/applier/greenhouse/__init__.py`\n- [ ] Создать `src/applier/greenhouse/context.py` (`ApplyContext` с typed полями через `TYPE_CHECKING`)\n- [ ] Создать `src/applier/greenhouse/utils.py` (`get_label` — общая утилита для validator/form_filler/combobox)\n- [ ] Создать `src/applier/greenhouse/combobox_js.py` (JS-шаблоны `GET_OPTS_JS`, `FIND_OTHER_OPTION_JS` и т.д.)\n- [ ] Создать `src/applier/greenhouse/combobox_engine.py` (РЕИНЖИНИРИНГ: `ReactComboboxDriver`, импортирует из `combobox_js.py`)\n- [ ] `pytest tests/e2e/test_combobox_baseline.py -v` — зелёный после реинжиниринга\n- [ ] Создать `src/applier/greenhouse/validator.py` (использует `get_label` из `utils.py`, НЕ callback)\n- [ ] Создать `src/applier/greenhouse/security.py` (использует `ctx: ApplyContext`)\n- [ ] Создать `src/applier/greenhouse/form_filler.py` (переносит batch AI AS-IS, **НЕ** заменяет на `AnswerRouter`)\n- [ ] Создать `src/applier/greenhouse/file_uploader.py`\n- [ ] Создать `src/applier/greenhouse/applier.py`\n- [ ] **Первым** обновить `src/bot/its_check_bot.py:32` (top-level импорт — сломает бот при старте)\n- [ ] Обновить `src/applier/queue_manager.py` (в `_apply_greenhouse`)\n- [ ] Обновить `src/applier/easy_apply.py` (в `_apply_external`)\n- [ ] Обновить `src/applier/indeed_router.py` (в `_route_to_ats`)\n- [ ] Обновить `src/platforms/greenhouse_scraper.py` (в `apply`)\n- [ ] Обновить `src/gui/apply_service.py` (в `apply_greenhouse`)\n- [ ] Обновить `src/bot/ats_test_menu.py` (в `_run_test`)\n- [ ] ⚠️ `src/applier/__init__.py` — добавить в `__getattr__` (PEP 562), **НЕ** в top-level import\n- [ ] `pytest tests/` — зелёный\n- [ ] Удалить `src/applier/greenhouse_apply.py`\n\n\nIMPLEMENTATION REVIEW:\nReview the current state of the project and provide a concise critique focusing on:\n1. Whether the requirements are correctly implemented\n2. Whether the project compiles successfully\n3. What requirements are missing or incorrect\n4. Specific improvements needed to satisfy requirements\n5. Use UI tools such as webdriver to test functionality thoroughly\n\nCRITICAL INSTRUCTIONS:\n1. Provide your feedback as your final response message\n2. Your feedback should be CONCISE and ACTIONABLE\n3. Focus ONLY on what needs to be fixed or improved\n4. Do NOT include your analysis process, file contents, or compilation output in your final feedback\n\nIf the implementation thoroughly meets all requirements, compiles and is fully tested (especially UI flows) *WITHOUT* minor gaps or errors:\n- Respond with: 'IMPLEMENTATION_APPROVED'\n\nIf improvements are needed:\n- Respond with a brief summary listing ONLY the specific issues to fix\n\nRemember: Be clear in your review and concise in your feedback. APPROVE iff the implementation works and thoroughly fits the requirements (implementation > 95% complete). Be rigorous, especially by testing that all UI features work.",
+        "role": "user"
+      },
+      {
+        "content": "I'll analyze the current implementation state against the requirements document. Let me start by examining what has been implemented.I'll analyze the current implementation state against the requirements document. Let me start by examining what has been implemented.",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_6a69",
+            "input": {
+              "command": "find src/applier -type f -name \"*.py\" | head -50"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_98bcd9e36461c527/thinned/leaned_tool_result_1773150457_3.txt",
+        "role": "user",
+        "tool_result_id": "call_6a69"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_4663",
+            "input": {
+              "command": "ls -la src/applier/ 2>/dev/null || echo \"Directory not found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_98bcd9e36461c527/thinned/leaned_tool_result_1773150457_5.txt",
+        "role": "user",
+        "tool_result_id": "call_4663"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_af04",
+            "input": {
+              "command": "ls -la src/applier/greenhouse_apply.py src/applier/indeed_apply.py src/applier/indeed_screening.py 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ Exit code 1: ls: src/applier/greenhouse_apply.py: No such file or directory\nls: src/applier/indeed_apply.py: No such file or directory\nls: src/applier/indeed_screening.py: No such file or directory",
+        "role": "user",
+        "tool_result_id": "call_af04"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_02c9",
+            "input": {
+              "searches": [
+                {
+                  "language": "python",
+                  "name": "indeed_screening_import",
+                  "paths": [
+                    "src"
+                  ],
+                  "query": "(import_from module: (dotted_name) @mod name: (identifier) @name (#eq? @name \"IndeedScreeningHandler\"))"
+                }
+              ]
+            },
+            "name": "code_search"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ✅ Code search completed\n{\n  \"searches\": [\n    {\n      \"name\": \"indeed_screening_import\",\n      \"matches\": [],\n      \"match_count\": 0,\n      \"files_searched\": 0,\n      \"error\": \"Invalid query: Query error at 1:2. Invalid node type import_from\"\n    }\n  ],\n  \"total_matches\": 0,\n  \"total_files_searched\": 0\n}",
+        "role": "user",
+        "tool_result_id": "call_02c9"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_077e",
+            "input": {
+              "command": "rg -n \"IndeedScreeningHandler\" --type py"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ bash: rg: command not found",
+        "role": "user",
+        "tool_result_id": "call_077e"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_dab2",
+            "input": {
+              "command": "rg -n \"UniversalScreeningHandler\" --type py"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ bash: rg: command not found",
+        "role": "user",
+        "tool_result_id": "call_dab2"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_f57b",
+            "input": {
+              "command": "rg -n \"from.*greenhouse_apply import\" --type py"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ bash: rg: command not found",
+        "role": "user",
+        "tool_result_id": "call_f57b"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_3039",
+            "input": {
+              "command": "rg -n \"from.*indeed_apply import\" --type py"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ bash: rg: command not found",
+        "role": "user",
+        "tool_result_id": "call_3039"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_4204",
+            "input": {
+              "command": "find src -name \"*.py\" -exec grep -l \"IndeedScreeningHandler\" {} \\;"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: src/applier/universal_screening/__init__.py\nsrc/applier/workday_apply.py",
+        "role": "user",
+        "tool_result_id": "call_4204"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_cb62",
+            "input": {
+              "command": "find src -name \"*.py\" -exec grep -l \"from.*greenhouse_apply import\" {} \\;"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ⚡️ ran successfully",
+        "role": "user",
+        "tool_result_id": "call_cb62"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_1534",
+            "input": {
+              "command": "find src -name \"*.py\" -exec grep -l \"from.*indeed_apply import\" {} \\;"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ⚡️ ran successfully",
+        "role": "user",
+        "tool_result_id": "call_1534"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_d66c",
+            "input": {
+              "file_path": "src/applier/__init__.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_98bcd9e36461c527/thinned/leaned_tool_result_1773150536_25.txt",
+        "role": "user",
+        "tool_result_id": "call_d66c"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_4616",
+            "input": {
+              "file_path": "src/applier/universal_screening/__init__.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/universal_screening/__init__.py\n\"\"\"\nUniversal screening question handler.\n\nWorks with Indeed, BambooHR, Workday, Lever, Ashby ATS platforms.\n\"\"\"\n\nfrom .handler import UniversalScreeningHandler\nfrom .models import Question\n\n# Backward compat alias — remove after all consumers updated\nIndeedScreeningHandler = UniversalScreeningHandler\n\n__all__ = [\n    \"UniversalScreeningHandler\",\n    \"IndeedScreeningHandler\",  # backward compat\n    \"Question\",\n]\n\n🔍 18 lines read",
+        "role": "user",
+        "tool_result_id": "call_4616"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_255d",
+            "input": {
+              "end": 50,
+              "file_path": "src/applier/indeed_router.py",
+              "start": 1
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result:  src/applier/indeed_router.py\n\"\"\"\nIndeed Router —\n🔍 3 lines read (chars 1-50)",
+        "role": "user",
+        "tool_result_id": "call_255d"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_2215",
+            "input": {
+              "file_path": "src/applier/indeed_router.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_98bcd9e36461c527/thinned/leaned_tool_result_1773150536_31.txt",
+        "role": "user",
+        "tool_result_id": "call_2215"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_21b2",
+            "input": {
+              "command": "grep -rn \"IndeedScreeningHandler\\|UniversalScreeningHandler\" src/applier/ --include=\"*.py\" | grep -v \"__pycache__\" | grep -v \".pyc\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: src/applier/bamboohr_apply.py:24:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/bamboohr_apply.py:62:        self.screening = UniversalScreeningHandler()\nsrc/applier/indeed/applier.py:26:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/indeed/applier.py:82:        self.screening = UniversalScreeningHandler()\nsrc/applier/indeed/applier.py:227:            # Screening questions через UniversalScreeningHandler\nsrc/applier/universal_screening/handler.py:3:UniversalScreeningHandler — DOM orchestration for screening questions.\nsrc/applier/universal_screening/handler.py:24:class UniversalScreeningHandler:\nsrc/applier/universal_screening/__init__.py:8:from .handler import UniversalScreeningHandler\nsrc/applier/universal_screening/__init__.py:12:IndeedScreeningHandler = UniversalScreeningHandler\nsrc/applier/universal_screening/__init__.py:15:    \"UniversalScreeningHandler\",\nsrc/applier/universal_screening/__init__.py:16:    \"IndeedScreeningHandler\",  # backward compat\nsrc/applier/workday_apply.py:23:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/workday_apply.py:102:        self.screening = UniversalScreeningHandler()\nsrc/applier/workday_apply.py:281:        # Шаг 1: IndeedScreeningHandler покрывает text/textarea/select/стандартные radio\nsrc/applier/workday_apply.py:292:        # IndeedScreeningHandler не найдёт [data-automation-id='radioGroup'] — остаём этот блок\nsrc/applier/indeed_router.py:26:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/indeed_router.py:168:                        screening = UniversalScreeningHandler()  # загружает profile.yaml\nsrc/applier/lever_apply.py:30:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/lever_apply.py:49:        self.screening = UniversalScreeningHandler()\nsrc/applier/ashby_apply.py:23:from src.applier.universal_screening import UniversalScreeningHandler\nsrc/applier/ashby_apply.py:59:        self.screening = UniversalScreeningHandler()",
+        "role": "user",
+        "tool_result_id": "call_21b2"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_bd90",
+            "input": {
+              "end": 50,
+              "file_path": "src/applier/workday_apply.py",
+              "start": 1
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/workday_apply.py\n\"\"\"\nWorkday Applier �\n🔍 3 lines read (chars 1-50)",
+        "role": "user",
+        "tool_result_id": "call_bd90"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_dd0b",
+            "input": {
+              "file_path": "src/applier/config.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nShared configuration constants for applier modules.\n\nThis module provides a single source of truth for environment variables\nused across greenhouse and indeed appliers.\n\"\"\"\nimport os\nfrom pathlib import Path\n\n\n# Resume file path - used by both GreenhouseApplier and IndeedApplier\nRESUME_PATH = Path(os.getenv(\"RESUME_PATH\", \"data/resume.pdf\"))\n\n# Cover letter file path - used by GreenhouseApplier\nCOVER_LETTER_PATH = Path(os.getenv(\"COVER_LETTER_PATH\", \"data/cover_letter.pdf\"))\n\n# Screenshots directory - used for debugging and error capture\nSCREENSHOTS_DIR = Path(os.getenv(\"SCREENSHOTS_DIR\", \"data/screenshots\"))\n\n\ndef ensure_dirs() -> None:\n    \"\"\"Ensure all required directories exist.\"\"\"\n    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)\n🔍 23 lines read",
+        "role": "user",
+        "tool_result_id": "call_dd0b"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_3a20",
+            "input": {
+              "file_path": "src/applier/greenhouse/__init__.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nGreenhouse Applier Package.\n\nProvides GreenhouseApplier for submitting job applications via Playwright stealth browser.\n\"\"\"\n\nfrom .applier import GreenhouseApplier\n\n__all__ = [\"GreenhouseApplier\"]\n\n🔍 9 lines read",
+        "role": "user",
+        "tool_result_id": "call_3a20"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_d45e",
+            "input": {
+              "file_path": "src/applier/greenhouse/context.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/greenhouse/context.py\n\"\"\"\nApplyContext — контекстный объект для greenhouse applier.\n\nРешает проблему \"паровоза аргументов\" — передаётся одним объектом\nво все функции вместо 4-5 отдельных аргументов.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, Dict, Optional\n\nif TYPE_CHECKING:\n    from playwright.async_api import Page\n    from src.platforms.base_scraper import Job\n    from src.applier.answer_bank import AnswerBank\n\n\n@dataclass\nclass ApplyContext:\n    \"\"\"Контекст подачи заявки на вакансию Greenhouse.\n    \n    Атрибуты:\n        page: Playwright Page для взаимодействия с формой\n        job: Job dataclass с данными о вакансии\n        answer_bank: AnswerBank для автозаполнения\n        screenshots_dir: Директория для скриншотов\n        bot_mode: Флаг режима бота (для HITL)\n        profile: Профиль кандидата из profile.yaml\n        job_id: Короткий ID вакансии для логов\n    \"\"\"\n    page: \"Page\"\n    job: \"Job\"\n    answer_bank: \"AnswerBank\"\n    screenshots_dir: Path = Path(\"data/screenshots\")\n    bot_mode: bool = False\n    profile: Optional[Dict[str, Any]] = None\n    job_id: str = \"\"\n    \n    # Кэши для контекста\n    _job_context: Dict[str, Any] = field(default_factory=dict, repr=False)\n    \n    def __post_init__(self) -> None:\n        \"\"\"Инициализация контекста вакансии.\"\"\"\n        if not self._job_context:\n            self._job_context = {\n                \"job_title\": self.job.title,\n                \"company\": self.job.company,\n                \"url\": self.job.apply_url or \"\",\n            }\n        if not self.job_id:\n            # Короткий hash URL для логов\n            import hashlib\n            url = self.job.apply_url or \"\"\n            self.job_id = hashlib.md5(url.encode()).hexdigest()[:8]\n🔍 57 lines read",
+        "role": "user",
+        "tool_result_id": "call_d45e"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_63ba",
+            "input": {
+              "file_path": "src/applier/greenhouse/utils.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nGreenhouse Applier — Utility Functions.\n\nShared utilities for label resolution and other common operations.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from playwright.async_api import Page, ElementHandle\n\n\nasync def get_label(page: \"Page\", element: \"ElementHandle\") -> str:\n    \"\"\"\n    Get label text for a form element.\n\n    Tries multiple strategies in order:\n    1. Label element with matching 'for' attribute\n    2. aria-label attribute\n    3. placeholder attribute\n\n    Returns empty string if no label found.\n    \"\"\"\n    try:\n        el_id = await element.get_attribute(\"id\")\n        if el_id:\n            label_el = await page.query_selector(f\"label[for='{el_id}']\")\n            if label_el:\n                return (await label_el.inner_text()).strip()\n        aria = await element.get_attribute(\"aria-label\")\n        if aria:\n            return aria.strip()\n        placeholder = await element.get_attribute(\"placeholder\")\n        if placeholder:\n            return placeholder.strip()\n    except Exception:\n        pass\n    return \"\"\n🔍 40 lines read",
+        "role": "user",
+        "tool_result_id": "call_63ba"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_fb17",
+            "input": {
+              "end": 100,
+              "file_path": "src/applier/greenhouse/applier.py",
+              "start": 1
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result:  src/applier/greenhouse/applier.py\n\"\"\"\nGreenhouse Applier — Main application workflow.\n\nExtracted\n🔍 5 lines read (chars 1-100)",
+        "role": "user",
+        "tool_result_id": "call_fb17"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_aef5",
+            "input": {
+              "end": 100,
+              "file_path": "src/applier/indeed/applier.py",
+              "start": 1
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\nIndeed Easy Apply — main applier class.\n\nRefactored from indeed_apply.py for maintainability.\n\n🔍 4 lines read (chars 1-100)",
+        "role": "user",
+        "tool_result_id": "call_aef5"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_f413",
+            "input": {
+              "end": 50,
+              "file_path": "src/applier/greenhouse/combobox_engine.py",
+              "start": 1
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result:  src/applier/greenhouse/combobox_engine.py\n\"\"\"\nRe\n🔍 3 lines read (chars 1-50)",
+        "role": "user",
+        "tool_result_id": "call_f413"
+      },
+      {
+        "content": "Let me check the key files more thoroughly:Let me check the key files more thoroughly:",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_c048",
+            "input": {
+              "file_path": "src/applier/greenhouse/applier.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/greenhouse/applier.py\n\"\"\"\nGreenhouse Applier — Main application workflow.\n\nExtracted from greenhouse_apply.py for modularity.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport os\nimport re\nfrom pathlib import Path\nfrom typing import Any, Dict, Optional, Tuple\n\nfrom loguru import logger\n\nfrom src.stealth.browser_stealth import StealthBrowser\nfrom src.stealth.human_simulator import human_click_safe\nfrom src.stealth.timing_engine import gaussian_delay\nfrom src.applier.answer_bank import AnswerBank\nfrom src.applier.ai_answerer import AIAnswerer\nfrom src.applier.human_review import HumanReviewPrompter\nfrom src.platforms.base_scraper import Job\n\nfrom .validator import find_empty_required_fields\nfrom .security import handle_security_code\nfrom .form_filler import fill_custom_questions\nfrom .file_uploader import upload_resume, upload_cover_letter\nfrom .combobox_engine import fill_combobox, fill_combobox_el\nfrom .context import ApplyContext\n\n\n# Paths for files\nRESUME_PATH = Path(os.environ.get(\"RESUME_PDF_PATH\", \"data/resume.pdf\"))\nCOVER_LETTER_PATH = Path(os.environ.get(\"COVER_LETTER_PATH\", \"data/cover_letter.pdf\"))\nSCREENSHOTS_DIR = Path(\"data/screenshots\")\nSCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)\n\n\n# Greenhouse React UI (job-boards.greenhouse.io) — поля по id, name=\"\" пустой\nSELECTORS = {\n    # Основные поля — по id (React UI)\n    \"first_name\": \"#first_name\",\n    \"last_name\": \"#last_name\",\n    \"email\": \"#email\",\n    \"phone\": \"#phone\",\n    \"country\": \"#country\",\n\n    # Кастомные вопросы — id^='question_'\n    \"custom_text\": \"input[id^='question_']:not([type='hidden']):not([type='radio']):not([type='checkbox']):not([type='file']):not([role='combobox']), \"\n                   \"textarea[id^='question_']\",\n    \"custom_combo\": \"input[id^='question_'][role='combobox']\",\n\n    # Radio — по id префиксу\n    \"custom_radio\": \"input[type='radio'][id^='question_']\",\n\n    # Submit и успех\n    \"submit\": \"button[type='submit'], button:has-text('Submit Application'), button:has-text('Submit')\",\n    \"success\": \".confirmation__content, h1:has-text('Thank'), [class*='confirmation'], div:has-text('application has been submitted')\",\n}\n\n\ndef _parse_greenhouse_url(url: str) -> Tuple[Optional[str], Optional[str]]:\n    \"\"\"Извлечь board_token и job_id из любого Greenhouse URL.\"\"\"\n    patterns = [\n        r'boards-api\\.greenhouse\\.io/v1/boards/([^/?#]+)/jobs/(\\d+)',\n        r'(?:boards|job-boards)\\.greenhouse\\.io/([^/?#]+)/jobs/(\\d+)',\n        r'([^./?#]+)\\.greenhouse\\.io/jobs/(\\d+)',\n    ]\n    for pat in patterns:\n        m = re.search(pat, url)\n        if m:\n            return m.group(1), m.group(2)\n    return None, None\n\n\nclass GreenhouseApplier:\n    \"\"\"\n    Подаёт заявку на Greenhouse вакансию через patchright stealth-браузер.\n\n    Открывает job-boards.greenhouse.io/{token}/jobs/{id},\n    заполняет форму через Playwright, отправляет Submit.\n    \"\"\"\n\n    def __init__(self):\n        self.bank = AnswerBank()\n        self.ai = AIAnswerer(profile=self.bank._profile)\n        self._hitl = HumanReviewPrompter()  # bot_mode читается из BOT_MODE env\n\n    def _page_url(self, apply_url: str) -> str:\n        \"\"\"Конвертировать любой Greenhouse URL в job-boards.greenhouse.io для браузера.\"\"\"\n        token, job_id = _parse_greenhouse_url(apply_url)\n        if token and job_id:\n            return f\"https://job-boards.greenhouse.io/{token}/jobs/{job_id}\"\n        # Если не распарсили — используем как есть (браузер сам сделает редиректы)\n        return apply_url\n\n    async def apply_http(self, job: Job, resume_path: str = None) -> Dict[str, Any]:\n        \"\"\"\n        Подать заявку через Playwright stealth-браузер.\n        Метод называется apply_http для совместимости с IndeedRouter и GreenhouseScraper.\n        \"\"\"\n        self._job_context = {\n            \"job_title\": job.title,\n            \"company\": job.company,\n            \"url\": job.apply_url or \"\",\n        }\n        resume_file = Path(resume_path) if resume_path else RESUME_PATH\n        if not resume_file.exists():\n            logger.error(f\"❌ Greenhouse: резюме не найдено: {resume_file}\")\n            return {\"success\": False, \"error\": \"resume_not_found\"}\n\n        apply_url = job.apply_url\n        if not apply_url:\n            logger.error(f\"❌ Greenhouse: нет apply_url у вакансии {job.id}\")\n            return {\"success\": False, \"error\": \"no_apply_url\"}\n\n        page_url = self._page_url(apply_url)\n        logger.info(f\"🟢 Greenhouse apply: {job.title} @ {job.company} → {page_url}\")\n\n        try:\n            async with StealthBrowser(headed=True) as browser:\n                async with await browser.new_context() as ctx:\n                    page = await browser.new_page(ctx)\n                    await page.goto(page_url, wait_until=\"domcontentloaded\", timeout=20000)\n                    await asyncio.sleep(gaussian_delay(2.0, 3.5))\n\n                    # Стандартные поля (React UI — по id)\n                    await self._fill(page, SELECTORS[\"first_name\"],\n                                     self.bank.get_answer(\"first_name\") or \"\")\n                    await self._fill(page, SELECTORS[\"last_name\"],\n                                     self.bank.get_answer(\"last_name\") or \"\")\n                    await self._fill(page, SELECTORS[\"email\"],\n                                     self.bank.get_answer(\"email\") or \"\")\n                    await self._fill(page, SELECTORS[\"phone\"],\n                                     self.bank.get_answer(\"phone\") or \"\")\n\n                    # Country — combobox (React dropdown)\n                    await fill_combobox(page, SELECTORS[\"country\"],\n                                        self.bank.get_answer(\"country\") or \"United States\")\n\n                    # EEO / Demographic fields (по прямому id, не question_ префикс)\n                    for field_id in (\"gender\", \"hispanic_ethnicity\", \"veteran_status\", \"disability_status\"):\n                        answer = self.bank.get_answer(field_id)\n                        if answer:\n                            await fill_combobox(page, f\"#{field_id}\", answer)\n\n                    # Загрузить резюме\n                    await upload_resume(page, resume_file)\n\n                    # Cover letter если есть\n                    if COVER_LETTER_PATH.exists():\n                        logger.debug(f\"📎 Greenhouse: загружаем cover letter: {COVER_LETTER_PATH}\")\n                        await upload_cover_letter(page, COVER_LETTER_PATH)\n\n                    # Кастомные вопросы\n                    await fill_custom_questions(page, self.bank, self.ai, self._hitl, self._get_context())\n\n                    # Скриншот ДО submit — чтобы видеть заполненную форму\n                    safe_company = job.company.lower().replace(' ', '_').replace('/', '_')\n                    job_id_short = str(job.id)[:8]\n                    pre_screenshot = SCREENSHOTS_DIR / f\"gh_{safe_company}_{job_id_short}_pre.png\"\n                    await page.screenshot(path=str(pre_screenshot), full_page=True)\n                    logger.debug(f\"📸 Pre-submit screenshot: {pre_screenshot}\")\n\n                    # ── Проверка пустых полей перед Submit ─────────────────\n                    empty_required = await find_empty_required_fields(page)\n                    if empty_required:\n                        logger.warning(\n                            f\"⚠️ Greenhouse: {len(empty_required)} незаполненных обязательных полей:\"\n                        )\n                        for lbl in empty_required:\n                            logger.warning(f\"   ❌ {lbl}\")\n                        logger.warning(\n                            f\"⏸️  Пауза 90 сек — заполните поля вручную в браузере.\\n\"\n                            f\"   Скриншот: {pre_screenshot.name}\"\n                        )\n                        await asyncio.sleep(90)\n                        # Пересканируем после паузы\n                        still_empty = await find_empty_required_fields(page)\n                        if still_empty:\n                            logger.error(f\"🛑 Поля всё ещё пусты: {still_empty} — Submit отменён\")\n                            return {\n                                \"success\": False, \"error\": \"required_fields_empty\",\n                                \"missing\": still_empty, \"screenshot_path\": str(pre_screenshot),\n                            }\n                        logger.info(\"✅ Все поля заполнены после паузы — продолжаем Submit\")\n                    # ────────────────────────────────────────────────────────\n\n                    # Submit\n                    submit_btn = await page.query_selector(SELECTORS[\"submit\"])\n                    if not submit_btn:\n                        logger.warning(\"⚠️ Greenhouse: кнопка Submit не найдена\")\n                        return {\"success\": False, \"error\": \"no_submit_button\",\n                                \"screenshot_path\": str(pre_screenshot)}\n\n                    # Явный scroll к кнопке Submit + пауза для рендера.\n                    # Страховка: human_click_safe тоже делает scroll, но здесь\n                    # даём браузеру время перерисовать layout после заполнения полей.\n                    await submit_btn.scroll_into_view_if_needed()\n                    await asyncio.sleep(0.5)\n\n                    submit_text = await submit_btn.inner_text()\n                    logger.info(f\"🖱️ Greenhouse: Submit найден ('{submit_text.strip()}'), кликаем...\")\n                    await human_click_safe(page, submit_btn)\n                    await asyncio.sleep(gaussian_delay(3.0, 5.0))\n\n                    # ── Security Code (Greenhouse Email Verification) ────────\n                    # После первого submit Greenhouse может показать поле для\n                    # ввода кода из письма — проверяем это и обрабатываем через HITL\n                    apply_ctx = ApplyContext(\n                        page=page,\n                        job=job,\n                        answer_bank=self.bank,\n                        screenshots_dir=SCREENSHOTS_DIR,\n                    )\n                    security_handled = await handle_security_code(apply_ctx)\n                    if security_handled:\n                        # После ввода кода ждём ещё немного\n                        await asyncio.sleep(gaussian_delay(3.0, 5.0))\n                    # ────────────────────────────────────────────────────────\n\n                    # Проверить успех: URL меняется на /confirmation\n                    current_url = page.url\n                    success_el = await page.query_selector(SELECTORS[\"success\"])\n                    logger.debug(f\"Greenhouse: URL после submit = {current_url}\")\n\n                    # Скриншот ПОСЛЕ submit — видим результат\n                    post_screenshot = SCREENSHOTS_DIR / f\"gh_{safe_company}_{job_id_short}_post.png\"\n                    await page.screenshot(path=str(post_screenshot), full_page=True)\n                    logger.info(f\"📸 Post-submit screenshot: {post_screenshot}\")\n\n                    success_confirmed = (\n                        \"/confirmation\" in current_url\n                        or \"thank\" in current_url.lower()\n                        or success_el is not None\n                    )\n                    if success_confirmed:\n                        logger.success(f\"✅ Greenhouse: подали на {job.title} @ {job.company}\")\n                        return {\"success\": True, \"screenshot_path\": str(post_screenshot)}\n\n                    logger.warning(\n                        f\"⚠️ Greenhouse: успех не подтверждён. URL={current_url}  \"\n                        f\"success_el={'да' if success_el else 'нет'}. \"\n                        f\"Смотри скриншоты: {pre_screenshot.name} / {post_screenshot.name}\"\n                    )\n                    return {\"success\": False, \"warning\": \"no_confirmation\",\n                            \"screenshot_path\": str(post_screenshot)}\n\n        except Exception as e:\n            logger.error(f\"❌ Greenhouse apply error: {e}\")\n            return {\"success\": False, \"error\": str(e)}\n\n    # ─── Helpers ────────────────────────────────────────────────────────────\n\n    def _get_context(self) -> Dict[str, Any]:\n        \"\"\"Get job context for AI/HITL prompts.\"\"\"\n        return getattr(self, \"_job_context\", {})\n\n    async def _fill(self, page, selector: str, value: str):\n        \"\"\"Заполнить поле если существует, видимо, включено и пустое.\"\"\"\n        if not value:\n            return\n        try:\n            el = await page.query_selector(selector)\n            if el and await el.is_visible() and await el.is_enabled():\n                current = await el.input_value()\n                if not current.strip():\n                    await el.click()\n                    await el.fill(value)\n                    await asyncio.sleep(gaussian_delay(0.2, 0.5))\n        except Exception as e:\n            logger.debug(f\"Greenhouse _fill: {selector} → {e}\")\n🔍 274 lines read",
+        "role": "user",
+        "tool_result_id": "call_c048"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_15c6",
+            "input": {
+              "file_path": "src/applier/indeed/applier.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nIndeed Easy Apply — main applier class.\n\nRefactored from indeed_apply.py for maintainability.\nUses modular components from the indeed/ package.\n\"\"\"\n\nimport asyncio\nimport os\nimport random\nfrom pathlib import Path\nfrom typing import Any, Dict, Optional, TYPE_CHECKING\n\nfrom loguru import logger\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nfrom src.stealth.browser_stealth import StealthBrowser\nfrom src.stealth.human_simulator import (\n    human_click_safe, human_type_element, human_scroll,\n    organic_browsing, move_mouse_bezier,\n)\nfrom src.stealth.timing_engine import gaussian_delay\nfrom src.applier.answer_bank import AnswerBank\nfrom src.applier.universal_screening import UniversalScreeningHandler\nfrom src.applier.universal_ai_filler import UniversalAIFiller\nfrom src.applier.form_pattern_store import FormPatternStore\nfrom src.platforms.base_scraper import Job\n\n# Import modular components from indeed package\nfrom .config import IA\nfrom .locators import click_apply, find_apply_frame\nfrom .captcha import extract_sitekey, solve_visible_captcha\nfrom .form_filler import upload_resume, fill_fields, handle_radios\nfrom .navigation import (\n    has_submit_button,\n    click_continue_or_submit,\n    is_success,\n    semantic_fingerprint,\n    dump_frame_html,\n)\n\nif TYPE_CHECKING:\n    from src.applier.selector_engine import SelectorEngine\n    from src.applier.selector_health import SelectorHealthMonitor\n\n# Feature flag: set USE_SELECTOR_ENGINE=false in .env to revert to legacy IA dict\n_USE_SE = os.environ.get(\"USE_SELECTOR_ENGINE\", \"true\").lower() == \"true\"\n\n# Paths\nRESUME_PATH = Path(os.environ.get(\"RESUME_PDF_PATH\", \"data/resume.pdf\"))\nINDEED_COOKIES = Path(\"data/indeed_cookies.json\")\n\n\nclass IndeedApplier:\n    \"\"\"\n    Подача через Indeed Easy Apply.\n\n    Работает с вакансиями которые остаются на indeed.com —\n    заявка подаётся через встроенную форму Indeed.\n\n    Phase 2 (MTD): принимает SelectorEngine и SelectorHealthMonitor через конструктор.\n    При USE_SELECTOR_ENGINE=false работает через legacy IA dict.\n    \"\"\"\n\n    # Обе Indeed-домена для URL-fallback поиска iframe\n    APPLY_DOMAINS = (\"apply.indeed.com\", \"smartapply.indeed.com\")\n\n    def __init__(\n        self,\n        selector_engine: Optional[\"SelectorEngine\"] = None,\n        health_monitor: Optional[\"SelectorHealthMonitor\"] = None,\n    ):\n        \"\"\"\n        Args:\n            selector_engine: Shared SelectorEngine (Phase 2/4 injection).\n                            Если None и USE_SELECTOR_ENGINE=true — создаётся новый.\n            health_monitor: Shared SelectorHealthMonitor. Если None — нет tracking.\n        \"\"\"\n        self.bank = AnswerBank()\n        self.screening = UniversalScreeningHandler()\n        if _USE_SE:\n            if selector_engine is None:\n                from src.applier.selector_engine import SelectorEngine as _SE\n                selector_engine = _SE(health_monitor=health_monitor)\n            self.selector = selector_engine\n        else:\n            self.selector = None\n        self.health = health_monitor\n\n    async def apply(self, job: Job) -> Dict[str, Any]:\n        \"\"\"\n        Стандартный apply — открывает браузер, идёт на страницу, подаёт.\n        Используется напрямую (не через IndeedRouter).\n        \"\"\"\n        url = job.url or job.apply_url\n        if not url:\n            return {\"success\": False, \"error\": \"no_url\"}\n\n        resume_file = RESUME_PATH\n        if not resume_file.exists():\n            return {\"success\": False, \"error\": \"resume_not_found\"}\n\n        logger.info(f\"🟡 IndeedApply: {job.title} @ {job.company}\")\n\n        try:\n            storage = str(INDEED_COOKIES) if INDEED_COOKIES.exists() else None\n\n            async with StealthBrowser(headed=True) as browser:\n                async with await browser.new_context(\n                    storage_state=storage\n                ) as ctx:\n                    page = await browser.new_page(ctx)\n                    # Логинимся если нужно\n                    await self._ensure_logged_in(page, browser, ctx)\n                    await page.goto(url, wait_until=\"domcontentloaded\", timeout=20000)\n                    await asyncio.sleep(gaussian_delay(2.0, 3.5))\n                    return await self.apply_on_page(job, page)\n\n        except Exception as e:\n            logger.error(f\"❌ IndeedApply error: {e}\")\n            return {\"success\": False, \"error\": str(e)}\n\n    async def _ensure_logged_in(self, page, browser=None, ctx=None):\n        \"\"\"\n        Проверить авторизацию на indeed.com через сохранённые cookies.\n        Программный логин не используется — Indeed использует Google OAuth.\n        Для первого входа используй кнопку '🔑 Indeed Login' в GUI.\n        \"\"\"\n        if not INDEED_COOKIES.exists():\n            logger.warning(\n                \"⚠️ IndeedApply: нет сохранённой сессии (data/indeed_cookies.json). \"\n                \"Нажми '🔑 Indeed Login' в GUI для ручного входа через Google.\"\n            )\n            return\n\n        # Cookies уже загружены через storage_state при создании контекста\n        logger.debug(\"IndeedApply: сессия загружена из cookies ✓\")\n\n    async def apply_on_page(self, job: Job, page) -> Dict[str, Any]:\n        \"\"\"\n        Подача когда страница уже открыта (используется из IndeedRouter).\n        page — уже открытый Playwright Page на indeed.com/viewjob?...\n\n        ═══ АРХИТЕКТУРА CAPTCHA ═══════════════════════════════════════\n        Indeed использует reCAPTCHA Enterprise INVISIBLE (не v2 checkbox).\n        Правильный порядок:\n          1. Запустить решение капчи в фоне СРАЗУ при входе на форму\n          2. Пока форма заполняется — 2captcha решает (10-30 сек)\n          3. ПЕРЕД кликом Submit — установить перехватчик с токеном\n          4. Нажать Submit → grecaptcha.enterprise.execute() → наш токен\n        ═══════════════════════════════════════════════════════════════\n        \"\"\"\n        resume_file = RESUME_PATH\n\n        # Логинимся если нужно\n        await self._ensure_logged_in(page)\n\n        # Phase 4: Early exit на error modals\n        if _USE_SE and self.selector:\n            if await self.selector.find(page, \"already_applied\", context=\"apply_start\"):\n                logger.info(\"IndeedApply: уже подавали на эту вакансию — skip\")\n                return {\"success\": False, \"error\": \"already_applied\", \"skip\": True}\n            if await self.selector.find(page, \"job_expired\", context=\"apply_start\"):\n                logger.info(\"IndeedApply: вакансия истекла/удалена — skip\")\n                return {\"success\": False, \"error\": \"job_expired\", \"skip\": True}\n\n        # Organic browsing — reCAPTCHA строит поведенческую модель с этого момента\n        logger.debug(\"IndeedApply: organic browsing (8s) — формируем поведенческий паттерн...\")\n        await organic_browsing(page, duration_seconds=8)\n\n        # После логину возвращаемся на страницу вакансии\n        job_url = job.url or job.apply_url\n        if job_url:\n            current = page.url\n            if \"secure.indeed.com/auth\" in current or \"indeed.com/account\" in current:\n                await page.goto(job_url, wait_until=\"domcontentloaded\", timeout=20000)\n                await asyncio.sleep(gaussian_delay(2.0, 3.0))\n\n        # Шаг 1: Найти и нажать кнопку Apply\n        clicked = await click_apply(page, self.selector)\n        if not clicked:\n            logger.warning(\"⚠️ IndeedApply: кнопка Apply не найдена — возможно уже в форме\")\n\n        await asyncio.sleep(gaussian_delay(2.0, 3.5))\n\n        # Шаг 2: Определить где форма\n        frame = await find_apply_frame(page, self.selector)\n        target = frame if frame else page\n        logger.info(f\"📋 IndeedApply: форма {'в iframe' if frame else 'на странице'}\")\n\n        # Organic browsing перед подачей\n        await organic_browsing(page, duration_seconds=5)\n        await dump_frame_html(frame or page, \"step0_initial\")\n\n        # Шаг 3: Цикл прохода по шагам формы\n        # С patchright stealth капча на последней странице не появляется.\n        # Просто заполняем форму и кликаем Submit — никакого captcha-solving.\n        max_steps = 12\n        none_retries = 0\n        last_fingerprint: str = \"\"\n        stuck_count: int = 0\n\n        # LLM fallback для stuck шагов (Task 4)\n        saved_fps: list[str] = []\n        store = FormPatternStore()\n        analyzer = UniversalAIFiller()   # GeminiClient lazy-init — ОК создать здесь\n\n        for step in range(max_steps):\n            logger.debug(f\"IndeedApply шаг {step + 1}\")\n            await asyncio.sleep(gaussian_delay(1.5, 2.5))\n\n            # Загрузка/выбор резюме\n            if resume_file.exists():\n                await upload_resume(target, resume_file, self.selector)\n\n            # Заполняем поля\n            context = {\n                \"job_title\": job.title,\n                \"company\": job.company,\n                \"url\": job.url,\n            }\n            bank_data = self.bank._data\n            await fill_fields(target, bank_data, self.selector, page=page, context=context)\n\n            # Screening questions через UniversalScreeningHandler\n            # ВАЖНО: передаём target (iframe), а не page (main page)!\n            try:\n                answered = await self.screening.handle_all_questions(target, context)\n                logger.info(f\"📋 IndeedScreening: answered {answered} questions\")\n            except Exception as e:\n                logger.warning(f\"⚠️ IndeedScreening failed, fallback to basic radios: {e}\")\n                await handle_radios(target)\n\n            # Скролл (protected — page may close if apply_on_page is called\n            # while the outer StealthBrowser context is already exiting)\n            try:\n                await human_scroll(page, count=2, direction=\"down\")\n            except Exception:\n                pass\n            await asyncio.sleep(gaussian_delay(0.5, 1.5))\n\n            # Успех?\n            if await is_success(page, self.selector):\n                if saved_fps:\n                    store.confirm_all_pending(\"indeed.com\", saved_fps)\n                    logger.info(f\"📚 Confirmed {len(saved_fps)} form patterns для следующего запуска\")\n                logger.success(f\"✅ IndeedApply: подача успешна! {job.company}\")\n                return {\"success\": True, \"platform\": \"indeed\"}\n\n            # Нажать Continue / Submit\n            submitted = await click_continue_or_submit(target, page, self.selector)\n            await asyncio.sleep(gaussian_delay(1.5, 3.0))\n\n            # ── Loop guard: detect stuck step ─────────────────────────────────\n            # Используем semantic fingerprint (поля формы) вместо innerText.slice\n            # — более точно определяет что форма действительно застряла.\n            try:\n                if _USE_SE and self.selector:\n                    fingerprint = await semantic_fingerprint(target)\n                else:\n                    fingerprint = await target.evaluate(\n                        \"() => document.body.innerText.slice(0, 300)\"\n                    )\n                if fingerprint == last_fingerprint:\n                    stuck_count += 1\n                    logger.warning(\n                        f\"⚠️ IndeedApply: шаг {step + 1} — форма не продвинулась \"\n                        f\"(stuck {stuck_count}/2). Возможно остались незаполненные поля.\"\n                    )\n                    if stuck_count >= 2:\n                        logger.warning(\n                            f\"⚠️ IndeedApply: шаг {step + 1} застрял — пробуем LLM semantic fallback...\"\n                        )\n                        await dump_frame_html(frame or page, f\"step{step + 1}_stuck\")\n                        llm_helped = False\n                        try:\n                            snapshot = await analyzer.extract_semantic_snapshot(target)\n                            labels = [q[\"label\"] for q in snapshot.get(\"questions\", [])]\n                            fp = store.fingerprint_step(labels)\n                            if fp != \"no_questions\":\n                                # Сначала пробуем кэшированный паттерн\n                                actions = store.load_pattern(\"indeed.com\", fp, step)\n                                source = \"pattern\"\n                                if not actions:\n                                    # Нет паттерна — просим Gemini\n                                    actions = await analyzer.analyze_and_map(\n                                        target, self.screening.profile, snapshot=snapshot\n                                    )\n                                    source = \"gemini\"\n                                if actions:\n                                    filled = await analyzer.execute_actions(target, actions)\n                                    if filled > 0:\n                                        logger.info(\n                                            f\"✅ LLM fallback ({source}): заполнил {filled} полей, \"\n                                            f\"шаг {step + 1} разблокирован\"\n                                        )\n                                        if source == \"gemini\":\n                                            store.save_pattern(\"indeed.com\", fp, step, actions)\n                                            saved_fps.append(fp)\n                                        stuck_count = 0\n                                        llm_helped = True\n                            else:\n                                logger.debug(\"Шаг без вопросов — LLM пропускаем\")\n                        except Exception as e:\n                            logger.error(f\"❌ LLM fallback ошибка: {e}\")\n                        if not llm_helped:\n                            logger.error(\"❌ IndeedApply: LLM fallback не помог. Прерываем.\")\n                            break\n                        # else: continue — цикл продолжится автоматически (llm_helped=True)\n                else:\n                    stuck_count = 0\n                last_fingerprint = fingerprint\n            except Exception:\n                pass\n            # ────────────────────────────────────────────────────────────────────\n\n            if submitted in (\"submitted\", \"submit_attempted\"):\n                await asyncio.sleep(gaussian_delay(3.0, 5.0))\n                if await is_success(page, self.selector):\n                    if saved_fps:\n                        store.confirm_all_pending(\"indeed.com\", saved_fps)\n                        logger.info(f\"📚 Confirmed {len(saved_fps)} form patterns для следующего запуска\")\n                    logger.success(f\"✅ IndeedApply: подача успешна! {job.company}\")\n                    return {\"success\": True, \"platform\": \"indeed\"}\n                logger.warning(f\"⚠️ IndeedApply: Submit нажат, успеха нет — пропускаем\")\n                break\n\n            if submitted == \"disabled\":\n                # Submit заблокирован — видимая reCAPTCHA v2 чекбокс.\n                # С patchright stealth клик по чекбоксу часто проходит без visual challenge.\n                logger.info(\"🧩 IndeedApply: Submit disabled — пытаемся решить reCAPTCHA...\")\n                solved = await solve_visible_captcha(page, target, self.selector)\n                if solved:\n                    logger.info(\"✅ reCAPTCHA решена, повторяем submit...\")\n                    await asyncio.sleep(gaussian_delay(1.5, 2.5))\n                    continue  # повторить шаг — нажать Submit\n                logger.warning(\"⚠️ IndeedApply: reCAPTCHA не решена — пропускаем\")\n                break\n\n            if submitted == \"none\":\n                none_retries += 1\n                await dump_frame_html(frame or page, f\"step{step + 1}_no_button\")\n                logger.warning(f\"⚠️ IndeedApply: кнопка не найдена (попытка {none_retries}/3)\")\n                if none_retries >= 3:\n                    break\n                await asyncio.sleep(3.0)\n\n        # Финальная проверка\n        if await is_success(page, self.selector):\n            if saved_fps:\n                store.confirm_all_pending(\"indeed.com\", saved_fps)\n                logger.info(f\"📚 Confirmed {len(saved_fps)} form patterns для следующего запуска\")\n            return {\"success\": True, \"platform\": \"indeed\"}\n\n        logger.warning(f\"⚠️ IndeedApply: форма не завершена\")\n        return {\"success\": False, \"error\": \"form_incomplete\", \"url\": page.url}\n🔍 358 lines read",
+        "role": "user",
+        "tool_result_id": "call_15c6"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_258f",
+            "input": {
+              "file_path": "src/applier/universal_screening/handler.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/universal_screening/handler.py\n\"\"\"\nUniversalScreeningHandler — DOM orchestration for screening questions.\n\nFind → answer → fill loop. Uses AnswerRouter for business logic.\n\"\"\"\n\nfrom pathlib import Path\nfrom typing import Any, Dict, List, Optional\n\nimport yaml\nfrom loguru import logger\n\nfrom src.applier.answer_bank import AnswerBank\nfrom src.applier.ai_answerer import AIAnswerer\nfrom src.applier.human_review import HumanReviewPrompter\n\nfrom .answer_router import AnswerRouter\nfrom .models import Question\nfrom .question_finder import find_all_questions\nfrom .radio_filler import click_radio_option, fill_checkbox, fill_radio, fill_select\n\n\nclass UniversalScreeningHandler:\n    \"\"\"\n    Handles screening questions on ATS application pages.\n\n    Works with Indeed, BambooHR, Workday, Lever, Ashby.\n    \n    Flow:\n    1. Find all questions on current step\n    2. For each: try AnswerBank → cache → AI\n    3. Fill the answer\n    \"\"\"\n\n    def __init__(\n        self, profile: Optional[Dict[str, Any]] = None, bot_mode: bool = False\n    ) -> None:\n        \"\"\"\n        Initialize screening handler.\n\n        Args:\n            profile: Candidate profile dict (from profile.yaml)\n            bot_mode: If True, skip HITL menus and auto-select best variant.\n        \"\"\"\n        self.profile = profile or self._load_profile()\n        self.answer_bank = AnswerBank()\n        self.ai_answerer = AIAnswerer(self.profile)\n        self._hitl = HumanReviewPrompter(bot_mode=bot_mode)\n        self._router = AnswerRouter(\n            self.answer_bank, self.ai_answerer, self._hitl\n        )\n\n    def _load_profile(self) -> Dict[str, Any]:\n        \"\"\"Load profile from data/candidate/profile.yaml.\"\"\"\n        profile_path = Path(\"data/candidate/profile.yaml\")\n        if profile_path.exists():\n            with open(profile_path, \"r\", encoding=\"utf-8\") as f:\n                return yaml.safe_load(f) or {}\n        return {}\n\n    async def find_all_questions(self, page) -> List[Question]:\n        \"\"\"Delegate to question_finder module.\"\"\"\n        return await find_all_questions(page)\n\n    async def answer_question(\n        self, question: Question, context: Optional[Dict[str, Any]] = None\n    ) -> Optional[str]:\n        \"\"\"Delegate to AnswerRouter.\"\"\"\n        return await self._router.answer_question(question, context)\n\n    async def handle_all_questions(\n        self,\n        page,\n        context: Optional[Dict[str, Any]] = None\n    ) -> int:\n        \"\"\"\n        Find and answer all questions on the current form step.\n\n        Args:\n            page: Playwright page object\n            context: Additional context (job title, company, url)\n\n        Returns:\n            Number of questions answered\n        \"\"\"\n        questions = await self.find_all_questions(page)\n        answered = 0\n\n        for q in questions:\n            try:\n                answer = await self.answer_question(q, context)\n\n                # None = no answer; \"\" = intentionally blank (still fill)\n                if answer is None:\n                    continue\n\n                # Fill the answer\n                if q.field_type == \"radio\":\n                    if await fill_radio(q.element, answer, page=page):\n                        answered += 1\n                    else:\n                        logger.warning(\n                            f\"⚠️ Radio not filled: '{q.text[:40]}...' answer='{answer}'\"\n                        )\n                elif q.field_type == \"select\":\n                    await fill_select(q.element, answer)\n                    answered += 1\n                elif q.field_type == \"checkbox\":\n                    await fill_checkbox(q.element, answer)\n                    answered += 1\n                elif q.field_type in [\"text\", \"number\"]:\n                    try:\n                        await q.element.fill(answer)\n                    except Exception:\n                        # Element may be stale after AI response\n                        try:\n                            await q.element.triple_click()\n                            await q.element.type(answer, delay=50)\n                        except Exception:\n                            pass\n                    answered += 1\n                elif q.field_type == \"textarea\":\n                    try:\n                        await q.element.fill(answer)\n                    except Exception:\n                        try:\n                            await q.element.triple_click()\n                            await q.element.type(answer, delay=30)\n                        except Exception:\n                            pass\n                    answered += 1\n\n            except Exception as e:\n                logger.error(f\"❌ Failed to fill '{q.text[:40]}...': {e}\")\n\n        logger.info(f\"✅ Answered {answered}/{len(questions)} questions\")\n        return answered\n\n🔍 138 lines read",
+        "role": "user",
+        "tool_result_id": "call_258f"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_4f6c",
+            "input": {
+              "end": 80,
+              "file_path": "src/applier/universal_screening/question_finder.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nQuestion discovery module — finds all form questions on a page.\n\n5 detecti\n🔍 4 lines read (chars 0-80)",
+        "role": "user",
+        "tool_result_id": "call_4f6c"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_a41a",
+            "input": {
+              "file_path": "src/applier/universal_screening/answer_router.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # src/applier/universal_screening/answer_router.py\n\"\"\"\nAnswerRouter — 3-tier pipeline for answering screening questions.\n\nLevel 1: AnswerBank (fast, free)\nLevel 2: CustomAnswers cache\nLevel 3: AI Answerer + HITL\n\nPure business logic — no Playwright page dependency.\n\"\"\"\n\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, Dict, List, Optional\n\nfrom loguru import logger\n\nfrom src.applier.answer_bank import AnswerBank\nfrom src.applier.ai_answerer import AIAnswerer\n\nif TYPE_CHECKING:\n    from src.applier.human_review import HumanReviewPrompter\n    from .models import Question\n\n\nfrom .models import is_hitl_needed\n\n\nclass AnswerRouter:\n    \"\"\"\n    Routes question answering through 3-tier pipeline.\n    \n    AnswerBank → cache → AI + HITL.\n    Returns str — no DOM manipulation.\n    \"\"\"\n\n    def __init__(\n        self,\n        answer_bank: AnswerBank,\n        ai_answerer: AIAnswerer,\n        hitl: \"HumanReviewPrompter\",\n    ) -> None:\n        self.answer_bank = answer_bank\n        self.ai_answerer = ai_answerer\n        self._hitl = hitl\n\n    async def answer_question(\n        self,\n        question: \"Question\",\n        context: Optional[Dict[str, Any]] = None\n    ) -> Optional[str]:\n        \"\"\"\n        Answer a single question using three-tier system.\n\n        Args:\n            question: Question object\n            context: Additional context (job title, company, etc.)\n\n        Returns:\n            Answer string or None if failed\n        \"\"\"\n        answer = None\n\n        # Level 1: AnswerBank\n        if question.field_type == \"radio\":\n            # Use option-aware lookup so answer matches an actual label on the page.\n            if question.options:\n                answer = self.answer_bank.get_answer_for_options(\n                    question.text, question.options\n                )\n            else:\n                answer = self.answer_bank.get_yes_no(question.text)\n        elif question.field_type == \"checkbox\":\n            answer = self.answer_bank.get_yes_no(question.text)\n        elif question.field_type == \"select\":\n            # Check if it's a years-of-experience dropdown\n            if \"year\" in question.text.lower():\n                answer = self.answer_bank.get_years_for_dropdown(question.text, question.options)\n            else:\n                answer = self.answer_bank.get_answer(question.text)\n        elif question.field_type in [\"text\", \"number\"]:\n            answer = self.answer_bank.get_answer(question.text)\n        elif question.field_type == \"textarea\":\n            # For open-ended, use AI directly (skip AnswerBank)\n            pass\n\n        # NOTE: check `is not None` (not `if answer`) so that empty string \"\"\n        # (intentionally blank like current_company) gets filled WITHOUT calling AI.\n        if answer is not None and question.field_type != \"textarea\":\n            logger.info(f\"✅ AnswerBank: '{question.text[:40]}...' → '{answer}'\")\n            return answer\n\n        # Level 2: Check AI cache\n        cached = self.ai_answerer.get_cached_answer(question.text, question.options)\n        if cached:\n            logger.info(f\"🎯 Cache: '{question.text[:40]}...' → '{cached}'\")\n            return cached\n\n        # Level 3: Gemini API + HITL\n        # For textarea, load skills context first\n        ai_context = dict(context) if context else {}\n        if question.field_type == \"textarea\":\n            skills = await self._load_skills_context(question.text)\n            if skills:\n                ai_context[\"skills_content\"] = skills\n\n        variants, best = await self.ai_answerer.ask_variants(\n            question=question.text,\n            field_type=question.field_type,\n            options=question.options,\n            context=ai_context,\n        )\n\n        if not variants:\n            logger.warning(f\"❌ No answer for: '{question.text[:60]}...'\")\n            return None\n\n        if is_hitl_needed(question.field_type, question.text):\n            chosen = await self._hitl.prompt(\n                question=question.text,\n                field_type=question.field_type,\n                variants=variants,\n                company=ai_context.get(\"company\", \"\"),\n                job_title=ai_context.get(\"job_title\", \"\"),\n                default_idx=best,\n            )\n        else:\n            chosen = variants[best] if variants else None\n\n        # For radio with known options, try to match the AI answer to an actual option label.\n        if question.field_type == \"radio\" and question.options and chosen:\n            resolved = self.answer_bank.get_answer_for_options(\n                question.text, question.options, default=chosen\n            )\n            chosen = resolved\n\n        if chosen:\n            self.ai_answerer.set_cached_answer(question.text, chosen, question.options)\n            logger.info(f\"🤖 AI: '{question.text[:40]}...' → '{chosen}'\")\n            return chosen\n\n        logger.warning(f\"❌ No answer for: '{question.text[:60]}...'\")\n        return None\n\n    async def _load_skills_context(self, question_text: str) -> str:\n        \"\"\"Load relevant skills/*.md content for open-ended question context.\"\"\"\n        skills_dir = Path(\"data/candidate/skills\")\n        if not skills_dir.exists():\n            return \"\"\n\n        skills_content = \"\"\n        question_lower = question_text.lower()\n        generic_keywords = [\"experience\", \"describe\", \"tell us\", \"background\", \"yourself\", \"relevant\"]\n        is_generic = any(kw in question_lower for kw in generic_keywords)\n\n        for skill_file in skills_dir.glob(\"*.md\"):\n            skill_name = skill_file.stem.lower()\n            if skill_name in question_lower or is_generic:\n                try:\n                    content = skill_file.read_text(encoding=\"utf-8\")\n                    skills_content += f\"\\n--- {skill_file.stem.upper()} ---\\n{content[:400]}\\n\"\n                except Exception:\n                    pass\n\n        return skills_content\n\n🔍 164 lines read",
+        "role": "user",
+        "tool_result_id": "call_a41a"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_ed2c",
+            "input": {
+              "end": 50,
+              "file_path": "src/applier/indeed/captcha.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: \"\"\"\nIndeed Easy Apply - Captcha solving module.\n\nH\n🔍 4 lines read (chars 0-50)",
+        "role": "user",
+        "tool_result_id": "call_ed2c"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_5a6f",
+            "input": {
+              "command": "find src/applier -name \"*.py\" -exec wc -l {} + | tail -30"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: 78 src/applier/ia_legacy.py\n      69 src/applier/__init__.py\n     104 src/applier/indeed/locators.py\n      87 src/applier/indeed/config.py\n       9 src/applier/indeed/__init__.py\n     357 src/applier/indeed/applier.py\n     326 src/applier/indeed/captcha.py\n     226 src/applier/indeed/navigation.py\n     243 src/applier/indeed/form_filler.py\n     508 src/applier/easy_apply.py\n     447 src/applier/universal_ai_filler.py\n     174 src/applier/human_review.py\n     138 src/applier/universal_screening/handler.py\n     291 src/applier/universal_screening/radio_filler.py\n      34 src/applier/universal_screening/models.py\n     164 src/applier/universal_screening/answer_router.py\n      18 src/applier/universal_screening/__init__.py\n     409 src/applier/universal_screening/question_finder.py\n     147 src/applier/smartrecruiters_apply.py\n     450 src/applier/workday_apply.py\n     228 src/applier/gmail_reader.py\n     540 src/applier/answer_bank.py\n     292 src/applier/indeed_router.py\n     183 src/applier/lever_apply.py\n     437 src/applier/ai_answerer.py\n     198 src/applier/ashby_apply.py\n     292 src/applier/form_filler.py\n     668 src/applier/selector_engine.py\n     672 src/applier/queue_manager.py\n   10645 total",
+        "role": "user",
+        "tool_result_id": "call_5a6f"
+      },
+      {
+        "content": "Let me check the greenhouse package structure to see if it's complete:Let me check the greenhouse package structure to see if it's complete:",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_6689df6a87e5498ab5f6f60b",
+            "input": {
+              "command": "find src/applier/greenhouse -name \"*.py\" -exec wc -l {} \\; 2>/dev/null | sort -n"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: 9 src/applier/greenhouse/__init__.py\n      39 src/applier/greenhouse/utils.py\n      56 src/applier/greenhouse/context.py\n      79 src/applier/greenhouse/file_uploader.py\n     139 src/applier/greenhouse/security.py\n     178 src/applier/greenhouse/validator.py\n     237 src/applier/greenhouse/combobox_js.py\n     273 src/applier/greenhouse/applier.py\n     323 src/applier/greenhouse/form_filler.py\n     662 src/applier/greenhouse/combobox_engine.py",
+        "role": "user",
+        "tool_result_id": "call_6689df6a87e5498ab5f6f60b"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_bddeac1b26074eecadff3050",
+            "input": {
+              "command": "ls -la src/applier/greenhouse/ 2>/dev/null"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 216\n-rw-r--r--@  1 terobyte  staff    201 Mar 10 00:25 __init__.py\ndrwxr-xr-x@  4 terobyte  staff    128 Mar 10 09:30 __pycache__\ndrwxr-xr-x@ 13 terobyte  staff    416 Mar 10 09:04 .\ndrwxr-xr-x@ 28 terobyte  staff    896 Mar 10 09:43 ..\n-rw-r--r--@  1 terobyte  staff  14356 Mar 10 09:04 applier.py\n-rw-r--r--@  1 terobyte  staff  26686 Mar  9 23:34 combobox_engine.py\n-rw-r--r--@  1 terobyte  staff  10207 Mar  9 23:32 combobox_js.py\n-rw-r--r--@  1 terobyte  staff   2186 Mar  9 23:31 context.py\n-rw-r--r--@  1 terobyte  staff   2869 Mar 10 00:27 file_uploader.py\n-rw-r--r--@  1 terobyte  staff  14052 Mar 10 00:27 form_filler.py\n-rw-r--r--@  1 terobyte  staff   5973 Mar 10 00:27 security.py\n-rw-r--r--@  1 terobyte  staff   1102 Mar  9 23:31 utils.py\n-rw-r--r--@  1 terobyte  staff   8636 Mar 10 00:27 validator.py",
+        "role": "user",
+        "tool_result_id": "call_bddeac1b26074eecadff3050"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_24a7",
+            "input": {
+              "command": "ls -la src/applier/*.py 2>/dev/null | grep -E \"(greenhouse_apply|indeed_apply|indeed_screening)\" || echo \"Old files NOT found (good)\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: Old files NOT found (good)",
+        "role": "user",
+        "tool_result_id": "call_24a7"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_b540",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && grep -rn \"from.*greenhouse_apply import\" . --include=\"*.py\" 2>/dev/null || echo \"No old imports found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: No old imports found",
+        "role": "user",
+        "tool_result_id": "call_b540"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_6473",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && grep -rn \"from.*indeed_apply import\" . --include=\"*.py\" 2>/dev/null || echo \"No old imports found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: No old imports found",
+        "role": "user",
+        "tool_result_id": "call_6473"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_5b48",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && grep -rn \"from.*indeed_screening import\" . --include=\"*.py\" 2>/dev/null || echo \"No old imports found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: No old imports found",
+        "role": "user",
+        "tool_result_id": "call_5b48"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_f1d6",
+            "input": {
+              "command": "grep -rn \"_answer_open_ended\" src/ --include=\"*.py\" 2>/dev/null || echo \"No _answer_open_ended found (correct)\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: No _answer_open_ended found (correct)",
+        "role": "user",
+        "tool_result_id": "call_f1d6"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_b92d",
+            "input": {
+              "command": "grep -n \"AudioCaptchaSolver\" src/applier/indeed/captcha.py | head -5"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: 5:1. AudioCaptchaSolver (visible checkbox fallback)\n72:      1. AudioCaptchaSolver → if checkbox accessible (rare but possible)\n79:    # Attempt 1: AudioCaptchaSolver\n80:    from src.stealth.audio_captcha_solver import AudioCaptchaSolver\n82:        solver = AudioCaptchaSolver()",
+        "role": "user",
+        "tool_result_id": "call_b92d"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_c85d",
+            "input": {
+              "command": "grep -n \"UniversalAIFiller\\|FormPatternStore\" src/applier/indeed/applier.py | head -5"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: 27:from src.applier.universal_ai_filler import UniversalAIFiller\n28:from src.applier.form_pattern_store import FormPatternStore\n207:        store = FormPatternStore()\n208:        analyzer = UniversalAIFiller()   # GeminiClient lazy-init — ОК создать здесь",
+        "role": "user",
+        "tool_result_id": "call_c85d"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_649d",
+            "input": {
+              "command": "git tag -l \"pre-refactor\" 2>/dev/null || echo \"No git tag check (git may not be configured)\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: pre-refactor",
+        "role": "user",
+        "tool_result_id": "call_649d"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_0d2a",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && python -m pytest tests/ -x --tb=short -q 2>&1 | head -100"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: bash: python: command not found",
+        "role": "user",
+        "tool_result_id": "call_0d2a"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_901d",
+            "input": {
+              "command": "python3 -c \"from src.applier.greenhouse import GreenhouseApplier; print('Greenhouse OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ Exit code 1: /Users/terobyte/tmp/workspace/src/ai/llm_client.py:16: FutureWarning: \n\nAll support for the `google.generativeai` package has ended. It will no longer be receiving \nupdates or bug fixes. Please switch to the `google.genai` package as soon as possible.\nSee README for more details:\n\nhttps://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md\n\n  import google.generativeai as genai\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    from src.applier.greenhouse import GreenhouseApplier; print('Greenhouse OK')\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/terobyte/tmp/workspace/src/applier/greenhouse/__init__.py\", line 7, in <module>\n    from .applier import GreenhouseApplier\n  File \"/Users/terobyte/tmp/workspace/src/applier/greenhouse/applier.py\", line 24, in <module>\n    from src.platforms.base_scraper import Job\nModuleNotFoundError: No module named 'src.platforms.base_scraper'",
+        "role": "user",
+        "tool_result_id": "call_901d"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_93da",
+            "input": {
+              "command": "python3 -c \"from src.applier.indeed import IndeedApplier; print('Indeed OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ Exit code 1: /Users/terobyte/tmp/workspace/src/ai/llm_client.py:16: FutureWarning: \n\nAll support for the `google.generativeai` package has ended. It will no longer be receiving \nupdates or bug fixes. Please switch to the `google.genai` package as soon as possible.\nSee README for more details:\n\nhttps://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md\n\n  import google.generativeai as genai\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    from src.applier.indeed import IndeedApplier; print('Indeed OK')\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/terobyte/tmp/workspace/src/applier/indeed/__init__.py\", line 8, in <module>\n    from .applier import IndeedApplier\n  File \"/Users/terobyte/tmp/workspace/src/applier/indeed/applier.py\", line 29, in <module>\n    from src.platforms.base_scraper import Job\nModuleNotFoundError: No module named 'src.platforms.base_scraper'",
+        "role": "user",
+        "tool_result_id": "call_93da"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_df7b",
+            "input": {
+              "command": "python3 -c \"from src.applier.universal_screening import UniversalScreeningHandler; print('Screening OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: /Users/terobyte/tmp/workspace/src/ai/llm_client.py:16: FutureWarning: \n\nAll support for the `google.generativeai` package has ended. It will no longer be receiving \nupdates or bug fixes. Please switch to the `google.genai` package as soon as possible.\nSee README for more details:\n\nhttps://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md\n\n  import google.generativeai as genai\nScreening OK",
+        "role": "user",
+        "tool_result_id": "call_df7b"
+      },
+      {
+        "content": "Good! The universal_screening module imports successfully. Let me check if tests exist and run them:Good! The universal_screening module imports successfully. Let me check if tests exist and run them:",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_aa84",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && ls -la tests/ 2>/dev/null | head -20 || echo \"No tests directory\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 0\ndrwxr-xr-x@  4 terobyte  staff  128 Mar  9 20:13 .\ndrwxr-xr-x@ 12 terobyte  staff  384 Mar  9 22:13 ..\ndrwxr-xr-x@  3 terobyte  staff   96 Mar 10 09:45 e2e\ndrwxr-xr-x@  3 terobyte  staff   96 Mar 10 09:44 fixtures",
+        "role": "user",
+        "tool_result_id": "call_aa84"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_cf69",
+            "input": {
+              "command": "cd /Users/terobyte/tmp/workspace && ls tests/e2e/ 2>/dev/null || echo \"No e2e tests\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: test_combobox_baseline.py",
+        "role": "user",
+        "tool_result_id": "call_cf69"
+      },
+      {
+        "content": "Let me check the test file content:Let me check the testfile content:Let me check the test file content:Let me check the testfile content:",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_1d3e",
+            "input": {
+              "file_path": "/Users/terobyte/tmp/workspace/tests/e2e/test_combobox_baseline.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # tests/e2e/test_combobox_baseline.py - E2E tests for combobox functionality\n# These tests verify the combobox engine works correctly before and after refactoring\n#\n# CRITICAL: These tests establish a baseline for the combobox behavior.\n# Run BEFORE refactoring to establish baseline, run AFTER to verify no regression.\n\nimport pytest\nimport asyncio\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright, Page, Browser\n\n# Fixtures directory\nFIXTURES_DIR = Path(__file__).parent.parent / \"fixtures\"\n\n\nasync def load_combobox_page(page: Page) -> None:\n    \"\"\"Load the React combobox test fixture.\"\"\"\n    html_path = FIXTURES_DIR / \"react_combobox.html\"\n    if not html_path.exists():\n        raise FileNotFoundError(f\"Fixture not found: {html_path}\")\n    await page.goto(f\"file://{html_path.absolute()}\")\n\n\nclass TestComboboxBasics:\n    \"\"\"Basic combobox interaction tests.\"\"\"\n    \n    @pytest.mark.asyncio\n    async def test_fill_combobox_direct_input(self):\n        \"\"\"Test Strategy 0+1: Direct input + ArrowDown to open dropdown.\n        \n        This tests the basic flow:\n        1. Focus the combobox input\n        2. Type value that exists in dropdown\n        3. Verify value is filled correctly\n        \"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                # Get the country combobox input\n                combobox = await page.query_selector('#country')\n                assert combobox is not None, \"Country combobox not found\"\n                \n                # Import the combobox engine (lazy to avoid import errors in non-e2e context)\n                from src.applier.greenhouse.combobox_engine import fill_combobox_el\n                \n                # Fill with a value that exists in dropdown\n                await fill_combobox_el(page, combobox, \"United States\", \"Country\")\n                \n                # Verify the value was filled\n                value = await combobox.input_value()\n                assert \"United States\" in value, f\"Expected 'United States' in value, got '{value}'\"\n            finally:\n                await browser.close()\n    \n    @pytest.mark.asyncio\n    async def test_fill_combobox_partial_match(self):\n        \"\"\"Test that partial matching works (typing 'Ger' should match 'Germany').\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_combobox_el\n                combobox = await page.query_selector('#country')\n                \n                # Fill with a value that can be matched\n                await fill_combobox_el(page, combobox, \"Germany\", \"Country\")\n                \n                value = await combobox.input_value()\n                assert \"Germany\" in value, f\"Expected 'Germany' in value, got '{value}'\"\n            finally:\n                await browser.close()\n    \n    @pytest.mark.asyncio\n    async def test_fill_combobox_other_option(self):\n        \"\"\"Test 'Other' option handling with subsequent text input.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_combobox_el\n                combobox = await page.query_selector('#school')\n                \n                # Select \"Other\" - this should trigger the \"other\" input field\n                await fill_combobox_el(page, combobox, \"Other\", \"School\")\n                \n                value = await combobox.input_value()\n                assert \"Other\" in value, f\"Expected 'Other' in value, got '{value}'\"\n                \n                # The \"other\" input should now be visible\n                other_input = await page.query_selector('#school-other')\n                assert other_input is not None, \"Other input not found\"\n                \n                # Check visibility (the fixture JS makes it visible when \"Other\" is selected)\n                await page.wait_for_timeout(100)  # Allow JS to execute\n            finally:\n                await browser.close()\n\n\nclass TestComboboxSearch:\n    \"\"\"Test combobox search/filter functionality.\"\"\"\n    \n    @pytest.mark.asyncio\n    async def test_fill_combobox_search_filter(self):\n        \"\"\"Test that typing filters the dropdown options.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_combobox_el\n                combobox = await page.query_selector('#skill')\n                \n                # Fill with a value\n                await fill_combobox_el(page, combobox, \"Python\", \"Primary Skill\")\n                \n                value = await combobox.input_value()\n                assert \"Python\" in value, f\"Expected 'Python' in value, got '{value}'\"\n            finally:\n                await browser.close()\n\n\nclass TestNativeSelect:\n    \"\"\"Test native <select> element filling.\"\"\"\n    \n    @pytest.mark.asyncio\n    async def test_fill_native_select(self):\n        \"\"\"Test native <select> element filling.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_select_native\n                select = await page.query_selector('#experience')\n                assert select is not None, \"Experience select not found\"\n                \n                # Fill native select\n                await fill_select_native(select, \"3-5 years\")\n                \n                # Verify value\n                value = await select.input_value()\n                assert value == \"3-5\", f\"Expected '3-5', got '{value}'\"\n            finally:\n                await browser.close()\n    \n    @pytest.mark.asyncio\n    async def test_fill_native_select_by_value(self):\n        \"\"\"Test native <select> filling by value instead of label.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_select_native\n                select = await page.query_selector('#experience')\n                \n                # Fill with value directly\n                await fill_select_native(select, \"5-10 years\")\n                \n                value = await select.input_value()\n                assert value == \"5-10\", f\"Expected '5-10', got '{value}'\"\n            finally:\n                await browser.close()\n\n\nclass TestComboboxEdgeCases:\n    \"\"\"Test edge cases and error handling.\"\"\"\n    \n    @pytest.mark.asyncio\n    async def test_fill_combobox_not_found_graceful(self):\n        \"\"\"Test handling when option is not found in dropdown.\n        \n        The combobox should handle this gracefully without throwing.\n        \"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                from src.applier.greenhouse.combobox_engine import fill_combobox_el\n                combobox = await page.query_selector('#country')\n                \n                # Try to fill with non-existent value\n                # Should not throw - graceful handling\n                try:\n                    await fill_combobox_el(page, combobox, \"NonExistentCountry123\", \"Country\")\n                except Exception:\n                    # It's OK if it throws for non-existent values\n                    pass\n                \n                # The test passes if we get here without unhandled exceptions\n            finally:\n                await browser.close()\n    \n    @pytest.mark.asyncio\n    async def test_combobox_label_resolution(self):\n        \"\"\"Test that labels are correctly resolved for comboboxes.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                # Get label for country combobox\n                label = await page.evaluate('''() => {\n                    const input = document.getElementById('country');\n                    const label = document.querySelector('label[for=\"country\"]');\n                    return label ? label.textContent : null;\n                }''')\n                \n                assert label == \"Country\", f\"Expected 'Country', got '{label}'\"\n            finally:\n                await browser.close()\n\n\nclass TestComboboxDropdownBehavior:\n    \"\"\"Test dropdown opening and option selection behavior.\"\"\"\n    \n    @pytest.mark.asyncio\n    async def test_dropdown_opens_on_interaction(self):\n        \"\"\"Test that dropdown opens when combobox is focused.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                combobox = await page.query_selector('#country')\n                \n                # Click to focus\n                await combobox.click()\n                \n                # Send ArrowDown to open dropdown\n                await combobox.press('ArrowDown')\n                \n                # Wait a bit for dropdown animation\n                await page.wait_for_timeout(100)\n                \n                # Check if dropdown is visible (has 'open' class or aria-expanded)\n                control = await page.query_selector('[role=\"combobox\"]')\n                aria_expanded = await control.get_attribute('aria-expanded')\n                \n                assert aria_expanded == 'true', \"Dropdown should be open after ArrowDown\"\n            finally:\n                await browser.close()\n    \n    @pytest.mark.asyncio\n    async def test_dropdown_options_clickable(self):\n        \"\"\"Test that dropdown options can be clicked.\"\"\"\n        async with async_playwright() as p:\n            browser = await p.chromium.launch()\n            page = await browser.new_page()\n            \n            try:\n                await load_combobox_page(page)\n                \n                combobox = await page.query_selector('#country')\n                \n                # Focus and open dropdown\n                await combobox.click()\n                await combobox.press('ArrowDown')\n                await page.wait_for_timeout(100)\n                \n                # Find and click an option\n                uk_option = await page.query_selector('[data-value=\"uk\"]')\n                if uk_option:\n                    await uk_option.click()\n                    await page.wait_for_timeout(100)\n                    \n                    # Verify value changed\n                    value = await combobox.input_value()\n                    assert \"United Kingdom\" in value, f\"Expected 'United Kingdom' in value, got '{value}'\"\n            finally:\n                await browser.close()\n\n\n# Run tests if executed directly\nif __name__ == \"__main__\":\n    pytest.main([__file__, \"-v\", \"--asyncio-mode=auto\"])\n🔍 299 lines read",
+        "role": "user",
+        "tool_result_id": "call_1d3e"
+      },
+      {
+        "content": "Let me check the HTML fixture and try running the tests:Let me check if the HTML fixture exists:Let me check the HTML fixture and try running the tests:Let me check if the HTML fixture exists:",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_51aa",
+            "input": {
+              "command": "ls -la tests/fixtures/"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 24\ndrwxr-xr-x@ 3 terobyte  staff    96 Mar 10 09:44 .\ndrwxr-xr-x@ 4 terobyte  staff   128 Mar  9 20:13 ..\n-rw-r--r--@ 1 terobyte  staff  9509 Mar 10 09:44 react_combobox.html",
+        "role": "user",
+        "tool_result_id": "call_51aa"
+      },
+      {
+        "content": "Good! The HTML fixture exists. Let me try running the tests:Good! The HTML fixture exists. Let me try running the tests:Good! The HTML fixture exists. Let me try running the tests:Good! The HTML fixture exists. Let me try running the tests:",
+        "role": "assistant"
+      }
+    ],
+    "percentage_used": 55.021934509277344,
+    "total_tokens": 98010,
+    "used_tokens": 53927
+  },
+  "session_id": "you_are_g3_in_coach_98bcd9e36461c527",
+  "status": "completed",
+  "timestamp": 1773150541
+}

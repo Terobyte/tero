@@ -1,0 +1,20 @@
+140642-kaE, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+140642-fYc, usr,  17K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+140644-jHY, ass,   0K 🟢, 
+140644-crb, usr,   0K 🟢, Tool result: ./tests/test_kimi_vision.py ./tests/test_integration_blind.py ./src/learning/learning_engine.py ./src/learn
+140644-yRr, ass,   0K 🟢, 
+140644-OBt, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  6 terobyte  staff  192 Mar 13 13:14 . drwxr-xr-x@ 11 terobyte  staff  352 Mar 13 13:14
+140646-BPW, ass,   0K 🟢, 
+140646-BBA, usr,   0K 🟢, Tool result: """ Blind Custom Site Applier - AI-first approach for unknown career sites.  This package provides autonomo
+140646-LGg, ass,   0K 🟢, 
+140646-cyl, usr,   8K 🟠, Tool result: """ BlindApplier - Main Orchestrator for Blind Custom Site Applier.  This is the main entry point for apply
+140646-vuz, ass,   0K 🟢, 
+140646-Pji, usr,   8K 🟠, Tool result: """ ReconAgent - Site Reconnaissance (Phase 0)  Analyzes unknown career sites to understand their structure
+140648-iTl, ass,   0K 🟢, 
+140648-EUO, usr,   1K 🟡, Tool result: """ Data models for the Blind Custom Site Applier. """ from __future__ import annotations  from dataclasses
+140648-xWg, ass,   0K 🟢, 
+140648-laL, usr,   4K 🟡, Tool result: """ Kimi Vision Client - Kimi 2.5 with vision capabilities.  Extends KimiClient to support image+text promp
+140648-QHu, ass,   0K 🟢, 
+140648-swL, usr,   8K 🟠, Tool result: """ Page Navigator - Intelligent navigation for custom career sites.  Phase 1 of the Blind Custom Site Appl
+
+--- TOTAL:  51K /  98K (52.7%) ---

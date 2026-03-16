@@ -1,0 +1,643 @@
+Tool result: """
+Integration tests for BlindApplier components.
+
+Tests the interaction between:
+- WizardEngine
+- OutcomeDetector  
+- PageNavigator
+- BlindApplier (orchestrator)
+"""
+
+import asyncio
+import json
+import pytest
+from dataclasses import asdict
+from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+
+# Import blind applier components
+from src.applier.blind.models import (
+    PageType,
+    OutcomeType,
+    SiteSchema,
+    WizardResult,
+    OutcomeResult,
+    ApplyResult,
+    StepSnapshot,
+    BoundingBox,
+    ApplyButtonInfo,
+    FormFieldPreview,
+)
+from src.applier.blind.wizard_engine import (
+    WizardEngine,
+    StepTracker,
+    NextButtonFinder,
+    ProgressIndicatorDetector,
+    WizardStuckError,
+    WizardMaxStepsError,
+    WizardTimeoutError,
+)
+from src.applier.blind.outcome_detector import OutcomeDetector
+from src.applier.blind.page_navigator import PageNavigator, ApplyButtonFinder, NavigationResult
+from src.applier.blind.recon_agent import ReconAgent
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@pytest.fixture
+def mock_page():
+    """Create a mock Playwright page."""
+    page = AsyncMock()
+    page.goto = AsyncMock()
+    page.click = AsyncMock()
+    page.fill = AsyncMock()
+    page.select_option = AsyncMock()
+    page.wait_for_selector = AsyncMock()
+    page.wait_for_load_state = AsyncMock()
+    page.screenshot = AsyncMock(return_value=b"fake_screenshot")
+    page.content = AsyncMock(return_value="<html><body>Test</body></html>")
+    page.evaluate = AsyncMock(return_value={
+        "buttons": [],
+        "forms": [],
+        "inputs": [],
+        "links": [],
+        "page_title": "Test Page",
+    })
+    page.url = "https://example.com/jobs/123"
+    return page
+
+
+@pytest.fixture
+def mock_browser():
+    """Create a mock browser instance."""
+    browser = AsyncMock()
+    browser.new_page = AsyncMock()
+    browser.close = AsyncMock()
+    return browser
+
+
+@pytest.fixture
+def sample_profile():
+    """Sample user profile for testing."""
+    return {
+        "first_name": "John",
+        "last_name": "Doe",
+        "email": "john.doe@example.com",
+        "phone": "+1-555-123-4567",
+        "location": "San Francisco, CA",
+        "linkedin": "https://linkedin.com/in/johndoe",
+        "github": "https://github.com/johndoe",
+        "resume_path": "/path/to/resume.pdf",
+        "skills": ["Python", "JavaScript", "React"],
+        "experience": [
+            {
+                "title": "Software Engineer",
+                "company": "Tech Corp",
+                "start_date": "2020-01",
+                "end_date": "present",
+                "description": "Developed web applications",
+            }
+        ],
+        "education": [
+            {
+                "degree": "BS Computer Science",
+                "school": "University of Tech",
+                "graduation_date": "2019-05",
+            }
+        ],
+    }
+
+
+# ============================================================================
+# WizardEngine Integration Tests
+# ============================================================================
+
+class TestWizardEngineIntegration:
+    """Integration tests for WizardEngine."""
+
+    def test_step_tracker_records_steps(self):
+        """Test that StepTracker records and detects loops."""
+        tracker = StepTracker(max_steps=5)
+        
+        # Record first step
+        tracker.record_step("https://example.com/step1", "hash1", "screen1")
+        assert len(tracker._steps) == 1
+        
+        # Record second step
+        tracker.record_step("https://example.com/step2", "hash2", "screen2")
+        assert len(tracker._steps) == 2
+        
+        # Same DOM hash 2 times should trigger stuck error on 3rd
+        tracker.record_step("https://example.com/step3", "hash2", "screen3")
+        with pytest.raises(WizardStuckError):
+            tracker.record_step("https://example.com/step4", "hash2", "screen4")
+
+    def test_step_tracker_max_steps_limit(self):
+        """Test that StepTracker enforces max steps."""
+        tracker = StepTracker(max_steps=3)
+        
+        tracker.record_step("url1", "hash1", "screen1")
+        tracker.record_step("url2", "hash2", "screen2")
+        tracker.record_step("url3", "hash3", "screen3")
+        
+        with pytest.raises(WizardMaxStepsError):
+            tracker.record_step("url4", "hash4", "screen4")
+
+    def test_step_tracker_get_diff(self):
+        """Test getting diff between steps."""
+        tracker = StepTracker()
+        
+        tracker.record_step("url1", "hash1", "screen1")
+        tracker.record_step("url2", "hash2", "screen2")
+        
+        diff = tracker.get_diff(0, 1)
+        assert diff is not None
+
+    def test_next_button_finder_patterns(self):
+        """Test NextButtonFinder pattern discovery."""
+        finder = NextButtonFinder()
+        
+        # Should have patterns defined
+        assert len(finder.NEXT_BUTTON_PATTERNS) > 0
+        assert len(finder.SUBMIT_BUTTON_PATTERNS) > 0
+        
+        # Check priority order
+        assert "button:has-text('Next')" in finder.NEXT_BUTTON_PATTERNS
+        assert "button:has-text('Submit')" in finder.SUBMIT_BUTTON_PATTERNS
+
+    @pytest.mark.asyncio
+    async def test_wizard_engine_init(self):
+        """Test WizardEngine initialization."""
+        engine = WizardEngine(max_steps=10, step_timeout=30)
+        
+        assert engine.max_steps == 10
+        assert engine.step_timeout == 30
+        assert engine.step_tracker is not None
+
+    @pytest.mark.asyncio
+    async def test_progress_indicator_detector(self, mock_page):
+        """Test ProgressIndicatorDetector finds progress bars."""
+        detector = ProgressIndicatorDetector()
+        
+        # Mock page with progress indicator
+        mock_page.evaluate = AsyncMock(return_value={
+            "has_progress": True,
+            "current_step": 2,
+            "total_steps": 5,
+            "step_indicators": ["Step 1", "Step 2", "Step 3"],
+        })
+        
+        result = await detector.detect(mock_page)
+        assert result is not None
+
+
+# ============================================================================
+# OutcomeDetector Integration Tests
+# ============================================================================
+
+class TestOutcomeDetectorIntegration:
+    """Integration tests for OutcomeDetector."""
+
+    def test_success_url_patterns(self):
+        """Test that success URL patterns are detected."""
+        detector = OutcomeDetector()
+        
+        success_urls = [
+            "https://example.com/thank-you",
+            "https://example.com/success",
+            "https://example.com/confirmation",
+            "https://example.com/application-submitted",
+        ]
+        
+        for url in success_urls:
+            # Check if URL matches success patterns
+            is_success = any(
+                pattern in url.lower()
+                for pattern in detector.SUCCESS_SIGNALS["url_patterns"]
+            )
+            assert is_success, f"URL {url} should match success pattern"
+
+    def test_failure_signals(self):
+        """Test that failure signals are detected."""
+        detector = OutcomeDetector()
+        
+        failure_texts = [
+            "Error: Please fill in required field",
+            "Invalid email format, try again",
+            "Session expired",
+            "Something went wrong",
+        ]
+        
+        for text in failure_texts:
+            is_failure = any(
+                signal.lower() in text.lower()
+                for signal in detector.FAILURE_SIGNALS
+            )
+            assert is_failure, f"Text '{text}' should match failure signal"
+
+    def test_outcome_result_string_handling(self):
+        """Test OutcomeResult handles string outcomes."""
+        # String outcome
+        result = OutcomeResult(outcome="success", confidence=0.95)
+        assert result.success is True
+        
+        # String failure
+        result = OutcomeResult(outcome="error", confidence=0.9)
+        assert result.success is False
+
+    def test_outcome_result_enum_handling(self):
+        """Test OutcomeResult handles enum outcomes."""
+        # Enum success
+        result = OutcomeResult(outcome=OutcomeType.SUCCESS, confidence=0.95)
+        assert result.success is True
+        
+        # Enum error
+        result = OutcomeResult(outcome=OutcomeType.ERROR, confidence=0.9)
+        assert result.success is False
+
+    def test_outcome_result_edge_cases(self):
+        """Test OutcomeResult handles edge cases."""
+        # Mixed case string
+        result = OutcomeResult(outcome="SUCCESS", confidence=0.9)
+        assert result.success is True
+        
+        result = OutcomeResult(outcome="Success", confidence=0.9)
+        assert result.success is True
+        
+        # Unknown outcome
+        result = OutcomeResult(outcome="unknown_state", confidence=0.5)
+        assert result.success is False
+
+
+# ============================================================================
+# PageNavigator Integration Tests
+# ============================================================================
+
+class TestPageNavigatorIntegration:
+    """Integration tests for PageNavigator."""
+
+    def test_apply_button_finder_patterns(self):
+        """Test ApplyButtonFinder has comprehensive patterns."""
+        finder = ApplyButtonFinder()
+        
+        # English patterns
+        english_patterns = [
+            "Apply",
+            "Apply Now",
+            "Apply for this job",
+        ]
+        
+        for text in english_patterns:
+            # Check that patterns exist
+            found = any(
+                text.lower() in pattern.lower()
+                for pattern in finder.APPLY_PATTERNS
+            )
+            assert found, f"Pattern for '{text}' should exist"
+
+    @pytest.mark.asyncio
+    async def test_navigator_init(self):
+        """Test PageNavigator initialization."""
+        navigator = PageNavigator()
+        assert navigator.button_finder is not None
+
+    @pytest.mark.asyncio
+    async def test_navigation_result_creation(self):
+        """Test NavigationResult dataclass."""
+        result = NavigationResult(
+            success=True,
+            final_url="https://example.com/apply",
+            page_type=PageType.FORM_SINGLE,
+            clicks=2,
+        )
+        
+        assert result.success is True
+        assert result.clicks == 2
+        assert result.page_type == PageType.FORM_SINGLE
+
+
+# ============================================================================
+# ReconAgent Integration Tests
+# ============================================================================
+
+class TestReconAgentIntegration:
+    """Integration tests for ReconAgent."""
+
+    def test_site_schema_creation(self):
+        """Test SiteSchema dataclass."""
+        schema = SiteSchema(
+            url="https://example.com/jobs/123",
+            domain="example.com",
+            page_type=PageType.JOB_LISTING,
+            requires_account=False,
+            has_apply_button=True,
+            apply_button_hint="Blue button top-right",
+            estimated_steps=1,
+            language="en",
+            detected_ats="unknown",
+            form_fields_preview=[],
+            blocked_reason=None,
+            screenshot_path="/tmp/screenshot.png",
+            raw_dom_hash="abc123",
+            confidence=0.85,
+        )
+        
+        assert schema.url == "https://example.com/jobs/123"
+        assert schema.page_type == PageType.JOB_LISTING
+        assert schema.has_apply_button is True
+        assert schema.confidence == 0.85
+
+    def test_site_schema_with_blocked_reason(self):
+        """Test SiteSchema with blocked reason."""
+        schema = SiteSchema(
+            url="https://example.com/jobs/123",
+            domain="example.com",
+            page_type=PageType.ERROR,
+            requires_account=False,
+            has_apply_button=False,
+            apply_button_hint="",
+            estimated_steps=0,
+            language="en",
+            detected_ats="unknown",
+            form_fields_preview=[],
+            blocked_reason="captcha_detected",
+            screenshot_path="/tmp/screenshot.png",
+            raw_dom_hash="abc123",
+            confidence=0.95,
+        )
+        
+        assert schema.blocked_reason == "captcha_detected"
+        assert schema.page_type == PageType.ERROR
+
+    def test_form_field_preview(self):
+        """Test FormFieldPreview dataclass."""
+        field = FormFieldPreview(
+            label="First Name",
+            type_guess="text",
+            required=True,
+            selector="#first-name",
+        )
+        
+        assert field.label == "First Name"
+        assert field.required is True
+
+
+# ============================================================================
+# BlindApplier Integration Tests
+# ============================================================================
+
+class TestBlindApplierIntegration:
+    """Integration tests for BlindApplier orchestrator."""
+
+    def test_apply_result_success(self):
+        """Test ApplyResult for successful application."""
+        result = ApplyResult(
+            success=True,
+            filled_fields=12,
+            steps_completed=3,
+            error=None,
+        )
+        
+        assert result.success is True
+        assert result.filled_fields == 12
+
+    def test_apply_result_failure(self):
+        """Test ApplyResult for failed application."""
+        result = ApplyResult(
+            success=False,
+            filled_fields=5,
+            steps_completed=1,
+            error="account_required",
+        )
+        
+        assert result.success is False
+        assert result.error == "account_required"
+
+    def test_wizard_result_creation(self):
+        """Test WizardResult dataclass."""
+        result = WizardResult(
+            success=True,
+            steps_completed=5,
+            steps_total=5,
+            filled_fields=20,
+            errors=[],
+            fingerprints=["hash1", "hash2"],
+        )
+        
+        assert result.success is True
+        assert result.steps_completed == 5
+        assert len(result.fingerprints) == 2
+
+    def test_wizard_result_with_errors(self):
+        """Test WizardResult with errors."""
+        result = WizardResult(
+            success=False,
+            steps_completed=2,
+            steps_total=5,
+            filled_fields=8,
+            errors=["Timeout on step 3", "Element not found"],
+            fingerprints=["hash1"],
+        )
+        
+        assert result.success is False
+        assert len(result.errors) == 2
+
+
+# ============================================================================
+# Models Integration Tests
+# ============================================================================
+
+class TestModelsIntegration:
+    """Integration tests for data models."""
+
+    def test_page_type_enum(self):
+        """Test PageType enum values."""
+        assert PageType.JOB_LISTING.value == "job_listing"
+        assert PageType.LOGIN_REQUIRED.value == "login_required"
+        assert PageType.FORM_SINGLE.value == "form_single"
+        assert PageType.FORM_WIZARD.value == "form_wizard"
+        assert PageType.CONFIRMATION.value == "confirmation"
+        assert PageType.ERROR.value == "error"
+
+    def test_outcome_type_enum(self):
+        """Test OutcomeType enum values."""
+        assert OutcomeType.SUCCESS.value == "success"
+        assert OutcomeType.ERROR.value == "error"
+        assert OutcomeType.LOADING.value == "loading"
+        assert OutcomeType.SAME_PAGE.value == "same_page"
+        assert OutcomeType.REDIRECT.value == "redirect"
+
+    def test_bounding_box(self):
+        """Test BoundingBox dataclass."""
+        bbox = BoundingBox(x=100, y=200, width=150, height=40)
+        
+        center_x = bbox.x + bbox.width // 2
+        center_y = bbox.y + bbox.height // 2
+        
+        assert center_x == 175
+        assert center_y == 220
+
+    def test_apply_button_info(self):
+        """Test ApplyButtonInfo dataclass."""
+        info = ApplyButtonInfo(
+            found=True,
+            selector="button:has-text('Apply Now')",
+            bbox=BoundingBox(x=500, y=300, width=120, height=40),
+            text="Apply Now",
+            confidence=0.95,
+        )
+        
+        assert info.found is True
+        assert info.selector == "button:has-text('Apply Now')"
+        assert info.confidence == 0.95
+
+    def test_step_snapshot(self):
+        """Test StepSnapshot dataclass."""
+        snapshot = StepSnapshot(
+            url="https://example.com/step/2",
+            dom_hash="abc123",
+            screenshot_hash="def456",
+            fields_count=10,
+            timestamp=1234567890.0,
+        )
+        
+        assert snapshot.url == "https://example.com/step/2"
+        assert snapshot.dom_hash == "abc123"
+
+
+# ============================================================================
+# End-to-End Simulation Tests
+# ============================================================================
+
+class TestEndToEndSimulation:
+    """Simulate end-to-end application flows."""
+
+    @pytest.mark.asyncio
+    async def test_simple_form_flow(self, mock_page, sample_profile):
+        """Test a simple single-page form flow."""
+        # Setup mock for simple form
+        mock_page.query_selector_all = AsyncMock(return_value=[
+            MagicMock(**{"is_visible.return_value": True})
+        ])
+        
+        # Create navigator
+        navigator = PageNavigator()
+        
+        # Simulate navigation result
+        nav_result = NavigationResult(
+            success=True,
+            final_url="https://example.com/apply",
+            page_type=PageType.FORM_SINGLE,
+            clicks=1,
+        )
+        
+        assert nav_result.success is True
+        assert nav_result.page_type == PageType.FORM_SINGLE
+
+    @pytest.mark.asyncio
+    async def test_wizard_flow_simulation(self, mock_page, sample_profile):
+        """Test a multi-step wizard flow simulation."""
+        # Create step tracker
+        tracker = StepTracker(max_steps=5)
+        
+        # Simulate wizard steps
+        steps = [
+            ("https://example.com/apply/step/1", "hash1", "screen1"),
+            ("https://example.com/apply/step/2", "hash2", "screen2"),
+            ("https://example.com/apply/step/3", "hash3", "screen3"),
+            ("https://example.com/apply/confirmation", "hash4", "screen4"),
+        ]
+        
+        for url, dom_hash, screen_hash in steps:
+            tracker.record_step(url, dom_hash, screen_hash)
+        
+        assert len(tracker._steps) == 4
+        
+        # Simulate outcome detection
+        result = OutcomeResult(
+            outcome=OutcomeType.SUCCESS,
+            confidence=0.95,
+            message="Application submitted successfully",
+        )
+        
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_blocked_site_flow(self, mock_page, sample_profile):
+        """Test handling of blocked sites (captcha, etc.)."""
+        # Create schema indicating blocked site
+        schema = SiteSchema(
+            url="https://example.com/jobs/123",
+            domain="example.com",
+            page_type=PageType.ERROR,
+            requires_account=False,
+            has_apply_button=False,
+            apply_button_hint="",
+            estimated_steps=0,
+            language="en",
+            detected_ats="unknown",
+            form_fields_preview=[],
+            blocked_reason="captcha_detected",
+            screenshot_path="/tmp/screenshot.png",
+            raw_dom_hash="abc123",
+            confidence=0.95,
+        )
+        
+        # Create apply result based on schema
+        result = ApplyResult(
+            success=False,
+            filled_fields=0,
+            steps_completed=0,
+            error=schema.blocked_reason,
+        )
+        
+        assert result.success is False
+        assert result.error == "captcha_detected"
+
+
+# ============================================================================
+# Error Handling Tests
+# ============================================================================
+
+class TestErrorHandling:
+    """Test error handling across components."""
+
+    def test_wizard_stuck_error(self):
+        """Test WizardStuckError exception."""
+        error = WizardStuckError("Stuck on step 3")
+        assert "Stuck on step 3" in str(error)
+
+    def test_wizard_max_steps_error(self):
+        """Test WizardMaxStepsError exception."""
+        error = WizardMaxStepsError("Exceeded 15 steps")
+        assert "Exceeded 15 steps" in str(error)
+
+    def test_wizard_timeout_error(self):
+        """Test WizardTimeoutError exception."""
+        error = WizardTimeoutError("Step timed out after 60s")
+        assert "timed out" in str(error)
+
+    @pytest.mark.asyncio
+    async def test_outcome_detector_handles_empty_content(self, mock_page):
+        """Test OutcomeDetector handles empty page content."""
+        detector = OutcomeDetector()
+        
+        mock_page.content = AsyncMock(return_value="")
+        mock_page.url = "https://example.com/unknown"
+        
+        # Detector should handle gracefully
+        # (actual implementation would call detect method)
+        assert detector.SUCCESS_SIGNALS is not None
+        assert detector.FAILURE_SIGNALS is not None
+
+
+# ============================================================================
+# Run Tests
+# ============================================================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+🔍 641 lines read

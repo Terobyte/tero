@@ -1,0 +1,150 @@
+Tool result: # src/ai/star_rewriter.py
+"""
+STARRewriter — переписывает bullet points в STAR/CAR формат.
+
+STAR: Situation → Task → Action → Result
+CAR:  Context → Action → Result (короче, для резюме)
+
+Usage:
+    rewriter = STARRewriter(llm_client)
+    result = await rewriter.rewrite(
+        bullet="Worked on database optimization",
+        context={"role": "Backend Engineer", "company": "Stripe"}
+    )
+    # → "Optimized PostgreSQL queries for payment service → reduced p99 latency by 40%"
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from loguru import logger
+
+
+@dataclass
+class STARResult:
+    original: str
+    rewritten: str           # CAR-формат для резюме (одна строка)
+    star_full: str           # Полный STAR для behavioral вопросов
+    has_metric: bool         # Содержит ли измеримый результат
+    confidence: str          # high/medium/low
+
+
+_CAR_PROMPT = """Rewrite this resume bullet point in CAR format (Context → Action → Result).
+
+Rules:
+1. One line only
+2. Start with strong action verb (Designed, Built, Reduced, Led, Automated...)
+3. Result MUST include a metric: %, $, time saved, count, or scale
+4. If no metric in original — estimate conservatively based on context
+5. Max 20 words
+
+Original: {bullet}
+Role: {role}
+Company: {company}
+
+Rewritten (one line, no explanation):"""
+
+_STAR_PROMPT = """Expand this bullet point into a full STAR behavioral answer (3-5 sentences).
+
+Bullet: {bullet}
+Role: {role}
+Company: {company}
+
+Format:
+S (Situation): [1 sentence — context/challenge]
+T (Task): [1 sentence — your responsibility]  
+A (Action): [2 sentences — specific steps you took]
+R (Result): [1 sentence — measurable outcome]
+
+STAR answer:"""
+
+
+class STARRewriter:
+    """Переписывает bullets в STAR/CAR формат через LLM."""
+
+    def __init__(self, llm_client=None):
+        self._llm = llm_client
+
+    async def rewrite(
+        self,
+        bullet: str,
+        context: Optional[dict] = None,
+        mode: str = "car",  # "car" для резюме, "star" для behavioral
+    ) -> STARResult:
+        """
+        Переписать bullet в STAR или CAR формат.
+
+        Args:
+            bullet: Исходный bullet point
+            context: {"role": "...", "company": "..."}
+            mode: "car" (краткий) или "star" (полный для собеседования)
+        """
+        ctx = context or {}
+        role = ctx.get("role", "Software Engineer")
+        company = ctx.get("company", "the company")
+
+        if not self._llm:
+            return STARResult(
+                original=bullet,
+                rewritten=bullet,
+                star_full=bullet,
+                has_metric=self._has_metric(bullet),
+                confidence="low",
+            )
+
+        try:
+            # CAR для резюме (всегда генерируем)
+            car_prompt = _CAR_PROMPT.format(
+                bullet=bullet, role=role, company=company
+            )
+            car_result = await self._llm.generate(car_prompt)
+            car_result = car_result.strip().lstrip("- •").strip()
+
+            # STAR для собеседований (только если запрошено)
+            star_full = ""
+            if mode == "star":
+                star_prompt = _STAR_PROMPT.format(
+                    bullet=bullet, role=role, company=company
+                )
+                star_full = (await self._llm.generate(star_prompt)).strip()
+
+            has_metric = self._has_metric(car_result)
+            confidence = "high" if has_metric else "medium"
+
+            logger.info(f"STAR: '{bullet[:40]}' → '{car_result[:40]}'")
+
+            return STARResult(
+                original=bullet,
+                rewritten=car_result if car_result else bullet,
+                star_full=star_full,
+                has_metric=has_metric,
+                confidence=confidence,
+            )
+        except Exception as e:
+            logger.error(f"STARRewriter failed: {e}")
+            return STARResult(
+                original=bullet,
+                rewritten=bullet,
+                star_full="",
+                has_metric=self._has_metric(bullet),
+                confidence="low",
+            )
+
+    async def rewrite_many(
+        self, bullets: list[str], context: Optional[dict] = None
+    ) -> list[STARResult]:
+        """Переписать список bullets (последовательно)."""
+        results = []
+        for b in bullets:
+            r = await self.rewrite(b, context)
+            results.append(r)
+        return results
+
+    @staticmethod
+    def _has_metric(text: str) -> bool:
+        """Содержит ли текст цифры/метрики."""
+        import re
+        return bool(re.search(r"\d+[%$kKmM]?|\d+\s*(percent|hours?|days?|users?)", text))
+
+🔍 148 lines read

@@ -1,0 +1,4 @@
+Tool result: ./src/applier/universal_screening/__init__.py:12:IndeedScreeningHandler = UniversalScreeningHandler
+./src/applier/universal_screening/__init__.py:16:    "IndeedScreeningHandler",  # backward compat
+./src/applier/workday_apply.py:281:        # Шаг 1: IndeedScreeningHandler покрывает text/textarea/select/стандартные radio
+./src/applier/workday_apply.py:292:        # IndeedScreeningHandler не найдёт [data-automation-id='radioGroup'] — остаём этот блок

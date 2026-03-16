@@ -1,0 +1,4 @@
+092452-wFX, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+092452-TrU, usr,  35K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+
+--- TOTAL:  37K /  98K (37.8%) ---

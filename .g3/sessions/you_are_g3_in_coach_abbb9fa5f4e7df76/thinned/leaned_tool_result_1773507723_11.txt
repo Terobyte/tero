@@ -1,0 +1,30 @@
+Tool result: {
+  "cost_limits": {
+    "max_per_application": 0.10,
+    "max_per_day": 5.00,
+    "max_per_month": 100.00,
+    "warn_at_percent": 80
+  },
+  "batch_validation": {
+    "enabled": true,
+    "critical_only": true,
+    "max_retries": 3
+  },
+  "llm": {
+    "default_provider": "gemini",
+    "fallback_provider": "kimi",
+    "max_retries": 3,
+    "timeout_seconds": 60
+  },
+  "knowledge_base": {
+    "chroma_path": ".index/chromadb",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "chunk_size": 500,
+    "chunk_overlap": 100
+  },
+  "screening": {
+    "enable_audit_log": true,
+    "enable_snapshot": true,
+    "strict_policy": true
+  }
+}

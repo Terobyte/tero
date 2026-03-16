@@ -1,0 +1,140 @@
+Tool result: # src/applier/universal_screening/handler.py
+"""
+UniversalScreeningHandler — DOM orchestration for screening questions.
+
+Find → answer → fill loop. Uses AnswerRouter for business logic.
+"""
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import yaml
+from loguru import logger
+
+from src.applier.answer_bank import AnswerBank
+from src.applier.ai_answerer import AIAnswerer
+from src.applier.human_review import HumanReviewPrompter
+
+from .answer_router import AnswerRouter
+from .models import Question
+from .question_finder import find_all_questions
+from .radio_filler import click_radio_option, fill_checkbox, fill_radio, fill_select
+
+
+class UniversalScreeningHandler:
+    """
+    Handles screening questions on ATS application pages.
+
+    Works with Indeed, BambooHR, Workday, Lever, Ashby.
+    
+    Flow:
+    1. Find all questions on current step
+    2. For each: try AnswerBank → cache → AI
+    3. Fill the answer
+    """
+
+    def __init__(
+        self, profile: Optional[Dict[str, Any]] = None, bot_mode: bool = False
+    ) -> None:
+        """
+        Initialize screening handler.
+
+        Args:
+            profile: Candidate profile dict (from profile.yaml)
+            bot_mode: If True, skip HITL menus and auto-select best variant.
+        """
+        self.profile = profile or self._load_profile()
+        self.answer_bank = AnswerBank()
+        self.ai_answerer = AIAnswerer(self.profile)
+        self._hitl = HumanReviewPrompter(bot_mode=bot_mode)
+        self._router = AnswerRouter(
+            self.answer_bank, self.ai_answerer, self._hitl
+        )
+
+    def _load_profile(self) -> Dict[str, Any]:
+        """Load profile from data/candidate/profile.yaml."""
+        profile_path = Path("data/candidate/profile.yaml")
+        if profile_path.exists():
+            with open(profile_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        return {}
+
+    async def find_all_questions(self, page) -> List[Question]:
+        """Delegate to question_finder module."""
+        return await find_all_questions(page)
+
+    async def answer_question(
+        self, question: Question, context: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """Delegate to AnswerRouter."""
+        return await self._router.answer_question(question, context)
+
+    async def handle_all_questions(
+        self,
+        page,
+        context: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """
+        Find and answer all questions on the current form step.
+
+        Args:
+            page: Playwright page object
+            context: Additional context (job title, company, url)
+
+        Returns:
+            Number of questions answered
+        """
+        questions = await self.find_all_questions(page)
+        answered = 0
+
+        for q in questions:
+            try:
+                answer = await self.answer_question(q, context)
+
+                # None = no answer; "" = intentionally blank (still fill)
+                if answer is None:
+                    continue
+
+                # Fill the answer
+                if q.field_type == "radio":
+                    if await fill_radio(q.element, answer, page=page):
+                        answered += 1
+                    else:
+                        logger.warning(
+                            f"⚠️ Radio not filled: '{q.text[:40]}...' answer='{answer}'"
+                        )
+                elif q.field_type == "select":
+                    await fill_select(q.element, answer)
+                    answered += 1
+                elif q.field_type == "checkbox":
+                    await fill_checkbox(q.element, answer)
+                    answered += 1
+                elif q.field_type in ["text", "number"]:
+                    try:
+                        await q.element.fill(answer)
+                    except Exception:
+                        # Element may be stale after AI response
+                        try:
+                            await q.element.triple_click()
+                            await q.element.type(answer, delay=50)
+                        except Exception:
+                            pass
+                    answered += 1
+                elif q.field_type == "textarea":
+                    try:
+                        await q.element.fill(answer)
+                    except Exception:
+                        try:
+                            await q.element.triple_click()
+                            await q.element.type(answer, delay=30)
+                        except Exception:
+                            pass
+                    answered += 1
+
+            except Exception as e:
+                logger.error(f"❌ Failed to fill '{q.text[:40]}...': {e}")
+
+        logger.info(f"✅ Answered {answered}/{len(questions)} questions")
+        return answered
+
+🔍 138 lines read

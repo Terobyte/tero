@@ -1,0 +1,58 @@
+Tool result: # src/applier/greenhouse/context.py
+"""
+ApplyContext — контекстный объект для greenhouse applier.
+
+Решает проблему "паровоза аргументов" — передаётся одним объектом
+во все функции вместо 4-5 отдельных аргументов.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
+    from src.platforms.base_scraper import Job
+    from src.applier.answer_bank import AnswerBank
+
+
+@dataclass
+class ApplyContext:
+    """Контекст подачи заявки на вакансию Greenhouse.
+    
+    Атрибуты:
+        page: Playwright Page для взаимодействия с формой
+        job: Job dataclass с данными о вакансии
+        answer_bank: AnswerBank для автозаполнения
+        screenshots_dir: Директория для скриншотов
+        bot_mode: Флаг режима бота (для HITL)
+        profile: Профиль кандидата из profile.yaml
+        job_id: Короткий ID вакансии для логов
+    """
+    page: "Page"
+    job: "Job"
+    answer_bank: "AnswerBank"
+    screenshots_dir: Path = Path("data/screenshots")
+    bot_mode: bool = False
+    profile: Optional[Dict[str, Any]] = None
+    job_id: str = ""
+    
+    # Кэши для контекста
+    _job_context: Dict[str, Any] = field(default_factory=dict, repr=False)
+    
+    def __post_init__(self) -> None:
+        """Инициализация контекста вакансии."""
+        if not self._job_context:
+            self._job_context = {
+                "job_title": self.job.title,
+                "company": self.job.company,
+                "url": self.job.apply_url or "",
+            }
+        if not self.job_id:
+            # Короткий hash URL для логов
+            import hashlib
+            url = self.job.apply_url or ""
+            self.job_id = hashlib.md5(url.encode()).hexdigest()[:8]
+🔍 57 lines read

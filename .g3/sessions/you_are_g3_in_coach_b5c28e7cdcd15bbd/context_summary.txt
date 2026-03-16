@@ -1,0 +1,30 @@
+095535-NeE, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+095535-rUz, usr,  35K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+095541-zgI, ass,   0K 🟢, I'll review the implementation against the requirements. Let me start by exploring the project structure and checking wh
+095541-jYP, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_b5c28e7cdcd15bbd/thinned/leaned_tool
+095541-PKk, ass,   0K 🟢, 
+095541-RlO, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_b5c28e7cdcd15bbd/thinned/leaned_tool
+095543-Fxw, ass,   0K 🟢, 
+095543-WRk, usr,   2K 🟡, Tool result: """ Stealth Browser - Anti-detection Playwright wrapper.  Provides a browser instance with stealth configur
+095543-Ppe, ass,   0K 🟢, 
+095543-GHa, usr,   2K 🟡, Tool result: # src/stealth/fingerprint_scripts.py """ JS-скрипты для спуфинга fingerprint API.  ВАЖНО: Не используй add_
+095543-UEc, ass,   0K 🟢, 
+095543-tHu, usr,   1K 🟡, Tool result: # src/stealth/geo_consistency.py """ GeoConsistencyValidator — проверяет соответствие IP геолокации и брауз
+095543-iPm, ass,   0K 🟢, 
+095543-WMI, usr,   0K 🟢, Tool result: {   "critical": ["work_authorization", "visa_sponsorship", "security_clearance", "criminal_history"],   "im
+095546-Nns, ass,   0K 🟢, 
+095546-yts, usr,   1K 🟡, Tool result: # src/applier/universal_screening/question_intent.py """ QuestionIntentClassifier - classifies screening qu
+095546-tXo, ass,   0K 🟢, 
+095546-BbC, usr,   1K 🟡, Tool result: # src/applier/universal_screening/session_context.py """ SessionContext — holds all Q&A for a screening ses
+095546-izT, ass,   0K 🟢, 
+095546-PsM, usr,   1K 🟡, Tool result: # src/applier/universal_screening/batch_validator.py """ BatchStepValidator - validates all screening answe
+095546-eub, ass,   0K 🟢, 
+095546-Tvh, usr,   2K 🟡, Tool result: # src/applier/semantic_answer_bank.py """ SemanticAnswerBank — extension of AnswerBank with BERT embeddings
+095549-FOg, ass,   0K 🟢, 
+095549-Rqa, usr,   1K 🟡, Tool result: #!/usr/bin/env python3 # scripts/collect_cdx_slugs.py """ Собирает ATS-слаги из Common Crawl CDX API.  Запу
+095549-CgK, ass,   0K 🟢, 
+095549-nqL, usr,   0K 🟢, Tool result: #!/usr/bin/env python3 # scripts/validate_slugs.py """ Валидирует slugs — делает HEAD-запрос к ATS API.  За
+095549-WAv, ass,   0K 🟢, 
+095549-tfX, usr,   3K 🟡, Tool result: # src/platforms/linkedin_voyager.py """ LinkedIn Voyager API client — приватный API LinkedIn.  ВАЖНО: Это п
+
+--- TOTAL:  59K /  98K (60.6%) ---

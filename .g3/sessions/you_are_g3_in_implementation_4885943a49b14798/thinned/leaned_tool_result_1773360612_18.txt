@@ -1,0 +1,217 @@
+Tool result: """
+Audit logging for screening batch validation.
+
+Provides persistence for debugging, review, and metrics.
+"""
+
+import json
+import os
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+
+
+@dataclass
+class AuditEntry:
+    """Single audit entry for a question answer."""
+    session_id: str
+    attempt_number: int
+    pass_type: str  # "draft" | "correction" | "recheck"
+    question_text: str
+    intent: str
+    draft_answer: str
+    validator_verdict: str  # "approved" | "rejected" | "skipped"
+    corrected_answer: Optional[str]
+    correction_method: Optional[str]  # "dom" | "vision" | "failed"
+    reason: str
+    severity: str  # "critical" | "warning" | "info"
+    page_url: str
+    company: str
+    job_title: str
+    timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
+
+
+@dataclass
+class BatchValidationMetrics:
+    """Metrics collected per session."""
+    total_questions: int = 0
+    draft_correct: int = 0
+    draft_wrong: int = 0
+    corrections_applied: int = 0
+    corrections_failed: int = 0
+    hard_stops: int = 0
+    validation_skipped: int = 0
+    validator_tokens_in: int = 0
+    validator_tokens_out: int = 0
+    validator_latency_ms: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class StepAuditLog:
+    """
+    Audit log for screening batch validation.
+    
+    Persists what happened for debugging, review, and metrics.
+    """
+    
+    def __init__(self, log_dir: Optional[Path] = None):
+        """
+        Initialize the audit log.
+        
+        Args:
+            log_dir: Directory for log files. Defaults to "logs/audit"
+        """
+        self.log_dir = log_dir or Path("logs/audit")
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.entries: List[AuditEntry] = []
+        self.metrics = BatchValidationMetrics()
+        self.session_metrics: Dict[str, BatchValidationMetrics] = {}
+    
+    def add_entry(self, entry: AuditEntry) -> None:
+        """Add an audit entry."""
+        self.entries.append(entry)
+        
+        # Update metrics
+        session_id = entry.session_id
+        if session_id not in self.session_metrics:
+            self.session_metrics[session_id] = BatchValidationMetrics()
+        
+        metrics = self.session_metrics[session_id]
+        metrics.total_questions += 1
+        
+        if entry.validator_verdict == "skipped":
+            metrics.validation_skipped += 1
+        elif entry.validator_verdict == "approved":
+            if entry.corrected_answer:
+                metrics.corrections_applied += 1
+                metrics.draft_wrong += 1
+            else:
+                metrics.draft_correct += 1
+        elif entry.validator_verdict == "rejected":
+            if entry.correction_method == "failed":
+                metrics.corrections_failed += 1
+                metrics.hard_stops += 1
+            else:
+                metrics.corrections_applied += 1
+                metrics.draft_wrong += 1
+    
+    def record_validator_metrics(
+        self,
+        session_id: str,
+        tokens_in: int,
+        tokens_out: int,
+        latency_ms: int
+    ) -> None:
+        """Record validator API metrics."""
+        if session_id not in self.session_metrics:
+            self.session_metrics[session_id] = BatchValidationMetrics()
+        
+        metrics = self.session_metrics[session_id]
+        metrics.validator_tokens_in += tokens_in
+        metrics.validator_tokens_out += tokens_out
+        metrics.validator_latency_ms += latency_ms
+    
+    def get_session_metrics(self, session_id: str) -> BatchValidationMetrics:
+        """Get metrics for a specific session."""
+        return self.session_metrics.get(session_id, BatchValidationMetrics())
+    
+    def save_session_log(self, session_id: str) -> Path:
+        """
+        Save audit log for a session to file.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Path to the saved log file
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"audit_{session_id}_{timestamp}.json"
+        filepath = self.log_dir / filename
+        
+        # Filter entries for this session
+        session_entries = [
+            asdict(e) for e in self.entries 
+            if e.session_id == session_id
+        ]
+        
+        # Build log data
+        log_data = {
+            "session_id": session_id,
+            "timestamp": timestamp,
+            "entries": session_entries,
+            "metrics": self.get_session_metrics(session_id).to_dict()
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(log_data, f, indent=2)
+        
+        return filepath
+    
+    def load_session_log(self, filepath: Path) -> Dict[str, Any]:
+        """
+        Load a saved audit log.
+        
+        Args:
+            filepath: Path to the log file
+            
+        Returns:
+            Parsed log data
+        """
+        with open(filepath) as f:
+            return json.load(f)
+    
+    def get_summary(self, session_id: str) -> Dict[str, Any]:
+        """
+        Get summary statistics for a session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Summary dict with key statistics
+        """
+        metrics = self.get_session_metrics(session_id)
+        
+        return {
+            "total_questions": metrics.total_questions,
+            "draft_correct_rate": (
+                metrics.draft_correct / metrics.total_questions 
+                if metrics.total_questions > 0 else 0
+            ),
+            "corrections_applied": metrics.corrections_applied,
+            "corrections_failed": metrics.corrections_failed,
+            "hard_stops": metrics.hard_stops,
+            "validation_skipped": metrics.validation_skipped,
+            "validator_tokens_total": (
+                metrics.validator_tokens_in + metrics.validator_tokens_out
+            ),
+            "validator_latency_ms": metrics.validator_latency_ms
+        }
+    
+    def get_critical_issues(self, session_id: str) -> List[AuditEntry]:
+        """
+        Get all critical severity entries for a session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            List of critical audit entries
+        """
+        return [
+            e for e in self.entries
+            if e.session_id == session_id and e.severity == "critical"
+        ]
+    
+    def clear_session(self, session_id: str) -> None:
+        """Clear entries and metrics for a session."""
+        self.entries = [e for e in self.entries if e.session_id != session_id]
+        if session_id in self.session_metrics:
+            del self.session_metrics[session_id]
+
+🔍 215 lines read

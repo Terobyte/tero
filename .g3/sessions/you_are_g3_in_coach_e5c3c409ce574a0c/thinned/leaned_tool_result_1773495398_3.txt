@@ -1,0 +1,257 @@
+Tool result: ✅ Code search completed
+{
+  "searches": [
+    {
+      "name": "webrtc_flags",
+      "matches": [],
+      "match_count": 0,
+      "files_searched": 0,
+      "error": "Invalid query: Query error at 1:2. Invalid node type string_literal"
+    },
+    {
+      "name": "canvas_noise",
+      "matches": [
+        {
+          "file": "./tests/stealth/test_canvas_noise.py",
+          "line": 8,
+          "column": 5,
+          "text": "test_canvas_noise_script_generated",
+          "captures": {
+            "name": "test_canvas_noise_script_generated"
+          }
+        },
+        {
+          "file": "./tests/stealth/test_canvas_noise.py",
+          "line": 17,
+          "column": 5,
+          "text": "test_canvas_noise_different_seeds_differ",
+          "captures": {
+            "name": "test_canvas_noise_different_seeds_differ"
+          }
+        },
+        {
+          "file": "./tests/stealth/test_canvas_noise.py",
+          "line": 27,
+          "column": 11,
+          "text": "test_canvas_hash_differs_across_sessions",
+          "captures": {
+            "name": "test_canvas_hash_differs_across_sessions"
+          }
+        },
+        {
+          "file": "./src/stealth/fingerprint_scripts.py",
+          "line": 12,
+          "column": 5,
+          "text": "canvas_noise_script",
+          "captures": {
+            "name": "canvas_noise_script"
+          }
+        }
+      ],
+      "match_count": 4,
+      "files_searched": 30
+    },
+    {
+      "name": "audio_spoof",
+      "matches": [
+        {
+          "file": "./tests/stealth/test_audio_spoofing.py",
+          "line": 8,
+          "column": 5,
+          "text": "test_audio_noise_script_contains_audiobuffer",
+          "captures": {
+            "name": "test_audio_noise_script_contains_audiobuffer"
+          }
+        },
+        {
+          "file": "./tests/stealth/test_audio_spoofing.py",
+          "line": 23,
+          "column": 11,
+          "text": "test_audio_fingerprint_differs",
+          "captures": {
+            "name": "test_audio_fingerprint_differs"
+          }
+        },
+        {
+          "file": "./src/stealth/fingerprint_scripts.py",
+          "line": 68,
+          "column": 5,
+          "text": "audio_noise_script",
+          "captures": {
+            "name": "audio_noise_script"
+          }
+        }
+      ],
+      "match_count": 3,
+      "files_searched": 30
+    },
+    {
+      "name": "battery_spoof",
+      "matches": [
+        {
+          "file": "./tests/stealth/test_battery_spoof.py",
+          "line": 8,
+          "column": 5,
+          "text": "test_battery_script_generated",
+          "captures": {
+            "name": "test_battery_script_generated"
+          }
+        },
+        {
+          "file": "./tests/stealth/test_battery_spoof.py",
+          "line": 18,
+          "column": 11,
+          "text": "test_battery_looks_like_laptop",
+          "captures": {
+            "name": "test_battery_looks_like_laptop"
+          }
+        },
+        {
+          "file": "./src/stealth/fingerprint_scripts.py",
+          "line": 117,
+          "column": 5,
+          "text": "battery_spoof_script",
+          "captures": {
+            "name": "battery_spoof_script"
+          }
+        }
+      ],
+      "match_count": 3,
+      "files_searched": 30
+    },
+    {
+      "name": "geo_consistency",
+      "matches": [
+        {
+          "file": "./tests/stealth/test_geo_consistency.py",
+          "line": 10,
+          "column": 7,
+          "text": "TestGeoConsistency",
+          "captures": {
+            "name": "TestGeoConsistency"
+          }
+        },
+        {
+          "file": "./src/stealth/geo_consistency.py",
+          "line": 47,
+          "column": 7,
+          "text": "GeoConsistencyValidator",
+          "captures": {
+            "name": "GeoConsistencyValidator"
+          }
+        }
+      ],
+      "match_count": 2,
+      "files_searched": 30
+    },
+    {
+      "name": "batch_validator",
+      "matches": [
+        {
+          "file": "./src/applier/universal_screening/batch_validator.py",
+          "line": 33,
+          "column": 7,
+          "text": "BatchStepValidator",
+          "captures": {
+            "name": "BatchStepValidator"
+          }
+        }
+      ],
+      "match_count": 1,
+      "files_searched": 30
+    },
+    {
+      "name": "question_intent",
+      "matches": [
+        {
+          "file": "./tests/applier/test_batch_validator.py",
+          "line": 11,
+          "column": 7,
+          "text": "TestQuestionIntentClassifier",
+          "captures": {
+            "name": "TestQuestionIntentClassifier"
+          }
+        },
+        {
+          "file": "./src/applier/universal_screening/question_intent.py",
+          "line": 25,
+          "column": 7,
+          "text": "QuestionIntentClassifier",
+          "captures": {
+            "name": "QuestionIntentClassifier"
+          }
+        }
+      ],
+      "match_count": 2,
+      "files_searched": 30
+    },
+    {
+      "name": "voyager_api",
+      "matches": [
+        {
+          "file": "./src/platforms/linkedin_voyager.py",
+          "line": 96,
+          "column": 7,
+          "text": "LinkedInVoyager",
+          "captures": {
+            "name": "LinkedInVoyager"
+          }
+        }
+      ],
+      "match_count": 1,
+      "files_searched": 30
+    },
+    {
+      "name": "indeed_api",
+      "matches": [
+        {
+          "file": "./tests/platforms/test_indeed_api.py",
+          "line": 23,
+          "column": 7,
+          "text": "TestIndeedAPIClientParsing",
+          "captures": {
+            "name": "TestIndeedAPIClientParsing"
+          }
+        },
+        {
+          "file": "./src/platforms/indeed_api.py",
+          "line": 95,
+          "column": 7,
+          "text": "IndeedAPIClient",
+          "captures": {
+            "name": "IndeedAPIClient"
+          }
+        }
+      ],
+      "match_count": 2,
+      "files_searched": 30
+    },
+    {
+      "name": "semantic_answer",
+      "matches": [
+        {
+          "file": "./tests/applier/test_semantic_answer_bank.py",
+          "line": 10,
+          "column": 7,
+          "text": "TestSemanticAnswerBankInterface",
+          "captures": {
+            "name": "TestSemanticAnswerBankInterface"
+          }
+        },
+        {
+          "file": "./src/applier/semantic_answer_bank.py",
+          "line": 39,
+          "column": 7,
+          "text": "SemanticAnswerBank",
+          "captures": {
+            "name": "SemanticAnswerBank"
+          }
+        }
+      ],
+      "match_count": 2,
+      "files_searched": 30
+    }
+  ],
+  "total_matches": 20,
+  "total_files_searched": 270
+}

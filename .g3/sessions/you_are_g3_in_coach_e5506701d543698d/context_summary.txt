@@ -1,0 +1,46 @@
+155342-BPH, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+155342-lbK, usr,  18K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+155349-skL, ass,   0K 🟢, 
+155349-DZN, usr,   0K 🟢, Tool result: ./src/insights/progressive_profiling.py ./src/insights/daily_engine.py ./src/learning/ab_tester.py ./src/ap
+155349-SiT, ass,   0K 🟢, 
+155349-ABD, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@  1 terobyte  staff   50 Mar 14 15:35 __init__.py drwxr-xr-x@  3 terobyte  staff   96 Ma
+155354-jSo, ass,   0K 🟢, 
+155354-UVh, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-oPb, ass,   0K 🟢, 
+155354-VSM, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-bnz, ass,   0K 🟢, 
+155354-BTO, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-Xhw, ass,   0K 🟢, 
+155354-KWy, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-tiB, ass,   0K 🟢, 
+155354-ufg, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-nMt, ass,   0K 🟢, 
+155354-QtR, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155354-DLs, ass,   0K 🟢, 
+155354-Hhw, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/Documents/careerbot: No such file or directory
+155356-PDY, ass,   0K 🟢, 
+155356-jTC, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace
+155356-TbO, ass,   0K 🟢, 
+155356-zMN, usr,   0K 🟢, Tool result: total 232 drwxr-xr-x@ 12 terobyte  staff    384 Mar 14 15:34 . drwxr-xr-x@  4 terobyte  staff    128 Mar  2
+155359-vzy, ass,   0K 🟢, 
+155359-dpU, usr,   3K 🟡, Tool result: # src/ai/resume_tailor.py """ ResumeTailor — адаптирует bullet points резюме под конкретную вакансию.  Flow
+155359-mMq, ass,   0K 🟢, 
+155359-Hph, usr,   1K 🟡, Tool result: # src/ai/star_rewriter.py """ STARRewriter — переписывает bullet points в STAR/CAR формат.  STAR: Situation
+155359-eRF, ass,   0K 🟢, 
+155359-WsQ, usr,   2K 🟡, Tool result: # src/learning/ab_tester.py """ ABTester — epsilon-greedy A/B тестирование вариантов резюме/cover letter.  
+155359-bWr, ass,   0K 🟢, 
+155359-EJR, usr,   1K 🟡, Tool result: # src/analytics/market_insights.py """ MarketInsights — анализирует накопленные вакансии и строит отчёт.  Д
+155402-sqs, ass,   0K 🟢, 
+155402-MYe, usr,   1K 🟡, Tool result: # src/applier/email_customizer.py """ EmailCustomizer — генерирует персональный application email под конкр
+155402-tyu, ass,   0K 🟢, 
+155402-OrV, usr,   3K 🟡, Tool result: # src/insights/daily_engine.py """ DailyInsightEngine — daily questions to enrich candidate profile.  Categ
+155402-zOt, ass,   0K 🟢, 
+155402-ixN, usr,   3K 🟡, Tool result: # src/insights/progressive_profiling.py """ ProgressiveProfiling — step-by-step profile completion wizard. 
+155404-rTf, ass,   0K 🟢, 
+155404-DIX, usr,   1K 🟡, Tool result: # src/bot/insights_handler.py """ Telegram handlers for daily insights feature.  Commands:   /insights - Ge
+155404-pxg, ass,   0K 🟢, 
+155404-OKY, usr,   2K 🟡, Tool result: # src/bot/profiling_handler.py """ Telegram FSM wizard for progressive profile completion.  States:   - Pro
+155404-JJp, ass,   0K 🟢, 
+155404-iUz, usr,   0K 🟢, Tool result: # src/bot/insights_market_handler.py """ Telegram handler for /market command - displays market insights. "
+
+--- TOTAL:  45K /  98K (46.0%) ---

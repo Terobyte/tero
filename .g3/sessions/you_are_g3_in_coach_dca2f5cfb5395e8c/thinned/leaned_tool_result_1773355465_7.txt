@@ -1,0 +1,517 @@
+Tool result: """
+AI Form Answerer Module.
+
+This module provides AI-powered answering for job application forms,
+with specific focus on preventing preamble phrases in textarea responses.
+"""
+
+from loguru import logger
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Preamble Detection Constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PREAMBLE_MARKERS = (
+    "based on", "i would like to", "as per", "according to",
+    "as mentioned", "given your", "looking at", "given the",
+    "thank you for", "i am pleased", "i am writing",
+    "in response to", "with reference to", "regarding your",
+    "i believe that", "it is worth noting",
+)
+
+_ABBREVIATIONS = frozenset({
+    "ph.d", "u.s", "dr", "mr", "mrs", "ms", "jr", "sr",
+    "inc", "ltd", "corp", "e.g", "i.e", "vs", "etc",
+})
+
+_PREAMBLE_FIELD_TYPES = {"textarea"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _find_sentence_end(text: str) -> int:
+    """
+    Find index of first real sentence-ending '. ' in text.
+    Skips abbreviations (Ph.D., U.S., etc.).
+
+    Returns:
+        Index of '. ' or -1 if not found.
+
+    Examples:
+        >>> _find_sentence_end("Based on my Ph.D. research. I am skilled.")
+        26
+        >>> _find_sentence_end("Hello world")
+        -1
+        >>> _find_sentence_end("Dr. Smith is here. Welcome.")
+        17
+    """
+    idx = 0
+    while idx < len(text):
+        dot_pos = text.find(". ", idx)
+        if dot_pos == -1:
+            return -1
+        word_start = text.rfind(" ", 0, dot_pos) + 1
+        word_before = text[word_start:dot_pos].lower().rstrip(".")
+        if word_before in _ABBREVIATIONS:
+            idx = dot_pos + 2
+            continue
+        return dot_pos
+    return -1
+
+
+def _strip_preamble(text: str) -> str:
+    """
+    Remove AI preamble phrases from the start of textarea answers.
+
+    Safety guarantees:
+    1. Never returns empty string — falls back to original text
+    2. Never returns text shorter than 10 chars — falls back to original
+    3. Skips abbreviations (Ph.D., U.S., Dr., e.g.)
+    4. Handles chained preambles via loop
+    5. Case-insensitive matching, preserves original casing
+
+    Examples:
+        >>> _strip_preamble("Based on your requirements. I have 5 years of Python.")
+        'I have 5 years of Python.'
+
+        >>> _strip_preamble("I want to build great products.")
+        'I want to build great products.'
+
+        >>> _strip_preamble("Based on my Ph.D. research. I developed novel algos.")
+        'I developed novel algos.'
+
+        >>> _strip_preamble("")
+        ''
+    """
+    if not text or len(text) < 10:
+        return text
+
+    original = text
+
+    changed = True
+    while changed:
+        changed = False
+        lower = text.lower()
+        for marker in _PREAMBLE_MARKERS:
+            if lower.startswith(marker):
+                dot_idx = _find_sentence_end(text)
+                if dot_idx != -1 and dot_idx < 150:
+                    remainder = text[dot_idx + 2:].strip()
+                    if len(remainder) >= 10:
+                        text = remainder
+                        changed = True
+                        break
+                break  # Marker found but cut is unsafe — exit
+
+    if text != original:
+        logger.debug(f"🧹 _strip_preamble: '{original[:60]}' → '{text[:60]}'")
+
+    return text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VARIANTS_PROMPT (Module-level)
+# ─────────────────────────────────────────────────────────────────────────────
+
+VARIANTS_PROMPT = """Ты — помощник для заполнения job applications. Твоя задача — сгенерировать 4 разных варианта ответа на вопрос формы.
+
+ТРЕБОВАНИЕ К КАЖДОМУ ВАРИАНТУ:
+Каждый вариант начинается СРАЗУ с содержания. Никаких вступлений.
+ЗАПРЕЩЁННЫЕ стартовые фразы: "Based on", "I would like to", "As per",
+"According to", "As mentioned", "Given your", "Looking at", "Given the",
+"Thank you for", "I am pleased", "I am writing", "In response to",
+"With reference to", "Regarding your", "I believe that", "It is worth noting".
+
+МИНИ-ПРИМЕР:
+  ❌ "Based on my experience, I have worked with distributed systems..."
+  ✅ "I have 4 years of experience with distributed systems..."
+
+ПРОФИЛЬ КАНДИДАТА:
+{profile}
+
+ВОПРОС: {question}
+Тип поля: {field_type}
+{context_section}
+
+СТИЛЬ ВАРИАНТОВ:
+1. Прямой и конкретный — сразу факты, без воды
+2. С акцентом на результаты — что сделал и чего достиг
+3. С техническими деталями — технологии, инструменты, методы
+4. С личной мотивацией — почему это важно для тебя
+
+ФОРМАТ ОТВЕТА (только JSON, без markdown):
+{{"variants": ["вариант1", "вариант2", "вариант3", "вариант4"], "best": 0-3}}
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AIAnswerer Class
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AIAnswerer:
+    """
+    AI-powered form answerer with preamble prevention.
+
+    Uses Gemini for ask() and Kimi/GLM5 for ask_variants().
+    Includes postprocessing to strip preamble phrases from textarea responses.
+    """
+
+    SYSTEM_PROMPT = """Ты — опытный помощник для заполнения job applications. Твоя задача — отвечать на вопросы форм от первого лица кандидата, используя информацию из профиля.
+
+ПРАВИЛА:
+1. Отвечай ТОЛЬКО на основе информации из профиля — не выдумывай
+2. Если информации нет — честно напиши "Unknown" или пустую строку
+3. Для select/radio — выбери наиболее подходящий вариант из списка
+4. Для checkbox — ответь "Yes" или "No"
+5. Для date — формат YYYY-MM-DD или MM/YYYY
+6. Для текстовых полей (textarea / cover letter / open-ended) → пиши ТОЛЬКО чистый
+   текст на английском, 2-4 предложения, БЕЗ markdown, БЕЗ YAML, БЕЗ заголовков,
+   БЕЗ bullets. Первое слово ответа — это уже сам ответ, никогда не вступление.
+   ЗАПРЕЩЁННЫЕ стартовые фразы: "Based on", "I would like to", "As per",
+   "According to", "As mentioned", "Given your", "Looking at", "Given the",
+   "Thank you for", "I am pleased", "I am writing", "In response to",
+   "With reference to", "Regarding your", "I believe that", "It is worth noting".
+
+ПРИМЕРЫ ПРАВИЛЬНЫХ И НЕПРАВИЛЬНЫХ ОТВЕТОВ (строго следовать):
+
+Вопрос: "Why are you interested in this role?"
+
+  ❌ НЕВЕРНО — вступление вместо ответа:
+  "Based on your job description, I believe my background in cloud infrastructure
+  aligns well with what you're looking for. I would like to highlight that..."
+
+  ✅ ВЕРНО — сразу содержание:
+  "I want to build infrastructure at scale. My 3 years in distributed systems at
+  a fintech startup have prepared me exactly for this kind of work."
+
+---
+
+Вопрос: "Describe your experience with Python."
+
+  ❌ НЕВЕРНО:
+  "According to my profile, I have extensive experience with Python. As mentioned
+  in my background, I have been working with this language for several years..."
+
+  ✅ ВЕРНО:
+  "5 years of Python across backend services, data pipelines, and automation.
+  Primary stack: FastAPI, SQLAlchemy, Celery, pytest."
+
+---
+
+Вопрос: "What motivates you professionally?"
+
+  ❌ НЕВЕРНО:
+  "Given your company culture and values, I think there is great alignment with
+  my personal motivation. Looking at the role requirements, I can see that..."
+
+  ✅ ВЕРНО:
+  "I'm motivated by hard technical problems with real user impact. The tighter
+  the feedback loop between my work and the user, the better."
+
+---
+
+Вопрос: "Tell us about a challenging project."
+
+  ❌ НЕВЕРНО:
+  "I am writing to share about a project that I believe demonstrates my
+  capabilities. In response to the question about challenges..."
+
+  ✅ ВЕРНО:
+  "Migrated a monolithic Django app to microservices under a 6-week deadline.
+  Designed the service boundary split, set up gRPC communication, and hit
+  99.9% uptime from week one."
+
+---
+
+Вопрос: "What are your salary expectations?"
+
+  ❌ НЕВЕРНО:
+  "Based on my research of the market and given the responsibilities outlined
+  in the job description, I believe a competitive salary would be..."
+
+  ✅ ВЕРНО:
+  "Open to discussing compensation. Targeting $130K-$160K base depending on
+  total comp structure and benefits."
+
+ПРОФИЛЬ КАНДИДАТА:
+{profile}
+
+ФОРМАТ ОТВЕТА (только JSON, без markdown):
+{"answer": "точный текст ответа", "confidence": "high|medium|low", "reason": "одна строка"}
+"""
+
+    def __init__(self, profile: dict, provider: str = "gemini"):
+        """
+        Initialize AIAnswerer.
+
+        Args:
+            profile: Candidate profile dictionary
+            provider: AI provider to use ("gemini", "kimi", or "glm5")
+        """
+        self.profile = profile
+        self.provider = provider
+        self._gemini = None
+        self._kimi = None
+        self._glm5 = None
+        self._unknown_log = []
+
+    def _get_profile_text(self) -> str:
+        """Convert profile dict to formatted text."""
+        lines = []
+        for section, data in self.profile.items():
+            if isinstance(data, dict):
+                lines.append(f"\n[{section.upper()}]")
+                for key, value in data.items():
+                    lines.append(f"  {key}: {value}")
+            else:
+                lines.append(f"{section}: {data}")
+        return "\n".join(lines)
+
+    async def ask(
+        self,
+        question: str,
+        field_type: str = "text",
+        options: list[str] | None = None,
+        context: str | None = None,
+    ) -> "AIAnswer | None":
+        """
+        Ask AI to answer a form question.
+
+        Args:
+            question: The form question
+            field_type: Type of field (text, textarea, radio, select, checkbox, date)
+            options: Available options for select/radio fields
+            context: Additional context for the question
+
+        Returns:
+            AIAnswer object or None if failed
+        """
+        profile_text = self._get_profile_text()
+
+        # Build context section
+        context_section = ""
+        if options:
+            context_section += f"ВАРИАНТЫ: {', '.join(options)}\n"
+        if context:
+            context_section += f"КОНТЕКСТ: {context}\n"
+
+        # Build prompt using .replace() instead of .format()
+        prompt = self.SYSTEM_PROMPT.replace("{profile}", profile_text)
+        prompt += f"\n\nВОПРОС: {question}\nТип поля: {field_type}\n{context_section}"
+
+        # Simulate AI response for greenfield implementation
+        # In real implementation, this would call self._gemini.generate(prompt)
+        result_json = await self._generate_response(prompt, question, field_type, options)
+
+        if not result_json:
+            return None
+
+        import json
+
+        try:
+            result = json.loads(result_json.strip())
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse AI response: {result_json[:100]}")
+            return None
+
+        answer_text = str(result.get("answer", ""))
+        raw_answer = answer_text
+
+        # Postprocessing: remove preamble phrases for textarea fields
+        if field_type in _PREAMBLE_FIELD_TYPES:
+            answer_text = _strip_preamble(answer_text)
+
+        # Log telemetry
+        if field_type in _PREAMBLE_FIELD_TYPES:
+            self._log_telemetry(
+                question=question,
+                field_type=field_type,
+                raw_answer=raw_answer,
+                final_answer=answer_text,
+                provider=self.provider,
+            )
+
+        return AIAnswer(
+            answer=answer_text,
+            confidence=result.get("confidence", "medium"),
+            reason=result.get("reason", ""),
+        )
+
+    async def ask_variants(
+        self,
+        question: str,
+        field_type: str = "textarea",
+        context: str | None = None,
+    ) -> tuple[list[str], int]:
+        """
+        Generate 4 answer variants for a question.
+
+        Args:
+            question: The form question
+            field_type: Type of field (default: textarea)
+            context: Additional context
+
+        Returns:
+            Tuple of (variants list, best index)
+        """
+        profile_text = self._get_profile_text()
+
+        context_section = f"КОНТЕКСТ: {context}\n" if context else ""
+
+        # Build prompt using .replace()
+        prompt = VARIANTS_PROMPT.replace("{profile}", profile_text)
+        prompt = prompt.replace("{question}", question)
+        prompt = prompt.replace("{field_type}", field_type)
+        prompt = prompt.replace("{context_section}", context_section)
+
+        # Simulate AI response
+        result_json = await self._generate_variants_response(prompt, question)
+
+        if not result_json:
+            # Fallback
+            return ["Please see my resume for details."], 0
+
+        import json
+
+        try:
+            result = json.loads(result_json.strip())
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse variants response: {result_json[:100]}")
+            return ["Please see my resume for details."], 0
+
+        variants = result.get("variants", [])
+        best = result.get("best", 0)
+
+        if not variants:
+            raise ValueError("No variants in response")
+
+        # Postprocessing: remove preamble only for textarea
+        if field_type in _PREAMBLE_FIELD_TYPES:
+            raw_variants = variants.copy()
+            variants = [_strip_preamble(v) for v in variants]
+
+            # Log telemetry for variants
+            for i, (raw, final) in enumerate(zip(raw_variants, variants)):
+                if raw != final:
+                    logger.debug(
+                        f"🧹 Variant {i} preamble stripped: '{raw[:40]}...' → '{final[:40]}...'"
+                    )
+
+        return variants, best
+
+    async def _generate_response(
+        self, prompt: str, question: str, field_type: str, options: list[str] | None
+    ) -> str | None:
+        """
+        Generate AI response (placeholder for actual API calls).
+
+        In real implementation, this would call the appropriate AI provider.
+        """
+        import json
+
+        # Simulate responses based on field type
+        if field_type == "radio" and options:
+            return json.dumps({
+                "answer": options[0] if options else "Yes",
+                "confidence": "high",
+                "reason": "Selected first option",
+            })
+        elif field_type == "select" and options:
+            return json.dumps({
+                "answer": options[0] if options else "",
+                "confidence": "high",
+                "reason": "Selected first option",
+            })
+        elif field_type == "checkbox":
+            return json.dumps({
+                "answer": "Yes",
+                "confidence": "high",
+                "reason": "Default checkbox value",
+            })
+        elif field_type == "date":
+            return json.dumps({
+                "answer": "2024-01-01",
+                "confidence": "medium",
+                "reason": "Default date",
+            })
+        elif field_type in ("textarea", "cover_letter"):
+            # Simulate a clean answer without preamble
+            return json.dumps({
+                "answer": "I have 5 years of experience with Python and distributed systems.",
+                "confidence": "high",
+                "reason": "Based on profile experience section",
+            })
+        else:
+            return json.dumps({
+                "answer": "Test User",
+                "confidence": "high",
+                "reason": "From profile",
+            })
+
+    async def _generate_variants_response(self, prompt: str, question: str) -> str | None:
+        """
+        Generate variants response (placeholder for actual API calls).
+
+        In real implementation, this would call Kimi or GLM5.
+        """
+        import json
+
+        # Simulate 4 variants
+        return json.dumps({
+            "variants": [
+                "I have 5 years of backend development experience with Python and Go.",
+                "Led a team of 4 engineers on a cloud migration project using AWS.",
+                "Built production APIs serving 1M+ requests per day with 99.9% uptime.",
+                "My focus is on scalable distributed systems and microservices architecture.",
+            ],
+            "best": 0,
+        })
+
+    def _log_telemetry(
+        self,
+        question: str,
+        field_type: str,
+        raw_answer: str,
+        final_answer: str,
+        provider: str,
+    ) -> None:
+        """Log telemetry for preamble stripping analysis."""
+        entry = {
+            "question": question[:100],
+            "field_type": field_type,
+            "provider": provider,
+            "raw_answer": raw_answer[:200],
+            "ai_answered": final_answer[:200],
+            "preamble_stripped": raw_answer != final_answer,
+        }
+        self._unknown_log.append(entry)
+        logger.debug(f"Telemetry logged: preamble_stripped={entry['preamble_stripped']}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AIAnswer Data Class
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AIAnswer:
+    """Data class for AI-generated answer."""
+
+    def __init__(self, answer: str, confidence: str, reason: str):
+        self.answer = answer
+        self.confidence = confidence
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return f"AIAnswer(answer={self.answer!r}, confidence={self.confidence!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AIAnswer):
+            return False
+        return (
+            self.answer == other.answer
+            and self.confidence == other.confidence
+            and self.reason == other.reason
+        )
+
+🔍 515 lines read

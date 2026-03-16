@@ -1,0 +1,560 @@
+Tool result: """
+BlindApplier - Main Orchestrator for Blind Custom Site Applier.
+
+This is the main entry point for applying to jobs on custom/unknown career sites.
+Orchestrates all components: ReconAgent, PageNavigator, VisionFormFiller, 
+WizardEngine, OutcomeDetector, ReplayRecorder, and SitePatternStore.
+"""
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import urlparse
+
+from .models import (
+    ApplyResult,
+    SiteSchema,
+    WizardResult,
+    OutcomeResult,
+)
+from .recon_agent import ReconAgent
+from .page_navigator import PageNavigator
+from .vision_form_filler import VisionFormFiller
+from .wizard_engine import WizardEngine
+from .outcome_detector import OutcomeDetector
+from .site_pattern_store import SitePatternStore
+from .replay_recorder import ReplayRecorder
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BlindApplierConfig:
+    """Configuration for BlindApplier."""
+    headed: bool = False
+    max_steps: int = 15
+    step_timeout: int = 60
+    vision_budget: int = 20  # Max vision calls per application
+    use_cache: bool = True
+    save_screenshots: bool = True
+    screenshot_dir: str = "data/screenshots"
+    notify_on_success: bool = True
+    notify_on_failure: bool = True
+    notify_on_review: bool = True
+
+
+class BlindApplier:
+    """
+    Main orchestrator for applying to jobs on custom/unknown career sites.
+    
+    Flow:
+    1. Check cache for confirmed workflow
+    2. ReconAgent → Site analysis
+    3. PageNavigator → Navigate to form
+    4. WizardEngine → Handle multi-step forms
+    5. OutcomeDetector → Detect result
+    6. ReplayRecorder → Record for learning
+    7. SitePatternStore → Store patterns
+    
+    Usage:
+        applier = BlindApplier(profile=my_profile)
+        result = await applier.apply(job_dict)
+    """
+    
+    def __init__(
+        self,
+        profile: dict,
+        config: Optional[BlindApplierConfig] = None,
+        pattern_store: Optional[SitePatternStore] = None,
+        notifier: Optional[Any] = None,
+    ):
+        """
+        Initialize BlindApplier.
+        
+        Args:
+            profile: User profile data for form filling
+            config: Configuration options
+            pattern_store: SitePatternStore instance (created if None)
+            notifier: Optional notifier for Telegram/email notifications
+        """
+        self.profile = profile
+        self.config = config or BlindApplierConfig()
+        self.pattern_store = pattern_store or SitePatternStore()
+        self.notifier = notifier
+        
+        # Initialize components (lazy - created on demand)
+        self._recon: Optional[ReconAgent] = None
+        self._navigator: Optional[PageNavigator] = None
+        self._form_filler: Optional[VisionFormFiller] = None
+        self._wizard: Optional[WizardEngine] = None
+        self._outcome_detector: Optional[OutcomeDetector] = None
+        
+        # State tracking
+        self._vision_calls = 0
+        self._current_recorder: Optional[ReplayRecorder] = None
+    
+    @property
+    def recon(self) -> ReconAgent:
+        """Lazy-initialize ReconAgent."""
+        if self._recon is None:
+            self._recon = ReconAgent()
+        return self._recon
+    
+    @property
+    def navigator(self) -> PageNavigator:
+        """Lazy-initialize PageNavigator."""
+        if self._navigator is None:
+            self._navigator = PageNavigator()
+        return self._navigator
+    
+    @property
+    def form_filler(self) -> VisionFormFiller:
+        """Lazy-initialize VisionFormFiller."""
+        if self._form_filler is None:
+            self._form_filler = VisionFormFiller(profile=self.profile)
+        return self._form_filler
+    
+    @property
+    def wizard(self) -> WizardEngine:
+        """Lazy-initialize WizardEngine."""
+        if self._wizard is None:
+            self._wizard = WizardEngine(
+                max_steps=self.config.max_steps,
+                step_timeout=self.config.step_timeout,
+            )
+        return self._wizard
+    
+    @property
+    def outcome_detector(self) -> OutcomeDetector:
+        """Lazy-initialize OutcomeDetector."""
+        if self._outcome_detector is None:
+            self._outcome_detector = OutcomeDetector()
+        return self._outcome_detector
+    
+    async def apply(self, job: dict) -> ApplyResult:
+        """
+        Full blind apply flow.
+        
+        Args:
+            job: Job dict with url/apply_url, id, company, title
+            
+        Returns:
+            ApplyResult with success/failure status
+        """
+        url = job.get("apply_url") or job.get("url", "")
+        if not url:
+            return ApplyResult(
+                success=False,
+                error="no_url_provided",
+            )
+        
+        domain = urlparse(url).netloc
+        job_id = job.get("id", "unknown")
+        
+        logger.info(f"🔮 BlindApplier: Starting apply for {domain} - {job.get('title', 'Unknown')}")
+        
+        # Step 0: Check cache for confirmed workflow
+        if self.config.use_cache:
+            cached_workflow = self.pattern_store.load_site_workflow(domain)
+            if cached_workflow and cached_workflow.get("success"):
+                logger.info(f"♻️ Found confirmed workflow for {domain} - replaying")
+                return await self._replay_workflow(cached_workflow, job)
+        
+        # Create recorder for this attempt
+        self._current_recorder = ReplayRecorder(job_id=job_id, domain=domain)
+        
+        try:
+            # Import browser here to avoid circular imports
+            from src.stealth.browser_stealth import StealthBrowser
+            
+            async with StealthBrowser(headed=self.config.headed) as browser:
+                async with await browser.new_context() as ctx:
+                    page = await browser.new_page(ctx)
+                    
+                    # Navigate to job page
+                    logger.info(f"📍 Navigating to {url}")
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    self._current_recorder.record("navigate", url=url)
+                    
+                    # Add random delay to appear human-like
+                    await asyncio.sleep(self._gaussian_delay(1.0, 2.0))
+                    
+                    # Step 1: Reconnaissance
+                    logger.info("🔍 Running site reconnaissance...")
+                    schema = await self._run_recon(page)
+                    
+                    # Check if known ATS was detected
+                    if schema.detected_ats and schema.detected_ats != "unknown":
+                        logger.info(f"🔄 Detected known ATS: {schema.detected_ats} - delegating")
+                        return await self._delegate_to_known_ats(schema.detected_ats, job)
+                    
+                    # Check for blockers
+                    if schema.blocked_reason:
+                        logger.warning(f"🚫 Site blocked: {schema.blocked_reason}")
+                        return self._create_blocked_result(schema.blocked_reason)
+                    
+                    if schema.requires_account:
+                        logger.warning(f"🔒 Site requires account/login")
+                        return self._create_blocked_result("account_required")
+                    
+                    # Step 2: Navigate to form if needed
+                    if schema.page_type == "job_listing" and schema.has_apply_button:
+                        logger.info("🖱️ Clicking Apply button...")
+                        clicked = await self._click_apply(page, schema)
+                        if not clicked:
+                            return ApplyResult(
+                                success=False,
+                                error="could_not_click_apply",
+                            )
+                        
+                        await asyncio.sleep(self._gaussian_delay(2.0, 4.0))
+                        
+                        # Re-run recon to analyze the form
+                        schema = await self._run_recon(page)
+                    
+                    # Step 3: Fill form
+                    if schema.page_type in ("form_single", "form_wizard"):
+                        logger.info("📝 Filling application form...")
+                        wizard_result = await self._fill_form(page, schema)
+                        
+                        if not wizard_result.success:
+                            return ApplyResult(
+                                success=False,
+                                filled=wizard_result.filled_fields,
+                                error="form_fill_failed",
+                                steps_completed=wizard_result.steps_completed,
+                            )
+                        
+                        # Step 4: Detect outcome
+                        logger.info("🎯 Detecting application outcome...")
+                        outcome = await self._detect_outcome(page)
+                        
+                        # Step 5: Save for learning
+                        await self._save_for_learning(
+                            domain=domain,
+                            wizard_result=wizard_result,
+                            outcome=outcome,
+                        )
+                        
+                        # Step 6: Notify if configured
+                        await self._notify_result(job, outcome)
+                        
+                        return ApplyResult(
+                            success=outcome.success,
+                            filled=wizard_result.filled_fields,
+                            error=outcome.error if not outcome.success else None,
+                            steps_completed=wizard_result.steps_completed,
+                            reference_id=outcome.reference_id,
+                            needs_review=outcome.confidence < 0.7,
+                            screenshot_path=schema.screenshot_path,
+                        )
+                    
+                    # Unhandled page type
+                    logger.warning(f"⚠️ Unhandled page type: {schema.page_type}")
+                    return ApplyResult(
+                        success=False,
+                        error=f"unhandled_page_type:{schema.page_type}",
+                    )
+                    
+        except Exception as e:
+            logger.error(f"❌ BlindApplier error: {e}", exc_info=True)
+            return ApplyResult(
+                success=False,
+                error=str(e),
+            )
+        finally:
+            self._current_recorder = None
+            self._vision_calls = 0
+    
+    async def _run_recon(self, page) -> SiteSchema:
+        """Run reconnaissance on current page."""
+        self._check_vision_budget()
+        
+        schema = await self.recon.analyze(page)
+        
+        if self._current_recorder:
+            self._current_recorder.record(
+                "recon",
+                page_type=schema.page_type,
+                has_apply_button=schema.has_apply_button,
+            )
+        
+        # Save screenshot if configured
+        if self.config.save_screenshots and schema.screenshot_path:
+            screenshot_dir = Path(self.config.screenshot_dir)
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+        
+        return schema
+    
+    async def _click_apply(self, page, schema: SiteSchema) -> bool:
+        """Click the Apply button."""
+        self._check_vision_budget()
+        
+        if schema.apply_button_info and schema.apply_button_info.selector:
+            # Use selector if available
+            try:
+                await page.click(schema.apply_button_info.selector)
+                if self._current_recorder:
+                    self._current_recorder.record(
+                        "click",
+                        selector=schema.apply_button_info.selector,
+                        description="Apply button",
+                    )
+                return True
+            except Exception as e:
+                logger.warning(f"Click by selector failed: {e}")
+        
+        # Fall back to navigator
+        result = await self.navigator.click_apply(page, schema)
+        
+        if result.success and self._current_recorder:
+            self._current_recorder.record(
+                "click",
+                selector=result.selector,
+                coordinates=result.coordinates,
+                description="Apply button (navigator)",
+            )
+        
+        return result.success
+    
+    async def _fill_form(self, page, schema: SiteSchema) -> WizardResult:
+        """Fill the application form."""
+        self._check_vision_budget()
+        
+        result = await self.wizard.run_wizard(
+            page=page,
+            profile=self.profile,
+            recorder=self._current_recorder,
+        )
+        
+        return result
+    
+    async def _detect_outcome(self, page) -> OutcomeResult:
+        """Detect the application outcome."""
+        self._check_vision_budget()
+        
+        outcome = await self.outcome_detector.detect(page)
+        
+        if self._current_recorder:
+            self._current_recorder.record(
+                "outcome_detected",
+                outcome=outcome.outcome,
+                success=outcome.success,
+            )
+        
+        return outcome
+    
+    async def _save_for_learning(
+        self,
+        domain: str,
+        wizard_result: WizardResult,
+        outcome: OutcomeResult,
+    ):
+        """Save workflow and patterns for future learning."""
+        if not self._current_recorder:
+            return
+        
+        # Save the recorded workflow
+        self._current_recorder.save(success=outcome.success)
+        
+        # Save to pattern store
+        if outcome.success:
+            self.pattern_store.save_site_workflow(
+                domain=domain,
+                workflow=self._current_recorder.get_actions(),
+                form_fingerprints=wizard_result.fingerprints,
+                success=True,
+            )
+            # Confirm all pending patterns for this domain
+            self.pattern_store.confirm_all_pending(domain)
+        else:
+            # Save as pending for review
+            self.pattern_store.save_site_workflow(
+                domain=domain,
+                workflow=self._current_recorder.get_actions(),
+                form_fingerprints=wizard_result.fingerprints,
+                success=False,
+            )
+    
+    async def _notify_result(self, job: dict, outcome: OutcomeResult):
+        """Send notification about the result."""
+        if not self.notifier:
+            return
+        
+        if outcome.success and self.config.notify_on_success:
+            await self._send_notification(
+                job=job,
+                message=f"✅ Application submitted successfully to {job.get('company', 'Unknown')}",
+                outcome=outcome,
+            )
+        elif not outcome.success and self.config.notify_on_failure:
+            await self._send_notification(
+                job=job,
+                message=f"❌ Application failed for {job.get('company', 'Unknown')}: {outcome.error}",
+                outcome=outcome,
+            )
+    
+    async def _send_notification(self, job: dict, message: str, outcome: OutcomeResult):
+        """Send a notification."""
+        if hasattr(self.notifier, 'send_message'):
+            await self.notifier.send_message(message)
+    
+    async def _replay_workflow(self, workflow: dict, job: dict) -> ApplyResult:
+        """
+        Replay a previously recorded workflow.
+        
+        This is much faster than a full blind apply as it uses
+        cached selectors and actions.
+        """
+        from src.stealth.browser_stealth import StealthBrowser
+        
+        actions = workflow.get("actions", [])
+        if not actions:
+            return ApplyResult(success=False, error="empty_workflow")
+        
+        url = job.get("apply_url") or job.get("url", "")
+        domain = urlparse(url).netloc
+        
+        logger.info(f"🔄 Replaying {len(actions)} actions for {domain}")
+        
+        try:
+            async with StealthBrowser(headed=self.config.headed) as browser:
+                async with await browser.new_context() as ctx:
+                    page = await browser.new_page(ctx)
+                    
+                    filled_fields = 0
+                    
+                    for action in actions:
+                        action_type = action.get("type")
+                        
+                        if action_type == "navigate":
+                            await page.goto(action["url"], wait_until="domcontentloaded")
+                        
+                        elif action_type == "click":
+                            if "selector" in action:
+                                await page.click(action["selector"])
+                            elif "coordinates" in action:
+                                coords = action["coordinates"]
+                                await page.mouse.click(coords[0], coords[1])
+                        
+                        elif action_type == "fill":
+                            await page.fill(action["selector"], action.get("value", ""))
+                            filled_fields += 1
+                        
+                        elif action_type == "select":
+                            await page.select_option(
+                                action["selector"],
+                                action.get("value", ""),
+                            )
+                            filled_fields += 1
+                        
+                        elif action_type == "upload":
+                            await page.set_input_files(
+                                action["selector"],
+                                action.get("file_path", ""),
+                            )
+                        
+                        elif action_type == "wait":
+                            if "seconds" in action:
+                                await asyncio.sleep(action["seconds"])
+                            elif "selector" in action:
+                                await page.wait_for_selector(action["selector"])
+                        
+                        # Small delay between actions
+                        await asyncio.sleep(0.3)
+                    
+                    # Verify outcome
+                    outcome = await self.outcome_detector.detect(page)
+                    
+                    return ApplyResult(
+                        success=outcome.success,
+                        filled=filled_fields,
+                        error=outcome.error if not outcome.success else None,
+                        reference_id=outcome.reference_id,
+                    )
+                    
+        except Exception as e:
+            logger.error(f"❌ Workflow replay failed: {e}")
+            return ApplyResult(success=False, error=str(e))
+    
+    async def _delegate_to_known_ats(self, ats_type: str, job: dict) -> ApplyResult:
+        """
+        Delegate to a known ATS applier.
+        
+        This is called when ReconAgent detects that the site is actually
+        using a known ATS platform.
+        """
+        logger.info(f"🔄 Delegating to known ATS handler: {ats_type}")
+        
+        # Import the appropriate applier based on ATS type
+        try:
+            if ats_type == "greenhouse":
+                from src.applier.greenhouse_applier import GreenhouseApplier
+                applier = GreenhouseApplier(headed=self.config.headed)
+            elif ats_type == "lever":
+                from src.applier.lever_applier import LeverApplier
+                applier = LeverApplier(headed=self.config.headed)
+            elif ats_type == "workday":
+                from src.applier.workday_applier import WorkdayApplier
+                applier = WorkdayApplier(headed=self.config.headed)
+            elif ats_type == "ashby":
+                from src.applier.ashby_applier import AshbyApplier
+                applier = AshbyApplier(headed=self.config.headed)
+            else:
+                logger.warning(f"Unknown ATS type for delegation: {ats_type}")
+                return ApplyResult(
+                    success=False,
+                    error=f"unknown_ats:{ats_type}",
+                )
+            
+            # Apply using the known ATS handler
+            result = await applier.apply(job)
+            return ApplyResult(
+                success=result.success if hasattr(result, 'success') else result == "success",
+                error=str(result) if isinstance(result, str) and result != "success" else None,
+            )
+            
+        except ImportError as e:
+            logger.warning(f"ATS applier not available: {ats_type} - {e}")
+            # Fall back to blind apply
+            return ApplyResult(
+                success=False,
+                error=f"ats_handler_not_available:{ats_type}",
+            )
+    
+    def _create_blocked_result(self, reason: str) -> ApplyResult:
+        """Create a result for blocked sites."""
+        return ApplyResult(
+            success=False,
+            error=reason,
+            needs_review=True,
+        )
+    
+    def _check_vision_budget(self):
+        """Check if we've exceeded the vision call budget."""
+        if self._vision_calls >= self.config.vision_budget:
+            raise RuntimeError(f"Vision budget exceeded: {self.config.vision_budget} calls")
+        self._vision_calls += 1
+    
+    def _gaussian_delay(self, mean: float, std: float) -> float:
+        """Generate a human-like random delay."""
+        import random
+        delay = random.gauss(mean, std)
+        return max(0.5, min(delay, 10.0))  # Clamp between 0.5 and 10 seconds
+
+
+# Convenience function for quick apply
+async def blind_apply(job: dict, profile: dict, **kwargs) -> ApplyResult:
+    """
+    Quick apply function for custom sites.
+    
+    Usage:
+        result = await blind_apply(job_dict, profile_dict)
+    """
+    applier = BlindApplier(profile=profile, **kwargs)
+    return await applier.apply(job)
+
+🔍 558 lines read

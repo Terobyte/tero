@@ -1,0 +1,9 @@
+Tool result: total 56
+-rw-r--r--@  1 terobyte  staff    64 Mar 14 15:35 __init__.py
+drwxr-xr-x@  6 terobyte  staff   192 Mar 14 15:47 __pycache__
+drwxr-xr-x@  8 terobyte  staff   256 Mar 14 16:03 .
+drwxr-xr-x@ 11 terobyte  staff   352 Mar 14 15:47 ..
+-rw-r--r--@  1 terobyte  staff  2878 Mar 14 15:46 insights_handler.py
+-rw-r--r--@  1 terobyte  staff   568 Mar 14 15:46 insights_market_handler.py
+-rw-r--r--@  1 terobyte  staff  5411 Mar 14 16:03 main_bot.py
+-rw-r--r--@  1 terobyte  staff  6587 Mar 14 15:46 profiling_handler.py

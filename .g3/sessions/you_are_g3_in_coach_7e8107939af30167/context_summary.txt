@@ -1,0 +1,48 @@
+201041-qEv, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+201041-ugC, usr,   9K 🟠, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+201043-IzM, ass,   0K 🟢, 
+201043-kOC, usr,   0K 🟢, Tool result: ./src/applier/universal_screening/session_context.py ./src/applier/universal_screening/policy.py ./src/appl
+201043-AIB, ass,   0K 🟢, 
+201043-DMn, usr,   0K 🟢, Tool result: total 120 drwxr-xr-x@ 12 terobyte  staff    384 Mar 12 20:05 . drwxr-xr-x@  4 terobyte  staff    128 Mar  2
+201044-XMq, ass,   0K 🟢, 
+201044-iWU, usr,   0K 🟢, Tool result: src/applier/universal_screening/session_context.py src/applier/universal_screening/policy.py src/applier/un
+201044-ulZ, ass,   0K 🟢, 
+201044-ULg, usr,   0K 🟢, Tool result: """ Question Intent Classifier  Maps raw question text to canonical intent using a three-tier strategy: 1. 
+201046-WAo, ass,   0K 🟢, 
+201046-myx, usr,   4K 🟡, Tool result: """ Critical Question Policy  Hard rules for P0 screening topics. Config-driven via config/critical_intents
+201046-cZP, ass,   0K 🟢, 
+201046-JPc, usr,   1K 🟡, Tool result: """ Snapshot data models for capturing step state.  These models capture the full answered state of a form 
+201046-ObP, ass,   0K 🟢, 
+201046-irg, usr,   1K 🟡, Tool result: """ SessionContext - Tracks answered intents across ALL steps in one application to detect cross-step contr
+201046-ZYQ, ass,   0K 🟢, 
+201046-Eea, usr,   2K 🟡, Tool result: """ Audit logging for screening batch validation.  Provides persistence for debugging, review, and metrics.
+201046-kyi, ass,   0K 🟢, 
+201046-IdN, usr,   1K 🟡, Tool result: {   "critical_intents": [     {       "intent": "requires_sponsorship",       "description": "Whether the c
+201048-Qpt, ass,   0K 🟢, 
+201048-rOW, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+201048-MwR, ass,   0K 🟢, 
+201048-iEg, usr,   0K 🟢, Tool result: src/applier/universal_screening/session_context.py src/applier/universal_screening/policy.py src/applier/un
+201051-aPP, ass,   0K 🟢, 
+201051-MuL, usr,   0K 🟢, Tool result: src/applier/universal_screening/session_context.py src/applier/universal_screening/policy.py src/applier/un
+201051-oHM, ass,   0K 🟢, 
+201051-POv, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+201051-qGj, ass,   0K 🟢, 
+201051-YUk, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  3 terobyte  staff   96 Mar 12 20:05 . drwxr-xr-x@ 12 terobyte  staff  384 Mar 12 20:05
+201052-lEZ, ass,   0K 🟢, 
+201052-CeJ, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@ 2 terobyte  staff  64 Mar 12 20:05 . drwxr-xr-x@ 3 terobyte  staff  96 Mar 12 20:05 ..
+201052-kAa, ass,   0K 🟢, 
+201052-IoJ, usr,   0K 🟢, Tool result: ❌ bash: rg: command not found
+201052-VqQ, ass,   0K 🟢, 
+201052-aRP, usr,   0K 🟢, Tool result: ❌ bash: rg: command not found
+201054-HwM, ass,   0K 🟢, 
+201054-lcE, usr,   0K 🟢, Tool result: /usr/bin/grep
+201054-JWV, ass,   0K 🟢, 
+201054-lNe, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  4 terobyte  staff  128 Mar 12 20:05 . drwxr-xr-x@ 12 terobyte  staff  384 Mar 12 20:05
+201056-jkQ, ass,   0K 🟢, 
+201056-XfD, usr,   0K 🟢, Tool result: src/applier/universal_screening/session_context.py src/applier/universal_screening/policy.py src/applier/un
+201056-DMy, ass,   0K 🟢, 
+201056-iQf, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@ 3 terobyte  staff   96 Mar 12 20:05 . drwxr-xr-x@ 4 terobyte  staff  128 Mar 12 20:05 .
+201056-mHt, ass,   0K 🟢, 
+201056-UDG, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@ 2 terobyte  staff   64 Mar 12 20:05 . drwxr-xr-x@ 4 terobyte  staff  128 Mar 12 20:05 .
+
+--- TOTAL:  24K /  98K (24.8%) ---

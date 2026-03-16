@@ -1,0 +1,234 @@
+Tool result: """
+Question Intent Classifier
+
+Maps raw question text to canonical intent using a three-tier strategy:
+1. Exact match - hash table of known question texts → intent (fastest, free)
+2. Regex fallback - patterns for wording variants, with explicit priority ordering
+3. LLM classification - only when exact+regex give confidence < 0.9
+"""
+
+import hashlib
+import re
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+
+class ClassificationTier(Enum):
+    EXACT = "exact"
+    REGEX = "regex"
+    LLM = "llm"
+
+
+@dataclass
+class IntentResult:
+    """Result of intent classification."""
+    intent: str
+    confidence: float
+    tier: ClassificationTier
+
+    def __post_init__(self):
+        # Ensure confidence is within valid range
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"Confidence must be between 0.0 and 1.0, got {self.confidence}")
+
+
+class QuestionIntentClassifier:
+    """
+    Classifies screening questions to canonical intents.
+
+    Critical rule: sponsorship patterns must be checked BEFORE work_authorization
+    to handle compound questions like:
+    "Will you now or in the future require sponsorship for a work visa,
+    including the transfer of an existing work authorization?"
+    """
+
+    # Known exact question mappings (question text -> intent)
+    # These are exact matches captured from real ATS platforms
+    EXACT_MATCHES: Dict[str, str] = {
+        # Work authorization questions
+        "are you currently authorized to work in the united states?": "authorized_to_work",
+        "are you legally authorized to work in the us?": "authorized_to_work",
+        "are you authorized to work in the united states?": "authorized_to_work",
+        "are you legally authorized to work in the united states?": "authorized_to_work",
+
+        # Sponsorship questions - CRITICAL: these compound questions
+        "will you now or in the future require sponsorship for a work visa?": "requires_sponsorship",
+        "will you now or in the future require sponsorship for a work visa, including the transfer of an existing work authorization?": "requires_sponsorship",
+        "will you now or in the future require sponsorship for a work visa, including the transfer of an exisiting work authorization?": "requires_sponsorship",  # typo variant
+        "do you now or in the future require sponsorship for a work visa?": "requires_sponsorship",
+        "do you require sponsorship for employment visa status?": "requires_sponsorship",
+        "will you require visa sponsorship now or in the future?": "requires_sponsorship",
+        "do you need visa sponsorship?": "requires_sponsorship",
+        "do you need sponsorship?": "requires_sponsorship",
+
+        # Driver's license
+        "do you have a valid driver's license?": "has_drivers_license",
+        "do you have a valid drivers license?": "has_drivers_license",
+        "do you possess a valid driver's license?": "has_drivers_license",
+
+        # Security clearance
+        "do you have a security clearance?": "has_security_clearance",
+        "do you hold an active security clearance?": "has_security_clearance",
+        "are you eligible for a security clearance?": "security_clearance_eligible",
+
+        # Criminal history
+        "have you ever been convicted of a felony?": "criminal_history",
+        "have you ever been convicted of a crime?": "criminal_history",
+        "do you have a criminal record?": "criminal_history",
+
+        # Relocation
+        "are you willing to relocate?": "willing_to_relocate",
+        "would you be willing to relocate?": "willing_to_relocate",
+
+        # Education
+        "do you have a bachelor's degree?": "has_bachelors_degree",
+        "do you have a master's degree?": "has_masters_degree",
+        "do you have a college degree?": "has_bachelors_degree",
+    }
+
+    # Regex patterns with priority ordering
+    # CRITICAL: sponsorship patterns MUST come before work_authorization patterns
+    # to prevent compound question misclassification
+    REGEX_PATTERNS: List[Tuple[str, str, float]] = [
+        # SPONSORSHIP PATTERNS (checked FIRST)
+        (r"require\s+(?:visa\s+)?sponsorship", "requires_sponsorship", 0.95),
+        (r"need\s+(?:visa\s+)?sponsorship", "requires_sponsorship", 0.95),
+        (r"will\s+you\s+(?:now|currently|in\s+the\s+future)\s+(?:or\s+in\s+the\s+future\s+)?require\s+sponsorship", "requires_sponsorship", 0.98),
+        (r"(?:now|future).*sponsorship.*(?:work\s+visa|employment)", "requires_sponsorship", 0.95),
+        (r"sponsorship\s+for\s+(?:a\s+)?(?:work\s+)?visa", "requires_sponsorship", 0.95),
+        (r"transfer\s+of\s+(?:existing|exisiting)\s+work\s+authorization", "requires_sponsorship", 0.92),  # Often part of sponsorship Q
+
+        # WORK AUTHORIZATION PATTERNS (checked AFTER sponsorship)
+        (r"(?:currently|legally)\s+authorized\s+to\s+work", "authorized_to_work", 0.95),
+        (r"authorized\s+to\s+work\s+in\s+(?:the\s+)?(?:united\s+states|us)", "authorized_to_work", 0.95),
+        (r"work\s+authorization", "work_authorization", 0.90),  # Lower priority, generic
+        (r"legally\s+(?:authorized|able)\s+to\s+work", "authorized_to_work", 0.95),
+
+        # Driver's license
+        (r"(?:valid|current)\s+driver'?s?\s+license", "has_drivers_license", 0.95),
+        (r"driver'?s?\s+license", "has_drivers_license", 0.85),
+
+        # Security clearance
+        (r"(?:active|current|valid)\s+security\s+clearance", "has_security_clearance", 0.95),
+        (r"security\s+clearance", "has_security_clearance", 0.85),
+        (r"eligible\s+for\s+(?:a\s+)?security\s+clearance", "security_clearance_eligible", 0.90),
+
+        # Criminal history
+        (r"convicted\s+of\s+(?:a\s+)?(?:felony|crime)", "criminal_history", 0.95),
+        (r"criminal\s+(?:record|history|background)", "criminal_history", 0.90),
+        (r"(?:felony|criminal)\s+conviction", "criminal_history", 0.95),
+
+        # Relocation
+        (r"willing\s+to\s+relocate", "willing_to_relocate", 0.95),
+        (r"relocate\s+for\s+(?:this\s+)?(?:position|job|role)", "willing_to_relocate", 0.90),
+
+        # Education
+        (r"bachelor'?s?\s+degree", "has_bachelors_degree", 0.90),
+        (r"master'?s?\s+degree", "has_masters_degree", 0.90),
+        (r"(?:college|university)\s+degree", "has_bachelors_degree", 0.85),
+    ]
+
+    def __init__(self, llm_client=None):
+        """
+        Initialize the classifier.
+
+        Args:
+            llm_client: Optional LLM client for tier 3 classification
+        """
+        self.llm_client = llm_client
+
+    def _normalize_text(self, question_text: str) -> str:
+        """
+        Normalize question text for matching.
+
+        - Lowercase
+        - Strip whitespace
+        - Normalize multiple spaces to single space
+        - Remove common punctuation
+        """
+        text = question_text.lower().strip()
+        text = re.sub(r'\s+', ' ', text)
+        # Keep basic punctuation that matters for meaning
+        text = re.sub(r'[^\w\s\?]', '', text)
+        return text
+
+    def classify(self, question_text: str) -> IntentResult:
+        """
+        Classify a question to its canonical intent.
+
+        Uses three-tier strategy:
+        1. Exact match (fastest, free, confidence=1.0)
+        2. Regex fallback (fast, cheap, confidence=0.85-0.98)
+        3. LLM classification (slow, expensive, confidence varies)
+
+        Args:
+            question_text: The raw question text
+
+        Returns:
+            IntentResult with intent, confidence, and tier information
+        """
+        normalized = self._normalize_text(question_text)
+
+        # Tier 1: Exact match
+        if normalized in self.EXACT_MATCHES:
+            return IntentResult(
+                intent=self.EXACT_MATCHES[normalized],
+                confidence=1.0,
+                tier=ClassificationTier.EXACT
+            )
+
+        # Tier 2: Regex patterns (priority ordered)
+        for pattern, intent, confidence in self.REGEX_PATTERNS:
+            if re.search(pattern, normalized):
+                return IntentResult(
+                    intent=intent,
+                    confidence=confidence,
+                    tier=ClassificationTier.REGEX
+                )
+
+        # Tier 3: LLM classification (if available)
+        if self.llm_client:
+            return self._classify_with_llm(question_text)
+
+        # No match found
+        return IntentResult(
+            intent="unknown",
+            confidence=0.0,
+            tier=ClassificationTier.REGEX  # Not LLM since we didn't use it
+        )
+
+    def _classify_with_llm(self, question_text: str) -> IntentResult:
+        """
+        Use LLM to classify question intent when exact/regex fail.
+
+        This is the fallback for unusual wording or new question types.
+        """
+        # This would integrate with an actual LLM client
+        # For now, return unknown with low confidence
+        # In production, this would call the LLM API
+        return IntentResult(
+            intent="unknown",
+            confidence=0.0,
+            tier=ClassificationTier.LLM
+        )
+
+    @staticmethod
+    def generate_question_id(question_text: str) -> str:
+        """
+        Generate a unique question ID from question text.
+
+        Uses MD5 hash of normalized question text (first 12 chars).
+
+        Args:
+            question_text: The raw question text
+
+        Returns:
+            12-character question ID (e.g., "q_02522a2b2726")
+        """
+        normalized = question_text.lower().strip()
+        normalized = re.sub(r'\s+', ' ', normalized)
+        hash_hex = hashlib.md5(normalized.encode()).hexdigest()
+        return f"q_{hash_hex[:12]}"
+
+🔍 232 lines read

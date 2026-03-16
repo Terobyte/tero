@@ -1,0 +1,246 @@
+Tool result: # src/ai/orchestrator.py
+"""
+AI Orchestrator - Coordinates all AI-powered features for job applications.
+
+Integrates:
+  - ResumeTailor: Personalizes resume bullets for each JD
+  - STARRewriter: Rewrites bullets in STAR/CAR format
+  - EmailCustomizer: Generates personalized application emails
+  - ABTester: A/B tests different content variants
+"""
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+from loguru import logger
+
+from src.ai.resume_tailor import ResumeTailor, TailoredResume
+from src.ai.star_rewriter import STARRewriter, STARResult
+from src.applier.email_customizer import EmailCustomizer, EmailResult
+from src.learning.ab_tester import ABTester
+
+
+@dataclass
+class OrchestratorResult:
+    """Result of orchestration for a job application."""
+    job_id: str
+    job_title: str
+    company: str
+    
+    # Resume tailoring
+    tailored_resume: Optional[str] = None
+    bullets_changed: int = 0
+    keywords_injected: list[str] = field(default_factory=list)
+    
+    # Email customization
+    email_subject: Optional[str] = None
+    email_body: Optional[str] = None
+    
+    # A/B testing
+    cover_letter_style: Optional[str] = None
+    
+    # Metadata
+    metadata: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+
+class AIOrchestrator:
+    """
+    Coordinates AI features for job application processing.
+    
+    Usage:
+        orchestrator = AIOrchestrator(llm_client=kimi)
+        result = await orchestrator.process_job(
+            job_id="stripe-123",
+            job_title="Backend Engineer",
+            company="Stripe",
+            jd="We need Python, AWS experience...",
+            profile={"personal": {"first_name": "John", ...}},
+        )
+    """
+    
+    def __init__(
+        self,
+        llm_client=None,
+        resume_path: str = "data/resume.md",
+        ab_tester: Optional[ABTester] = None,
+    ):
+        self._llm = llm_client
+        self._resume_path = Path(resume_path)
+        
+        # Initialize sub-components
+        self._resume_tailor = ResumeTailor(llm_client=llm_client, resume_path=resume_path)
+        self._star_rewriter = STARRewriter(llm_client=llm_client)
+        self._email_customizer = EmailCustomizer(llm_client=llm_client)
+        self._ab_tester = ab_tester or ABTester()
+        
+        # Register A/B experiments
+        self._ab_tester.register("cover_letter_style", ["formal", "friendly", "concise"])
+        self._ab_tester.register("resume_bullet_version", ["v1_original", "v2_tailored"])
+    
+    async def process_job(
+        self,
+        job_id: str,
+        job_title: str,
+        company: str,
+        jd: str,
+        profile: dict,
+        *,
+        tailor_resume: bool = True,
+        generate_email: bool = True,
+        use_ab_testing: bool = True,
+    ) -> OrchestratorResult:
+        """
+        Process a job application through all AI features.
+        
+        Args:
+            job_id: Unique job identifier
+            job_title: Job title
+            company: Company name
+            jd: Job description text
+            profile: Candidate profile dict
+            tailor_resume: Whether to tailor resume bullets
+            generate_email: Whether to generate application email
+            use_ab_testing: Whether to use A/B testing for content variants
+        """
+        result = OrchestratorResult(
+            job_id=job_id,
+            job_title=job_title,
+            company=company,
+        )
+        
+        # A/B Testing: Choose cover letter style
+        if use_ab_testing:
+            style = self._ab_tester.choose("cover_letter_style")
+            result.cover_letter_style = style
+            result.metadata["ab_style"] = style
+            logger.info(f"A/B: selected style '{style}' for {company}")
+        
+        # Run tasks in parallel where possible
+        tasks = []
+        
+        if tailor_resume:
+            tasks.append(self._tailor_resume(result, jd, job_title, company))
+        
+        if generate_email:
+            tasks.append(self._generate_email(result, job_title, company, jd, profile))
+        
+        # Execute tasks
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        
+        return result
+    
+    async def _tailor_resume(
+        self,
+        result: OrchestratorResult,
+        jd: str,
+        job_title: str,
+        company: str,
+    ) -> None:
+        """Tailor resume bullets to match JD keywords."""
+        try:
+            tailored = await self._resume_tailor.tailor(
+                jd=jd,
+                job_title=job_title,
+                company=company,
+            )
+            result.tailored_resume = tailored.markdown
+            result.bullets_changed = tailored.changed_count
+            result.keywords_injected = tailored.keywords_injected
+            result.metadata["match_improvement"] = tailored.match_improvement
+            
+            logger.info(
+                f"Resume tailored for {company}: {tailored.changed_count} bullets changed, "
+                f"{len(tailored.keywords_injected)} keywords injected"
+            )
+        except Exception as e:
+            error_msg = f"Resume tailoring failed: {e}"
+            logger.warning(error_msg)
+            result.errors.append(error_msg)
+    
+    async def _generate_email(
+        self,
+        result: OrchestratorResult,
+        job_title: str,
+        company: str,
+        jd: str,
+        profile: dict,
+    ) -> None:
+        """Generate personalized application email."""
+        try:
+            email = await self._email_customizer.generate(
+                job_title=job_title,
+                company=company,
+                profile=profile,
+                jd=jd,
+            )
+            result.email_subject = email.subject
+            result.email_body = email.body
+            result.metadata["email_keywords"] = email.keywords_used
+            
+            logger.info(f"Email generated for {company}: {len(email.body)} chars")
+        except Exception as e:
+            error_msg = f"Email generation failed: {e}"
+            logger.warning(error_msg)
+            result.errors.append(error_msg)
+    
+    async def rewrite_bullets_star(
+        self,
+        bullets: list[str],
+        context: Optional[dict] = None,
+    ) -> list[STARResult]:
+        """
+        Rewrite bullet points in STAR/CAR format.
+        
+        Useful for improving resume bullets independently.
+        """
+        return await self._star_rewriter.rewrite_many(bullets, context)
+    
+    def record_ab_outcome(
+        self,
+        experiment: str,
+        variant: str,
+        success: bool,
+    ) -> None:
+        """
+        Record A/B test outcome (call when feedback received from employer).
+        
+        Args:
+            experiment: Experiment name (e.g., "cover_letter_style")
+            variant: Variant that was used
+            success: Whether the outcome was positive (interview, offer)
+        """
+        self._ab_tester.record_outcome(experiment, variant, success)
+    
+    def get_ab_stats(self) -> dict:
+        """Get A/B testing statistics for all experiments."""
+        return self._ab_tester.all_stats()
+
+
+# Convenience function for simple use cases
+async def tailor_resume_for_jd(
+    jd: str,
+    job_title: str,
+    company: str,
+    llm_client=None,
+    resume_path: str = "data/resume.md",
+) -> TailoredResume:
+    """
+    Quick helper to tailor a resume for a specific JD.
+    
+    Usage:
+        result = await tailor_resume_for_jd(
+            jd="We need Python, AWS...",
+            job_title="Backend Engineer",
+            company="Stripe",
+        )
+        print(result.markdown)
+    """
+    tailor = ResumeTailor(llm_client=llm_client, resume_path=resume_path)
+    return await tailor.tailor(jd=jd, job_title=job_title, company=company)
+
+🔍 244 lines read

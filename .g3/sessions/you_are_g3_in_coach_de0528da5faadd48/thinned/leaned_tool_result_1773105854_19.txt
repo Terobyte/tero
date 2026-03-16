@@ -1,0 +1,22 @@
+Tool result: -rw-r--r--@ 1 terobyte  staff  40645 Mar  9 20:29 src/applier/indeed_screening.py
+---
+# src/applier/indeed_screening.py
+"""
+Indeed Screening Handler — обрабатывает screening questions на странице Indeed Apply.
+
+Трёхуровневая система:
+1. AnswerBank (быстро, бесплатно)
+2. CustomAnswers (кэш)
+3. AI Answerer (Gemini Flash)
+"""
+
+import os
+import json
+import yaml
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+from datetime import datetime
+from loguru import logger
+
+from src.applier.answer_bank import AnswerBank

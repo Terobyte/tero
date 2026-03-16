@@ -1,0 +1,100 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/terobyte/tmp/workspace
+plugins: anyio-4.12.0, asyncio-1.3.0, cov-7.0.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 47 items
+
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_work_authorization_detected PASSED [  2%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_visa_sponsorship_detected PASSED [  4%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_case_insensitive PASSED [  6%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_normal_question_returns_none PASSED [  8%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_is_critical_security_clearance PASSED [ 10%]
+tests/applier/test_batch_validator.py::TestQuestionIntentClassifier::test_relocation_is_important_not_critical PASSED [ 12%]
+tests/applier/test_batch_validator.py::TestSessionContext::test_critical_answers_filter PASSED [ 14%]
+tests/applier/test_batch_validator.py::TestSessionContext::test_to_dict PASSED [ 17%]
+tests/applier/test_batch_validator.py::TestBatchValidator::test_no_corrections_for_good_answers PASSED [ 19%]
+tests/applier/test_batch_validator.py::TestBatchValidator::test_critical_error_returned PASSED [ 21%]
+tests/applier/test_semantic_answer_bank.py::TestSemanticAnswerBankInterface::test_regex_answer_returned_first PASSED [ 23%]
+tests/applier/test_semantic_answer_bank.py::TestSemanticAnswerBankInterface::test_get_yes_no_delegates PASSED [ 25%]
+tests/applier/test_semantic_answer_bank.py::TestSemanticAnswerBankInterface::test_drop_in_replacement PASSED [ 27%]
+tests/applier/test_semantic_answer_bank.py::TestSemanticSearch::test_semantic_match_work_authorization_variant FAILED [ 29%]
+tests/applier/test_semantic_answer_bank.py::TestSemanticSearch::test_unrelated_question_returns_none FAILED [ 31%]
+tests/platforms/test_indeed_api.py::TestIndeedAPISession::test_headers_contain_bearer PASSED [ 34%]
+tests/platforms/test_indeed_api.py::TestIndeedAPISession::test_mobile_user_agent PASSED [ 36%]
+tests/platforms/test_indeed_api.py::TestIndeedAPIClientParsing::test_parses_graphql_response PASSED [ 38%]
+tests/platforms/test_linkedin_voyager.py::TestVoyagerSession::test_csrf_token_strips_quotes PASSED [ 40%]
+tests/platforms/test_linkedin_voyager.py::TestVoyagerSession::test_cookies_dict PASSED [ 42%]
+tests/platforms/test_linkedin_voyager.py::TestVoyagerSession::test_headers_content PASSED [ 44%]
+tests/platforms/test_linkedin_voyager.py::TestVoyagerSession::test_load_from_file PASSED [ 46%]
+tests/platforms/test_linkedin_voyager.py::TestJobParsing::test_parse_empty_response PASSED [ 48%]
+tests/platforms/test_linkedin_voyager.py::TestJobParsing::test_parse_no_elements PASSED [ 51%]
+tests/platforms/test_linkedin_voyager.py::TestJobParsing::test_parse_malformed_elements PASSED [ 53%]
+tests/platforms/test_linkedin_voyager.py::TestJobParsing::test_parse_valid_job PASSED [ 55%]
+tests/platforms/test_linkedin_voyager.py::TestJobParsing::test_parse_multiple_jobs PASSED [ 57%]
+tests/platforms/test_linkedin_voyager.py::TestSearchParams::test_build_search_params_basic PASSED [ 59%]
+tests/platforms/test_linkedin_voyager.py::TestSearchParams::test_build_search_params_remote PASSED [ 61%]
+tests/platforms/test_linkedin_voyager.py::TestGeoIds::test_geo_ids_exist PASSED [ 63%]
+tests/stealth/test_audio_spoofing.py::test_audio_noise_script_contains_audiobuffer PASSED [ 65%]
+tests/stealth/test_audio_spoofing.py::test_different_seeds_different_script PASSED [ 68%]
+tests/stealth/test_audio_spoofing.py::test_audio_fingerprint_differs PASSED [ 70%]
+tests/stealth/test_battery_spoof.py::test_battery_script_generated PASSED [ 72%]
+tests/stealth/test_battery_spoof.py::test_battery_looks_like_laptop FAILED [ 74%]
+tests/stealth/test_canvas_noise.py::test_canvas_noise_script_generated PASSED [ 76%]
+tests/stealth/test_canvas_noise.py::test_canvas_noise_different_seeds_differ PASSED [ 78%]
+tests/stealth/test_canvas_noise.py::test_canvas_hash_differs_across_sessions FAILED [ 80%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_us_state_timezone_mapping PASSED [ 82%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_from_ip_api_response PASSED [ 85%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_from_region_fallback PASSED [ 87%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_infer_timezone_unknown_region_returns_none PASSED [ 89%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_check_consistent_timezone PASSED [ 91%]
+tests/stealth/test_geo_consistency.py::TestGeoConsistency::test_check_mismatch_detected PASSED [ 93%]
+tests/stealth/test_webrtc_leak.py::test_webrtc_policy_flag_present PASSED [ 95%]
+tests/stealth/test_webrtc_leak.py::test_webrtc_no_local_ip_leak PASSED   [ 97%]
+tests/stealth/test_webrtc_leak.py::test_fingerprint_check_includes_webrtc PASSED [100%]
+
+=================================== FAILURES ===================================
+______ TestSemanticSearch.test_semantic_match_work_authorization_variant _______
+tests/applier/test_semantic_answer_bank.py:48: in test_semantic_match_work_authorization_variant
+    answer = bank.get_answer("Can you work legally without needing any visa support?")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/applier/semantic_answer_bank.py:156: in get_answer
+    self._ensure_model()
+src/applier/semantic_answer_bank.py:75: in _ensure_model
+    import faiss
+E   ModuleNotFoundError: No module named 'faiss'
+___________ TestSemanticSearch.test_unrelated_question_returns_none ____________
+tests/applier/test_semantic_answer_bank.py:57: in test_unrelated_question_returns_none
+    answer = bank.get_answer("What is the airspeed velocity of an unladen swallow?")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/applier/semantic_answer_bank.py:156: in get_answer
+    self._ensure_model()
+src/applier/semantic_answer_bank.py:75: in _ensure_model
+    import faiss
+E   ModuleNotFoundError: No module named 'faiss'
+________________________ test_battery_looks_like_laptop ________________________
+tests/stealth/test_battery_spoof.py:29: in test_battery_looks_like_laptop
+    result = await page.evaluate("""async () => {
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/playwright/async_api/_generated.py:8567: in evaluate
+    await self._impl_obj.evaluate(
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/playwright/_impl/_page.py:464: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/playwright/_impl/_frame.py:320: in evaluate
+    await self._channel.send(
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.Error: Page.evaluate: TypeError: navigator.getBattery is not a function
+E       at eval (eval at evaluate (:290:30), <anonymous>:2:39)
+E       at UtilityScript.evaluate (<anonymous>:297:18)
+E       at UtilityScript.<anonymous> (<anonymous>:1:44)
+----------------------------- Captured stderr call -----------------------------
+2026-03-14 09:24:17.656 | DEBUG    | src.stealth.browser_stealth:__aenter__:93 - StealthBrowser launched (headed=False)
+2026-03-14 09:24:17.665 | DEBUG    | src.stealth.browser_stealth:new_context:130 - New context created (tz=America/New_York, locale=en-US)
+2026-03-14 09:24:17.785 | DEBUG    | src.stealth.browser_stealth:__aexit__:102 - StealthBrowser closed
+___________________ test_canvas_hash_differs_across_sessions ___________________
+tests/stealth/test_canvas_noise.py:56: in test_canvas_hash_differs_across_sessions
+    assert hashes[0] != hashes[1], (

@@ -1,0 +1,347 @@
+Tool result: """
+Queue Manager - Application queue with retry logic.
+
+Phase -1 of CareerBot Resilience Plan.
+Implements retry architecture with exponential backoff.
+"""
+
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Optional, Callable, Any
+from collections import defaultdict
+import json
+import os
+
+from .retry_policy import RetryPolicy, ErrorType
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ApplicationBudget:
+    """
+    Budget limits for a single job application.
+    Phase 2.5 - Circuit Breaker.
+    
+    Prevents infinite API calls on stuck forms.
+    """
+    max_llm_calls: int = 30
+    max_strategies_per_element: int = 10
+    max_time_seconds: int = 600  # 10 minutes
+    daily_budget_usd: float = 5.0
+    
+    # Runtime tracking
+    llm_calls_used: int = 0
+    strategies_used: int = 0
+    start_time: Optional[datetime] = None
+    daily_spent_usd: float = 0.0
+    
+    def check(self) -> bool:
+        """
+        Check if budget allows continuing.
+        
+        Returns:
+            True if can continue, False if budget exhausted
+        """
+        if self.llm_calls_used >= self.max_llm_calls:
+            logger.warning(f"Budget exhausted: {self.llm_calls_used}/{self.max_llm_calls} LLM calls")
+            return False
+        
+        if self.start_time:
+            elapsed = (datetime.utcnow() - self.start_time).total_seconds()
+            if elapsed >= self.max_time_seconds:
+                logger.warning(f"Budget exhausted: {elapsed:.0f}s >= {self.max_time_seconds}s time limit")
+                return False
+        
+        if self.daily_spent_usd >= self.daily_budget_usd:
+            logger.warning(f"Budget exhausted: ${self.daily_spent_usd:.2f} >= ${self.daily_budget_usd:.2f} daily")
+            return False
+        
+        return True
+    
+    def record_llm_call(self, cost_usd: float = 0.0):
+        """Record an LLM call."""
+        self.llm_calls_used += 1
+        self.daily_spent_usd += cost_usd
+    
+    def record_strategy_attempt(self):
+        """Record a strategy attempt on an element."""
+        self.strategies_used += 1
+    
+    def start(self):
+        """Mark start of application."""
+        self.start_time = datetime.utcnow()
+        self.llm_calls_used = 0
+        self.strategies_used = 0
+
+
+class ApplicationQueue:
+    """
+    Queue manager for job applications with retry support.
+    
+    Features:
+    - Priority queue by retry time
+    - Exponential backoff for retryable errors
+    - Permanent failure tracking for non-retryable errors
+    - Daily budget management
+    """
+    
+    def __init__(self, storage_path: str = "data/queue.json"):
+        self.storage_path = storage_path
+        self.jobs: dict[str, dict] = {}  # job_id -> job data
+        self.pending_queue: list[str] = []  # job_ids awaiting processing
+        self.retry_schedule: dict[str, datetime] = {}  # job_id -> retry_after
+        self.completed: list[str] = []  # completed job_ids
+        self.failed: dict[str, str] = {}  # job_id -> failure reason
+        
+        self._ensure_storage_dir()
+        self._load()
+    
+    def _ensure_storage_dir(self):
+        """Ensure storage directory exists."""
+        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
+    
+    def _load(self):
+        """Load queue state from disk."""
+        if os.path.exists(self.storage_path):
+            try:
+                with open(self.storage_path, 'r') as f:
+                    data = json.load(f)
+                    self.jobs = data.get("jobs", {})
+                    self.pending_queue = data.get("pending", [])
+                    self.completed = data.get("completed", [])
+                    self.failed = data.get("failed", {})
+                    # Parse retry times
+                    for job_id, retry_time in data.get("retry_schedule", {}).items():
+                        if retry_time:
+                            self.retry_schedule[job_id] = datetime.fromisoformat(retry_time)
+                logger.info(f"Loaded {len(self.jobs)} jobs from queue")
+            except Exception as e:
+                logger.error(f"Failed to load queue: {e}")
+    
+    def _save(self):
+        """Persist queue state to disk."""
+        try:
+            data = {
+                "jobs": self.jobs,
+                "pending": self.pending_queue,
+                "completed": self.completed,
+                "failed": self.failed,
+                "retry_schedule": {
+                    k: v.isoformat() if v else None 
+                    for k, v in self.retry_schedule.items()
+                }
+            }
+            with open(self.storage_path, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save queue: {e}")
+    
+    def add_job(self, job: dict) -> str:
+        """
+        Add a new job to the queue.
+        
+        Args:
+            job: Job dictionary with id, title, company, url, etc.
+            
+        Returns:
+            Job ID
+        """
+        job_id = job.get("id") or str(len(self.jobs) + 1)
+        job["id"] = job_id
+        job["status"] = "pending"
+        job["retry_count"] = 0
+        job["created_at"] = datetime.utcnow().isoformat()
+        
+        self.jobs[job_id] = job
+        self.pending_queue.append(job_id)
+        self._save()
+        
+        logger.info(f"Added job {job_id}: {job.get('title', 'Unknown')} @ {job.get('company', 'Unknown')}")
+        return job_id
+    
+    def get_next_job(self) -> Optional[dict]:
+        """
+        Get the next job to process.
+        
+        Returns:
+            Job dictionary or None if no jobs ready
+        """
+        now = datetime.utcnow()
+        
+        # Check retry queue first
+        for job_id, retry_after in list(self.retry_schedule.items()):
+            if now >= retry_after:
+                # Ready to retry
+                del self.retry_schedule[job_id]
+                self.pending_queue.append(job_id)
+        
+        if not self.pending_queue:
+            return None
+        
+        job_id = self.pending_queue.pop(0)
+        job = self.jobs.get(job_id)
+        
+        if job:
+            job["status"] = "in_progress"
+            job["updated_at"] = now.isoformat()
+            self._save()
+        
+        return job
+    
+    def mark_success(self, job_id: str):
+        """Mark job as successfully completed."""
+        job = self.jobs.get(job_id)
+        if job:
+            job["status"] = "applied"
+            job["applied_at"] = datetime.utcnow().isoformat()
+            self.completed.append(job_id)
+            self._save()
+            logger.info(f"Job {job_id} completed successfully")
+    
+    def mark_error(self, job_id: str, error: Exception, page_state: str = ""):
+        """
+        Mark job as errored, schedule retry if appropriate.
+        
+        Args:
+            job_id: Job identifier
+            error: Exception that occurred
+            page_state: Optional page state for context
+        """
+        job = self.jobs.get(job_id)
+        if not job:
+            logger.error(f"Unknown job {job_id}")
+            return
+        
+        error_type = RetryPolicy.classify_error(error, page_state)
+        attempt = job.get("retry_count", 0)
+        config = RetryPolicy.get_retry_config(error_type, attempt)
+        
+        job["last_error_type"] = error_type.value
+        job["last_error_message"] = str(error)
+        
+        if config.should_retry:
+            # Schedule retry
+            job["retry_count"] = attempt + 1
+            job["status"] = "retry_scheduled"
+            job["retry_after"] = (datetime.utcnow() + timedelta(seconds=config.delay_seconds)).isoformat()
+            self.retry_schedule[job_id] = datetime.utcnow() + timedelta(seconds=config.delay_seconds)
+            logger.warning(f"Job {job_id} failed ({error_type.value}): {config.message}")
+        else:
+            # Permanent failure
+            job["status"] = "error"
+            self.failed[job_id] = f"{error_type.value}: {str(error)}"
+            logger.error(f"Job {job_id} permanently failed: {error_type.value} - {error}")
+        
+        self._save()
+    
+    def schedule_retry(self, job_id: str, delay_seconds: int, reason: str = ""):
+        """
+        Manually schedule a retry.
+        
+        Args:
+            job_id: Job identifier
+            delay_seconds: Seconds to wait before retry
+            reason: Reason for retry
+        """
+        retry_after = datetime.utcnow() + timedelta(seconds=delay_seconds)
+        self.retry_schedule[job_id] = retry_after
+        
+        job = self.jobs.get(job_id)
+        if job:
+            job["status"] = "retry_scheduled"
+            job["retry_after"] = retry_after.isoformat()
+        
+        self._save()
+        logger.info(f"Scheduled retry for {job_id} in {delay_seconds}s: {reason}")
+    
+    def mark_hitl_required(self, job_id: str, reason: str, screenshot_path: str = ""):
+        """
+        Mark job as requiring human intervention.
+        
+        Args:
+            job_id: Job identifier
+            reason: Why human help is needed
+            screenshot_path: Path to screenshot for human review
+        """
+        job = self.jobs.get(job_id)
+        if job:
+            job["status"] = "hitl_required"
+            job["hitl_reason"] = reason
+            job["hitl_screenshot"] = screenshot_path
+            self._save()
+            logger.warning(f"Job {job_id} requires HITL: {reason}")
+    
+    def get_stats(self) -> dict:
+        """Get queue statistics."""
+        return {
+            "total_jobs": len(self.jobs),
+            "pending": len(self.pending_queue),
+            "retry_scheduled": len(self.retry_schedule),
+            "completed": len(self.completed),
+            "failed": len(self.failed),
+            "hitl_required": sum(1 for j in self.jobs.values() if j.get("status") == "hitl_required"),
+        }
+
+
+class RetryScheduler:
+    """
+    Background scheduler for retry processing.
+    
+    Runs periodically to check for jobs ready to retry.
+    """
+    
+    def __init__(self, queue: ApplicationQueue, process_fn: Callable[[dict], Any]):
+        self.queue = queue
+        self.process_fn = process_fn
+        self._running = False
+        self._task = None
+    
+    async def start(self, interval_seconds: int = 60):
+        """
+        Start the retry scheduler.
+        
+        Args:
+            interval_seconds: How often to check for retries
+        """
+        self._running = True
+        self._task = asyncio.create_task(self._run_loop(interval_seconds))
+        logger.info(f"Retry scheduler started (interval={interval_seconds}s)")
+    
+    async def stop(self):
+        """Stop the retry scheduler."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Retry scheduler stopped")
+    
+    async def _run_loop(self, interval: int):
+        """Main scheduler loop."""
+        while self._running:
+            try:
+                job = self.queue.get_next_job()
+                if job:
+                    # Process job in background
+                    asyncio.create_task(self._process_job(job))
+            except Exception as e:
+                logger.error(f"Scheduler error: {e}")
+            
+            await asyncio.sleep(interval)
+    
+    async def _process_job(self, job: dict):
+        """Process a single job."""
+        try:
+            result = await self.process_fn(job)
+            if result and result.get("success"):
+                self.queue.mark_success(job["id"])
+            elif result and result.get("error"):
+                self.queue.mark_error(job["id"], Exception(result["error"]))
+        except Exception as e:
+            self.queue.mark_error(job["id"], e)
+🔍 346 lines read

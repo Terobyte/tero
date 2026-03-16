@@ -1,0 +1,138 @@
+130144-iMl, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+130144-DUc, usr,  27K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+130148-vND, ass,   0K 🟢, 
+130148-MsT, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130148-eVS, ass,   0K 🟢, 
+130148-kun, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  5 terobyte  staff  160 Mar 14 12:27 . drwxr-xr-x@ 17 terobyte  staff  544 Mar 14 12:51
+130150-qLx, ass,   0K 🟢, 
+130150-lxU, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130150-zTE, ass,   0K 🟢, 
+130150-sKU, usr,   0K 🟢, Tool result: # Core dependencies loguru>=0.7.0 pydantic>=2.0.0  # AI/ML chromadb>=0.5.0 sentence-transformers>=2.2.0 ran
+130150-TpI, ass,   0K 🟢, 
+130150-LRc, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130152-SGg, ass,   0K 🟢, 
+130152-glz, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130152-DKE, ass,   0K 🟢, 
+130152-nCS, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130152-Sih, ass,   0K 🟢, 
+130152-dFX, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130155-LID, ass,   0K 🟢, 
+130155-SqN, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130155-cAX, ass,   0K 🟢, 
+130155-wPR, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130155-ZAG, ass,   0K 🟢, 
+130155-eAQ, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130155-GQE, ass,   0K 🟢, 
+130155-HqY, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130157-oJs, ass,   0K 🟢, 
+130157-LjI, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130157-sPO, ass,   0K 🟢, 
+130157-PfI, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130157-FbP, ass,   0K 🟢, 
+130157-dml, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130200-pif, ass,   0K 🟢, 
+130200-FDN, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130200-EDb, ass,   0K 🟢, 
+130200-xZX, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_abbb9fa5f4e7df76/thinned/leaned_tool
+130200-Mvi, ass,   0K 🟢, 
+130200-SIq, usr,   0K 🟢, Tool result: total 40 drwxr-xr-x@ 4 terobyte  staff    128 Mar 14 12:58 __pycache__ drwxr-xr-x@ 5 terobyte  staff    160
+130203-DUv, ass,   0K 🟢, 
+130203-VcN, usr,   2K 🟡, Tool result: # src/ai/gap_recommender.py """ GapRecommender — рекомендации как закрыть пробелы в опыте.  Input: GapAnaly
+130203-lFM, ass,   0K 🟢, 
+130203-Suh, usr,   2K 🟡, Tool result: # src/ai/nlg.py """ NaturalLanguageGenerator — генерация уникальных ответов на screening вопросы.  Ключевые
+130203-KsB, ass,   0K 🟢, 
+130203-ufw, usr,   1K 🟡, Tool result: # src/ai/embeddings.py """ EmbeddingsPipeline — RAG pipeline поверх VectorKnowledgeBase.  Отвечает за: 1. И
+130203-TBB, ass,   0K 🟢, 
+130203-vNb, usr,   2K 🟡, Tool result: # src/ai/match_rate.py """ MatchRateCalculator — оценка соответствия JD и профиля кандидата.  Возвращает де
+130209-Mew, ass,   0K 🟢, 
+130209-vqn, usr,   3K 🟡, Tool result: # src/ai/orchestrator.py """ TailoringOrchestrator — orchestrates the job application tailoring process.  I
+130209-rTA, ass,   0K 🟢, 
+130209-DLK, usr,   1K 🟡, Tool result: # src/utils/cost_reporter.py """ AI Cost Reporter — CLI/GUI отчёты о расходах на LLM API.  Форматы: CLI tab
+130209-FxE, ass,   0K 🟢, 
+130209-ZDh, usr,   0K 🟢, Tool result: # src/applier/universal_screening/session_context.py """ SessionContext — хранит ответы на screening вопрос
+130209-ELP, ass,   0K 🟢, 
+130209-jKx, usr,   1K 🟡, Tool result: """ GapAnalyser — анализ пробелов между требованиями JD и профилем кандидата.  Выявляет: - matched: требова
+130215-tIU, ass,   0K 🟢, 
+130215-jIu, usr,   0K 🟢, Tool result: ❌ Failed to read file '/Users/terobyte/tmp/workspace/.g3/workspace/src/utils/cost_tracker.py': No such file
+130215-XAX, ass,   0K 🟢, 
+130215-hRR, usr,   0K 🟢, Tool result: ❌ Failed to read file '/Users/terobyte/tmp/workspace/.g3/workspace/src/ai/llm_client.py': No such file or d
+130215-Lme, ass,   0K 🟢, 
+130215-DxK, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+130218-Sre, ass,   0K 🟢, 
+130218-cEM, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace total 192 drwxr-xr-x@  3 terobyte  staff     96 Mar 14 12:51 __pycache__ drwx
+130218-SCe, ass,   0K 🟢, 
+130218-UXv, usr,   0K 🟢, Tool result: ❌ Failed to read file '/Users/terobyte/tmp/workspace/.g3/workspace/src/utils/cost_tracker.py': No such file
+130218-ynr, ass,   0K 🟢, 
+130218-tsu, usr,   0K 🟢, Tool result: ❌ Failed to read file '/Users/terobyte/tmp/workspace/.g3/workspace/src/ai/llm_client.py': No such file or d
+130221-IWD, ass,   0K 🟢, 
+130221-AWy, usr,   4K 🟡, Tool result: """ AI Cost Tracking — отслеживание расходов на LLM API.  Паттерн: Singleton + ContextVar для job_id без из
+130221-qDj, ass,   0K 🟢, 
+130221-cLY, usr,   4K 🟡, Tool result: # src/ai/llm_client.py """ LLM Client — унифицированный интерфейс для LLM провайдеров.  Поддерживает: - Kim
+130221-sBr, ass,   0K 🟢, 
+130221-nKM, usr,   2K 🟡, Tool result: #!/usr/bin/env python3 """ CareerBot Main Entry Point.  Usage:     python main.py --apply --job-id <id>    
+130221-gkP, ass,   0K 🟢, 
+130221-myR, usr,   0K 🟢, Tool result: {   "cost_limits": {     "max_per_application": 0.10,     "max_per_day": 5.00,     "max_per_month": 100.00,
+130228-sRT, ass,   0K 🟢, 
+130228-Has, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130228-dog, ass,   0K 🟢, 
+130228-Ovg, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130228-JtK, ass,   0K 🟢, 
+130228-imx, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130228-cgm, ass,   0K 🟢, 
+130228-BSS, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130228-Qch, ass,   0K 🟢, 
+130228-OhR, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130228-TcS, ass,   0K 🟢, 
+130228-tlT, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+130233-MAx, ass,   0K 🟢, 
+130233-Cpp, usr,   0K 🟢, Tool result: ✅ cost_tracker OK
+130233-GWO, ass,   0K 🟢, 
+130233-Gcp, usr,   0K 🟢, Tool result: ✅ knowledge_base OK
+130233-mbQ, ass,   0K 🟢, 
+130233-iyu, usr,   0K 🟢, Tool result: ✅ gap_recommender OK
+130233-vjy, ass,   0K 🟢, 
+130233-qpf, usr,   0K 🟢, Tool result: ✅ nlg OK
+130233-Mnr, ass,   0K 🟢, 
+130233-pvy, usr,   0K 🟢, Tool result: ✅ match_rate OK
+130233-zeL, ass,   0K 🟢, 
+130233-dUt, usr,   0K 🟢, Tool result: ✅ embeddings OK
+130238-xHG, ass,   0K 🟢, 
+130238-WyI, usr,   0K 🟢, Tool result: ✅ snapshot OK
+130238-ipV, ass,   0K 🟢, 
+130238-hiG, usr,   0K 🟢, Tool result: ✅ correction_executor OK
+130238-uqE, ass,   0K 🟢, 
+130238-wQz, usr,   0K 🟢, Tool result: ✅ policy OK
+130238-NKW, ass,   0K 🟢, 
+130238-itH, usr,   0K 🟢, Tool result: ✅ audit_log OK
+130238-YCp, ass,   0K 🟢, 
+130238-uFf, usr,   0K 🟢, Tool result: ✅ handler OK
+130238-csp, ass,   0K 🟢, 
+130238-okr, usr,   0K 🟢, Tool result: ✅ batch_validator OK
+130243-wrN, ass,   0K 🟢, 
+130243-fbc, usr,   0K 🟢, Tool result: total 40 drwxr-xr-x@ 4 terobyte  staff    128 Mar 14 12:58 __pycache__ drwxr-xr-x@ 5 terobyte  staff    160
+130243-yEv, ass,   0K 🟢, 
+130243-nMl, usr,   0K 🟢, Tool result: total 24 -rw-r--r--@  1 terobyte  staff    79 Mar 14 12:37 __init__.py drwxr-xr-x@  4 terobyte  staff   128
+130243-cfT, ass,   0K 🟢, 
+130243-aZV, usr,   0K 🟢, Tool result: total 8 drwxr-xr-x@  3 terobyte  staff    96 Mar 14 12:48 . drwxr-xr-x@ 17 terobyte  staff   544 Mar 14 12:
+130247-KQt, ass,   0K 🟢, 
+130247-ZyB, usr,   0K 🟢, Tool result: -- Migration: Add ai_costs table for CostTracker persistence -- Created: 2026-03-14 -- Feature: AI Cost Tra
+130247-Sqs, ass,   0K 🟢, 
+130247-wYi, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 14 12:27 . drwxr-xr-x@ 17 terobyte  staff  544 Mar 14 12:51
+130247-ltn, ass,   0K 🟢, 
+130247-KFy, usr,   2K 🟡, Tool result: # src/applier/ai_answerer.py """ AIAnswerer — отвечает на screening вопросы с помощью LLM.  Интеграции: - V
+130250-mBp, ass,   0K 🟢, 
+130250-lQU, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+130250-tii, ass,   0K 🟢, 
+130250-Nvh, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 14 12:27 . drwxr-xr-x@ 17 terobyte  staff  544 Mar 14 12:51
+130253-rmZ, ass,   0K 🟢, 
+130253-NXu, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+130253-moX, ass,   0K 🟢, 
+130253-OUn, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+130255-jiw, ass,   0K 🟢, 
+130255-gGX, usr,   0K 🟢, Tool result: ============================= test session starts ============================== platform darwin -- Python 
+130302-ufx, ass,   0K 🟢, 
+130302-Crc, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace/src/utils/cost_tracker.py /Users/terobyte/tmp/workspace/src/utils/cost_report
+130302-YpW, ass,   0K 🟢, 
+130302-gEc, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 14 12:27 . drwxr-xr-x@ 17 terobyte  staff  544 Mar 14 12:51
+
+--- TOTAL:  66K /  98K (67.5%) ---

@@ -1,0 +1,30 @@
+125449-gBd, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+125449-ZlF, usr,  27K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+125453-fLE, ass,   0K 🟢, 
+125453-dqU, usr,   0K 🟢, Tool result: ./main.py ./src/utils/cost_tracker.py ./src/utils/cost_reporter.py ./src/applier/__init__.py ./src/applier/
+125453-Qzt, ass,   0K 🟢, 
+125453-XCU, usr,   0K 🟢, Tool result: total 40 drwxr-xr-x@ 4 terobyte  staff    128 Mar 14 12:52 __pycache__ drwxr-xr-x@ 5 terobyte  staff    160
+125453-ePw, ass,   0K 🟢, 
+125453-bJB, usr,   0K 🟢, Tool result: total 168 -rw-r--r--@  1 terobyte  staff     90 Mar 14 12:28 __init__.py drwxr-xr-x@ 11 terobyte  staff    
+125453-UgF, ass,   0K 🟢, 
+125453-Zvl, usr,   0K 🟢, Tool result: total 96 -rw-r--r--@  1 terobyte  staff    114 Mar 14 12:37 __init__.py drwxr-xr-x@ 10 terobyte  staff    3
+125455-JDr, ass,   0K 🟢, 
+125455-Ewh, usr,   2K 🟡, Tool result: # src/applier/ai_answerer.py """ AIAnswerer — отвечает на screening вопросы с помощью LLM.  Интеграции: - V
+125455-Nud, ass,   0K 🟢, 
+125455-EQc, usr,   2K 🟡, Tool result: #!/usr/bin/env python3 """ CareerBot Main Entry Point.  Usage:     python main.py --apply --job-id <id>    
+125459-pYh, ass,   0K 🟢, 
+125459-ytB, usr,   4K 🟡, Tool result: # src/ai/llm_client.py """ LLM Client — унифицированный интерфейс для LLM провайдеров.  Поддерживает: - Kim
+125459-bnH, ass,   0K 🟢, 
+125459-pPZ, usr,   3K 🟡, Tool result: # src/ai/orchestrator.py """ TailoringOrchestrator — orchestrates the job application tailoring process.  I
+125459-yjK, ass,   0K 🟢, 
+125459-Pik, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/workspace/CareerBot/CareerBot2: No such file or directory
+125501-RkL, ass,   0K 🟢, 
+125501-RTt, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace total 192 drwxr-xr-x@  3 terobyte  staff     96 Mar 14 12:51 __pycache__ drwx
+125503-qIr, ass,   0K 🟢, 
+125503-GAN, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+125503-pvI, ass,   0K 🟢, 
+125503-sXb, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+125503-vRX, ass,   0K 🟢, 
+125503-IPY, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+
+--- TOTAL:  43K /  98K (44.9%) ---

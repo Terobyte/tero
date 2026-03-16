@@ -1,0 +1,10 @@
+Tool result: total 168
+drwxr-xr-x@  6 terobyte  staff    192 Mar 13 14:02 __pycache__
+drwxr-xr-x@  9 terobyte  staff    288 Mar 13 13:49 .
+drwxr-xr-x@  6 terobyte  staff    192 Mar 13 13:14 ..
+-rw-r--r--@  1 terobyte  staff  19748 Mar 13 13:43 ai_answerer.py
+-rw-r--r--@  1 terobyte  staff  22751 Mar 13 13:43 answer_bank.py
+-rw-r--r--@  1 terobyte  staff  10108 Mar 13 13:42 ats_detector.py
+drwxr-xr-x@ 15 terobyte  staff    480 Mar 13 14:58 blind
+-rw-r--r--@  1 terobyte  staff   5564 Mar 13 13:49 gmail_reader.py
+-rw-r--r--@  1 terobyte  staff  18745 Mar 13 13:49 queue_manager.py

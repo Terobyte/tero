@@ -1,0 +1,24 @@
+Tool result: """
+Shared configuration constants for applier modules.
+
+This module provides a single source of truth for environment variables
+used across greenhouse and indeed appliers.
+"""
+import os
+from pathlib import Path
+
+
+# Resume file path - used by both GreenhouseApplier and IndeedApplier
+RESUME_PATH = Path(os.getenv("RESUME_PATH", "data/resume.pdf"))
+
+# Cover letter file path - used by GreenhouseApplier
+COVER_LETTER_PATH = Path(os.getenv("COVER_LETTER_PATH", "data/cover_letter.pdf"))
+
+# Screenshots directory - used for debugging and error capture
+SCREENSHOTS_DIR = Path(os.getenv("SCREENSHOTS_DIR", "data/screenshots"))
+
+
+def ensure_dirs() -> None:
+    """Ensure all required directories exist."""
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+🔍 23 lines read

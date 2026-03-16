@@ -1,0 +1,520 @@
+Tool result: """
+Unit tests for KimiVisionClient.
+
+Tests image+text prompt handling, JSON parsing, and error cases.
+"""
+
+import base64
+import json
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+
+from src.ai.kimi_vision import KimiVisionClient, VisionResponse, get_kimi_vision_client
+
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+@pytest.fixture
+def mock_openai_client():
+    """Mock AsyncOpenAI client."""
+    client = AsyncMock()
+    return client
+
+
+@pytest.fixture
+def vision_client(mock_openai_client):
+    """KimiVisionClient with mocked API."""
+    client = KimiVisionClient(api_key="test-key")
+    client._client = mock_openai_client
+    return client
+
+
+@pytest.fixture
+def sample_image_bytes():
+    """Sample PNG image bytes (1x1 transparent pixel)."""
+    # Minimal valid PNG
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+
+
+# ============================================================================
+# VisionResponse Tests
+# ============================================================================
+
+class TestVisionResponse:
+    """Tests for VisionResponse dataclass."""
+    
+    def test_create_response(self):
+        """Test creating a VisionResponse."""
+        response = VisionResponse(
+            text='{"outcome": "SUCCESS"}',
+            parsed_json={"outcome": "SUCCESS"},
+            confidence=0.9,
+            model="kimi-2.5",
+            tokens_used=100,
+        )
+        
+        assert response.text == '{"outcome": "SUCCESS"}'
+        assert response.parsed_json["outcome"] == "SUCCESS"
+        assert response.confidence == 0.9
+        assert response.model == "kimi-2.5"
+        assert response.tokens_used == 100
+    
+    def test_default_values(self):
+        """Test default values."""
+        response = VisionResponse(text="test")
+        
+        assert response.parsed_json is None
+        assert response.confidence == 0.0
+        assert response.model == ""
+        assert response.tokens_used == 0
+
+
+# ============================================================================
+# KimiVisionClient Tests
+# ============================================================================
+
+class TestKimiVisionClientInit:
+    """Tests for KimiVisionClient initialization."""
+    
+    def test_init_with_api_key(self):
+        """Test initialization with explicit API key."""
+        client = KimiVisionClient(api_key="my-key")
+        assert client.api_key == "my-key"
+    
+    def test_init_with_env_key(self, monkeypatch):
+        """Test initialization with environment variable."""
+        monkeypatch.setenv("KIMI_API_KEY", "env-key")
+        client = KimiVisionClient()
+        assert client.api_key == "env-key"
+    
+    def test_init_with_blackbox_env_key(self, monkeypatch):
+        """Test initialization with BLACKBOX_API_KEY env."""
+        monkeypatch.delenv("KIMI_API_KEY", raising=False)
+        monkeypatch.setenv("BLACKBOX_API_KEY", "blackbox-key")
+        client = KimiVisionClient()
+        assert client.api_key == "blackbox-key"
+    
+    def test_init_no_key(self, monkeypatch):
+        """Test initialization without any API key."""
+        monkeypatch.delenv("KIMI_API_KEY", raising=False)
+        monkeypatch.delenv("BLACKBOX_API_KEY", raising=False)
+        client = KimiVisionClient()
+        assert client.api_key is None
+    
+    def test_custom_settings(self):
+        """Test custom settings."""
+        client = KimiVisionClient(
+            api_key="key",
+            max_tokens=1024,
+            temperature=0.5,
+            timeout=30.0,
+        )
+        assert client.max_tokens == 1024
+        assert client.temperature == 0.5
+        assert client.timeout == 30.0
+
+
+class TestKimiVisionClientGenerate:
+    """Tests for generate_with_image method."""
+    
+    @pytest.mark.asyncio
+    async def test_generate_basic(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test basic image+text generation."""
+        # Mock response
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"result": "test"}'
+        mock_response.usage.total_tokens = 50
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        response = await vision_client.generate_with_image(
+            prompt="What is this?",
+            image_bytes=sample_image_bytes,
+        )
+        
+        assert response.text == '{"result": "test"}'
+        assert response.parsed_json["result"] == "test"
+        assert response.tokens_used == 50
+    
+    @pytest.mark.asyncio
+    async def test_generate_with_system_prompt(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test generation with system prompt."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"ok": true}'
+        mock_response.usage = None
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        await vision_client.generate_with_image(
+            prompt="Analyze",
+            image_bytes=sample_image_bytes,
+            system_prompt="You are a helpful assistant.",
+        )
+        
+        # Check that system prompt was included
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        assert any(m["role"] == "system" for m in messages)
+    
+    @pytest.mark.asyncio
+    async def test_generate_json_mode(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test JSON mode adds instruction."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"confidence": 0.9}'
+        mock_response.usage.total_tokens = 100
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        response = await vision_client.generate_with_image(
+            prompt="Test",
+            image_bytes=sample_image_bytes,
+            json_mode=True,
+        )
+        
+        assert response.confidence == 0.9
+        assert response.parsed_json["confidence"] == 0.9
+    
+    @pytest.mark.asyncio
+    async def test_generate_api_error(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test API error handling."""
+        mock_openai_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("API Error")
+        )
+        
+        with pytest.raises(Exception, match="API Error"):
+            await vision_client.generate_with_image(
+                prompt="Test",
+                image_bytes=sample_image_bytes,
+            )
+    
+    @pytest.mark.asyncio
+    async def test_generate_empty_response(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test empty response handling."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = None
+        mock_response.usage.total_tokens = 0
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        response = await vision_client.generate_with_image(
+            prompt="Test",
+            image_bytes=sample_image_bytes,
+        )
+        
+        assert response.text == ""
+        assert response.parsed_json is None
+
+
+class TestKimiVisionClientJSON:
+    """Tests for JSON extraction."""
+    
+    def test_extract_json_direct(self, vision_client):
+        """Test direct JSON extraction."""
+        result = vision_client._extract_json('{"key": "value"}')
+        assert result == {"key": "value"}
+    
+    def test_extract_json_with_whitespace(self, vision_client):
+        """Test JSON with whitespace."""
+        result = vision_client._extract_json('  \n  {"key": "value"}  \n  ')
+        assert result == {"key": "value"}
+    
+    def test_extract_json_markdown_block(self, vision_client):
+        """Test JSON in markdown code block."""
+        text = '```json\n{"key": "value"}\n```'
+        result = vision_client._extract_json(text)
+        assert result == {"key": "value"}
+    
+    def test_extract_json_plain_block(self, vision_client):
+        """Test JSON in plain code block."""
+        text = '```\n{"key": "value"}\n```'
+        result = vision_client._extract_json(text)
+        assert result == {"key": "value"}
+    
+    def test_extract_json_embedded(self, vision_client):
+        """Test JSON embedded in text."""
+        text = 'Here is the result: {"key": "value"} end.'
+        result = vision_client._extract_json(text)
+        assert result == {"key": "value"}
+    
+    def test_extract_json_invalid(self, vision_client):
+        """Test invalid JSON returns None."""
+        result = vision_client._extract_json("not json at all")
+        assert result is None
+    
+    def test_extract_json_empty(self, vision_client):
+        """Test empty string returns None."""
+        result = vision_client._extract_json("")
+        assert result is None
+
+
+class TestKimiVisionClientBBox:
+    """Tests for find_element_bbox method."""
+    
+    @pytest.mark.asyncio
+    async def test_find_bbox_success(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test successful bounding box detection."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"x": 100, "y": 200, "width": 50, "height": 30, "confidence": 0.9}'
+        mock_response.usage.total_tokens = 50
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.find_element_bbox(
+            image_bytes=sample_image_bytes,
+            target_description="Apply Now button",
+        )
+        
+        assert result is not None
+        assert result["x"] == 100
+        assert result["y"] == 200
+        assert result["width"] == 50
+        assert result["height"] == 30
+    
+    @pytest.mark.asyncio
+    async def test_find_bbox_not_found(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test element not found."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"not_found": true}'
+        mock_response.usage.total_tokens = 50
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.find_element_bbox(
+            image_bytes=sample_image_bytes,
+            target_description="Non-existent button",
+        )
+        
+        assert result is None
+
+
+class TestKimiVisionClientPageType:
+    """Tests for analyze_page_type method."""
+    
+    @pytest.mark.asyncio
+    async def test_analyze_job_listing(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test job listing page detection."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "page_type": "job_listing",
+            "apply_button": {"visible": True, "text": "Apply Now", "location": "top right"},
+            "account_required": False,
+            "form_fields_count": 0,
+            "estimated_steps": 1,
+            "language": "en",
+            "blocker": None,
+            "confidence": 0.9,
+        })
+        mock_response.usage.total_tokens = 100
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.analyze_page_type(sample_image_bytes)
+        
+        assert result["page_type"] == "job_listing"
+        assert result["apply_button"]["visible"] is True
+        assert result["confidence"] == 0.9
+    
+    @pytest.mark.asyncio
+    async def test_analyze_with_dom_context(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test analysis with DOM context."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"page_type": "form_single"}'
+        mock_response.usage.total_tokens = 100
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        dom_snapshot = {"buttons": [{"text": "Apply"}], "inputs": []}
+        
+        result = await vision_client.analyze_page_type(
+            sample_image_bytes,
+            dom_snapshot=dom_snapshot,
+        )
+        
+        # Check DOM was included in prompt - find the user message
+        call_args = mock_openai_client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        
+        # Find the user message (could be at different indices depending on system prompts)
+        user_message = next((m for m in messages if m["role"] == "user"), None)
+        assert user_message is not None
+        
+        # The user message content is a list with [image, text]
+        prompt = user_message["content"][1]["text"]
+        assert "DOM Summary" in prompt
+
+
+class TestKimiVisionClientFormVerify:
+    """Tests for verify_form_state method."""
+    
+    @pytest.mark.asyncio
+    async def test_verify_complete_form(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test complete form verification."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "empty_required_fields": [],
+            "validation_errors": [],
+            "next_button": {"text": "Submit", "visible": True},
+            "unselected_dropdowns": [],
+            "file_upload_needed": False,
+            "form_looks_complete": True,
+            "confidence": 0.95,
+        })
+        mock_response.usage.total_tokens = 80
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.verify_form_state(sample_image_bytes)
+        
+        assert result["form_looks_complete"] is True
+        assert len(result["empty_required_fields"]) == 0
+    
+    @pytest.mark.asyncio
+    async def test_verify_incomplete_form(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test incomplete form verification."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "empty_required_fields": ["First Name", "Email"],
+            "validation_errors": ["Email is invalid"],
+            "next_button": {"text": "Next", "visible": True},
+            "unselected_dropdowns": ["Country"],
+            "file_upload_needed": True,
+            "form_looks_complete": False,
+            "confidence": 0.85,
+        })
+        mock_response.usage.total_tokens = 90
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.verify_form_state(sample_image_bytes)
+        
+        assert "First Name" in result["empty_required_fields"]
+        assert "Email" in result["empty_required_fields"]
+        assert result["form_looks_complete"] is False
+
+
+class TestKimiVisionClientOutcome:
+    """Tests for detect_outcome method."""
+    
+    @pytest.mark.asyncio
+    async def test_detect_success(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test success outcome detection."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "outcome": "SUCCESS",
+            "confidence": 0.95,
+            "message": "Application submitted successfully",
+            "reference_id": "APP-12345",
+            "detected_elements": ["thank you message", "confirmation number"],
+        })
+        mock_response.usage.total_tokens = 60
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.detect_outcome(sample_image_bytes)
+        
+        assert result["outcome"] == "SUCCESS"
+        assert result["reference_id"] == "APP-12345"
+    
+    @pytest.mark.asyncio
+    async def test_detect_error(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test error outcome detection."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "outcome": "ERROR",
+            "confidence": 0.9,
+            "message": "Validation error",
+            "reference_id": None,
+            "detected_elements": ["error message"],
+        })
+        mock_response.usage.total_tokens = 50
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.detect_outcome(sample_image_bytes)
+        
+        assert result["outcome"] == "ERROR"
+    
+    @pytest.mark.asyncio
+    async def test_detect_loading(self, vision_client, mock_openai_client, sample_image_bytes):
+        """Test loading state detection."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "outcome": "LOADING",
+            "confidence": 0.8,
+            "message": "Form is processing",
+        })
+        mock_response.usage.total_tokens = 40
+        mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        result = await vision_client.detect_outcome(sample_image_bytes)
+        
+        assert result["outcome"] == "LOADING"
+
+
+class TestKimiVisionClientClose:
+    """Tests for close method."""
+    
+    @pytest.mark.asyncio
+    async def test_close_client(self, vision_client, mock_openai_client):
+        """Test closing the client."""
+        mock_openai_client.close = AsyncMock()
+        
+        await vision_client.close()
+        
+        mock_openai_client.close.assert_called_once()
+        assert vision_client._client is None
+    
+    @pytest.mark.asyncio
+    async def test_close_no_client(self, vision_client):
+        """Test closing when no client exists."""
+        vision_client._client = None
+        # Should not raise
+        await vision_client.close()
+
+
+# ============================================================================
+# Singleton Tests
+# ============================================================================
+
+class TestGetKimiVisionClient:
+    """Tests for singleton getter."""
+    
+    def test_get_singleton(self, monkeypatch):
+        """Test singleton creation."""
+        monkeypatch.setenv("KIMI_API_KEY", "test-key")
+        
+        from src.ai.kimi_vision import _vision_client
+        # Reset singleton
+        import src.ai.kimi_vision as module
+        module._vision_client = None
+        
+        client1 = get_kimi_vision_client()
+        client2 = get_kimi_vision_client()
+        
+        assert client1 is client2
+    
+    def test_singleton_is_kimi_vision_client(self, monkeypatch):
+        """Test singleton type."""
+        monkeypatch.setenv("KIMI_API_KEY", "test-key")
+        
+        import src.ai.kimi_vision as module
+        module._vision_client = None
+        
+        client = get_kimi_vision_client()
+        assert isinstance(client, KimiVisionClient)
+
+
+# ============================================================================
+# Run tests
+# ============================================================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+🔍 518 lines read
