@@ -1,0 +1,307 @@
+Tool result: # src/ai/llm_client.py
+"""
+LLM Client — унифицированный интерфейс для LLM провайдеров.
+
+Поддерживает:
+- Kimi (Moonshot AI)
+- Gemini (Google)
+- Claude (Anthropic)
+- GLM5 (Z-ai)
+
+Интегрирован с CostTracker для автоматического отслеживания расходов.
+"""
+from __future__ import annotations
+
+import os
+from typing import Optional, AsyncIterator
+from loguru import logger
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cost Tracking Integration
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _track(provider: str, model: str, response: Any, module: str = "") -> None:
+    """
+    Извлечь usage из ответа LLM и передать в CostTracker.
+    
+    Поддерживает разные форматы ответов:
+    - OpenAI-compatible (Kimi, GLM5): response.usage.prompt_tokens/completion_tokens
+    - Gemini: response.usage_metadata.prompt_token_count/candidates_token_count
+    - Anthropic: response.usage.input_tokens/output_tokens
+    
+    Args:
+        provider: Имя провайдера (kimi, gemini-flash, claude-sonnet, etc.)
+        model: Полное имя модели
+        response: Ответ от LLM API
+        module: Модуль-источник вызова (для логирования)
+    """
+    try:
+        from src.utils.cost_tracker import CostTracker
+        
+        inp, out = 0, 0
+        
+        # OpenAI-compatible (Kimi, GLM5)
+        if hasattr(response, "usage") and response.usage:
+            inp = getattr(response.usage, "prompt_tokens", 0)
+            out = getattr(response.usage, "completion_tokens", 0)
+        
+        # Gemini
+        elif hasattr(response, "usage_metadata"):
+            m = response.usage_metadata
+            inp = getattr(m, "prompt_token_count", 0)
+            out = getattr(m, "candidates_token_count", 0)
+        
+        # Anthropic
+        elif hasattr(response, "usage") and hasattr(response.usage, "input_tokens"):
+            inp = getattr(response.usage, "input_tokens", 0)
+            out = getattr(response.usage, "output_tokens", 0)
+        
+        # Fallback: estimate from response length
+        else:
+            text_len = len(str(response))
+            inp = out = text_len // 4
+            logger.debug(f"Cost tracking: estimated tokens from response length")
+        
+        CostTracker.instance().track(
+            provider=provider,
+            model=model,
+            input_tokens=inp,
+            output_tokens=out,
+            module=module,
+        )
+        
+    except Exception as e:
+        logger.debug(f"Cost tracking error (non-fatal): {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Base Client Interface
+# ═══════════════════════════════════════════════════════════════════════════
+
+class BaseLLMClient:
+    """Базовый класс для LLM клиентов."""
+    
+    async def generate(self, prompt: str, **kwargs) -> str:
+        """Сгенерировать текст по prompt."""
+        raise NotImplementedError
+    
+    async def generate_stream(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+        """Сгенерировать текст с streaming."""
+        raise NotImplementedError
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Kimi Client (Moonshot AI)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class KimiClient(BaseLLMClient):
+    """
+    Kimi K2.5 клиент через OpenAI-compatible API.
+    
+    Usage:
+        client = KimiClient()
+        response = await client.generate("Explain Python decorators")
+    """
+    
+    MODEL = "blackboxai/moonshotai/kimi-k2.5"
+    PROVIDER = "kimi"
+    
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        self.api_key = api_key or os.getenv("KIMI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.base_url = base_url or os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+        self._client = None
+    
+    def _get_client(self):
+        if self._client is None:
+            try:
+                from openai import AsyncOpenAI
+                self._client = AsyncOpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                )
+            except ImportError:
+                raise ImportError("openai package required: pip install openai")
+        return self._client
+    
+    async def generate(self, prompt: str, **kwargs) -> str:
+        """Сгенерировать текст."""
+        client = self._get_client()
+        
+        response = await client.chat.completions.create(
+            model=self.MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs,
+        )
+        
+        # Track cost
+        _track(self.PROVIDER, self.MODEL, response, module="kimi_client")
+        
+        return response.choices[0].message.content or ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Gemini Client (Google)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class GeminiClient(BaseLLMClient):
+    """
+    Gemini Flash клиент.
+    
+    Usage:
+        client = GeminiClient()
+        response = await client.generate("Explain async/await in Python")
+    """
+    
+    MODEL = "gemini-3-flash-preview"
+    PROVIDER = "gemini-flash"
+    
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self._client = None
+    
+    def _get_client(self):
+        if self._client is None:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=self.api_key)
+                self._client = genai.GenerativeModel(self.MODEL)
+            except ImportError:
+                raise ImportError("google-generativeai package required: pip install google-generativeai")
+        return self._client
+    
+    async def generate(self, prompt: str, **kwargs) -> str:
+        """Сгенерировать текст."""
+        client = self._get_client()
+        
+        response = await client.generate_content_async(prompt, **kwargs)
+        
+        # Track cost
+        _track(self.PROVIDER, self.MODEL, response, module="gemini_client")
+        
+        return response.text or ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Claude Client (Anthropic)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ClaudeClient(BaseLLMClient):
+    """
+    Claude Sonnet клиент.
+    
+    Usage:
+        client = ClaudeClient()
+        response = await client.generate("Write a haiku about coding")
+    """
+    
+    MODEL = "claude-sonnet-4-20250514"
+    PROVIDER = "claude-sonnet"
+    
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self._client = None
+    
+    def _get_client(self):
+        if self._client is None:
+            try:
+                from anthropic import AsyncAnthropic
+                self._client = AsyncAnthropic(api_key=self.api_key)
+            except ImportError:
+                raise ImportError("anthropic package required: pip install anthropic")
+        return self._client
+    
+    async def generate(self, prompt: str, **kwargs) -> str:
+        """Сгенерировать текст."""
+        client = self._get_client()
+        
+        response = await client.messages.create(
+            model=self.MODEL,
+            max_tokens=kwargs.pop("max_tokens", 4096),
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs,
+        )
+        
+        # Track cost
+        _track(self.PROVIDER, self.MODEL, response, module="claude_client")
+        
+        return response.content[0].text if response.content else ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GLM5 Client (Z-ai)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class GLM5Client(BaseLLMClient):
+    """
+    GLM-5 клиент через OpenAI-compatible API.
+    
+    Usage:
+        client = GLM5Client()
+        response = await client.generate("Translate to Chinese: Hello world")
+    """
+    
+    MODEL = "z-ai/glm-5"
+    PROVIDER = "glm5"
+    
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        self.api_key = api_key or os.getenv("GLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.base_url = base_url or os.getenv("GLM_BASE_URL", "https://api.z.ai/v1")
+        self._client = None
+    
+    def _get_client(self):
+        if self._client is None:
+            try:
+                from openai import AsyncOpenAI
+                self._client = AsyncOpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                )
+            except ImportError:
+                raise ImportError("openai package required: pip install openai")
+        return self._client
+    
+    async def generate(self, prompt: str, **kwargs) -> str:
+        """Сгенерировать текст."""
+        client = self._get_client()
+        
+        response = await client.chat.completions.create(
+            model=self.MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            **kwargs,
+        )
+        
+        # Track cost
+        _track(self.PROVIDER, self.MODEL, response, module="glm5_client")
+        
+        return response.choices[0].message.content or ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Factory Function
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_llm_client(provider: str = "gemini", **kwargs) -> BaseLLMClient:
+    """
+    Получить LLM клиент по имени провайдера.
+    
+    Args:
+        provider: "kimi", "gemini", "claude", "glm5"
+        **kwargs: Аргументы для конструктора клиента
+        
+    Returns:
+        Экземпляр LLM клиента
+    """
+    clients = {
+        "kimi": KimiClient,
+        "gemini": GeminiClient,
+        "claude": ClaudeClient,
+        "glm5": GLM5Client,
+    }
+    
+    if provider not in clients:
+        raise ValueError(f"Unknown LLM provider: {provider}. Available: {list(clients.keys())}")
+    
+    return clients[provider](**kwargs)
+
+🔍 305 lines read

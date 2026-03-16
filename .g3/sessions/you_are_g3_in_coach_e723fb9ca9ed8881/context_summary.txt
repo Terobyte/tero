@@ -1,0 +1,40 @@
+160347-Cmj, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+160347-yWF, usr,  18K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+160349-kbi, ass,   0K 🟢, 
+160349-pJT, usr,   0K 🟢, Tool result: ./src/insights/progressive_profiling.py ./src/insights/daily_engine.py ./src/insights/__init__.py ./src/lea
+160349-zCF, ass,   0K 🟢, 
+160349-vDh, usr,   0K 🟢, Tool result: total 240 drwxr-xr-x@ 13 terobyte  staff    416 Mar 14 15:57 . drwxr-xr-x@  4 terobyte  staff    128 Mar  2
+160357-ZJP, ass,   0K 🟢, 
+160357-Mxu, usr,   0K 🟢, Tool result: ❌ bash: python: command not found
+160357-jyD, ass,   0K 🟢, 
+160357-xPB, usr,   0K 🟢, Tool result: No matches found
+160357-uTn, ass,   0K 🟢, 
+160357-yif, usr,   0K 🟢, Tool result: No ResumeTailor integration found in orchestrator.py
+160400-lmk, ass,   0K 🟢, 
+160400-jIn, usr,   3K 🟡, Tool result: # src/ai/resume_tailor.py """ ResumeTailor — адаптирует bullet points резюме под конкретную вакансию.  Flow
+160400-kHA, ass,   0K 🟢, 
+160400-JFX, usr,   2K 🟡, Tool result: # src/learning/ab_tester.py """ ABTester — epsilon-greedy A/B тестирование вариантов резюме/cover letter.  
+160400-MyR, ass,   0K 🟢, 
+160400-zZN, usr,   1K 🟡, Tool result: # src/ai/star_rewriter.py """ STARRewriter — переписывает bullet points в STAR/CAR формат.  STAR: Situation
+160400-fFX, ass,   0K 🟢, 
+160400-Pfw, usr,   1K 🟡, Tool result: # src/analytics/market_insights.py """ MarketInsights — анализирует накопленные вакансии и строит отчёт.  Д
+160403-VoQ, ass,   0K 🟢, 
+160403-WwC, usr,   1K 🟡, Tool result: # src/applier/email_customizer.py """ EmailCustomizer — генерирует персональный application email под конкр
+160403-gEP, ass,   0K 🟢, 
+160403-zHq, usr,   3K 🟡, Tool result: # src/insights/daily_engine.py """ DailyInsightEngine — daily questions to enrich candidate profile.  Categ
+160403-XWb, ass,   0K 🟢, 
+160403-GMO, usr,   3K 🟡, Tool result: # src/insights/progressive_profiling.py """ ProgressiveProfiling — step-by-step profile completion wizard. 
+160405-cKq, ass,   0K 🟢, 
+160405-xXh, usr,   1K 🟡, Tool result: # src/bot/insights_handler.py """ Telegram handlers for daily insights feature.  Commands:   /insights - Ge
+160405-gel, ass,   0K 🟢, 
+160405-Rfp, usr,   2K 🟡, Tool result: # src/bot/profiling_handler.py """ Telegram FSM wizard for progressive profile completion.  States:   - Pro
+160405-xQx, ass,   0K 🟢, 
+160405-kfG, usr,   1K 🟡, Tool result: # src/bot/main_bot.py """ Main Telegram bot entry point with aiogram Dispatcher.  Registers all routers and
+160409-COk, ass,   0K 🟢, 
+160409-aWz, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160409-UaT, ass,   0K 🟢, 
+160409-yiX, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160409-cAy, ass,   0K 🟢, 
+160409-XIq, usr,   0K 🟢, Tool result: ❌ Command failed with exit code 1
+
+--- TOTAL:  46K /  98K (47.5%) ---

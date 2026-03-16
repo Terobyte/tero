@@ -1,0 +1,167 @@
+async def _find_empty_required_fields(self, page) -> list:
+        """
+        Найти все видимые обязательные поля которые пустые.
+        Возвращает список label-строк пустых полей.
+        """
+        empty = []
+        seen_ids = set()
+
+        # Все input/textarea/select с aria-required или required
+        candidates = await page.query_selector_all(
+            "input[aria-required='true'], input[required], "
+            "select[aria-required='true'], select[required], "
+            "textarea[aria-required='true'], textarea[required]"
+        )
+        for el in candidates:
+            el_type = (await el.get_attribute("type") or "text").lower()
+            if el_type in ("hidden", "file", "submit", "button", "reset", "image"):
+                continue
+            if not await el.is_visible():
+                continue
+            # Combobox инпуты (role='combobox') обрабатываются отдельно ниже —
+            # input_value() для react-select всегда "" даже после выбора
+            el_role = (await el.get_attribute("role") or "").lower()
+            if el_role == "combobox":
+                continue
+            el_id = await el.get_attribute("id") or ""
+            if el_id in seen_ids:
+                continue
+            seen_ids.add(el_id)
+
+            tag = await el.evaluate("e => e.tagName.toLowerCase()")
+            if tag == "select":
+                val = await el.evaluate(
+                    "e => e.selectedIndex <= 0 ? '' : (e.options[e.selectedIndex]?.value || '')"
+                )
+            else:
+                val = await el.input_value()
+
+            if not val.strip():
+                label = await self._get_label(page, el)
+                empty.append(label or el_id or "unknown")
+
+        # Также проверяем combobox (React Select — не имеет native required)
+        # Их обязательность определяем по aria-required на самом input
+        # ВАЖНО: после выбора input_value() = "" (react-select очищает текстовый инпут).
+        # Реальное значение — в [class*='single-value'] контейнере рядом с инпутом.
+        combos = await page.query_selector_all("input[role='combobox'][aria-required='true']")
+        for el in combos:
+            if not await el.is_visible():
+                continue
+            el_id = await el.get_attribute("id") or ""
+            if el_id in seen_ids:
+                continue
+            seen_ids.add(el_id)
+            # Проверяем заполнен ли react-select combobox.
+            # Greenhouse использует emotion CSS-in-JS с чистыми хешами (css-1abc234) —
+            # class-based селекторы ненадёжны. Главный метод — структурный (M5).
+            val = await el.evaluate("""
+                (el) => {
+                    // ── M5: Структурный (не требует читаемых class-имён) ─────────────────
+                    // react-select structure: ValueContainer > [singleValue|placeholder, Input > el]
+                    // Когда заполнено: singleValue видим + placeholder скрыт (display:none)
+                    // Когда пусто:     только placeholder видим, hidden-siblings нет
+                    const inputWrapper = el.parentElement;
+                    const vc5 = inputWrapper && inputWrapper.parentElement;
+                    if (vc5) {
+                        let visText = null, hasHiddenSibling = false;
+                        for (const child of vc5.children) {
+                            if (child === inputWrapper || child.contains(el)) continue;
+                            // Пропускаем indicator-иконки (стрелка, крестик)
+                            if (child.querySelector && child.querySelector('svg')) continue;
+                            const st = window.getComputedStyle(child);
+                            const t = child.innerText && child.innerText.trim();
+                            if (!t) continue;
+                            if (st.display === 'none' || st.visibility === 'hidden' || child.offsetParent === null) {
+                                hasHiddenSibling = true;
+                            } else {
+                                visText = t;
+                            }
+                        }
+                        // Заполнено: есть видимый текст (value) И скрытый sibling (placeholder)
+                        if (visText && hasHiddenSibling) return 'M5:' + visText;
+                    }
+
+                    // ── Class-based методы (запасные — работают при семантических классах) ─
+                    // Пробуем первые 4 ancestor-а (не closest() — может уйти слишком далеко)
+                    const ancestors = [];
+                    let node = el;
+                    for (let i = 0; i < 5; i++) {
+                        node = node.parentElement;
+                        if (!node) break;
+                        ancestors.push(node);
+                        if (i >= 3) break;
+                    }
+
+                    // M1: single-value class
+                    for (const anc of ancestors) {
+                        const sv = anc.querySelector(
+                            '[class*="single-value"],[class*="singleValue"],[class*="-singleValue"],[class*="SingleValue"]'
+                        );
+                        if (sv) {
+                            const st = window.getComputedStyle(sv);
+                            if (st.display !== 'none' && st.visibility !== 'hidden' && sv.offsetParent !== null) {
+                                const t = sv.innerText && sv.innerText.trim();
+                                if (t) return 'M1:' + t;
+                            }
+                        }
+                    }
+
+                    // M2: placeholder visibility (react-select всегда скрывает при выборе)
+                    for (const anc of ancestors) {
+                        const ph = anc.querySelector(
+                            '[class*="placeholder"],[class*="-placeholder"],[class*="Placeholder"]'
+                        );
+                        if (ph) {
+                            const st = window.getComputedStyle(ph);
+                            const hidden = st.display === 'none' || st.visibility === 'hidden' || ph.offsetParent === null;
+                            return hidden ? 'M2:__has_value__' : 'M2:__empty__';
+                        }
+                    }
+
+                    // M3: ValueContainer children
+                    for (const anc of ancestors) {
+                        const vcEl = anc.querySelector(
+                            '[class*="ValueContainer"],[class*="value-container"],[class*="-value-container"],[class*="values"]'
+                        );
+                        if (vcEl) {
+                            for (const child of vcEl.children) {
+                                if (child.tagName === 'INPUT' || child.contains(el)) continue;
+                                const st = window.getComputedStyle(child);
+                                if (st.display === 'none') continue;
+                                if ((child.className || '').toLowerCase().includes('placeholder')) continue;
+                                const t = child.innerText && child.innerText.trim();
+                                if (t) return 'M3:' + t;
+                            }
+                        }
+                    }
+
+                    // M4: aria-selected
+                    for (const anc of ancestors) {
+                        const sel = anc.querySelector('[aria-selected="true"]');
+                        if (sel && sel.offsetParent !== null) {
+                            const t = sel.innerText && sel.innerText.trim();
+                            if (t) return 'M4:' + t;
+                        }
+                    }
+
+                    return el.value || '';
+                }
+            """)
+            raw = val.strip()
+            # JS возвращает: 'Mx:value' или 'M2:__has_value__' = заполнено
+            #                'M2:__empty__' или '' = пусто
+            is_empty = (not raw) or (raw == "M2:__empty__")
+            logger.debug(f"Combobox '{el_id}': raw='{raw[:60]}' → {'EMPTY' if is_empty else 'FILLED'}")
+            if is_empty:
+                label = await self._get_label(page, el)
+                empty.append(label or el_id or "unknown combobox")
+
+        return empty
+
+    async def _handle_security_code(self, page, job) -> bool:
+        """
+        Обработать Greenhouse Email Verification (Security Code).
+
+        После submit Greenhouse иногда показывает форму с полем для ввода
+        кода из письма — это стандартная email-верификация, НЕ CAPTCHA.

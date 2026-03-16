@@ -1,0 +1,70 @@
+211011-ict, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+211011-hCj, usr,  10K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+211016-EKd, ass,   0K 🟢, I'll review the current implementation against the requirements. Let me start by exploring the codebase structure andkey
+211016-kXI, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211016-NBv, ass,   0K 🟢, 
+211016-fPY, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211020-ACy, ass,   0K 🟢, 
+211020-Rxf, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211020-UwE, ass,   0K 🟢, 
+211020-ywP, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211020-SUW, ass,   0K 🟢, 
+211020-oEi, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211020-VTr, ass,   0K 🟢, 
+211020-nZU, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_68354cc132d2a55d/thinned/leaned_tool
+211025-QbO, ass,   0K 🟢, 
+211025-xLh, usr,   7K 🟠, Tool result: """ FormStateMachine - Backtracking state machine for form filling.  Phase 4: Handles "wrong answer → try d
+211025-QKx, ass,   0K 🟢, 
+211025-OmY, usr,   4K 🟡, Tool result: """ Queue Manager - Application queue with retry logic.  Phase -1 of CareerBot Resilience Plan. Implements 
+211025-CVe, ass,   0K 🟢, 
+211025-Mcn, usr,   1K 🟡, Tool result: """ Database models for CareerBot. Includes retry fields for job applications. """  from dataclasses import
+211029-Vqv, ass,   0K 🟢, 
+211029-IHM, usr,   5K 🟠, Tool result: """ HITL (Human-in-the-Loop) Telegram Handler  Phase 9 - Last resort escape valve when all automation fails
+211029-CNz, ass,   0K 🟢, 
+211029-FRb, usr,  11K 🔴, Tool result: """ SelectorEngine - 4-tier element discovery with Shadow DOM support.  Tier 1: CSS selectors (fast, reliab
+211029-CmD, ass,   0K 🟢, 
+211029-xnE, usr,   5K 🟠, Tool result: """ AI Answerer - Multi-provider LLM fallback chain for question answering.  Provides resilient LLM answeri
+211029-oGc, ass,   0K 🟢, 
+211029-qwh, usr,   3K 🟡, Tool result: """ StealthBrowser - Anti-detection browser with CDP support.  Phase 6 of CareerBot Resilience Plan.  Featu
+211038-UzX, ass,   0K 🟢, 
+211038-uIi, usr,   4K 🟡, Tool result: ✅ Code search completed {   "searches": [     {       "name": "find_retry_policy",       "matches": [      
+211038-Cwt, ass,   0K 🟢, 
+211038-aHk, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+211038-lhh, ass,   0K 🟢, 
+211038-kkd, usr,   0K 🟢, Tool result: total 80 drwxr-xr-x@ 11 terobyte  staff    352 Mar 10 15:52 . drwxr-xr-x@  4 terobyte  staff    128 Mar  2 
+211043-yPv, ass,   0K 🟢, 
+211043-sij, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+211047-SIB, ass,   0K 🟢, 
+211047-YHa, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 10 15:52 . drwxr-xr-x@ 11 terobyte  staff  352 Mar 10 15:52
+211047-hem, ass,   0K 🟢, 
+211047-ODp, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+211047-jsW, ass,   0K 🟢, 
+211047-VkO, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+211050-vYd, ass,   0K 🟢, 
+211050-uGy, usr,   2K 🟡, Tool result: """ RetryPolicy - Centralized retry logic for job applications.  Phase -1 of CareerBot Resilience Plan. Thi
+211057-wyp, ass,   0K 🟢, 
+211057-yhd, usr,   6K 🟠, Tool result: """ Human Simulator - Realistic human behavior simulation.  Implements stochastic delays, mouse movements, 
+211057-nFo, ass,   0K 🟢, 
+211057-Yew, usr,   5K 🟠, Tool result: """ WarmupTracker - Anti-detection warmup tracking.  Tracks application activity to simulate human-like beh
+211057-LlP, ass,   0K 🟢, 
+211057-FhZ, usr,   4K 🟡, Tool result: """ Gemini Vision module for Tier 4 LLM-based element discovery. Implements bounding box injection for impr
+211104-bMs, ass,   0K 🟢, 
+211104-Cwo, usr,   7K 🟠, Tool result: """ AI Fallback Chain - Multi-provider LLM fallback system.  Phase 2: Provides resilience through multiple 
+211104-WPa, ass,   0K 🟢, 
+211104-ZSv, usr,   4K 🟡, Tool result: """ Verified checkbox/radio/select filling with multi-strategy fallback.  Phase 0 implementation: Verified 
+211125-rHv, ass,   0K 🟢, Let me check the full `radio_filler.py` to verify the implementation, then run sometests.Let me check the full `radio_fi
+211125-pbb, usr,   4K 🟡, Tool result: """ Verified checkbox/radio/select filling with multi-strategy fallback.  Phase 0 implementation: Verified 
+211125-mAR, ass,   0K 🟢, 
+211125-nfv, usr,   4K 🟡, Tool result: """ Strategy Store - Phase 1 Implementation  Persists winning strategies per domain for faster subsequent a
+211125-ZTz, ass,   0K 🟢, 
+211125-Rby, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+211131-ofs, ass,   0K 🟢, 
+211131-wLd, usr,   0K 🟢, Tool result: Import test passed
+211131-GhZ, ass,   0K 🟢, 
+211131-QuT, usr,   0K 🟢, Tool result: StrategyStore import passed
+211131-TZS, ass,   0K 🟢, 
+211131-BNj, usr,   0K 🟢, Tool result: FormStateMachine import passed
+211140-rGN, ass,   0K 🟢, 
+211140-KLw, usr,   0K 🟢, Tool result: Testing RetryPolicy... ✓ RetryPolicy should_retry works ✓ RetryPolicy delay_seconds works ✗ classify_error 
+
+--- TOTAL: 100K /  98K (102.2%) ---

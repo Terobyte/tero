@@ -1,0 +1,11 @@
+Tool result: total 232
+drwxr-xr-x@ 10 terobyte  staff    320 Mar 14 15:34 .
+drwxr-xr-x@  4 terobyte  staff    128 Mar  2 16:12 ..
+-rw-r--r--@  1 terobyte  staff   6148 Mar 14 15:22 .DS_Store
+-rw-r--r--@  1 terobyte  staff   2780 Mar  3 13:04 .env.example
+drwxr-xr-x@  5 terobyte  staff    160 Mar 14 10:09 .g3
+drwxr-xr-x@ 12 terobyte  staff    384 Mar 14 14:12 .git
+drwxr-xr-x@  2 terobyte  staff     64 Mar 14 12:27 .index
+drwxr-xr-x@  6 terobyte  staff    192 Mar  4 14:05 .pytest_cache
+-rw-r--r--@  1 terobyte  staff  50354 Mar 14 15:33 ALL_REMAINING_FEATURES-1.md
+-rw-r--r--@  1 terobyte  staff  50354 Mar 14 15:33 requirements.md

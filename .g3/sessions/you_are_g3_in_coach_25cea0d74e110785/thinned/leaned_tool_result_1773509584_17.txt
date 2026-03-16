@@ -1,0 +1,146 @@
+Tool result: # src/ai/embeddings.py
+"""
+EmbeddingsPipeline — RAG pipeline поверх VectorKnowledgeBase.
+
+Отвечает за:
+1. Инкрементальную индексацию PKB-чанков
+2. Гибридный поиск (BM25 + semantic, как в dual_retriever но с ChromaDB)
+3. Re-ranking результатов
+4. Кэш эмбеддингов между сессиями
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from loguru import logger
+
+from src.ai.knowledge_base import VectorKnowledgeBase
+
+
+@dataclass
+class RAGResult:
+    """Один результат RAG-поиска."""
+    text: str
+    chunk_id: str
+    semantic_score: float
+    bm25_score: float = 0.0
+    final_score: float = 0.0
+    source: str = ""
+
+
+class EmbeddingsPipeline:
+    """
+    RAG Pipeline: гибридный поиск по PKB.
+
+    Комбинирует ChromaDB (semantic) + BM25 (keyword) для лучших результатов.
+
+    Usage:
+        pipeline = EmbeddingsPipeline(pkb_dir="data/pkb")
+        pipeline.build_index(chunks)
+        results = pipeline.search("Python REST API experience", k=5)
+    """
+
+    def __init__(self, pkb_dir: str | Path = "data/pkb"):
+        self.pkb_dir = Path(pkb_dir)
+        self._kb = VectorKnowledgeBase()
+        self._bm25 = None
+        self._chunks = []
+        self._indexed = False
+
+    def build_index(self, chunks, force: bool = False) -> None:
+        """
+        Построить индекс из PKB чанков.
+
+        Args:
+            chunks: list[Chunk] из PKBIndexer
+            force: Переиндексировать полностью
+        """
+        self._chunks = chunks
+        # Semantic index (ChromaDB)
+        added = self._kb.index_pkb(chunks, force=force)
+        logger.info(f"EmbeddingsPipeline: {added} new chunks indexed in ChromaDB")
+
+        # BM25 index
+        self._build_bm25(chunks)
+        self._indexed = True
+
+    def _build_bm25(self, chunks) -> None:
+        """Построить BM25 индекс."""
+        try:
+            from rank_bm25 import BM25Okapi
+            tokenized = [c.text.lower().split() for c in chunks]
+            self._bm25 = BM25Okapi(tokenized)
+        except ImportError:
+            logger.warning("rank-bm25 not installed, skipping BM25 index")
+            self._bm25 = None
+
+    def search(
+        self,
+        query: str,
+        k: int = 10,
+        semantic_weight: float = 0.7,
+        bm25_weight: float = 0.3,
+    ) -> list[RAGResult]:
+        """
+        Гибридный поиск: semantic + BM25.
+
+        Args:
+            query: Поисковый запрос
+            k: Количество результатов
+            semantic_weight: Вес семантического поиска
+            bm25_weight: Вес BM25
+
+        Returns:
+            Sorted список RAGResult по final_score DESC
+        """
+        # Semantic search via ChromaDB
+        semantic = self._kb.search_pkb(query, k=k * 2)
+        sem_map = {r["chunk_id"]: r for r in semantic}
+
+        # BM25 search
+        bm25_map: dict[str, float] = {}
+        if self._bm25 and self._chunks:
+            scores = self._bm25.get_scores(query.lower().split())
+            top_k = sorted(enumerate(scores), key=lambda x: -x[1])[:k * 2]
+            max_score = top_k[0][1] if top_k else 1.0
+            for idx, score in top_k:
+                chunk_id = self._chunks[idx].chunk_id
+                bm25_map[chunk_id] = score / max(max_score, 0.001)
+
+        # Merge & re-rank
+        all_ids = set(sem_map.keys()) | set(bm25_map.keys())
+        results = []
+        for cid in all_ids:
+            sem_score = sem_map[cid]["score"] if cid in sem_map else 0.0
+            bm25_score = bm25_map.get(cid, 0.0)
+            final = semantic_weight * sem_score + bm25_weight * bm25_score
+            text = sem_map[cid]["text"] if cid in sem_map else ""
+            source = sem_map[cid].get("metadata", {}).get("source", "") if cid in sem_map else ""
+
+            results.append(RAGResult(
+                text=text, chunk_id=cid,
+                semantic_score=sem_score,
+                bm25_score=bm25_score,
+                final_score=final,
+                source=source,
+            ))
+
+        results.sort(key=lambda r: -r.final_score)
+        return results[:k]
+
+    def index_qa_pairs(self) -> int:
+        """Проиндексировать подтверждённые Q&A пары."""
+        qa_path = Path("data/unknown_questions.json")
+        if not qa_path.exists():
+            return 0
+        entries = json.loads(qa_path.read_text(encoding="utf-8"))
+        return self._kb.index_qa_cache(entries)
+
+    def stats(self) -> dict:
+        """Статистика индекса."""
+        return self._kb.stats()
+
+🔍 144 lines read

@@ -1,0 +1,197 @@
+Tool result: # src/applier/universal_screening/batch_validator.py
+"""
+BatchStepValidator — валидация ответов на screening вопросы.
+
+Phase 2-5 of batch validation:
+- Проверка consistency ответов
+- Выявление incorrect answers
+- Генерация corrections для re-fill
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional, List
+from loguru import logger
+
+
+@dataclass
+class Correction:
+    """Предложенная коррекция ответа."""
+    question_text: str
+    current_answer: str
+    corrected_answer: str
+    reason: str
+    severity: str = "warning"  # "critical", "warning", "info"
+
+
+@dataclass
+class ValidationResult:
+    """Результат валидации шага."""
+    step: int
+    total_questions: int
+    corrections: List[Correction] = field(default_factory=list)
+    passed: bool = True
+    error_message: str = ""
+
+
+class BatchStepValidator:
+    """
+    Валидатор для batch validation screening вопросов.
+
+    Usage:
+        validator = BatchStepValidator(ai_answerer, profile)
+        corrections = await validator.validate(session)
+    """
+
+    def __init__(self, ai_answerer=None, profile: dict = None):
+        """
+        Args:
+            ai_answerer: AIAnswerer instance для re-validation
+            profile: Профиль кандидата
+        """
+        self._ai_answerer = ai_answerer
+        self._profile = profile or {}
+
+    async def validate(self, session) -> List[Correction]:
+        """
+        Валидировать ответы из session.
+
+        Args:
+            session: SessionContext с записанными ответами
+
+        Returns:
+            Список Correction для исправления
+        """
+        corrections = []
+
+        if not session or not session.answers:
+            return corrections
+
+        for answer in session.answers:
+            # Проверка consistency
+            correction = await self._validate_single(answer)
+            if correction:
+                corrections.append(correction)
+
+        if corrections:
+            logger.info(
+                f"BatchStepValidator: {len(corrections)} corrections needed "
+                f"out of {len(session.answers)} answers"
+            )
+        else:
+            logger.info("BatchStepValidator: all answers passed validation")
+
+        return corrections
+
+    async def _validate_single(self, answer) -> Optional[Correction]:
+        """
+        Валидировать один ответ.
+
+        Args:
+            answer: SessionAnswer
+
+        Returns:
+            Correction если нужен, иначе None
+        """
+        # Check for obvious issues
+        question_lower = answer.question_text.lower()
+        answer_lower = answer.answer.lower() if answer.answer else ""
+
+        # Check for empty answer
+        if not answer.answer or answer.answer.strip() == "":
+            return Correction(
+                question_text=answer.question_text,
+                current_answer=answer.answer or "",
+                corrected_answer="",
+                reason="Empty answer",
+                severity="critical" if answer.is_critical else "warning",
+            )
+
+        # Check for placeholder answers
+        placeholders = ["n/a", "none", "unknown", "tbd", "todo", "???"]
+        if answer_lower in placeholders:
+            return Correction(
+                question_text=answer.question_text,
+                current_answer=answer.answer,
+                corrected_answer="",
+                reason="Placeholder answer needs to be filled",
+                severity="critical" if answer.is_critical else "warning",
+            )
+
+        # Check for work authorization questions
+        if "authorized" in question_lower or "legally" in question_lower:
+            expected = self._profile.get("work_authorization", {}).get("us_authorized", "Yes")
+            if answer_lower not in ["yes", "no", expected.lower()]:
+                return Correction(
+                    question_text=answer.question_text,
+                    current_answer=answer.answer,
+                    corrected_answer=expected,
+                    reason="Authorization answer inconsistent with profile",
+                    severity="critical",
+                )
+
+        # Check for sponsorship questions
+        if "sponsorship" in question_lower:
+            requires_sponsorship = self._profile.get("work_authorization", {}).get(
+                "requires_sponsorship", False
+            )
+            expected = "Yes" if requires_sponsorship else "No"
+            if answer_lower not in ["yes", "no", expected.lower()]:
+                return Correction(
+                    question_text=answer.question_text,
+                    current_answer=answer.answer,
+                    corrected_answer=expected,
+                    reason="Sponsorship answer inconsistent with profile",
+                    severity="critical",
+                )
+
+        # Check for years of experience questions
+        if "years" in question_lower and "experience" in question_lower:
+            try:
+                years = int(answer.answer)
+                profile_years = int(
+                    self._profile.get("experience", {}).get("total_years", 0) or 0
+                )
+                # Allow some variance
+                if abs(years - profile_years) > 2:
+                    return Correction(
+                        question_text=answer.question_text,
+                        current_answer=answer.answer,
+                        corrected_answer=str(profile_years),
+                        reason="Experience years inconsistent with profile",
+                        severity="warning",
+                    )
+            except ValueError:
+                pass  # Not a numeric answer
+
+        return None
+
+    def quick_validate(self, answers: List[dict]) -> List[Correction]:
+        """
+        Быстрая синхронная валидация без LLM.
+
+        Args:
+            answers: List of {question_text, answer, is_critical}
+
+        Returns:
+            Список corrections
+        """
+        corrections = []
+
+        for a in answers:
+            question = a.get("question_text", "")
+            answer_val = a.get("answer", "")
+            is_critical = a.get("is_critical", False)
+
+            if not answer_val or answer_val.strip() == "":
+                corrections.append(Correction(
+                    question_text=question,
+                    current_answer=answer_val or "",
+                    corrected_answer="",
+                    reason="Empty answer",
+                    severity="critical" if is_critical else "warning",
+                ))
+
+        return corrections
+
+🔍 195 lines read

@@ -1,0 +1,28 @@
+100641-YiG, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+100641-WWa, usr,  35K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+100646-xnH, ass,   0K 🟢, I'll review the implementation against the requirements. Let me explore the project structure and verify what's actually
+100646-GyK, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_dd7df9997385d416/thinned/leaned_tool
+100646-FJd, ass,   0K 🟢, 
+100646-RVl, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  6 terobyte  staff  192 Mar 14 08:46 . drwxr-xr-x@ 16 terobyte  staff  512 Mar 14 10:06
+100646-IrT, ass,   0K 🟢, 
+100646-tDo, usr,   0K 🟢, Tool result: total 56 -rw-r--r--@ 1 terobyte  staff    53 Mar 14 08:48 __init__.py drwxr-xr-x@ 6 terobyte  staff   192 M
+100648-ccR, ass,   0K 🟢, 
+100648-TQM, usr,   2K 🟡, Tool result: """ Stealth Browser - Anti-detection Playwright wrapper.  Provides a browser instance with stealth configur
+100648-yrL, ass,   0K 🟢, 
+100648-pVU, usr,   2K 🟡, Tool result: # src/stealth/fingerprint_scripts.py """ JS-скрипты для спуфинга fingerprint API.  ВАЖНО: Не используй add_
+100648-bBO, ass,   0K 🟢, 
+100648-NUL, usr,   0K 🟢, Tool result: {   "critical": ["work_authorization", "visa_sponsorship", "security_clearance", "criminal_history"],   "im
+100651-stp, ass,   0K 🟢, 
+100651-yGt, usr,   1K 🟡, Tool result: # src/applier/universal_screening/question_intent.py """ QuestionIntentClassifier - classifies screening qu
+100651-MOP, ass,   0K 🟢, 
+100651-glz, usr,   1K 🟡, Tool result: # src/applier/universal_screening/batch_validator.py """ BatchStepValidator - validates all screening answe
+100651-HSR, ass,   0K 🟢, 
+100651-OSl, usr,   1K 🟡, Tool result: # src/applier/universal_screening/session_context.py """ SessionContext — holds all Q&A for a screening ses
+100653-oOE, ass,   0K 🟢, 
+100653-isl, usr,   4K 🟡, Tool result: # src/applier/universal_screening/handler.py """ Universal Screening Handler with Batch Validation.  Integr
+100653-gAl, ass,   0K 🟢, 
+100653-SyT, usr,   2K 🟡, Tool result: # src/applier/semantic_answer_bank.py """ SemanticAnswerBank — extension of AnswerBank with BERT embeddings
+100653-Dox, ass,   0K 🟢, 
+100653-zRJ, usr,   3K 🟡, Tool result: # src/platforms/linkedin_voyager.py """ LinkedIn Voyager API client — приватный API LinkedIn.  ВАЖНО: Это п
+
+--- TOTAL:  59K /  98K (60.3%) ---

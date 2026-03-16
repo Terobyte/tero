@@ -1,0 +1,50 @@
+Tool result: # src/applier/indeed_screening.py
+"""
+Indeed Screening Handler — обрабатывает screening questions на странице Indeed Apply.
+
+Трёхуровневая система:
+1. AnswerBank (быстро, бесплатно)
+2. CustomAnswers (кэш)
+3. AI Answerer (Gemini Flash)
+"""
+
+import os
+import json
+import yaml
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+from datetime import datetime
+from loguru import logger
+
+from src.applier.answer_bank import AnswerBank
+from src.applier.ai_answerer import AIAnswerer, AIAnswer
+from src.applier.human_review import HumanReviewPrompter
+
+
+def _is_hitl_needed(field_type: str, question_text: str) -> bool:
+    """True если нужен HITL-меню с вариантами ответов."""
+    if field_type == "textarea":
+        return True
+    return _is_hitl_question(question_text)
+
+
+def _is_hitl_question(text: str) -> bool:
+    """True если вопрос о мотивации/культуре/финансах — нужен HITL."""
+    t = text.lower()
+    return any(kw in t for kw in [
+        "why", "describe", "tell us", "explain", "what motivates",
+        "why do you want", "what excites", "greatest strength",
+        "greatest weakness", "tell me about yourself",
+        "salary", "compensation", "expected pay", "pay expectation",
+    ])
+
+
+@dataclass
+class Question:
+    """Represents a form question."""
+    text: str
+    field_type: str  # radio, select, text, number, checkbox, textarea
+    options: List[str]
+    element: Any  # Playwright locator
+    required: bool = True

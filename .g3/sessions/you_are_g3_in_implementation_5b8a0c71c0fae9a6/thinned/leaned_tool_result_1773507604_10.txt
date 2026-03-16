@@ -1,0 +1,313 @@
+Tool result: # src/ai/knowledge_base.py
+"""
+VectorKnowledgeBase — ChromaDB-backed персистентная база знаний кандидата.
+
+Хранит PKB-чанки как embeddings. Поддерживает:
+- Семантический поиск по JD-требованиям
+- Поиск релевантных примеров для screening вопросов
+- Поиск по навыкам/опыту кандидата
+
+Заменяет in-memory VectorRetriever постоянным хранилищем.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Any
+from dataclasses import dataclass, field
+import json
+import time
+
+from loguru import logger
+
+
+CHROMA_PATH = Path(".index/chromadb")
+COLLECTION_PKB = "pkb_chunks"
+COLLECTION_QA = "qa_cache"  # Кэш Q&A пар из unknown_questions
+
+
+@dataclass
+class Chunk:
+    """Простой класс чанка для индексации."""
+    chunk_id: str
+    text: str
+    source: str = ""
+    category: str = ""
+    skill_tags: list[str] = field(default_factory=list)
+
+
+class VectorKnowledgeBase:
+    """
+    ChromaDB-based Knowledge Base для CareerBot.
+
+    Collections:
+    - pkb_chunks: PKB-чанки профиля кандидата
+    - qa_cache: Пары вопрос→ответ из unknown_questions.json
+
+    Usage:
+        kb = VectorKnowledgeBase()
+        kb.index_pkb(chunks)
+        results = kb.search_pkb("Python experience distributed systems", k=5)
+    """
+
+    def __init__(self, persist_path: str | Path = CHROMA_PATH):
+        self._path = Path(persist_path)
+        self._client: Any = None
+        self._pkb_col: Any = None
+        self._qa_col: Any = None
+
+    def _get_client(self):
+        """Ленивая инициализация ChromaDB клиента."""
+        if self._client is None:
+            try:
+                import chromadb
+                self._path.mkdir(parents=True, exist_ok=True)
+                self._client = chromadb.PersistentClient(path=str(self._path))
+            except ImportError:
+                raise ImportError(
+                    "chromadb not installed. Run: pip install chromadb>=0.5.0"
+                )
+        return self._client
+
+    def _get_pkb_col(self):
+        """Получить или создать коллекцию PKB chunks."""
+        if self._pkb_col is None:
+            client = self._get_client()
+            self._pkb_col = client.get_or_create_collection(
+                name=COLLECTION_PKB,
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._pkb_col
+
+    def _get_qa_col(self):
+        """Получить или создать коллекцию Q&A cache."""
+        if self._qa_col is None:
+            client = self._get_client()
+            self._qa_col = client.get_or_create_collection(
+                name=COLLECTION_QA,
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._qa_col
+
+    # ── PKB Indexing ──────────────────────────────────────────────────
+
+    def index_pkb(self, chunks: list[Chunk], force: bool = False) -> int:
+        """
+        Проиндексировать PKB-чанки в ChromaDB.
+
+        Args:
+            chunks: list[Chunk] с полями chunk_id, text, source, category, skill_tags
+            force: True = переиндексировать даже если уже есть
+
+        Returns:
+            Количество добавленных/обновлённых чанков
+        """
+        if not chunks:
+            logger.debug("VectorKB: no chunks to index")
+            return 0
+
+        col = self._get_pkb_col()
+        existing: set[str] = set()
+        if not force:
+            try:
+                existing = set(col.get()["ids"])
+            except Exception:
+                existing = set()
+
+        to_add = [c for c in chunks if c.chunk_id not in existing]
+        if not to_add:
+            logger.debug(f"VectorKB: {len(chunks)} chunks already indexed, skipping")
+            return 0
+
+        try:
+            col.upsert(
+                ids=[c.chunk_id for c in to_add],
+                documents=[c.text for c in to_add],
+                metadatas=[
+                    {
+                        "source": getattr(c, "source", ""),
+                        "category": getattr(c, "category", ""),
+                        "skill_tags": json.dumps(getattr(c, "skill_tags", [])),
+                    }
+                    for c in to_add
+                ],
+            )
+            logger.info(f"✅ VectorKB: indexed {len(to_add)} PKB chunks")
+            return len(to_add)
+        except Exception as e:
+            logger.error(f"VectorKB indexing error: {e}")
+            return 0
+
+    def search_pkb(self, query: str, k: int = 5) -> list[dict]:
+        """
+        Семантический поиск по PKB.
+
+        Args:
+            query: Поисковый запрос
+            k: Количество результатов
+
+        Returns:
+            list of {"text": str, "chunk_id": str, "score": float, "metadata": dict}
+        """
+        col = self._get_pkb_col()
+        try:
+            count = col.count()
+        except Exception:
+            count = 0
+
+        if count == 0:
+            logger.warning("VectorKB: PKB collection is empty. Run index_pkb() first.")
+            return []
+
+        try:
+            results = col.query(
+                query_texts=[query],
+                n_results=min(k, count),
+                include=["documents", "metadatas", "distances"],
+            )
+
+            output: list[dict] = []
+            if results["documents"] and results["documents"][0]:
+                for i, doc in enumerate(results["documents"][0]):
+                    distance = results["distances"][0][i] if results["distances"] else 0
+                    output.append({
+                        "text": doc,
+                        "chunk_id": results["ids"][0][i],
+                        "score": 1.0 - distance,  # cosine distance → similarity
+                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                    })
+            return output
+        except Exception as e:
+            logger.error(f"VectorKB search error: {e}")
+            return []
+
+    # ── Q&A Cache ─────────────────────────────────────────────────────
+
+    def index_qa_cache(self, qa_entries: list[dict]) -> int:
+        """
+        Проиндексировать Q&A пары из unknown_questions.json.
+        Позволяет находить похожие вопросы семантически.
+
+        Args:
+            qa_entries: list of {id, question, ai_answered, my_answer, status}
+
+        Returns:
+            Количество проиндексированных пар
+        """
+        if not qa_entries:
+            return 0
+
+        col = self._get_qa_col()
+        confirmed = [
+            q for q in qa_entries
+            if q.get("status") in ("confirmed", "overridden")
+        ]
+        if not confirmed:
+            logger.debug("VectorKB: no confirmed Q&A pairs to index")
+            return 0
+
+        try:
+            col.upsert(
+                ids=[q["id"] for q in confirmed],
+                documents=[q["question"] for q in confirmed],
+                metadatas=[
+                    {
+                        "answer": q.get("my_answer") or q.get("ai_answered", ""),
+                        "field_type": q.get("field_type", ""),
+                        "status": q.get("status", ""),
+                    }
+                    for q in confirmed
+                ],
+            )
+            logger.info(f"✅ VectorKB: indexed {len(confirmed)} Q&A pairs")
+            return len(confirmed)
+        except Exception as e:
+            logger.error(f"VectorKB Q&A indexing error: {e}")
+            return 0
+
+    def find_similar_question(
+        self,
+        question: str,
+        k: int = 3,
+        threshold: float = 0.80,
+    ) -> list[dict]:
+        """
+        Найти похожие вопросы в Q&A кэше.
+
+        Args:
+            question: Вопрос для поиска
+            k: Максимум результатов
+            threshold: Минимальный score для включения
+
+        Returns:
+            list of {"question": str, "answer": str, "score": float}
+        """
+        col = self._get_qa_col()
+        try:
+            count = col.count()
+        except Exception:
+            count = 0
+
+        if count == 0:
+            return []
+
+        try:
+            results = col.query(
+                query_texts=[question],
+                n_results=min(k, count),
+                include=["documents", "metadatas", "distances"],
+            )
+
+            output: list[dict] = []
+            if results["documents"] and results["documents"][0]:
+                for i, doc in enumerate(results["documents"][0]):
+                    distance = results["distances"][0][i] if results["distances"] else 0
+                    score = 1.0 - distance
+                    if score >= threshold:
+                        output.append({
+                            "question": doc,
+                            "answer": results["metadatas"][0][i].get("answer", "")
+                            if results["metadatas"]
+                            else "",
+                            "score": score,
+                        })
+            return output
+        except Exception as e:
+            logger.error(f"VectorKB Q&A search error: {e}")
+            return []
+
+    # ── Stats & Management ────────────────────────────────────────────
+
+    def stats(self) -> dict:
+        """Статистика по коллекциям."""
+        try:
+            return {
+                "pkb_chunks": self._get_pkb_col().count(),
+                "qa_pairs": self._get_qa_col().count(),
+            }
+        except Exception:
+            return {"pkb_chunks": 0, "qa_pairs": 0}
+
+    def clear(self) -> None:
+        """Очистить все коллекции (для тестов)."""
+        try:
+            client = self._get_client()
+            for name in (COLLECTION_PKB, COLLECTION_QA):
+                try:
+                    client.delete_collection(name)
+                except Exception:
+                    pass
+            self._pkb_col = None
+            self._qa_col = None
+            logger.info("VectorKB: collections cleared")
+        except Exception as e:
+            logger.debug(f"VectorKB clear error: {e}")
+
+    def is_available(self) -> bool:
+        """Проверить доступность ChromaDB."""
+        try:
+            import chromadb  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+🔍 311 lines read

@@ -1,0 +1,220 @@
+Tool result: # src/ai/resume_tailor.py
+"""
+ResumeTailor — адаптирует bullet points резюме под конкретную вакансию.
+
+Flow:
+  1. Парсит текущее резюме (markdown или текст)
+  2. Извлекает ключевые слова из JD
+  3. Находит слабые bullet (низкий keyword overlap)
+  4. LLM переписывает их с STAR + JD-keywords
+  5. Генерирует итоговый markdown/PDF
+"""
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from loguru import logger
+
+
+@dataclass
+class BulletScore:
+    """Оценка одного bullet point."""
+    original: str
+    score: float        # 0.0 - 1.0, насколько bullet релевантен JD
+    keywords_missing: list[str]
+    keywords_present: list[str]
+
+
+@dataclass
+class TailoredResume:
+    """Результат tailoring."""
+    original_bullets: list[str]
+    tailored_bullets: list[str]
+    keywords_injected: list[str]
+    match_improvement: float    # насколько вырос keyword score
+    markdown: str               # итоговое резюме в markdown
+    changed_count: int          # сколько bullet переписано
+
+
+class ResumeTailor:
+    """
+    Адаптирует резюме под конкретную вакансию.
+
+    Usage:
+        tailor = ResumeTailor(llm_client=kimi_client)
+        result = await tailor.tailor(
+            resume_path="data/resume.md",
+            jd="We need Python, AWS, Kubernetes experience...",
+            job_title="Backend Engineer",
+            company="Stripe",
+        )
+        print(result.markdown)
+        print(f"Injected: {result.keywords_injected}")
+    """
+
+    # Сколько bullet переписывать максимум
+    MAX_BULLETS_TO_REWRITE = 3
+
+    # Промпт для переписывания bullet
+    REWRITE_PROMPT = """You are an ATS optimization expert. Rewrite this resume bullet point to:
+1. Include these missing keywords naturally: {missing_keywords}
+2. Follow STAR format: [Action verb] [what you did] → [measurable result]
+3. Keep approximately the same length
+4. Sound authentic, not keyword-stuffed
+
+Original bullet: {original}
+Job title: {job_title}
+Company: {company}
+
+Rewritten bullet (one line only, no explanation):"""
+
+    def __init__(self, llm_client=None, resume_path: str = "data/resume_template.md"):
+        self._llm = llm_client
+        self._resume_path = Path(resume_path)
+
+    async def tailor(
+        self,
+        jd: str,
+        job_title: str,
+        company: str,
+        resume_path: Optional[str] = None,
+    ) -> TailoredResume:
+        """
+        Главный метод: tailoring резюме под вакансию.
+
+        Args:
+            jd: Полный текст job description
+            job_title: Название вакансии
+            company: Название компании
+            resume_path: Путь к резюме (override)
+        """
+        path = Path(resume_path) if resume_path else self._resume_path
+        resume_text = path.read_text(encoding="utf-8") if path.exists() else ""
+
+        # 1. Извлечь bullets и keywords
+        bullets = self._extract_bullets(resume_text)
+        jd_keywords = self._extract_jd_keywords(jd)
+
+        logger.info(f"Resume Tailor: {len(bullets)} bullets, {len(jd_keywords)} JD keywords")
+
+        # 2. Оценить каждый bullet
+        scored = [self._score_bullet(b, jd_keywords) for b in bullets]
+        scored.sort(key=lambda x: x.score)  # слабые — первые
+
+        # 3. Переписать top-N слабых bullets
+        to_rewrite = scored[:self.MAX_BULLETS_TO_REWRITE]
+        tailored_bullets = list(bullets)  # копия
+        keywords_injected = []
+
+        for bs in to_rewrite:
+            if bs.score > 0.7:
+                continue  # bullet уже хорошо, не трогаем
+            try:
+                new_bullet = await self._rewrite_bullet(
+                    bs, job_title, company
+                )
+                idx = bullets.index(bs.original)
+                tailored_bullets[idx] = new_bullet
+                keywords_injected.extend(bs.keywords_missing[:2])
+                logger.info(f"  ✍️  '{bs.original[:50]}' → '{new_bullet[:50]}'")
+            except Exception as e:
+                logger.warning(f"Bullet rewrite failed: {e}")
+
+        # 4. Пересчитать score после tailoring
+        new_scored = [self._score_bullet(b, jd_keywords) for b in tailored_bullets]
+        old_avg = sum(s.score for s in scored) / max(len(scored), 1)
+        new_avg = sum(s.score for s in new_scored) / max(len(new_scored), 1)
+
+        # 5. Сгенерировать markdown
+        markdown = self._rebuild_resume(resume_text, bullets, tailored_bullets)
+
+        return TailoredResume(
+            original_bullets=bullets,
+            tailored_bullets=tailored_bullets,
+            keywords_injected=list(set(keywords_injected)),
+            match_improvement=new_avg - old_avg,
+            markdown=markdown,
+            changed_count=sum(1 for o, n in zip(bullets, tailored_bullets) if o != n),
+        )
+
+    def _extract_bullets(self, text: str) -> list[str]:
+        """Извлечь bullet points из markdown резюме."""
+        bullets = []
+        for line in text.split("\n"):
+            line = line.strip()
+            if line.startswith(("- ", "* ", "• ")) and len(line) > 20:
+                bullets.append(line[2:].strip())
+        return bullets
+
+    def _extract_jd_keywords(self, jd: str) -> list[str]:
+        """Извлечь ключевые слова из JD (технологии, навыки)."""
+        # Общие tech-термины — дополнить по нужде
+        tech_terms = [
+            "python", "javascript", "typescript", "java", "go", "rust",
+            "aws", "gcp", "azure", "docker", "kubernetes", "terraform",
+            "react", "vue", "angular", "node", "django", "fastapi", "flask",
+            "postgresql", "mysql", "mongodb", "redis", "kafka", "spark",
+            "machine learning", "deep learning", "sql", "api", "rest",
+            "ci/cd", "git", "linux", "agile", "scrum",
+        ]
+        jd_lower = jd.lower()
+        found = [t for t in tech_terms if t in jd_lower]
+
+        # Добавить слова из requirements-секций JD
+        for line in jd.split("\n"):
+            if any(marker in line.lower() for marker in
+                   ["required", "must have", "experience with", "proficiency in"]):
+                words = re.findall(r"\b[A-Z][a-zA-Z+#]{2,}\b", line)
+                found.extend(w.lower() for w in words)
+
+        return list(dict.fromkeys(found))[:30]  # дедупликация, лимит 30
+
+    def _score_bullet(self, bullet: str, jd_keywords: list[str]) -> BulletScore:
+        """Оценить насколько bullet перекрывает JD keywords."""
+        bullet_lower = bullet.lower()
+        present = [kw for kw in jd_keywords if kw in bullet_lower]
+        missing = [kw for kw in jd_keywords if kw not in bullet_lower]
+        score = len(present) / max(len(jd_keywords), 1)
+        return BulletScore(
+            original=bullet,
+            score=score,
+            keywords_present=present,
+            keywords_missing=missing[:5],  # топ-5 отсутствующих
+        )
+
+    async def _rewrite_bullet(
+        self, bs: BulletScore, job_title: str, company: str
+    ) -> str:
+        """Переписать один bullet через LLM."""
+        if not self._llm:
+            return bs.original  # нет LLM — оставить как есть
+
+        prompt = self.REWRITE_PROMPT.format(
+            missing_keywords=", ".join(bs.keywords_missing[:3]),
+            original=bs.original,
+            job_title=job_title,
+            company=company,
+        )
+        result = await self._llm.generate(prompt)
+        result = result.strip().lstrip("- •").strip()
+        # Проверка: не должен быть пустым и не должен быть длиннее в 3 раза
+        if result and len(result) < len(bs.original) * 3:
+            return result
+        return bs.original
+
+    def _rebuild_resume(
+        self, original: str, old_bullets: list[str], new_bullets: list[str]
+    ) -> str:
+        """Вставить переписанные bullets обратно в резюме."""
+        result = original
+        for old, new in zip(old_bullets, new_bullets):
+            if old != new:
+                result = result.replace(f"- {old}", f"- {new}", 1)
+                result = result.replace(f"* {old}", f"* {new}", 1)
+        return result
+
+🔍 218 lines read

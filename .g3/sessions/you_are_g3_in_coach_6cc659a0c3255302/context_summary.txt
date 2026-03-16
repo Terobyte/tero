@@ -1,0 +1,46 @@
+091522-zev, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+091522-WOm, usr,  35K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+091526-RTE, ass,   0K 🟢, I'll review the current implementation against the requirements. Let me start by exploring the project structure and che
+091526-BwT, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_6cc659a0c3255302/thinned/leaned_tool
+091526-HCA, ass,   0K 🟢, 
+091526-oUb, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  6 terobyte  staff  192 Mar 14 08:46 . drwxr-xr-x@ 14 terobyte  staff  448 Mar 14 08:48
+091530-Tee, ass,   0K 🟢, 
+091530-NAB, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_6cc659a0c3255302/thinned/leaned_tool
+091530-MFN, ass,   0K 🟢, 
+091530-KsI, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_6cc659a0c3255302/thinned/leaned_tool
+091530-CcY, ass,   0K 🟢, 
+091530-XXX, usr,   1K 🟡, Tool result: # src/stealth/geo_consistency.py """ GeoConsistencyValidator — проверяет соответствие IP геолокации и брауз
+091532-ekI, ass,   0K 🟢, 
+091532-CCQ, usr,   1K 🟡, Tool result: # src/applier/universal_screening/question_intent.py """ QuestionIntentClassifier - classifies screening qu
+091532-PyK, ass,   0K 🟢, 
+091532-Lac, usr,   1K 🟡, Tool result: # src/applier/universal_screening/session_context.py """ SessionContext — holds all Q&A for a screening ses
+091532-OiC, ass,   0K 🟢, 
+091532-tpH, usr,   1K 🟡, Tool result: # src/applier/universal_screening/batch_validator.py """ BatchStepValidator - validates all screening answe
+091534-BDs, ass,   0K 🟢, 
+091534-mNA, usr,   0K 🟢, Tool result: total 8 drwxr-xr-x@  3 terobyte  staff   96 Mar 14 08:59 . drwxr-xr-x@ 14 terobyte  staff  448 Mar 14 08:48
+091537-YDo, ass,   0K 🟢, 
+091537-ELe, usr,   0K 🟢, Tool result: {   "critical": ["work_authorization","visa_sponsorship","security_clearance","criminal_history"],   "impor
+091537-dsN, ass,   0K 🟢, 
+091537-eMY, usr,   0K 🟢, Tool result: total 56 drwxr-xr-x@ 5 terobyte  staff   160 Mar 14 09:13 . drwxr-xr-x@ 6 terobyte  staff   192 Mar 14 08:4
+091537-lAZ, ass,   0K 🟢, 
+091537-nza, usr,   0K 🟢, Tool result: total 16 drwxr-xr-x@ 4 terobyte  staff   128 Mar 14 09:13 . drwxr-xr-x@ 6 terobyte  staff   192 Mar 14 08:4
+091537-tcc, ass,   0K 🟢, 
+091537-VaC, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@ 2 terobyte  staff   64 Mar 14 08:46 . drwxr-xr-x@ 6 terobyte  staff  192 Mar 14 08:46 .
+091540-jBb, ass,   0K 🟢, 
+091540-JnJ, usr,   2K 🟡, Tool result: # src/applier/semantic_answer_bank.py """ SemanticAnswerBank — extension of AnswerBank with BERT embeddings
+091540-SpP, ass,   0K 🟢, 
+091540-BkM, usr,   3K 🟡, Tool result: # src/platforms/linkedin_voyager.py """ LinkedIn Voyager API client — приватный API LinkedIn.  ВАЖНО: Это п
+091540-PSj, ass,   0K 🟢, 
+091540-JPf, usr,   3K 🟡, Tool result: # src/platforms/indeed_api.py """ Indeed GraphQL API client — мобильный API Indeed.  Endpoint: https://apis
+091543-LIr, ass,   0K 🟢, 
+091543-YcS, usr,   0K 🟢, Tool result: ./scripts/collect_cdx_slugs.py ./scripts/validate_slugs.py
+091543-LxB, ass,   0K 🟢, 
+091543-zny, usr,   0K 🟢, Tool result: ./tests/platforms/test_linkedin_voyager.py ./tests/stealth/test_audio_spoofing.py ./tests/stealth/test_batt
+091546-YwE, ass,   0K 🟢, 
+091546-ExT, usr,   0K 🟢, Tool result: total 56 -rw-r--r--@ 1 terobyte  staff    53 Mar 14 08:48 __init__.py drwxr-xr-x@ 6 terobyte  staff   192 M
+091548-xgL, ass,   0K 🟢, 
+091548-aHY, usr,   2K 🟡, Tool result: """ Stealth Browser - Anti-detection Playwright wrapper.  Provides a browser instance with stealth configur
+091548-pxH, ass,   0K 🟢, 
+091548-jHP, usr,   2K 🟡, Tool result: # src/stealth/fingerprint_scripts.py """ JS-скрипты для спуфинга fingerprint API.  ВАЖНО: Не используй add_
+
+--- TOTAL:  60K /  98K (61.6%) ---

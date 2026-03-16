@@ -1,0 +1,318 @@
+Tool result: # src/platforms/indeed_api.py
+"""
+Indeed GraphQL API client — мобильный API Indeed.
+
+Endpoint: https://apis.indeed.com/graphql
+Auth: OAuth Bearer token (получается при логине через мобильное приложение)
+
+Как получить токен:
+1. Проксируй трафик Indeed iOS app через mitmproxy
+2. Найди Authorization: Bearer <token> в заголовках
+3. Сохрани в data/indeed_session.json: {"bearer_token": "..."}
+
+Токен живёт ~7 дней. Обновляй при 401 ответе.
+"""
+import json
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional, AsyncIterator
+import httpx
+from loguru import logger
+
+from src.platforms.base_scraper import Job
+
+
+SESSION_PATH = Path("data/indeed_session.json")
+GRAPHQL_URL = "https://apis.indeed.com/graphql"
+
+SEARCH_QUERY = """
+query JobSearch($query: String!, $location: String!, $limit: Int!) {
+  jobSearch(
+    what: $query
+    where: $location
+    limit: $limit
+    sort: "date"
+  ) {
+    results {
+      job {
+        key
+        title
+        datePublished
+        employer { name }
+        location { countryCode city administrativeDistrictCode }
+        compensation { estimated { min max currencyCode } }
+        description { html }
+        apply { applyType }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+
+@dataclass
+class IndeedAPISession:
+    """Indeed API session with Bearer token."""
+    bearer_token: str
+
+    @classmethod
+    def load(cls, path: Path = SESSION_PATH) -> "IndeedAPISession":
+        """
+        Load session from JSON file.
+        
+        Args:
+            path: Path to session JSON file
+            
+        Returns:
+            IndeedAPISession instance
+        """
+        data = json.loads(path.read_text())
+        return cls(bearer_token=data["bearer_token"])
+
+    @classmethod
+    def from_token(cls, token: str) -> "IndeedAPISession":
+        """Create session directly from token."""
+        return cls(bearer_token=token)
+
+    def to_headers(self) -> dict:
+        """
+        Generate headers for API requests.
+        
+        Returns:
+            Dict with Authorization and other required headers
+        """
+        return {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "Indeed/2023120701 (iPhone; iOS 17.0; Scale/3.00)",
+            "Accept": "application/json",
+            "Accept-Language": "en-US",
+            "X-Indeed-Client": "mobile",
+        }
+
+
+class IndeedAPIClient:
+    """
+    Client for Indeed GraphQL API.
+    
+    Usage:
+        session = IndeedAPISession.load()
+        async with IndeedAPIClient(session) as client:
+            async for job in client.search_jobs("software engineer"):
+                print(job.title, job.company)
+    """
+
+    def __init__(self, session: IndeedAPISession, rate_limit_delay: float = 1.0):
+        """
+        Initialize client.
+        
+        Args:
+            session: IndeedAPISession with bearer token
+            rate_limit_delay: Delay between requests in seconds
+        """
+        self._session = session
+        self._delay = rate_limit_delay
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> "IndeedAPIClient":
+        """Create HTTP client."""
+        self._client = httpx.AsyncClient(
+            headers=self._session.to_headers(),
+            timeout=15.0,
+        )
+        return self
+
+    async def __aexit__(self, *args):
+        """Close HTTP client."""
+        if self._client:
+            await self._client.aclose()
+
+    async def search_jobs(
+        self,
+        query: str,
+        location: str = "Remote",
+        limit: int = 100,
+    ) -> AsyncIterator[Job]:
+        """
+        Search for jobs via GraphQL API.
+        
+        Args:
+            query: Job search query (e.g., "software engineer")
+            location: Location string (e.g., "Remote", "New York, NY")
+            limit: Maximum number of results
+            
+        Yields:
+            Job objects
+        """
+        import asyncio
+
+        payload = {
+            "query": SEARCH_QUERY,
+            "variables": {
+                "query": query,
+                "location": location,
+                "limit": limit,
+            },
+        }
+
+        try:
+            resp = await self._client.post(GRAPHQL_URL, json=payload)
+            
+            if resp.status_code == 401:
+                logger.error(
+                    "Indeed API token expired — обнови data/indeed_session.json"
+                )
+                return
+            
+            if resp.status_code == 429:
+                logger.warning("Indeed API rate limited — waiting 60s")
+                await asyncio.sleep(60)
+                return
+            
+            resp.raise_for_status()
+            data = resp.json()
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Indeed API HTTP error: {e}")
+            return
+        except json.JSONDecodeError as e:
+            logger.error(f"Indeed API JSON error: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Indeed API error: {e}")
+            return
+
+        results = (
+            data.get("data", {})
+                .get("jobSearch", {})
+                .get("results", [])
+        )
+
+        for result in results:
+            job_data = result.get("job", {})
+            if not job_data:
+                continue
+
+            job = self._parse_job(job_data, location)
+            if job:
+                yield job
+
+    def _parse_job(self, job_data: dict, default_location: str) -> Optional[Job]:
+        """
+        Parse job data from GraphQL response.
+        
+        Args:
+            job_data: Job dict from API response
+            default_location: Fallback location string
+            
+        Returns:
+            Job object or None if parsing fails
+        """
+        try:
+            employer = job_data.get("employer", {}).get("name", "")
+            location_data = job_data.get("location", {})
+            
+            # Build location string
+            city = location_data.get("city", "")
+            state = location_data.get("administrativeDistrictCode", "")
+            loc_str = f"{city}, {state}".strip(", ") if city or state else default_location
+            
+            job_key = job_data.get("key", "")
+            
+            # Get compensation if available
+            compensation = job_data.get("compensation", {})
+            estimated = compensation.get("estimated", {})
+            salary_str = None
+            if estimated:
+                min_val = estimated.get("min")
+                max_val = estimated.get("max")
+                currency = estimated.get("currencyCode", "USD")
+                if min_val and max_val:
+                    salary_str = f"{min_val}-{max_val} {currency}"
+            
+            return Job(
+                title=job_data.get("title", ""),
+                company=employer,
+                location=loc_str,
+                url=f"https://www.indeed.com/viewjob?jk={job_key}",
+                source="indeed_api",
+                job_id=f"indeed_{job_key}",
+                description=job_data.get("description", {}).get("html", ""),
+                salary=salary_str,
+                posted_date=job_data.get("datePublished"),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse Indeed job: {e}")
+            return None
+
+    async def get_job_details(self, job_key: str) -> Optional[dict]:
+        """
+        Get detailed job information.
+        
+        Args:
+            job_key: Indeed job key
+            
+        Returns:
+            Job details dict or None
+        """
+        detail_query = """
+        query JobDetail($key: String!) {
+          job(key: $key) {
+            key
+            title
+            description { html }
+            employer { name url }
+            location { fullAddress }
+            compensation { estimated { min max currencyCode } }
+            apply { applyType applyUrl }
+          }
+        }
+        """
+        
+        payload = {
+            "query": detail_query,
+            "variables": {"key": job_key},
+        }
+        
+        try:
+            resp = await self._client.post(GRAPHQL_URL, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", {}).get("job")
+        except Exception as e:
+            logger.warning(f"Failed to get Indeed job details: {e}")
+            return None
+
+
+async def search_indeed_jobs(
+    query: str,
+    location: str = "Remote",
+    limit: int = 100,
+    token: Optional[str] = None,
+) -> list[Job]:
+    """
+    Convenience function to search Indeed jobs.
+    
+    Args:
+        query: Job search query
+        location: Location string
+        limit: Max results
+        token: Bearer token (or load from file)
+        
+    Returns:
+        List of Job objects
+    """
+    if token:
+        session = IndeedAPISession.from_token(token)
+    else:
+        session = IndeedAPISession.load()
+    
+    jobs = []
+    async with IndeedAPIClient(session) as client:
+        async for job in client.search_jobs(query, location, limit):
+            jobs.append(job)
+    
+    return jobs
+
+🔍 316 lines read

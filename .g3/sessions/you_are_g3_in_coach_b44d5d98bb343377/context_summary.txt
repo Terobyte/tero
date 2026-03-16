@@ -1,0 +1,54 @@
+151432-dQZ, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+151432-pVq, usr,  17K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+151434-Kyb, ass,   0K 🟢, 
+151434-gmU, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_b44d5d98bb343377/thinned/leaned_tool
+151434-JEU, ass,   0K 🟢, 
+151434-pam, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_b44d5d98bb343377/thinned/leaned_tool
+151434-ofg, ass,   0K 🟢, 
+151434-Lsz, usr,   0K 🟢, Tool result: total 24 drwxr-xr-x@ 4 terobyte  staff    128 Mar 13 15:03 __pycache__ drwxr-xr-x@ 4 terobyte  staff    128
+151436-AFx, ass,   0K 🟢, 
+151436-XkC, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_b44d5d98bb343377/thinned/leaned_tool
+151436-pmc, ass,   0K 🟢, 
+151436-CcL, usr,   0K 🟢, Tool result: bash: python: command not found Import failed
+151437-pMR, ass,   0K 🟢, 
+151437-rDL, usr,   0K 🟢, Tool result: Import successful
+151440-Vke, ass,   0K 🟢, 
+151440-VUA, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/projects/jobbot: No such file or directory
+151440-szj, ass,   0K 🟢, 
+151440-kgO, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/projects/jobbot: No such file or directory
+151440-FAU, ass,   0K 🟢, 
+151440-SFb, usr,   0K 🟢, Tool result: ❌ bash: line 0: cd: /Users/terobyte/projects/jobbot: No such file or directory
+151441-qOG, ass,   0K 🟢, 
+151441-QNP, usr,   0K 🟢, Tool result: /Users/terobyte/tmp/workspace total 120 drwxr-xr-x@ 11 terobyte  staff    352 Mar 13 13:14 . drwxr-xr-x@  4
+151444-qCS, ass,   0K 🟢, 
+151444-BaM, usr,   1K 🟡, Tool result: ============================= test session starts ============================== platform darwin -- Python 
+151444-Kyn, ass,   0K 🟢, 
+151444-SRQ, usr,   0K 🟢, Tool result: """ Blind Custom Site Applier - AI-first approach for unknown career sites.  This package provides autonomo
+151444-ZWu, ass,   0K 🟢, 
+151444-cZS, usr,   1K 🟡, Tool result: """ Data models for the Blind Custom Site Applier. """ from __future__ import annotations  from dataclasses
+151447-dTq, ass,   0K 🟢, 
+151447-xKd, usr,   9K 🟠, Tool result: """ BlindApplier - Main Orchestrator for Blind Custom Site Applier.  This is the main entry point for apply
+151447-pfv, ass,   0K 🟢, 
+151447-tyg, usr,   8K 🟠, Tool result: """ ReconAgent - Site Reconnaissance (Phase 0)  Analyzes unknown career sites to understand their structure
+151447-JYa, ass,   0K 🟢, 
+151447-ntu, usr,   4K 🟡, Tool result: """ Kimi Vision Client - Kimi 2.5 with vision capabilities.  Extends KimiClient to support image+text promp
+151450-hLf, ass,   0K 🟢, 
+151450-iNL, usr,   0K 🟢, Tool result: """ WizardEngine - Multi-Step Wizard Engine for Blind Custom Site Applier.  Handles multi-step forms 🔍 4 li
+151450-AHs, ass,   0K 🟢, 
+151450-oPP, usr,   0K 🟢, Tool result: """ Page Navigator - Intelligent navigation for custom career sites.  Phase 1 of the Blind Custom Si 🔍 4 li
+151450-NAs, ass,   0K 🟢, 
+151450-oyI, usr,   0K 🟢, Tool result: """ OutcomeDetector - Multi-modal Success/Failure Detection for Blind Custom Site Applier.  Detects  🔍 4 li
+151450-Yka, ass,   0K 🟢, 
+151450-OYI, usr,   0K 🟢, Tool result: """ SitePatternStore - Extended Pattern Storage for Blind Custom Site Applier.  Stores site-level wo 🔍 4 li
+151453-LrV, ass,   0K 🟢, 
+151453-tFQ, usr,   0K 🟢, Tool result: """ Integration tests for Blind Custom Site Applier (orchestrator) """  import asyncio import json import p
+151453-WYv, ass,   0K 🟢, 
+151453-PoN, usr,   0K 🟢, Tool result: ✅ Code search completed {   "searches": [     {       "name": "queue_manager_blind",       "matches": [],  
+151453-qJe, ass,   0K 🟢, 
+151453-PFM, usr,   0K 🟢, Tool result: ❌ bash: rg: command not found
+151455-cHl, ass,   0K 🟢, 
+151455-lAg, usr,  22K 🟣, Tool result: ✅ Code search completed {   "searches": [     {       "name": "queue_manager_blind_route",       "matches":
+151458-Awc, ass,   0K 🟢, 
+151458-GKb, usr,   6K 🟠, Tool result: , Optional from pathlib import Path  logger = logging.getLogger(__name__)   class ApplicationResult(Enum): 
+
+--- TOTAL:  77K /  98K (79.0%) ---

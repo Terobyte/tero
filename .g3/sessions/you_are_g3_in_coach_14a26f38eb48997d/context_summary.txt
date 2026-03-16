@@ -1,0 +1,14 @@
+131939-tEq, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+131939-GGo, usr,  17K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+131954-ERg, ass,   0K 🟢, 
+131954-Cmr, usr,   0K 🟢, Tool result: ./src/applier/blind/models.py ./src/applier/blind/field_finder.py ./src/applier/blind/__init__.py ./src/app
+131954-KPE, ass,   0K 🟢, 
+131954-Sje, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  6 terobyte  staff  192 Mar 13 13:14 . drwxr-xr-x@ 11 terobyte  staff  352 Mar 13 13:14
+131956-cqp, ass,   0K 🟢, 
+131956-Soi, usr,   0K 🟢, Tool result: """ Blind Custom Site Applier - AI-first approach for unknown career sites.  This package provides autonomo
+131956-Rpd, ass,   0K 🟢, 
+131956-yzx, usr,   1K 🟡, Tool result: """ Data models for the Blind Custom Site Applier. """  from dataclasses import dataclass, field from datet
+131956-jhl, ass,   0K 🟢, 
+131956-bIc, usr,   4K 🟡, Tool result: """ Kimi Vision Client - Kimi 2.5 with vision capabilities.  Extends KimiClient to support image+text promp
+
+--- TOTAL:  25K /  98K (26.4%) ---

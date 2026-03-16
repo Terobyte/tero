@@ -1,0 +1,384 @@
+Tool result: """
+Strategy Store - Phase 1 Implementation
+
+Persists winning strategies per domain for faster subsequent attempts.
+Learns which click strategies work best on which ATS platforms.
+"""
+
+import json
+import logging
+import os
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StrategyStats:
+    """Statistics for a single strategy on a domain."""
+    successes: int = 0
+    failures: int = 0
+    last_success: float = 0.0  # timestamp
+    last_failure: float = 0.0  # timestamp
+    
+    @property
+    def total_attempts(self) -> int:
+        return self.successes + self.failures
+    
+    @property
+    def success_rate(self) -> float:
+        if self.total_attempts == 0:
+            return 0.0
+        return self.successes / self.total_attempts
+    
+    def to_dict(self) -> dict:
+        return {
+            "successes": self.successes,
+            "failures": self.failures,
+            "last_success": self.last_success,
+            "last_failure": self.last_failure,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "StrategyStats":
+        return cls(
+            successes=data.get("successes", 0),
+            failures=data.get("failures", 0),
+            last_success=data.get("last_success", 0.0),
+            last_failure=data.get("last_failure", 0.0),
+        )
+
+
+@dataclass
+class DomainStrategies:
+    """All strategy stats for a single domain."""
+    element_types: dict[str, dict[str, StrategyStats]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(StrategyStats))
+    )
+    
+    def get_stats(self, element_type: str, strategy_name: str) -> StrategyStats:
+        """Get stats for a specific element type and strategy."""
+        return self.element_types[element_type][strategy_name]
+    
+    def record_success(self, element_type: str, strategy_name: str) -> None:
+        """Record a successful strategy use."""
+        stats = self.get_stats(element_type, strategy_name)
+        stats.successes += 1
+        stats.last_success = time.time()
+    
+    def record_failure(self, element_type: str, strategy_name: str) -> None:
+        """Record a failed strategy use."""
+        stats = self.get_stats(element_type, strategy_name)
+        stats.failures += 1
+        stats.last_failure = time.time()
+    
+    def get_winning_strategy(self, element_type: str) -> Optional[str]:
+        """
+        Get the best strategy for an element type based on success rate.
+        Returns None if no strategies have been tried.
+        """
+        type_strategies = self.element_types.get(element_type, {})
+        if not type_strategies:
+            return None
+        
+        # Filter strategies with at least one success
+        successful = {
+            name: stats for name, stats in type_strategies.items()
+            if stats.successes > 0
+        }
+        
+        if not successful:
+            return None
+        
+        # Sort by success rate (descending), then by total attempts (descending)
+        best = max(
+            successful.items(),
+            key=lambda x: (x[1].success_rate, x[1].total_attempts)
+        )
+        return best[0]
+    
+    def to_dict(self) -> dict:
+        return {
+            et: {
+                sn: stats.to_dict()
+                for sn, stats in strategies.items()
+            }
+            for et, strategies in self.element_types.items()
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "DomainStrategies":
+        ds = cls()
+        for element_type, strategies in data.items():
+            for strategy_name, stats_data in strategies.items():
+                ds.element_types[element_type][strategy_name] = StrategyStats.from_dict(stats_data)
+        return ds
+
+
+class StrategyStore:
+    """
+    Persists winning strategies per domain.
+    
+    Learns which click strategies work best on which ATS platforms,
+    reducing the number of attempts needed for subsequent applications.
+    
+    TTL: 30 days (sites update rarely)
+    
+    Usage:
+        store = StrategyStore()
+        
+        # Before trying strategies, check for winning one
+        winning = store.get_winning_strategy("workday.com", "checkbox")
+        if winning:
+            # Try winning strategy first
+            ...
+        
+        # After successful strategy
+        store.record_success("workday.com", "checkbox", "label_js")
+        
+        # After failed strategy
+        store.record_failure("workday.com", "checkbox", "direct_click")
+    """
+    
+    TTL_SECONDS = 30 * 24 * 3600  # 30 days
+    DEFAULT_DATA_DIR = "data"
+    
+    def __init__(self, data_dir: Optional[str] = None):
+        """
+        Initialize the strategy store.
+        
+        Args:
+            data_dir: Directory for persistence. Defaults to 'data/'.
+        """
+        self.data_dir = Path(data_dir or self.DEFAULT_DATA_DIR)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.store_file = self.data_dir / "strategy_store.json"
+        self._domains: dict[str, DomainStrategies] = {}
+        self._last_cleanup = time.time()
+        
+        self._load()
+    
+    def _load(self) -> None:
+        """Load persisted strategy data from disk."""
+        if not self.store_file.exists():
+            return
+        
+        try:
+            with open(self.store_file, "r") as f:
+                data = json.load(f)
+            
+            for domain, domain_data in data.get("domains", {}).items():
+                self._domains[domain] = DomainStrategies.from_dict(domain_data)
+            
+            logger.info(f"Loaded strategy store: {len(self._domains)} domains")
+            
+        except Exception as e:
+            logger.error(f"Failed to load strategy store: {e}")
+            self._domains = {}
+    
+    def _save(self) -> None:
+        """Persist strategy data to disk."""
+        try:
+            data = {
+                "version": 1,
+                "updated_at": time.time(),
+                "domains": {
+                    domain: ds.to_dict()
+                    for domain, ds in self._domains.items()
+                }
+            }
+            
+            with open(self.store_file, "w") as f:
+                json.dump(data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Failed to save strategy store: {e}")
+    
+    def _cleanup_expired(self) -> None:
+        """Remove strategies older than TTL."""
+        now = time.time()
+        
+        # Only cleanup every hour
+        if now - self._last_cleanup < 3600:
+            return
+        
+        self._last_cleanup = now
+        expired_domains = []
+        
+        for domain, ds in self._domains.items():
+            expired_types = []
+            
+            for element_type, strategies in list(ds.element_types.items()):
+                # Check if all strategies are expired
+                all_expired = all(
+                    now - stats.last_success > self.TTL_SECONDS
+                    for stats in strategies.values()
+                    if stats.successes > 0
+                )
+                
+                if all_expired:
+                    expired_types.append(element_type)
+            
+            for et in expired_types:
+                del ds.element_types[et]
+            
+            if not ds.element_types:
+                expired_domains.append(domain)
+        
+        for domain in expired_domains:
+            del self._domains[domain]
+        
+        if expired_domains:
+            logger.info(f"Cleaned up {len(expired_domains)} expired domain entries")
+            self._save()
+    
+    def get_domain(self, domain: str) -> DomainStrategies:
+        """Get or create strategy data for a domain."""
+        if domain not in self._domains:
+            self._domains[domain] = DomainStrategies()
+        return self._domains[domain]
+    
+    def record_success(
+        self,
+        domain: str,
+        element_type: str,
+        strategy_name: str,
+    ) -> None:
+        """
+        Record a successful strategy use.
+        
+        Args:
+            domain: Domain name (e.g., "workday.com", "indeed.com")
+            element_type: Type of element ("checkbox", "radio", "select")
+            strategy_name: Name of strategy that succeeded ("label_js", "direct_click", etc.)
+        """
+        ds = self.get_domain(domain)
+        ds.record_success(element_type, strategy_name)
+        self._save()
+        
+        logger.debug(
+            f"Strategy success: {domain}/{element_type}/{strategy_name} "
+            f"(rate: {ds.get_stats(element_type, strategy_name).success_rate:.1%})"
+        )
+    
+    def record_failure(
+        self,
+        domain: str,
+        element_type: str,
+        strategy_name: str,
+    ) -> None:
+        """
+        Record a failed strategy use.
+        
+        Args:
+            domain: Domain name
+            element_type: Type of element
+            strategy_name: Name of strategy that failed
+        """
+        ds = self.get_domain(domain)
+        ds.record_failure(element_type, strategy_name)
+        self._save()
+        
+        logger.debug(
+            f"Strategy failure: {domain}/{element_type}/{strategy_name}"
+        )
+    
+    def get_winning_strategy(
+        self,
+        domain: str,
+        element_type: str,
+    ) -> Optional[str]:
+        """
+        Get the best strategy for a domain/element_type combination.
+        
+        Returns the strategy with highest success rate among those
+        that have at least one success. Returns None if no winning
+        strategy exists yet.
+        
+        Args:
+            domain: Domain name
+            element_type: Type of element
+            
+        Returns:
+            Strategy name or None
+        """
+        self._cleanup_expired()
+        
+        ds = self._domains.get(domain)
+        if not ds:
+            return None
+        
+        winning = ds.get_winning_strategy(element_type)
+        
+        if winning:
+            stats = ds.get_stats(element_type, winning)
+            logger.debug(
+                f"Winning strategy for {domain}/{element_type}: {winning} "
+                f"({stats.success_rate:.1%} success, {stats.total_attempts} attempts)"
+            )
+        
+        return winning
+    
+    def get_all_winning_strategies(self, domain: str) -> dict[str, str]:
+        """
+        Get all winning strategies for a domain.
+        
+        Returns:
+            Dict mapping element_type to winning strategy name
+        """
+        ds = self._domains.get(domain)
+        if not ds:
+            return {}
+        
+        result = {}
+        for element_type in ds.element_types:
+            winning = ds.get_winning_strategy(element_type)
+            if winning:
+                result[element_type] = winning
+        
+        return result
+    
+    def clear_domain(self, domain: str) -> None:
+        """Clear all strategy data for a domain."""
+        if domain in self._domains:
+            del self._domains[domain]
+            self._save()
+            logger.info(f"Cleared strategy data for {domain}")
+    
+    def clear_all(self) -> None:
+        """Clear all strategy data."""
+        self._domains = {}
+        if self.store_file.exists():
+            os.remove(self.store_file)
+        logger.info("Cleared all strategy data")
+
+
+# Element type constants
+ELEMENT_TYPE_CHECKBOX = "checkbox"
+ELEMENT_TYPE_RADIO = "radio"
+ELEMENT_TYPE_SELECT = "select"
+ELEMENT_TYPE_INPUT = "input"
+ELEMENT_TYPE_BUTTON = "button"
+
+# Strategy name constants (must match radio_filler.py)
+STRATEGY_LABEL_JS = "label_js"
+STRATEGY_LABEL_PW = "label_pw"
+STRATEGY_DIRECT_CLICK = "direct_click"
+STRATEGY_FORCE_CLICK = "force_click"
+STRATEGY_JS_CLICK = "js_click"
+STRATEGY_SET_PROPERTY = "set_property"
+
+ALL_STRATEGIES = [
+    STRATEGY_LABEL_JS,
+    STRATEGY_LABEL_PW,
+    STRATEGY_DIRECT_CLICK,
+    STRATEGY_FORCE_CLICK,
+    STRATEGY_JS_CLICK,
+    STRATEGY_SET_PROPERTY,
+]
+🔍 383 lines read

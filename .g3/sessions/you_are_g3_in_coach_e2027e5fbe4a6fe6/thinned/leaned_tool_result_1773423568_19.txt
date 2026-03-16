@@ -1,0 +1,197 @@
+Tool result: """
+Data models for the Blind Custom Site Applier.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Optional
+
+
+class PageType(Enum):
+    """Types of pages detected during reconnaissance."""
+    JOB_LISTING = "job_listing"
+    LOGIN_REQUIRED = "login_required"
+    FORM_SINGLE = "form_single"
+    FORM_WIZARD = "form_wizard"
+    CONFIRMATION = "confirmation"
+    ERROR = "error"
+    UNKNOWN = "unknown"
+
+
+class OutcomeType(Enum):
+    """Possible outcomes after form submission."""
+    SUCCESS = "success"
+    ERROR = "error"
+    LOADING = "loading"
+    SAME_PAGE = "same_page"
+    REDIRECT = "redirect"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class BoundingBox:
+    """Bounding box coordinates for an element."""
+    x: int
+    y: int
+    width: int
+    height: int
+    
+    def center(self) -> tuple[int, int]:
+        """Get center coordinates."""
+        return (self.x + self.width // 2, self.y + self.height // 2)
+
+
+@dataclass
+class ApplyButtonInfo:
+    """Information about an Apply button."""
+    visible: bool = False
+    text: str = ""
+    location: str = ""  # Description like "top-right", "center"
+    selector: Optional[str] = None
+    bbox: Optional[BoundingBox] = None
+
+
+@dataclass
+class FormFieldPreview:
+    """Preview of a form field detected during recon."""
+    label: str
+    type_guess: str  # text, email, phone, select, file, etc.
+    required: bool = False
+
+
+@dataclass
+class SiteSchema:
+    """
+    Result of site reconnaissance.
+    
+    Describes the structure and characteristics of a custom career site.
+    """
+    url: str
+    domain: str
+    page_type: str  # PageType enum value
+    requires_account: bool = False
+    has_apply_button: bool = False
+    apply_button_hint: str = ""  # Description for LLM
+    apply_button_info: Optional[ApplyButtonInfo] = None
+    estimated_steps: int = 1
+    language: str = "en"
+    detected_ats: str = "unknown"  # If resembles known ATS
+    form_fields_preview: list[FormFieldPreview] = field(default_factory=list)
+    blocked_reason: Optional[str] = None  # captcha, geo-block, 404
+    screenshot_path: str = ""
+    raw_dom_hash: str = ""
+    confidence: float = 0.0
+    
+    # Additional DOM analysis results
+    has_login_form: bool = False
+    forms_count: int = 0
+    inputs_count: int = 0
+    buttons_count: int = 0
+    page_title: str = ""
+    meta_description: str = ""
+    
+    # Additional fields for recon_agent compatibility
+    dom_snapshot: dict = field(default_factory=dict)
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+@dataclass
+class StepSnapshot:
+    """Snapshot of a wizard step for tracking and comparison."""
+    step_number: int = 0
+    url: str = ""
+    dom_hash: str = ""
+    screenshot_hash: str = ""
+    timestamp: datetime = field(default_factory=datetime.now)
+    fields_detected: int = 0
+    fields_filled: int = 0
+
+
+@dataclass
+class StepDiff:
+    """Difference between two consecutive steps."""
+    added_fields: list[dict] = field(default_factory=list)
+    removed_fields: list[dict] = field(default_factory=list)
+    url_changed: bool = False
+    dom_changed: bool = False
+    progress_indicator_changed: bool = False
+    new_step_detected: bool = False
+
+
+@dataclass
+class WizardResult:
+    """Result of wizard execution."""
+    success: bool
+    steps_completed: int = 0
+    steps_total: int = 0  # Estimated
+    filled_fields: int = 0
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    fingerprints: list[str] = field(default_factory=list)  # Form fingerprints
+    step_snapshots: list[StepSnapshot] = field(default_factory=list)
+    final_url: str = ""
+    reference_id: Optional[str] = None
+    confidence: float = 0.0
+    patterns: list[dict] = field(default_factory=list)  # For learning
+
+
+@dataclass
+class OutcomeResult:
+    """Result of outcome detection."""
+    outcome: Any  # OutcomeType enum value or str
+    success: bool
+    confidence: float
+    message: str = ""
+    error: Optional[str] = None
+    reference_id: Optional[str] = None
+    final_url: str = ""
+    screenshot_path: str = ""
+    success_signals: list[str] = field(default_factory=list)
+    failure_signals: list[str] = field(default_factory=list)
+    error_details: list[str] = field(default_factory=list)
+    
+    def __post_init__(self):
+        if isinstance(self.outcome, str):
+            self.success = self.outcome.lower() == "success"
+
+
+@dataclass
+class ApplyResult:
+    """Result of a blind apply attempt."""
+    success: bool
+    filled: int = 0  # Number of fields filled
+    error: Optional[str] = None
+    steps_completed: int = 0
+    reference_id: Optional[str] = None
+    needs_review: bool = False  # Human review needed
+    screenshot_path: str = ""
+
+
+@dataclass
+class DOMSnapshot:
+    """Lean DOM snapshot for analysis."""
+    buttons: list[dict] = field(default_factory=list)
+    links: list[dict] = field(default_factory=list)
+    forms: list[dict] = field(default_factory=list)
+    inputs: list[dict] = field(default_factory=list)
+    has_login_form: bool = False
+    page_title: str = ""
+    meta_description: str = ""
+
+
+@dataclass
+class FormField:
+    """Represents a form field found on a page."""
+    label: str
+    type: str
+    required: bool = False
+    name: Optional[str] = None
+    id: Optional[str] = None
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    options: list[str] = field(default_factory=list)  # For select/combobox
+    bbox: Optional[BoundingBox] = None
+
+🔍 195 lines read

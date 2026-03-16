@@ -1,0 +1,279 @@
+Tool result: # src/applier/universal_screening/handler.py
+"""
+Universal Screening Handler — главный модуль для обработки screening вопросов.
+
+Интегрирует:
+- Snapshot для сохранения DOM-состояния
+- CorrectionExecutor для re-fill после коррекции
+- CriticalQuestionPolicy как финальный gate
+- StepAuditLog для аудит-трейла
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+from loguru import logger
+
+from .snapshot import StepSnapshot
+from .correction_executor import CorrectionExecutor
+from .audit_log import StepAuditLog
+from .policy import CriticalQuestionPolicy
+
+
+class UniversalScreeningHandler:
+    """
+    Обработчик screening вопросов с поддержкой batch validation.
+    
+    Usage:
+        handler = UniversalScreeningHandler(
+            page=page,
+            ai_answerer=ai_answerer,
+            profile=profile,
+            enable_batch_validation=True,
+        )
+        await handler.handle_all_questions(questions, context)
+    """
+    
+    def __init__(
+        self,
+        page,
+        ai_answerer,
+        profile: dict,
+        enable_batch_validation: bool = True,
+    ):
+        self.page = page
+        self.ai_answerer = ai_answerer
+        self.profile = profile
+        self._enable_batch_validation = enable_batch_validation
+        self._snapshot: Optional[StepSnapshot] = None
+        self._session = None  # SessionContext from batch_validator
+        self._audit_log: Optional[StepAuditLog] = None
+    
+    async def handle_all_questions(
+        self,
+        questions: list[Any],
+        context: Optional[dict] = None,
+        step: int = 1,
+    ) -> dict[str, str]:
+        """
+        Обработать все screening вопросы на странице.
+        
+        Args:
+            questions: Список Question объектов
+            context: Контекст вакансии {job_id, company, title, ...}
+            step: Номер шага формы
+            
+        Returns:
+            Словарь {question_text: answer}
+        """
+        context = context or {}
+        job_id = context.get("job_id", "")
+        job_url = context.get("url", "")
+        
+        # Initialize snapshot and audit log
+        self._snapshot = StepSnapshot(step=step, job_url=job_url)
+        self._audit_log = StepAuditLog(job_id=job_id, job_url=job_url)
+        
+        answers = {}
+        
+        for q in questions:
+            try:
+                answer = await self._handle_single_question(q, context)
+                if answer:
+                    answers[q.text] = answer
+                    
+                    # Record to snapshot for potential re-fill
+                    if self._enable_batch_validation and self._snapshot:
+                        locator_info = await self._get_locator_info(q.element)
+                        self._snapshot.add(
+                            text=q.text,
+                            field_type=q.field_type,
+                            options=list(q.options or []),
+                            answer=answer,
+                            locator_info=locator_info,
+                        )
+                    
+                    # Record to audit log
+                    if self._audit_log:
+                        is_critical = self._is_critical_question(q)
+                        self._audit_log.record_answer(
+                            question=q.text,
+                            field_type=q.field_type,
+                            answer=answer,
+                            intent=getattr(q, "intent", None),
+                            is_critical=is_critical,
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Failed to handle question '{q.text[:50]}': {e}")
+                continue
+        
+        # Run batch validation if enabled and we have critical answers
+        if self._enable_batch_validation and self._session:
+            await self._run_batch_validation(context)
+        
+        # Flush audit log
+        if self._audit_log:
+            self._audit_log.flush()
+        
+        return answers
+    
+    async def _handle_single_question(
+        self,
+        question: Any,
+        context: dict,
+    ) -> Optional[str]:
+        """Обработать один вопрос."""
+        # Try AI answerer
+        if self.ai_answerer:
+            try:
+                ai_result = await self.ai_answerer.ask(
+                    question=question.text,
+                    field_type=question.field_type,
+                    options=list(question.options or []),
+                    context=context,
+                )
+                if ai_result and ai_result.answer:
+                    # Fill the field
+                    filled = await self._fill_field(question, ai_result.answer)
+                    if filled:
+                        return ai_result.answer
+            except Exception as e:
+                logger.debug(f"AI answerer failed: {e}")
+        
+        # Fallback: try profile-based answer
+        answer = self._get_profile_answer(question)
+        if answer:
+            filled = await self._fill_field(question, answer)
+            if filled:
+                return answer
+        
+        return None
+    
+    async def _fill_field(self, question: Any, answer: str) -> bool:
+        """Заполнить поле в DOM."""
+        try:
+            el = question.element
+            
+            if question.field_type == "radio":
+                from .radio_filler import fill_radio
+                return await fill_radio(el, answer, page=self.page)
+                
+            elif question.field_type == "select":
+                from src.applier.form_utils import fill_select_safe
+                return await fill_select_safe(el, answer, page=self.page)
+                
+            elif question.field_type in ("text", "textarea", "number"):
+                await el.fill(answer)
+                return True
+                
+            elif question.field_type == "checkbox":
+                from .radio_filler import fill_checkbox_verified
+                return await fill_checkbox_verified(el, answer)
+                
+        except Exception as e:
+            logger.debug(f"Failed to fill field: {e}")
+            return False
+        
+        return False
+    
+    def _get_profile_answer(self, question: Any) -> Optional[str]:
+        """Получить ответ из профиля кандидата."""
+        text = question.text.lower()
+        
+        # Common screening questions
+        if "authorized" in text or "legally" in text:
+            return self.profile.get("work_authorization", {}).get("us_authorized", "Yes")
+        if "sponsorship" in text:
+            return str(self.profile.get("work_authorization", {}).get("requires_sponsorship", False))
+        if "years" in text and "experience" in text:
+            return str(self.profile.get("experience", {}).get("total_years", "5"))
+        if "notice period" in text or "start" in text:
+            return self.profile.get("availability", {}).get("notice_period", "2 weeks")
+        
+        return None
+    
+    def _is_critical_question(self, question: Any) -> bool:
+        """Определить, является ли вопрос критическим."""
+        text = question.text.lower()
+        critical_keywords = [
+            "authorized", "legally", "sponsorship", "visa",
+            "required", "must have", "essential",
+        ]
+        return any(kw in text for kw in critical_keywords)
+    
+    async def _get_locator_info(self, element) -> dict:
+        """Извлечь selector/nth из Playwright element."""
+        try:
+            selector = ""
+            nth = 0
+            if hasattr(element, "_selector"):
+                selector = element._selector
+            elif hasattr(element, "_impl_obj"):
+                # Try to get selector from Playwright internals
+                pass
+            return {"selector": selector, "nth": nth}
+        except Exception:
+            return {}
+    
+    def _record_batch_answer(self, question: Any, answer: str):
+        """Записать ответ для batch validation."""
+        if self._session is None:
+            return
+        
+        try:
+            from .session_context import SessionAnswer
+            self._session.add_answer(SessionAnswer(
+                question_text=question.text,
+                field_type=question.field_type,
+                answer=answer,
+                is_critical=self._is_critical_question(question),
+            ))
+        except Exception:
+            pass
+    
+    async def _run_batch_validation(self, context: dict):
+        """Запустить batch validation и correction."""
+        if not self._session or not self._session.critical_answers():
+            return
+        
+        try:
+            from .batch_validator import BatchStepValidator
+            
+            validator = BatchStepValidator(self.ai_answerer, self.profile)
+            corrections = await validator.validate(self._session)
+            
+            if not corrections:
+                return
+            
+            # Apply corrections
+            executor = CorrectionExecutor(self.page)
+            fixed = await executor.execute(corrections, self._snapshot)
+            
+            # Policy check
+            policy = CriticalQuestionPolicy()
+            decision = policy.evaluate(corrections, fixed)
+            
+            # Record corrections to audit log
+            if self._audit_log:
+                for c in corrections:
+                    self._audit_log.record_correction(c, success=c.question_text in fixed)
+            
+            if not decision.allow_continue:
+                logger.error(f"Policy blocked: {decision.reason}")
+                raise RuntimeError(decision.reason)
+                
+            logger.info(f"Batch validation: {len(corrections)} corrections, {len(fixed)} fixed")
+            
+        except Exception as e:
+            logger.error(f"Batch validation failed: {e}")
+            raise
+    
+    def set_session(self, session):
+        """Установить SessionContext для batch validation."""
+        self._session = session
+    
+    def get_snapshot(self) -> Optional[StepSnapshot]:
+        """Получить текущий snapshot."""
+        return self._snapshot
+
+🔍 277 lines read

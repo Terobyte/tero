@@ -1,0 +1,18 @@
+Tool result: /Users/terobyte/tmp/workspace
+total 232
+drwxr-xr-x@ 16 terobyte  staff    512 Mar 14 10:06 .
+drwxr-xr-x@  4 terobyte  staff    128 Mar  2 16:12 ..
+-rw-r--r--@  1 terobyte  staff   6148 Mar 14 08:41 .DS_Store
+-rw-r--r--@  1 terobyte  staff   2780 Mar  3 13:04 .env.example
+drwxr-xr-x@  5 terobyte  staff    160 Mar 13 15:28 .g3
+drwxr-xr-x@ 12 terobyte  staff    384 Mar 11 21:20 .git
+drwxr-xr-x@  6 terobyte  staff    192 Mar  4 14:05 .pytest_cache
+drwxr-xr-x@  3 terobyte  staff     96 Mar 14 08:59 config
+drwxr-xr-x@  5 terobyte  staff    160 Mar 14 10:06 data
+-rw-r--r--@  1 terobyte  staff     81 Mar 14 09:54 pytest.ini
+-rw-r--r--@  1 terobyte  staff  94485 Mar 14 08:41 requirements.md
+-rw-r--r--@  1 terobyte  staff    333 Mar 14 08:48 requirements.txt
+drwxr-xr-x@  5 terobyte  staff    160 Mar 14 09:59 scripts
+drwxr-xr-x@  6 terobyte  staff    192 Mar 14 08:46 src
+drwxr-xr-x@  9 terobyte  staff    288 Mar 14 08:50 tests
+drwxr-xr-x@  2 terobyte  staff     64 Mar 14 10:06 tmp

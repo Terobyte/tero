@@ -1,0 +1,24 @@
+155648-vqV, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+155648-lnT, usr,  18K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+155652-gmr, ass,   0K 🟢, 
+155652-mLM, usr,   0K 🟢, Tool result: ./src/insights/progressive_profiling.py ./src/insights/daily_engine.py ./src/insights/__init__.py ./src/lea
+155652-htH, ass,   0K 🟢, 
+155652-ZaG, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@  1 terobyte  staff   50 Mar 14 15:35 __init__.py drwxr-xr-x@  3 terobyte  staff   96 Ma
+155652-Evs, ass,   0K 🟢, 
+155652-rpr, usr,   0K 🟢, Tool result: total 8 drwxr-xr-x@  3 terobyte  staff   96 Mar 14 15:46 . drwxr-xr-x@ 12 terobyte  staff  384 Mar 14 15:34
+155655-cPZ, ass,   0K 🟢, 
+155655-hbc, usr,   3K 🟡, Tool result: # src/ai/resume_tailor.py """ ResumeTailor — адаптирует bullet points резюме под конкретную вакансию.  Flow
+155655-Quy, ass,   0K 🟢, 
+155655-DPf, usr,   1K 🟡, Tool result: # src/ai/star_rewriter.py """ STARRewriter — переписывает bullet points в STAR/CAR формат.  STAR: Situation
+155655-pWq, ass,   0K 🟢, 
+155655-xZM, usr,   2K 🟡, Tool result: # src/learning/ab_tester.py """ ABTester — epsilon-greedy A/B тестирование вариантов резюме/cover letter.  
+155655-Huy, ass,   0K 🟢, 
+155655-yjq, usr,   1K 🟡, Tool result: # src/analytics/market_insights.py """ MarketInsights — анализирует накопленные вакансии и строит отчёт.  Д
+155658-NOu, ass,   0K 🟢, 
+155658-OCR, usr,   1K 🟡, Tool result: # src/applier/email_customizer.py """ EmailCustomizer — генерирует персональный application email под конкр
+155658-bxh, ass,   0K 🟢, 
+155658-duI, usr,   3K 🟡, Tool result: # src/insights/daily_engine.py """ DailyInsightEngine — daily questions to enrich candidate profile.  Categ
+155658-SNX, ass,   0K 🟢, 
+155658-XSI, usr,   3K 🟡, Tool result: # src/insights/progressive_profiling.py """ ProgressiveProfiling — step-by-step profile completion wizard. 
+
+--- TOTAL:  40K /  98K (41.2%) ---

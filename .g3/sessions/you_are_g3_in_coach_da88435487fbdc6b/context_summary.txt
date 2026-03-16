@@ -1,0 +1,70 @@
+160043-Ybp, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+160043-oDV, usr,  10K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+160055-hSW, ass,   0K 🟢, I'll review the implementation against the CareerBot Resilience Plan requirements. Let me first examine the current code
+160055-WEp, usr,   0K 🟢, Tool result: ./src/applier/queue_manager.py
+160055-dRW, ass,   0K 🟢, 
+160055-RFQ, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@  1 terobyte  staff   92 Mar 10 15:53 __init__.py drwxr-xr-x@  3 terobyte  staff   96 Ma
+160058-ogM, ass,   0K 🟢, 
+160058-cKl, usr,   4K 🟡, Tool result: """ Queue Manager - Application queue with retry logic.  Phase -1 of CareerBot Resilience Plan. Implements 
+160058-Beg, ass,   0K 🟢, 
+160058-euK, usr,   0K 🟢, Tool result: ❌ Failed to read file 'src/applier/radio_filler.py': No such file or directory (os error 2)
+160058-TWA, ass,   0K 🟢, 
+160058-rRs, usr,   0K 🟢, Tool result: ❌ Failed to read file 'src/applier/selector_engine.py': No such file or directory (os error 2)
+160058-lOX, ass,   0K 🟢, 
+160058-OEZ, usr,   0K 🟢, Tool result: src/hitl/__init__.py src/__init__.py src/models/job.py src/applier/__init__.py src/applier/retry_policy.py 
+160102-wjL, ass,   0K 🟢, 
+160102-OQV, usr,   2K 🟡, Tool result: """ RetryPolicy - Centralized retry logic for job applications.  Phase -1 of CareerBot Resilience Plan. Thi
+160102-kgF, ass,   0K 🟢, 
+160102-KIn, usr,   0K 🟢, Tool result: # HITL module - Human-in-the-loop components from .telegram_handler import TelegramHandler, request_human_h
+160102-GmX, ass,   0K 🟢, 
+160102-QLB, usr,   1K 🟡, Tool result: """ Database models for CareerBot. Includes retry fields for job applications. """  from dataclasses import
+160102-kti, ass,   0K 🟢, 
+160102-SUd, usr,   0K 🟢, Tool result: # AI module - LLM providers and vision capabilities from .llm_chain import (     AI_FALLBACK_CHAIN,     cal
+160102-Sdr, ass,   0K 🟢, 
+160102-GQq, usr,   0K 🟢, Tool result: # Stealth module - anti-detection browser components from .stealth_browser import StealthBrowser from .huma
+160105-jxS, ass,   0K 🟢, 
+160105-FXK, usr,   0K 🟢, Tool result: total 48 -rw-r--r--@  1 terobyte  staff    588 Mar 10 15:53 __init__.py drwxr-xr-x@  3 terobyte  staff     
+160105-mFv, ass,   0K 🟢, 
+160105-Hsj, usr,   0K 🟢, Tool result: ❌ Failed to read file 'src/ai/llm_chain.py': No such file or directory (os error 2)
+160105-vFY, ass,   0K 🟢, 
+160105-nJE, usr,   0K 🟢, Tool result: ❌ Failed to read file 'src/hitl/telegram_handler.py': No such file or directory (os error 2)
+160116-pvh, ass,   0K 🟢, Let me check the file structure more thoroughly and look for existing implementations:Let me check the file structure mo
+160116-UQN, usr,   0K 🟢, Tool result: src/hitl/__init__.py src/__init__.py src/models/job.py src/applier/__init__.py src/applier/retry_policy.py 
+160116-dEF, ass,   0K 🟢, 
+160116-vIn, usr,   8K 🟠, Tool result: ✅ Code search completed {   "searches": [     {       "name": "verify_element_state",       "matches": [], 
+160116-XOu, ass,   0K 🟢, 
+160116-nhy, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160121-BdB, ass,   0K 🟢, 
+160121-DqX, usr,   0K 🟢, Tool result: ✅ Code search completed {   "searches": [     {       "name": "StrategyStore",       "matches": [         {
+160121-RKJ, ass,   0K 🟢, 
+160121-kWU, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160121-mjq, ass,   0K 🟢, 
+160121-bCh, usr,   0K 🟢, Tool result: 8
+160121-yMX, ass,   0K 🟢, 
+160121-RZK, usr,   0K 🟢, Tool result: 3.14.0 (v3.14.0:ebf955df7a8, Oct  7 2025, 08:20:14) [Clang 16.0.0 (clang-1600.0.26.6)]
+160136-Rvx, ass,   0K 🟢, 
+160136-cIy, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160139-FYa, ass,   0K 🟢, 
+160139-QBU, usr,   0K 🟢, Tool result: bash: python: command not found
+160143-jiQ, ass,   0K 🟢, 
+160143-ciy, usr,   0K 🟢, Tool result: ❌ Traceback (most recent call last):   File "<string>", line 1, in <module>     import sys; sys.path.insert
+160148-vWY, ass,   0K 🟢, 
+160148-mNx, usr,   0K 🟢, Tool result: """CareerBot Applier Module - Form filling and job application automation."""  from .queue_manager import A
+160148-bXr, ass,   0K 🟢, 
+160148-BZs, usr,   0K 🟢, Tool result: # AI module - LLM providers and vision capabilities from .llm_chain import (     AI_FALLBACK_CHAIN,     cal
+160148-PMU, ass,   0K 🟢, 
+160148-WxH, usr,   0K 🟢, Tool result: # Stealth module - anti-detection browser components from .stealth_browser import StealthBrowser from .huma
+160148-CXy, ass,   0K 🟢, 
+160148-ieJ, usr,   0K 🟢, Tool result: # HITL module - Human-in-the-loop components from .telegram_handler import TelegramHandler, request_human_h
+160202-rix, ass,   0K 🟢, 
+160202-ajs, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160202-Imq, ass,   0K 🟢, 
+160202-IkS, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 10 15:52 . drwxr-xr-x@ 11 terobyte  staff  352 Mar 10 15:52
+160209-AXb, ass,   0K 🟢, 
+160209-SYC, usr,   0K 🟢, Tool result: total 0 drwxr-xr-x@  2 terobyte  staff   64 Mar 10 15:52 . drwxr-xr-x@ 11 terobyte  staff  352 Mar 10 15:52
+160209-Wky, ass,   0K 🟢, 
+160209-zMI, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+160212-fOk, ass,   0K 🟢, 
+160212-JJx, usr,   0K 🟢, Tool result: src/hitl/__init__.py src/__init__.py src/models/job.py src/applier/__init__.py src/applier/retry_policy.py 
+
+--- TOTAL:  34K /  98K (34.7%) ---

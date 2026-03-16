@@ -1,0 +1,44 @@
+132155-KDR, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
+132155-yrB, usr,  27K 🟣, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
+132200-wDf, ass,   0K 🟢, I'll review the implementation against the requirements. Let me start by exploring the project structure and checking wh
+132200-wBI, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_27db31e7f9a3a9ec/thinned/leaned_tool
+132200-nEs, ass,   0K 🟢, 
+132200-ruX, usr,   0K 🟢, Tool result: total 8 -rw-r--r--@  1 terobyte  staff  306 Mar 14 13:04 __init__.py drwxr-xr-x@  3 terobyte  staff   96 Ma
+132200-glI, ass,   0K 🟢, 
+132200-WPq, usr,   0K 🟢, Tool result: total 72 -rw-r--r--@ 1 terobyte  staff    220 Mar 14 13:04 __init__.py drwxr-xr-x@ 6 terobyte  staff    192
+132200-QJN, ass,   0K 🟢, 
+132200-pCA, usr,   0K 🟢, Tool result saved to /Users/terobyte/tmp/workspace/.g3/sessions/you_are_g3_in_coach_27db31e7f9a3a9ec/thinned/leaned_tool
+132200-AqL, ass,   0K 🟢, 
+132200-HCZ, usr,   0K 🟢, Tool result: total 24 -rw-r--r--@  1 terobyte  staff    79 Mar 14 12:37 __init__.py drwxr-xr-x@  4 terobyte  staff   128
+132202-LWq, ass,   0K 🟢, 
+132202-MWJ, usr,   0K 🟢, Tool result: total 96 -rw-r--r--@  1 terobyte  staff    114 Mar 14 12:37 __init__.py drwxr-xr-x@ 10 terobyte  staff    3
+132202-dgo, ass,   0K 🟢, 
+132202-GeV, usr,   0K 🟢, Tool result: # Core dependencies loguru>=0.7.0 pydantic>=2.0.0  # AI/ML chromadb>=0.5.0 sentence-transformers>=2.2.0 ran
+132202-nVz, ass,   0K 🟢, 
+132202-WCN, usr,   0K 🟢, Tool result: {   "cost_limits": {     "max_per_application": 0.10,     "max_per_day": 5.00,     "max_per_month": 100.00,
+132204-NiO, ass,   0K 🟢, 
+132204-tdP, usr,   4K 🟡, Tool result: """ AI Cost Tracking — отслеживание расходов на LLM API.  Паттерн: Singleton + ContextVar для job_id без из
+132204-lYs, ass,   0K 🟢, 
+132204-xIW, usr,   4K 🟡, Tool result: # src/ai/llm_client.py """ LLM Client — унифицированный интерфейс для LLM провайдеров.  Поддерживает: - Kim
+132204-tbM, ass,   0K 🟢, 
+132204-dPS, usr,   4K 🟡, Tool result: # src/ai/knowledge_base.py """ VectorKnowledgeBase — ChromaDB-backed персистентная база знаний кандидата.  
+132207-mJB, ass,   0K 🟢, 
+132207-lUv, usr,   3K 🟡, Tool result: # src/applier/universal_screening/handler.py """ Universal Screening Handler — главный модуль для обработки
+132207-lYb, ass,   0K 🟢, 
+132207-dLL, usr,   3K 🟡, Tool result: # src/ai/orchestrator.py """ TailoringOrchestrator — orchestrates the job application tailoring process.  I
+132210-Toi, ass,   0K 🟢, 
+132210-bip, usr,   2K 🟡, Tool result: # src/applier/universal_screening/batch_validator.py """ BatchStepValidator — валидация ответов на screenin
+132210-BIh, ass,   0K 🟢, 
+132210-lfN, usr,   2K 🟡, Tool result: # src/ai/gap_recommender.py """ GapRecommender — рекомендации как закрыть пробелы в опыте.  Input: GapAnaly
+132210-GLZ, ass,   0K 🟢, 
+132210-uTU, usr,   2K 🟡, Tool result: # src/ai/match_rate.py """ MatchRateCalculator — оценка соответствия JD и профиля кандидата.  Возвращает де
+132210-YDf, ass,   0K 🟢, 
+132210-tPI, usr,   2K 🟡, Tool result: # src/ai/nlg.py """ NaturalLanguageGenerator — генерация уникальных ответов на screening вопросы.  Ключевые
+132210-nFB, ass,   0K 🟢, 
+132210-Iur, usr,   1K 🟡, Tool result: # src/ai/embeddings.py """ EmbeddingsPipeline — RAG pipeline поверх VectorKnowledgeBase.  Отвечает за: 1. И
+132216-VhV, ass,   0K 🟢, Let me check if the code compiles correctly and if there are any missing dependencies or imports:Let me check if the cod
+132216-AFF, usr,   0K 🟢, Tool result: ❌ Exit code 127: bash: python: command not found
+132219-OhF, ass,   0K 🟢, 
+132219-sHo, usr,   0K 🟢, Tool result: ⚡️ ran successfully
+
+--- TOTAL:  62K /  98K (63.9%) ---

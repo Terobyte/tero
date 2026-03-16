@@ -1,0 +1,484 @@
+Tool result: """
+HITL (Human-in-the-Loop) Telegram Handler
+
+Phase 9 - Last resort escape valve when all automation fails.
+Sends alerts to Telegram with screenshots and waits for human help.
+
+Usage:
+    from hitl.telegram_handler import TelegramHandler
+    
+    handler = TelegramHandler(bot_token, chat_id)
+    response = await handler.request_help(page, job, "Form validation failed")
+    if response == "help":
+        # User chose to help manually
+        ...
+"""
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Optional, Callable, Awaitable
+
+logger = logging.getLogger(__name__)
+
+
+class HITLResponse(Enum):
+    """User response types for HITL requests."""
+    HELP = "help"          # User will help manually
+    SKIP = "skip"          # User wants to skip this job
+    TIMEOUT = "timeout"    # No response received
+    ERROR = "error"        # Error occurred
+
+
+class HITLReason(Enum):
+    """Reasons for requesting human help."""
+    FORM_VALIDATION_FAILED = "form_validation_failed"
+    CAPTCHA_REQUIRED = "captcha_required"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    UNKNOWN_FIELD = "unknown_field"
+    SITE_BROKEN = "site_broken"
+    ANTI_BOT_DETECTED = "anti_bot_detected"
+    MULTIPLE_FAILURES = "multiple_failures"
+
+
+@dataclass
+class HITLRequest:
+    """Represents a request for human help."""
+    job_id: str
+    job_title: str
+    company: str
+    reason: HITLReason
+    screenshot: Optional[bytes] = None
+    url: Optional[str] = None
+    error_details: Optional[str] = None
+    created_at: datetime = None
+    
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.utcnow()
+
+
+@dataclass
+class HITLResult:
+    """Result of an HITL request."""
+    response: HITLResponse
+    request: HITLRequest
+    responded_at: Optional[datetime] = None
+    user_notes: Optional[str] = None
+
+
+class TelegramHandler:
+    """
+    Handles human-in-the-loop interactions via Telegram.
+    
+    Phase 9 - Final escape valve when all automation strategies fail.
+    
+    Features:
+    - Sends alerts with screenshots
+    - Provides inline buttons for user response
+    - Waits for response with timeout
+    - Tracks pending requests
+    - Supports scheduled retry (e.g., 2 hours for CAPTCHA to clear)
+    """
+    
+    DEFAULT_TIMEOUT_SECONDS = 1800  # 30 minutes
+    CAPTCHA_RETRY_HOURS = 2  # Retry after 2 hours (CAPTCHA often clears)
+    MAX_PENDING_REQUESTS = 10
+    
+    def __init__(
+        self,
+        bot_token: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    ):
+        """
+        Initialize Telegram handler.
+        
+        Args:
+            bot_token: Telegram bot token (or set TELEGRAM_BOT_TOKEN env var)
+            chat_id: Chat ID to send messages to (or set TELEGRAM_CHAT_ID env var)
+            timeout_seconds: Max time to wait for user response
+        """
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.timeout_seconds = timeout_seconds
+        self._bot = None
+        self._pending_requests: dict[str, HITLRequest] = {}
+        self._response_events: dict[str, asyncio.Event] = {}
+        self._response_results: dict[str, HITLResponse] = {}
+    
+    async def _get_bot(self):
+        """Lazily initialize Telegram bot."""
+        if self._bot is not None:
+            return self._bot
+        
+        # Try to get credentials from environment if not provided
+        import os
+        if not self.bot_token:
+            self.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        if not self.chat_id:
+            self.chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        
+        if not self.bot_token or not self.chat_id:
+            logger.warning("Telegram credentials not configured - HITL disabled")
+            return None
+        
+        # Import telegram library
+        try:
+            from telegram import Bot
+            self._bot = Bot(token=self.bot_token)
+            return self._bot
+        except ImportError:
+            logger.warning("python-telegram-bot not installed - HITL disabled")
+            return None
+    
+    async def request_help(
+        self,
+        page,
+        job: 'Job',
+        reason: HITLReason,
+        error_details: Optional[str] = None,
+    ) -> HITLResponse:
+        """
+        Request human help for a job application.
+        
+        Args:
+            page: Playwright page object (for screenshot)
+            job: Job dataclass with title, company, etc.
+            reason: Why human help is needed
+            error_details: Optional error details
+            
+        Returns:
+            HITLResponse indicating user's decision
+        """
+        bot = await self._get_bot()
+        
+        if bot is None:
+            logger.warning("Telegram not configured - returning TIMEOUT")
+            return HITLResponse.TIMEOUT
+        
+        # Create request
+        request = HITLRequest(
+            job_id=job.id,
+            job_title=job.title,
+            company=job.company,
+            reason=reason,
+            error_details=error_details,
+        )
+        
+        # Take screenshot if page provided
+        try:
+            if page:
+                request.screenshot = await page.screenshot(type="jpeg", quality=85)
+                request.url = page.url
+        except Exception as e:
+            logger.warning(f"Failed to take screenshot: {e}")
+        
+        # Send alert
+        try:
+            await self._send_alert(bot, request)
+            self._pending_requests[request.job_id] = request
+            
+            # Wait for response
+            result = await self._wait_for_response(request.job_id)
+            return result.response
+            
+        except Exception as e:
+            logger.error(f"Failed to send HITL alert: {e}")
+            return HITLResponse.ERROR
+        finally:
+            self._pending_requests.pop(request.job_id, None)
+    
+    async def _send_alert(self, bot, request: HITLRequest):
+        """Send alert message with screenshot and buttons."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        # Format message
+        reason_emoji = {
+            HITLReason.CAPTCHA_REQUIRED: "🤖",
+            HITLReason.FORM_VALIDATION_FAILED: "📝",
+            HITLReason.BUDGET_EXHAUSTED: "💰",
+            HITLReason.UNKNOWN_FIELD: "❓",
+            HITLReason.SITE_BROKEN: "💥",
+            HITLReason.ANTI_BOT_DETECTED: "🚨",
+            HITLReason.MULTIPLE_FAILURES: "⚠️",
+        }.get(request.reason, "🆘")
+        
+        message = (
+            f"{reason_emoji} *Нужна помощь!*\n\n"
+            f"📋 *Вакансия:* {request.job_title}\n"
+            f"🏢 *Компания:* {request.company}\n"
+            f"🔗 *URL:* {request.url or 'N/A'}\n\n"
+            f"*Причина:* `{request.reason.value}`\n"
+        )
+        
+        if request.error_details:
+            # Truncate long error details
+            details = request.error_details[:200]
+            if len(request.error_details) > 200:
+                details += "..."
+            message += f"```\n{details}\n```\n"
+        
+        message += (
+            f"\n⏰ *Ожидание ответа:* {self.timeout_seconds // 60} минут\n"
+            f"🆔 *Request ID:* `{request.job_id}`"
+        )
+        
+        # Create inline keyboard
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✋ Помочь вручную", callback_data=f"help:{request.job_id}"),
+                InlineKeyboardButton("⏭️ Пропустить", callback_data=f"skip:{request.job_id}"),
+            ],
+        ])
+        
+        # Send message
+        if request.screenshot:
+            await bot.send_photo(
+                chat_id=self.chat_id,
+                photo=request.screenshot,
+                caption=message,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+        else:
+            await bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+        
+        logger.info(f"HITL alert sent for job {request.job_id}: {request.reason.value}")
+    
+    async def _wait_for_response(self, job_id: str) -> HITLResult:
+        """Wait for user response with timeout."""
+        # Create event for this request
+        event = asyncio.Event()
+        self._response_events[job_id] = event
+        
+        try:
+            # Wait for callback or timeout
+            await asyncio.wait_for(event.wait(), timeout=self.timeout_seconds)
+            
+            # Get response
+            response = self._response_results.pop(job_id, HITLResponse.TIMEOUT)
+            
+            return HITLResult(
+                response=response,
+                request=self._pending_requests.get(job_id),
+                responded_at=datetime.utcnow(),
+            )
+            
+        except asyncio.TimeoutError:
+            logger.warning(f"HITL timeout for job {job_id}")
+            return HITLResult(
+                response=HITLResponse.TIMEOUT,
+                request=self._pending_requests.get(job_id),
+            )
+        finally:
+            self._response_events.pop(job_id, None)
+    
+    async def handle_callback(self, callback_data: str) -> bool:
+        """
+        Handle callback from Telegram inline button.
+        
+        Call this from your webhook handler.
+        
+        Args:
+            callback_data: The callback_data from the button press
+            
+        Returns:
+            True if callback was handled successfully
+        """
+        try:
+            action, job_id = callback_data.split(":", 1)
+            
+            # Map action to response
+            action_map = {
+                "help": HITLResponse.HELP,
+                "skip": HITLResponse.SKIP,
+            }
+            
+            response = action_map.get(action)
+            if response is None:
+                logger.warning(f"Unknown HITL action: {action}")
+                return False
+            
+            # Store response and trigger event
+            self._response_results[job_id] = response
+            
+            event = self._response_events.get(job_id)
+            if event:
+                event.set()
+            
+            logger.info(f"HITL response received: {action} for job {job_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to handle HITL callback: {e}")
+            return False
+    
+    async def send_status_update(
+        self,
+        job_id: str,
+        status: str,
+        message: str,
+    ) -> bool:
+        """Send a status update for a pending request."""
+        bot = await self._get_bot()
+        if bot is None:
+            return False
+        
+        try:
+            await bot.send_message(
+                chat_id=self.chat_id,
+                text=f"📊 *{status}*\n\n{message}\n\n🆔 `{job_id}`",
+                parse_mode="Markdown",
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send status update: {e}")
+            return False
+    
+    def get_pending_requests(self) -> list[HITLRequest]:
+        """Get list of pending HITL requests."""
+        return list(self._pending_requests.values())
+    
+    def should_retry_after_captcha(self) -> bool:
+        """
+        Check if a retry after CAPTCHA is worthwhile.
+        
+        CAPTCHAs often clear themselves after a few hours.
+        Returns True if automatic retry is recommended.
+        """
+        # Simple heuristic: always recommend retry after CAPTCHA
+        # More sophisticated logic could track CAPTCHA patterns
+        return True
+
+
+class HITLManager:
+    """
+    Manages HITL workflow and retry scheduling.
+    
+    Coordinates between automation failures and HITL requests.
+    """
+    
+    # Maximum time to wait for human help before auto-retry
+    MAX_HITL_WAIT_HOURS = 2
+    
+    # Retry intervals for different error types
+    RETRY_INTERVALS = {
+        HITLReason.CAPTCHA_REQUIRED: timedelta(hours=2),
+        HITLReason.SITE_BROKEN: timedelta(hours=6),
+        HITLReason.ANTI_BOT_DETECTED: timedelta(hours=1),
+        HITLReason.FORM_VALIDATION_FAILED: timedelta(minutes=30),
+        HITLReason.BUDGET_EXHAUSTED: timedelta(hours=24),
+    }
+    
+    def __init__(
+        self,
+        telegram_handler: TelegramHandler,
+        max_pending: int = 5,
+    ):
+        self.telegram = telegram_handler
+        self.max_pending = max_pending
+        self._pending_count = 0
+    
+    async def request_help_if_needed(
+        self,
+        page,
+        job: 'Job',
+        error_type: str,
+        budget_exhausted: bool = False,
+    ) -> tuple[HITLResponse, Optional[timedelta]]:
+        """
+        Request human help if appropriate, or schedule automatic retry.
+        
+        Args:
+            page: Playwright page
+            job: Job being processed
+            error_type: Error type encountered
+            budget_exhausted: Whether API budget is exhausted
+            
+        Returns:
+            Tuple of (response, retry_after)
+            - response: What to do (HELP, SKIP, TIMEOUT)
+            - retry_after: When to automatically retry (if TIMEOUT)
+        """
+        # Check if too many pending requests
+        if len(self.telegram.get_pending_requests()) >= self.max_pending:
+            logger.warning("Too many pending HITL requests - auto-scheduling retry")
+            retry_after = self.RETRY_INTERVALS.get(
+                HITLReason.MULTIPLE_FAILURES,
+                timedelta(hours=1)
+            )
+            return HITLResponse.TIMEOUT, retry_after
+        
+        # Map error type to HITL reason
+        reason_map = {
+            "captcha": HITLReason.CAPTCHA_REQUIRED,
+            "form_validation": HITLReason.FORM_VALIDATION_FAILED,
+            "unknown_field": HITLReason.UNKNOWN_FIELD,
+            "site_down": HITLReason.SITE_BROKEN,
+            "anti_bot": HITLReason.ANTI_BOT_DETECTED,
+            "budget_exhausted": HITLReason.BUDGET_EXHAUSTED,
+        }
+        
+        reason = reason_map.get(error_type, HITLReason.MULTIPLE_FAILURES)
+        
+        # Special handling for budget exhaustion
+        if budget_exhausted:
+            reason = HITLReason.BUDGET_EXHAUSTED
+        
+        # Request help
+        response = await self.telegram.request_help(page, job, reason)
+        
+        # Calculate retry time if timeout
+        retry_after = None
+        if response == HITLResponse.TIMEOUT:
+            retry_after = self.RETRY_INTERVALS.get(reason, timedelta(hours=1))
+        
+        return response, retry_after
+    
+    def get_retry_delay(self, reason: HITLReason) -> timedelta:
+        """Get recommended retry delay for a given reason."""
+        return self.RETRY_INTERVALS.get(reason, timedelta(hours=1))
+
+
+# Convenience function for direct use
+async def request_human_help(
+    page,
+    job: 'Job',
+    reason: str = "unknown",
+    error_details: Optional[str] = None,
+) -> HITLResponse:
+    """
+    Convenience function to request human help.
+    
+    Args:
+        page: Playwright page
+        job: Job dataclass
+        reason: Reason for help (string, will be mapped to HITLReason)
+        error_details: Optional error details
+        
+    Returns:
+        HITLResponse indicating user's decision
+    """
+    # Map string reason to enum
+    reason_map = {
+        "captcha": HITLReason.CAPTCHA_REQUIRED,
+        "validation": HITLReason.FORM_VALIDATION_FAILED,
+        "budget": HITLReason.BUDGET_EXHAUSTED,
+        "field": HITLReason.UNKNOWN_FIELD,
+        "site": HITLReason.SITE_BROKEN,
+        "antibot": HITLReason.ANTI_BOT_DETECTED,
+    }
+    
+    hitl_reason = reason_map.get(reason.lower(), HITLReason.MULTIPLE_FAILURES)
+    
+    handler = TelegramHandler()
+    return await handler.request_help(page, job, hitl_reason, error_details)
+🔍 483 lines read

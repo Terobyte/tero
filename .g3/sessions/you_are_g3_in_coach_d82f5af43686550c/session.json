@@ -1,0 +1,330 @@
+{
+  "context_window": {
+    "conversation_history": [
+      {
+        "content": "You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.\n\nWhen a task is complete, provide a summary of what was accomplished.\n\nFor shell commands: Use the shell tool with the exact command needed. Always use `rg` (ripgrep) instead of `grep` - it's faster, has better defaults, and respects .gitignore. Avoid commands that produce a large amount of output, and consider piping those outputs to files.\nIf you create temporary files for verification, place these in a subdir named 'tmp'. Do NOT pollute the current dir.\n\nUse `code_search` for definitions, `rg` for everything else.\n\n# Task Management with Plan Mode\n\n**REQUIRED for all multi-step tasks.**\n\nPlan Mode is a cognitive forcing system that prevents:\n- Attention collapse\n- False claims of completeness\n- Happy-path-only implementations\n- Duplication/contradiction with existing code\n\n## Workflow\n\n1. **Draft**: Call `plan_read` to check for existing plan, then `plan_write` with the plan YAML\n2. **Approval**: Ask user to approve before starting work (\"'approve', or edit plan?\"). In non-interactive mode (autonomous/one-shot), plans auto-approve on write.\n3. **Execute**: Implement items, updating plan with `plan_write` to mark progress\n4. **Complete**: When all items are done/blocked, verification runs automatically\n\n## Plan Schema\n\nEach plan item MUST have:\n- `id`: Stable identifier (e.g., \"I1\", \"I2\")\n- `description`: What will be done\n- `state`: todo | doing | done | blocked\n- `touches`: Paths/modules this affects (forces \"where does this live?\")\n- `checks`: Required perspectives:\n  - `happy`: {desc, target} - Normal successful operation\n  - `negative`: [{desc, target}, ...] - Error handling, invalid input (>=1 required)\n  - `boundary`: [{desc, target}, ...] - Edge cases, limits (>=1 required)\n- `evidence`: (required when done) File:line refs, test names\n- `notes`: (required when done) Short implementation explanation\n\n## Rules\n\nWhen drafting a plan, you MUST:\n- Keep items ~7 by default\n- Commit to where the work will live (touches)\n- Provide all three checks (happy, negative, boundary)\n\nWhen updating a plan:\n- Cannot remove items from an approved plan (mark as blocked instead)\n- Must provide evidence and notes when marking item as done\n\n## Example Plan\n\n```\nplan_write(\n  plan: \"\n    plan_id: csv-import-feature\n    items:\n      - id: I1\n        description: Add CSV import for comic book metadata\n        state: todo\n        touches: [src/import, src/library]\n        checks:\n          happy:\n            desc: Valid CSV imports 3 comics\n            target: import::csv\n          negative:\n            - desc: Missing column errors with MissingColumn\n              target: import::csv\n          boundary:\n            - desc: Empty file yields empty import without error\n              target: import::csv\n  \",\n)\n```\n\nWhen marking done, add `evidence` and `notes` to the item.\n\n## Action Envelope\n\nBefore marking the last plan item done, call `write_envelope` with facts about completed work. The envelope captures what was actually built so it can be verified against invariants in `analysis/rulespec.yaml` if present. The tool writes the envelope and runs datalog verification automatically.\n\n```yaml\ntype: code_change\nfacts:\n  csv_importer:\n    capabilities: [handle_headers, handle_tsv, handle_quoted_fields]\n    file: \"src/import/csv.rs\"\n    tests: [\"test_valid_csv\", \"test_tsv_import\", \"test_missing_column\"]\n  api_changes:\n    breaking: false\n    new_endpoints: [\"/api/import/csv\"]\n  breaking_changes: null  # Use null to assert something is explicitly absent\n```\n\n**Rules:**\n- All fact groups MUST go under the top-level `facts:` key. No other top-level keys except envelope metadata (e.g. `type:`)\n- Use file paths as evidence values so the validator can check them: `\"src/foo.rs\"`, `\"src/foo.rs:42\"`, `\"tests/bar.rs::test_name\"`\n- Free-form notes are allowed alongside file paths (e.g. `notes: \"Refactored from old module\"`)\n- Selectors in `analysis/rulespec.yaml` (e.g., `csv_importer.capabilities`) are evaluated against envelope facts\n- Use dot notation for nested access: `api_changes.breaking`\n- Use `null` to explicitly assert absence (for `not_exists` predicates)\n- `write_envelope` verifies facts against `analysis/rulespec.yaml` (if present) and `plan_verify()` confirms the envelope was written\n\n# Workspace Memory\n\nMemory is auto-loaded at startup. Call `remember` at end of turn when you discover code locations worth noting.\n\n\n# Available Toolsets\n\nYou can dynamically load additional tools using `load_toolset`. The tool will return the full definitions so you learn how to use them.\n\n<available_toolsets>\n  <toolset>\n    <name>webdriver</name>\n    <description>Browser automation via Safari WebDriver. Start sessions, navigate, find elements, click, type, execute JavaScript, take screenshots.</description>\n  </toolset>\n  <toolset>\n    <name>research</name>\n    <description>Initiate web-based research on a topic. This tool is ASYNCHRONOUS - it spawns a research agent in the background and returns immediately with a research_id. Results are automatically injected into the conversation when ready.</description>\n  </toolset>\n</available_toolsets>\n",
+        "role": "system"
+      },
+      {
+        "content": "You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, actionable feedback.\n\nREQUIREMENTS:\n# Level 2 Completion Plan — Stable MVP\n\n> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.\n\n**Goal:** Complete Level 2 of ROADMAP_10_LEVELS.md — reach stable MVP that can run overnight safely.\n\n**Architecture:** Fill gaps identified in roadmap review: slug collection (21K more), structured logging, API key validation.\n\n**Tech Stack:** Python 3.14, loguru, httpx, asyncio, json\n\n**Time Estimate:** 10-20 minutes of focused work\n\n---\n\n## Current State\n\n| Component | Status | Gap |\n|-----------|--------|-----|\n| BatchValidator | ✅ Exists | Already works |\n| AI Cost Tracking | ✅ Exists | Already works |\n| Slug database | 9,094 | Need +21K → 30K |\n| Structured logging | ❌ Missing | Need JSON logs |\n| API keys | ❌ Not in env | User action needed |\n\n---\n\n## File Structure\n\n```\nscripts/\n├── collect_cdx_slugs.py      # Modify: add more sources\n├── collect_github_slugs.py   # Existing\n└── run_slug_collection.py   # Create: orchestrator\n\nsrc/utils/\n├── structured_logger.py      # Create: JSON logging wrapper\n└── config_validator.py       # Create: startup validation\n\ndata/companies/\n├── greenhouse_slugs.json     # Existing: 4,662\n├── lever_slugs.json          # Existing: 1,116\n├── ashby_slugs.json          # Existing: 798\n├── bamboohr_slugs.json       # Existing: 2,518\n├── indeed_slugs.json         # Create: from API\n└── linkedin_slugs.json       # Create: from Voyager\n\nconfig/\n└── settings.json             # Modify: add logging config\n```\n\n---\n\n## Chunk 1: Slug Collection (Target: 30K total)\n\n### Task 1: Check existing slug collection scripts\n\n**Files:**\n- Read: `scripts/collect_cdx_slugs.py`\n- Read: `scripts/collect_github_slugs.py`\n\n- [ ] **Step 1: Review collect_cdx_slugs.py**\n\n```bash\ncat scripts/collect_cdx_slugs.py\n```\n\n- [ ] **Step 2: Check what sources are available**\n\nRun the CDX collector to see current output:\n\n```bash\npython3 scripts/collect_cdx_slugs.py --dry-run 2>&1 | head -50\n```\n\nExpected: List of sources that will be queried\n\n---\n\n### Task 2: Create unified slug collection runner\n\n**Files:**\n- Create: `scripts/run_slug_collection.py`\n\n- [ ] **Step 1: Write the slug collection orchestrator**\n\n```python\n# scripts/run_slug_collection.py\n\"\"\"\nUnified slug collection runner — collects company slugs from all sources.\n\nSources:\n1. Greenhouse job boards (CDX archive)\n2. Lever job boards (CDX archive)\n3. Ashby job boards (CDX archive)\n4. BambooHR job boards (CDX archive)\n5. Workday tenants (CDX archive)\n6. GitHub awesome-job-boards lists\n\nUsage:\n    python scripts/run_slug_collection.py --all\n    python scripts/run_slug_collection.py --source greenhouse --limit 5000\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport asyncio\nimport json\nfrom pathlib import Path\nfrom datetime import datetime\nfrom typing import Optional\n\nfrom loguru import logger\n\nOUTPUT_DIR = Path(\"data/companies\")\n\n\nasync def collect_greenhouse_cdx(limit: int = 10000) -> list[str]:\n    \"\"\"Collect Greenhouse board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.greenhouse.io/*.boards.greenhouse.io/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                # Extract slug from URL like https://boards.greenhouse.io/companyname\n                if \"boards.greenhouse.io/\" in url:\n                    parts = url.split(\"boards.greenhouse.io/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Greenhouse CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Greenhouse CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_lever_cdx(limit: int = 8000) -> list[str]:\n    \"\"\"Collect Lever board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.lever.co/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                # Extract slug from URL like https://lever.co/companyname\n                if \"lever.co/\" in url:\n                    parts = url.split(\"lever.co/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2 and slug not in (\"jobs\", \"careers\", \"api\"):\n                            slugs.add(slug)\n            logger.info(f\"Lever CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Lever CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_ashby_cdx(limit: int = 5000) -> list[str]:\n    \"\"\"Collect Ashby board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.ashbyhq.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"ashbyhq.com/\" in url:\n                    parts = url.split(\"ashbyhq.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Ashby CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Ashby CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_workday_cdx(limit: int = 8000) -> list[str]:\n    \"\"\"Collect Workday tenant slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.myworkdayjobs.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"myworkdayjobs.com/\" in url:\n                    parts = url.split(\"myworkdayjobs.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Workday CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Workday CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_smartrecruiters_cdx(limit: int = 5000) -> list[str]:\n    \"\"\"Collect SmartRecruiters board slugs.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.smartrecruiters.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"smartrecruiters.com/\" in url:\n                    parts = url.split(\"smartrecruiters.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"SmartRecruiters CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"SmartRecruiters CDX failed: {e}\")\n\n    return list(slugs)\n\n\ndef save_slugs(slugs: list[str], name: str) -> None:\n    \"\"\"Save slugs to JSON file.\"\"\"\n    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)\n    path = OUTPUT_DIR / f\"{name}_slugs.json\"\n\n    # Merge with existing\n    existing = set()\n    if path.exists():\n        try:\n            existing = set(json.loads(path.read_text()))\n        except:\n            pass\n\n    merged = sorted(existing | set(slugs))\n    path.write_text(json.dumps(merged, indent=2))\n    logger.info(f\"Saved {len(merged)} slugs to {path}\")\n\n\nasync def collect_all(limit_per_source: int = 5000) -> dict[str, int]:\n    \"\"\"Collect from all sources.\"\"\"\n\n    tasks = [\n        (\"greenhouse\", collect_greenhouse_cdx(limit_per_source)),\n        (\"lever\", collect_lever_cdx(limit_per_source)),\n        (\"ashby\", collect_ashby_cdx(limit_per_source)),\n        (\"workday\", collect_workday_cdx(limit_per_source)),\n        (\"smartrecruiters\", collect_smartrecruiters_cdx(limit_per_source)),\n    ]\n\n    results = {}\n    for name, coro in tasks:\n        slugs = await coro\n        save_slugs(slugs, name)\n        results[name] = len(slugs)\n\n    return results\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=\"Collect company slugs\")\n    parser.add_argument(\"--all\", action=\"store_true\", help=\"Collect from all sources\")\n    parser.add_argument(\"--source\", type=str, help=\"Single source to collect\")\n    parser.add_argument(\"--limit\", type=int, default=5000, help=\"Limit per source\")\n    parser.add_argument(\"--dry-run\", action=\"store_true\", help=\"Show what would be collected\")\n    args = parser.parse_args()\n\n    if args.dry_run:\n        print(\"Would collect from: greenhouse, lever, ashby, workday, smartrecruiters\")\n        print(f\"Limit per source: {args.limit}\")\n        return\n\n    if args.all:\n        results = asyncio.run(collect_all(args.limit))\n        total = sum(results.values())\n        print(f\"\\nCollected {total} total slugs:\")\n        for name, count in sorted(results.items()):\n            print(f\"  {name}: {count}\")\n    elif args.source:\n        # Run single source\n        async def run_one():\n            if args.source == \"greenhouse\":\n                return await collect_greenhouse_cdx(args.limit)\n            elif args.source == \"lever\":\n                return await collect_lever_cdx(args.limit)\n            elif args.source == \"ashby\":\n                return await collect_ashby_cdx(args.limit)\n            elif args.source == \"workday\":\n                return await collect_workday_cdx(args.limit)\n            elif args.source == \"smartrecruiters\":\n                return await collect_smartrecruiters_cdx(args.limit)\n            else:\n                logger.error(f\"Unknown source: {args.source}\")\n                return []\n\n        slugs = asyncio.run(run_one())\n        save_slugs(slugs, args.source)\n        print(f\"Collected {len(slugs)} {args.source} slugs\")\n    else:\n        parser.print_help()\n\n\nif __name__ == \"__main__\":\n    main()\n```\n\n- [ ] **Step 2: Test the script**\n\n```bash\npython3 scripts/run_slug_collection.py --dry-run\n```\n\nExpected: \"Would collect from: greenhouse, lever, ashby, workday, smartrecruiters\"\n\n- [ ] **Step 3: Run collection for all sources**\n\n```bash\npython3 scripts/run_slug_collection.py --all --limit 5000\n```\n\nExpected: Collects ~25K new slugs in 2-3 minutes\n\n- [ ] **Step 4: Verify total count**\n\n```bash\npython3 -c \"\nimport json\nfrom pathlib import Path\ntotal = 0\nfor f in Path('data/companies').glob('*_slugs.json'):\n    data = json.loads(f.read_text())\n    total += len(data)\n    print(f'{f.name}: {len(data)}')\nprint(f'TOTAL: {total}')\n\"\n```\n\nExpected: 30K+ total slugs\n\n- [ ] **Step 5: Commit slug collection**\n\n```bash\ngit add scripts/run_slug_collection.py data/companies/*_slugs.json\ngit commit -m \"feat(scripts): add unified slug collection runner, collect 30K+ slugs\n\n- New: scripts/run_slug_collection.py — CDX archive crawler\n- Sources: Greenhouse, Lever, Ashby, Workday, SmartRecruiters\n- Result: 30K+ company slugs for blind applier\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\"\n```\n\n---\n\n## Chunk 2: Structured JSON Logging\n\n### Task 3: Create structured logger wrapper\n\n**Files:**\n- Create: `src/utils/structured_logger.py`\n- Modify: `config/settings.json`\n\n- [ ] **Step 1: Write the structured logger module**\n\n```python\n# src/utils/structured_logger.py\n\"\"\"\nStructured JSON logging for CareerBot.\n\nEnables:\n- JSON logs for machine parsing\n- Easy integration with logging aggregators (Grafana Loki, ELK)\n- Human-readable console output in dev mode\n\nUsage:\n    from src.utils.structured_logger import get_logger\n    logger = get_logger(__name__)\n\n    logger.info(\"job_applied\", job_id=\"abc123\", company=\"Stripe\", ats=\"greenhouse\")\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import Any\n\nfrom loguru import logger\n\n\ndef json_sink(message: dict) -> None:\n    \"\"\"Custom sink that outputs JSON lines.\"\"\"\n    record = message[\"record\"]\n    output = {\n        \"timestamp\": record[\"time\"].isoformat(),\n        \"level\": record[\"level\"].name,\n        \"message\": record[\"message\"],\n        \"module\": record[\"module\"],\n        \"function\": record[\"function\"],\n        \"line\": record[\"line\"],\n    }\n    # Add extra fields\n    if record[\"extra\"]:\n        output[\"extra\"] = record[\"extra\"]\n    print(json.dumps(output), file=sys.stderr)\n\n\ndef setup_logging(\n    json_output: bool = False,\n    log_file: str | None = None,\n    level: str = \"INFO\",\n) -> None:\n    \"\"\"\n    Configure loguru for structured logging.\n\n    Args:\n        json_output: If True, output JSON lines to stderr\n        log_file: Optional file path for logs\n        level: Log level (DEBUG, INFO, WARNING, ERROR)\n    \"\"\"\n    # Remove default handler\n    logger.remove()\n\n    if json_output:\n        # JSON to stderr\n        logger.add(\n            json_sink,\n            level=level,\n            format=\"{message}\",\n        )\n    else:\n        # Human-readable to stderr\n        logger.add(\n            sys.stderr,\n            level=level,\n            format=\"<green>{time:HH:mm:ss}</green> | <level>{level:8}</level> | <cyan>{module:20}</cyan> - {message}\",\n            colorize=True,\n        )\n\n    if log_file:\n        log_path = Path(log_file)\n        log_path.parent.mkdir(parents=True, exist_ok=True)\n        logger.add(\n            str(log_path),\n            level=level,\n            rotation=\"10 MB\",\n            retention=\"7 days\",\n            serialize=True,  # JSON format in file\n        )\n\n    logger.info(\"Logging configured\", json_output=json_output, level=level)\n\n\ndef get_logger(name: str = __name__):\n    \"\"\"Get a logger instance with module name bound.\"\"\"\n    return logger.bind(module=name)\n```\n\n- [ ] **Step 2: Test the structured logger**\n\n```bash\npython3 -c \"\nfrom src.utils.structured_logger import setup_logging, get_logger\n\n# Test human-readable mode\nsetup_logging(json_output=False, level='DEBUG')\nlog = get_logger('test')\nlog.info('test_message', key='value', count=42)\n\n# Test JSON mode\nprint('---')\nsetup_logging(json_output=True, level='DEBUG')\nlog2 = get_logger('test_json')\nlog2.info('json_test', action='apply', company='Stripe')\n\"\n```\n\nExpected:\n- First output: colored human-readable line\n- Second output: JSON line with all fields\n\n- [ ] **Step 3: Add logging config to settings.json**\n\nRead current settings and add logging section:\n\n```bash\ncat config/settings.json | python3 -c \"\nimport json, sys\ndata = json.load(sys.stdin)\ndata['logging'] = {\n    'json_output': False,\n    'log_file': 'data/logs/careerbot.jsonl',\n    'level': 'INFO'\n}\nprint(json.dumps(data, indent=2))\n\" > config/settings.json.tmp && mv config/settings.json.tmp config/settings.json\n```\n\n- [ ] **Step 4: Commit structured logger**\n\n```bash\ngit add src/utils/structured_logger.py config/settings.json\ngit commit -m \"feat(logging): add structured JSON logging support\n\n- New: src/utils/structured_logger.py\n- Config: logging.json_output, logging.log_file, logging.level\n- Supports both human-readable console and JSON file output\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\"\n```\n\n---\n\n## Chunk 3: API Key Validation\n\n### Task 4: Create config validator\n\n**Files:**\n- Create: `src/utils/config_validator.py`\n\n- [ ] **Step 1: Write the config validator**\n\n```python\n# src/utils/config_validator.py\n\"\"\"\nConfiguration validator — checks required env vars and API keys at startup.\n\nRaises clear errors before the app runs, not in the middle of a job apply.\n\nUsage:\n    from src.utils.config_validator import validate_config\n    validate_config()  # Raises if missing critical keys\n\"\"\"\nfrom __future__ import annotations\n\nimport os\nimport sys\nfrom dataclasses import dataclass\nfrom typing import Optional\n\n\n@dataclass\nclass ConfigIssue:\n    key: str\n    severity: str  # \"critical\", \"warning\"\n    message: str\n    fix_hint: str\n\n\nREQUIRED_KEYS = {\n    # Critical for any operation\n    \"APPLICANT_EMAIL\": (\"critical\", \"Email for job applications\"),\n    \"APPLICANT_FIRST_NAME\": (\"critical\", \"First name for applications\"),\n    \"APPLICANT_LAST_NAME\": (\"critical\", \"Last name for applications\"),\n\n    # AI providers (at least one needed)\n    \"GEMINI_API_KEY\": (\"ai\", \"Gemini API for JD parsing (cheap)\"),\n    \"ANTHROPIC_API_KEY\": (\"ai\", \"Claude API for resume tailoring (expensive)\"),\n    \"OPENAI_API_KEY\": (\"ai\", \"OpenAI API for various tasks\"),\n\n    # Optional but recommended\n    \"TELEGRAM_BOT_TOKEN\": (\"warning\", \"Telegram notifications\"),\n    \"TELEGRAM_CHAT_ID\": (\"warning\", \"Telegram chat ID\"),\n    \"LINKEDIN_EMAIL\": (\"warning\", \"LinkedIn scraping\"),\n    \"LINKEDIN_PASSWORD\": (\"warning\", \"LinkedIn scraping\"),\n    \"TWOCAPTCHA_API_KEY\": (\"warning\", \"Captcha solving\"),\n}\n\n\ndef validate_config(strict: bool = False) -> list[ConfigIssue]:\n    \"\"\"\n    Validate configuration and return list of issues.\n\n    Args:\n        strict: If True, raise on any critical issue\n\n    Returns:\n        List of ConfigIssue objects\n    \"\"\"\n    issues = []\n\n    # Check critical keys\n    has_ai_key = False\n    for key, (severity, description) in REQUIRED_KEYS.items():\n        value = os.environ.get(key, \"\")\n        if not value:\n            if severity == \"critical\":\n                issues.append(ConfigIssue(\n                    key=key,\n                    severity=\"critical\",\n                    message=f\"Missing required: {key}\",\n                    fix_hint=f\"Add to .env: {key}=your_value_here\",\n                ))\n            elif severity == \"ai\":\n                # Track that we have at least one AI key\n                pass\n            else:\n                issues.append(ConfigIssue(\n                    key=key,\n                    severity=\"warning\",\n                    message=f\"Missing optional: {key}\",\n                    fix_hint=f\"Add to .env if needed: {key}=your_value_here\",\n                ))\n        elif severity == \"ai\":\n            has_ai_key = True\n\n    # Check that at least one AI key is set\n    if not has_ai_key:\n        issues.append(ConfigIssue(\n            key=\"AI_API_KEY\",\n            severity=\"critical\",\n            message=\"No AI API key configured\",\n            fix_hint=\"Add at least one: GEMINI_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY\",\n        ))\n\n    if strict:\n        critical = [i for i in issues if i.severity == \"critical\"]\n        if critical:\n            print(\"❌ Configuration errors:\", file=sys.stderr)\n            for issue in critical:\n                print(f\"  {issue.key}: {issue.message}\", file=sys.stderr)\n                print(f\"    Fix: {issue.fix_hint}\", file=sys.stderr)\n            raise SystemExit(1)\n\n    return issues\n\n\ndef print_config_report() -> None:\n    \"\"\"Print a human-readable config status report.\"\"\"\n    issues = validate_config(strict=False)\n\n    print(\"📋 Configuration Status:\\n\")\n\n    # Check each key\n    for key, (severity, description) in REQUIRED_KEYS.items():\n        value = os.environ.get(key, \"\")\n        if value:\n            status = \"✅\"\n        elif severity == \"critical\":\n            status = \"❌\"\n        elif severity == \"ai\":\n            status = \"⚠️\" if any(i.key == \"AI_API_KEY\" for i in issues) else \"✅\"\n        else:\n            status = \"⚠️\"\n        print(f\"  {status} {key:<25} {description}\")\n\n    # Summary\n    critical = [i for i in issues if i.severity == \"critical\"]\n    warnings = [i for i in issues if i.severity == \"warning\"]\n\n    print(f\"\\n  Summary: {len(critical)} critical, {len(warnings)} warnings\")\n\n    if critical:\n        print(\"\\n  ❌ Critical issues prevent operation:\")\n        for issue in critical:\n            print(f\"     {issue.fix_hint}\")\n\n\nif __name__ == \"__main__\":\n    print_config_report()\n```\n\n- [ ] **Step 2: Test the validator**\n\n```bash\npython3 src/utils/config_validator.py\n```\n\nExpected: Shows config status with warnings for missing keys\n\n- [ ] **Step 3: Commit config validator**\n\n```bash\ngit add src/utils/config_validator.py\ngit commit -m \"feat(config): add startup configuration validator\n\n- New: src/utils/config_validator.py\n- Checks required env vars before app runs\n- Reports missing API keys with fix hints\n- Run: python src/utils/config_validator.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\"\n```\n\n---\n\n## Final Verification\n\n### Task 5: Verify Level 2 completion\n\n- [ ] **Step 1: Run all verifications**\n\n```bash\necho \"=== Level 2 Verification ===\"\necho\n\necho \"1. Slug count:\"\npython3 -c \"\nimport json\nfrom pathlib import Path\ntotal = sum(len(json.loads(f.read_text())) for f in Path('data/companies').glob('*_slugs.json'))\nprint(f'   Total slugs: {total}')\nprint(f'   Target: 30,000')\nprint(f'   Status: {\\\"✅ PASS\\\" if total >= 30000 else \\\"⚠️ NEED \\\" + str(30000-total) + \\\" more\\\"}')\"\n\necho\necho \"2. BatchValidator import:\"\npython3 -c \"from src.applier.universal_screening.batch_validator import BatchStepValidator; print('   ✅ PASS')\" 2>&1 || echo \"   ❌ FAIL\"\n\necho\necho \"3. Structured logger import:\"\npython3 -c \"from src.utils.structured_logger import setup_logging; print('   ✅ PASS')\" 2>&1 || echo \"   ❌ FAIL\"\n\necho\necho \"4. Config validator import:\"\npython3 -c \"from src.utils.config_validator import validate_config; print('   ✅ PASS')\" 2>&1 || echo \"   ❌ FAIL\"\n\necho\necho \"5. Cost tracker import:\"\npython3 -c \"from src.utils.cost_tracker import CostTracker; print('   ✅ PASS')\" 2>&1 || echo \"   ❌ FAIL\"\n\necho\necho \"6. Resume tailor import:\"\npython3 -c \"from src.ai.resume_tailor import ResumeTailor; print('   ✅ PASS')\" 2>&1 || echo \"   ❌ FAIL\"\n```\n\n- [ ] **Step 2: Update ROADMAP with current level**\n\nAdd a marker to `plans/ROADMAP_10_LEVELS.md` showing progress:\n\n```markdown\n## 📊 ШКАЛА ЗРЕЛОСТИ\n\n```\n  1 ██░░░░░░░░  Рабочий прототип ✅ COMPLETE\n  2 ███░░░░░░░  Стабильный MVP ← ВЫ ЗДЕСЬ (теперь 90%+)\n  3 ████░░░░░░  Telegram MVP — первые продажи\n```\n```\n\n- [ ] **Step 3: Final commit**\n\n```bash\ngit add -A\ngit commit -m \"feat: complete Level 2 requirements for stable MVP\n\n- Slug database: 30K+ company slugs collected\n- Structured logging: JSON output support\n- Config validation: startup checks for API keys\n- All Level 2 components verified working\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\"\ngit push\n```\n\n---\n\n## User Action Required\n\nAfter this plan is executed, the user must:\n\n1. **Add API keys to `.env`:**\n   ```bash\n   # Copy template\n   cp .env.example .env\n\n   # Edit and add your keys\n   nano .env\n   ```\n\n   Required keys:\n   - `GEMINI_API_KEY` — for JD parsing (cheap)\n   - `ANTHROPIC_API_KEY` — for resume tailoring (or `OPENAI_API_KEY`)\n   - `APPLICANT_EMAIL`, `APPLICANT_FIRST_NAME`, `APPLICANT_LAST_NAME`\n\n2. **Verify config:**\n   ```bash\n   python3 src/utils/config_validator.py\n   ```\n\n3. **Run the bot:**\n   ```bash\n   python main.py --test\n   ```\n\n---\n\n*Plan generated: 2026-03-14*\n\n\nIMPLEMENTATION REVIEW:\nReview the current state of the project and provide a concise critique focusing on:\n1. Whether the requirements are correctly implemented\n2. Whether the project compiles successfully\n3. What requirements are missing or incorrect\n4. Specific improvements needed to satisfy requirements\n5. Use UI tools such as webdriver to test functionality thoroughly\n\nCRITICAL INSTRUCTIONS:\n1. Provide your feedback as your final response message\n2. Your feedback should be CONCISE and ACTIONABLE\n3. Focus ONLY on what needs to be fixed or improved\n4. Do NOT include your analysis process, file contents, or compilation output in your final feedback\n\nIf the implementation thoroughly meets all requirements, compiles and is fully tested (especially UI flows) *WITHOUT* minor gaps or errors:\n- Respond with: 'IMPLEMENTATION_APPROVED'\n\nIf improvements are needed:\n- Respond with a brief summary listing ONLY the specific issues to fix\n\nRemember: Be clear in your review and concise in your feedback. APPROVE iff the implementation works and thoroughly fits the requirements (implementation > 95% complete). Be rigorous, especially by testing that all UI features work.",
+        "role": "user"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_6cWoU9k6QdnZwIw293Kze97g",
+            "input": {
+              "command": "find . -type f -name \"*.py\" | head -50"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ./scripts/run_slug_collection.py\n./src/utils/cost_tracker.py\n./src/utils/config_validator.py\n./src/utils/structured_logger.py\n./src/applier/universal_screening/batch_validator.py\n./src/ai/resume_tailor.py",
+        "role": "user",
+        "tool_result_id": "call_6cWoU9k6QdnZwIw293Kze97g"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_sm5ckx1z5SmeBMDYy2eTU4dV",
+            "input": {
+              "command": "ls -la scripts/ 2>/dev/null || echo \"scripts/ directory not found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 24\ndrwxr-xr-x@  3 terobyte  staff    96 Mar 14 21:24 .\ndrwxr-xr-x@ 13 terobyte  staff   416 Mar 14 21:23 ..\n-rw-r--r--@  1 terobyte  staff  9642 Mar 14 21:30 run_slug_collection.py",
+        "role": "user",
+        "tool_result_id": "call_sm5ckx1z5SmeBMDYy2eTU4dV"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_qpimgvlzfDRAUyByfQCrUOpE",
+            "input": {
+              "command": "ls -la src/utils/ 2>/dev/null || echo \"src/utils/ directory not found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 40\ndrwxr-xr-x@ 5 terobyte  staff   160 Mar 14 21:26 __pycache__\ndrwxr-xr-x@ 6 terobyte  staff   192 Mar 14 21:26 .\ndrwxr-xr-x@ 5 terobyte  staff   160 Mar 14 21:23 ..\n-rw-r--r--@ 1 terobyte  staff  4368 Mar 14 21:26 config_validator.py\n-rw-r--r--@ 1 terobyte  staff  6991 Mar 14 21:26 cost_tracker.py\n-rw-r--r--@ 1 terobyte  staff  2437 Mar 14 21:26 structured_logger.py",
+        "role": "user",
+        "tool_result_id": "call_qpimgvlzfDRAUyByfQCrUOpE"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_qx4WAy0k9sXLZoWxy9Xq7mzJ",
+            "input": {
+              "command": "ls -la data/companies/ 2>/dev/null || echo \"data/companies/ directory not found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 48\ndrwxr-xr-x@ 7 terobyte  staff   224 Mar 14 21:29 .\ndrwxr-xr-x@ 4 terobyte  staff   128 Mar 14 21:23 ..\n-rw-r--r--@ 1 terobyte  staff   108 Mar 14 21:29 ashby_slugs.json\n-rw-r--r--@ 1 terobyte  staff     2 Mar 14 21:28 greenhouse_slugs.json\n-rw-r--r--@ 1 terobyte  staff     2 Mar 14 21:28 lever_slugs.json\n-rw-r--r--@ 1 terobyte  staff  5372 Mar 14 21:29 smartrecruiters_slugs.json\n-rw-r--r--@ 1 terobyte  staff   732 Mar 14 21:29 workday_slugs.json",
+        "role": "user",
+        "tool_result_id": "call_qx4WAy0k9sXLZoWxy9Xq7mzJ"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_wwUZy1Fl6tWGd1JGZIwEBm2N",
+            "input": {
+              "command": "python3 -c \"\nimport json\nfrom pathlib import Path\ntotal = 0\nfor f in sorted(Path('data/companies').glob('*_slugs.json')):\n    data = json.loads(f.read_text())\n    total += len(data)\n    print(f'{f.name}: {len(data)}')\nprint(f'TOTAL: {total}')\n\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ashby_slugs.json: 8\ngreenhouse_slugs.json: 0\nlever_slugs.json: 0\nsmartrecruiters_slugs.json: 235\nworkday_slugs.json: 41\nTOTAL: 284",
+        "role": "user",
+        "tool_result_id": "call_wwUZy1Fl6tWGd1JGZIwEBm2N"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_IJbsLiInAtOgYC2PHpUoj62e",
+            "input": {
+              "command": "python3 -c \"from src.applier.universal_screening.batch_validator import BatchStepValidator; print('BatchValidator: OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: BatchValidator: OK",
+        "role": "user",
+        "tool_result_id": "call_IJbsLiInAtOgYC2PHpUoj62e"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_TI0F4VNbAEyAs4zOxPNw3Jq8",
+            "input": {
+              "command": "python3 -c \"from src.utils.structured_logger import setup_logging; print('StructuredLogger: OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: StructuredLogger: OK",
+        "role": "user",
+        "tool_result_id": "call_TI0F4VNbAEyAs4zOxPNw3Jq8"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_jH8yZdBbkj9hl5FEgWypiGSA",
+            "input": {
+              "command": "python3 -c \"from src.utils.config_validator import validate_config; print('ConfigValidator: OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ConfigValidator: OK",
+        "role": "user",
+        "tool_result_id": "call_jH8yZdBbkj9hl5FEgWypiGSA"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_Z7XsEC1vCi0Tc2DKtXCj9SVz",
+            "input": {
+              "command": "python3 -c \"from src.utils.cost_tracker import CostTracker; print('CostTracker: OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: CostTracker: OK",
+        "role": "user",
+        "tool_result_id": "call_Z7XsEC1vCi0Tc2DKtXCj9SVz"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_LnskxIYci1ifypWqdsBZkVtR",
+            "input": {
+              "command": "python3 -c \"from src.ai.resume_tailor import ResumeTailor; print('ResumeTailor: OK')\" 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ResumeTailor: OK",
+        "role": "user",
+        "tool_result_id": "call_LnskxIYci1ifypWqdsBZkVtR"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_k54xWmocPQZHQFY6ZYAXQyHp",
+            "input": {
+              "command": "cd /Users/terobyte/dev/careerbot && python3 scripts/run_slug_collection.py --dry-run 2>&1"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: ❌ bash: line 0: cd: /Users/terobyte/dev/careerbot: No such file or directory",
+        "role": "user",
+        "tool_result_id": "call_k54xWmocPQZHQFY6ZYAXQyHp"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_vK6iPtIIoVpbL9mIzTHwHGlx",
+            "input": {
+              "command": "cd /Users/terobyte/dev/careerbot && ls -la config/settings.json 2>&1 || echo \"settings.json not found\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: settings.json not found",
+        "role": "user",
+        "tool_result_id": "call_vK6iPtIIoVpbL9mIzTHwHGlx"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_shANrrfNeTU6PpjWGAnbq44x",
+            "input": {
+              "command": "pwd && ls -la"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: /Users/terobyte/tmp/workspace\ntotal 80\ndrwxr-xr-x@ 13 terobyte  staff    416 Mar 14 21:23 .\ndrwxr-xr-x@  4 terobyte  staff    128 Mar  2 16:12 ..\n-rw-r--r--@  1 terobyte  staff   6148 Mar 14 15:22 .DS_Store\n-rw-r--r--@  1 terobyte  staff   2780 Mar  3 13:04 .env.example\ndrwxr-xr-x@  5 terobyte  staff    160 Mar 14 16:30 .g3\ndrwxr-xr-x@ 12 terobyte  staff    384 Mar 14 14:12 .git\ndrwxr-xr-x@  2 terobyte  staff     64 Mar 14 12:27 .index\ndrwxr-xr-x@  6 terobyte  staff    192 Mar  4 14:05 .pytest_cache\ndrwxr-xr-x@  3 terobyte  staff     96 Mar 14 21:26 config\ndrwxr-xr-x@  4 terobyte  staff    128 Mar 14 21:23 data\n-rw-r--r--@  1 terobyte  staff  24815 Mar 14 21:21 requirements.md\ndrwxr-xr-x@  3 terobyte  staff     96 Mar 14 21:24 scripts\ndrwxr-xr-x@  5 terobyte  staff    160 Mar 14 21:23 src",
+        "role": "user",
+        "tool_result_id": "call_shANrrfNeTU6PpjWGAnbq44x"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_NzLA8b0T1HOEStPplC10ifTS",
+            "input": {
+              "command": "ls -la config/"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: total 8\ndrwxr-xr-x@  3 terobyte  staff   96 Mar 14 21:26 .\ndrwxr-xr-x@ 13 terobyte  staff  416 Mar 14 21:23 ..\n-rw-r--r--@  1 terobyte  staff  550 Mar 14 21:26 settings.json",
+        "role": "user",
+        "tool_result_id": "call_NzLA8b0T1HOEStPplC10ifTS"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_fWSfgR8DRzkDrJp1OTsCPvqQ",
+            "input": {
+              "command": "cat config/settings.json 2>/dev/null || echo \"No settings.json\""
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: {\n  \"logging\": {\n    \"json_output\": false,\n    \"log_file\": \"data/logs/careerbot.jsonl\",\n    \"level\": \"INFO\"\n  },\n  \"slug_collection\": {\n    \"sources\": [\"greenhouse\", \"lever\", \"ashby\", \"workday\", \"smartrecruiters\"],\n    \"limit_per_source\": 5000,\n    \"output_dir\": \"data/companies\"\n  },\n  \"ai\": {\n    \"default_provider\": \"gemini\",\n    \"fallback_provider\": \"openai\",\n    \"resume_tailor_model\": \"claude-3-5-sonnet\",\n    \"jd_parser_model\": \"gemini-2.0-flash\"\n  },\n  \"budgets\": {\n    \"daily_ai_spend_limit\": 10.0,\n    \"monthly_ai_spend_limit\": 200.0\n  }\n}",
+        "role": "user",
+        "tool_result_id": "call_fWSfgR8DRzkDrJp1OTsCPvqQ"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_xLjqBNF0XdGQutA6yrDpMhyp",
+            "input": {
+              "command": "cat .env.example"
+            },
+            "name": "shell"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # Indeed Form Question-Answering System - Environment Variables\n# Copy this file to .env and fill in your values\n\n# ============================================\n# API Keys (Required for AI answering)\n# ============================================\n\n# Gemini API Key (Primary AI provider)\n# Get yours at: https://makersuite.google.com/app/apikey\nGEMINI_API_KEY=\n\n# Anthropic API Key (Fallback AI provider - optional)\n# Get yours at: https://console.anthropic.com/\nANTHROPIC_API_KEY=\n\n# Telegram Bot Token (For profile setup via /setup command)\n# Get yours at: https://t.me/botfather\nTELEGRAM_BOT_TOKEN=\n\n# ============================================\n# Candidate Personal Info\n# ============================================\n\nAPPLICANT_FIRST_NAME=Tim\nAPPLICANT_LAST_NAME=J.\nAPPLICANT_EMAIL=your.email@example.com\nAPPLICANT_PHONE=1-XXX-XXXXXXX\n\n# ============================================\n# Certifications (Yes/No)\n# ============================================\n\nHAS_DRIVERS_LICENSE=No\nHAS_COMPTIA_A_PLUS=No\nHAS_SECURITY_PLUS=No\nHAS_AWS_CERT=No\nHAS_BACHELORS_DEGREE=No\nHAS_MASTERS_DEGREE=No\nHAS_CCNA=No\nHAS_PMP=No\nHAS_AZURE_CERT=No\nHAS_GCP_CERT=No\n\n# ============================================\n# Work Conditions (Yes/No)\n# ============================================\n\nWILLING_TO_TRAVEL=No\nWILLING_TO_RELOCATE=No\nWORK_WEEKENDS=Yes\nWORK_OVERTIME=Yes\nWORK_NIGHTS=No\nAVAILABLE_ON_CALL=Yes\nPREFER_REMOTE=Yes\nACCEPT_HYBRID=Yes\n\n# ============================================\n# Tech Experience (Years - numeric)\n# ============================================\n\nYEARS_PYTHON=3\nYEARS_JAVA=0\nYEARS_REACT=1\nYEARS_NODEJS=0\nYEARS_JAVASCRIPT=1\nYEARS_DOCKER=1\nYEARS_KUBERNETES=0\nYEARS_SQL=2\nYEARS_GIT=2\nYEARS_LINUX=3\nYEARS_NETWORKING=2\nYEARS_WINDOWS_SERVER=1\nYEARS_ACTIVE_DIRECTORY=1\nYEARS_OFFICE365=2\nYEARS_SALESFORCE=0\nYEARS_SERVICENOW=0\nYEARS_VMWARE=1\nYEARS_AZURE=0\nYEARS_GCP=0\nYEARS_TERRAFORM=0\nYEARS_ANSIBLE=0\nYEARS_JENKINS=0\n\n# ============================================\n# Work Authorization\n# ============================================\n\nAUTHORIZED_TO_WORK_US=Yes\nREQUIRES_SPONSORSHIP=No\n\n# ============================================\n# Salary Expectations (USD)\n# ============================================\n\nEXPECTED_SALARY_USD=60000\nMINIMUM_SALARY_USD=50000\n\n# ============================================\n# Availability\n# ============================================\n\nSTART_DATE=immediately\nNOTICE_PERIOD_WEEKS=0\n\n# ============================================\n# Comfort Questions (Yes/No)\n# ============================================\n\nCOMFORTABLE_FAST_PACED=Yes\nWORK_INDEPENDENTLY=Yes\nHANDLE_AMBIGUITY=Yes\nCUSTOMER_FACING_OK=Yes\n\n# ============================================\n# Cover Letter (Optional)\n# ============================================\n\nAPPLICANT_COVER_LETTER=",
+        "role": "user",
+        "tool_result_id": "call_xLjqBNF0XdGQutA6yrDpMhyp"
+      },
+      {
+        "content": "",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_V6P2RK8hSIyqzRqjuJAn8JZE",
+            "input": {
+              "file_path": "/Users/terobyte/tmp/workspace/scripts/run_slug_collection.py"
+            },
+            "name": "read_file"
+          }
+        ]
+      },
+      {
+        "content": "Tool result: # scripts/run_slug_collection.py\n\"\"\"\nUnified slug collection runner — collects company slugs from all sources.\n\nSources:\n1. Greenhouse job boards (CDX archive)\n2. Lever job boards (CDX archive)\n3. Ashby job boards (CDX archive)\n4. BambooHR job boards (CDX archive)\n5. Workday tenants (CDX archive)\n6. SmartRecruiters boards (CDX archive)\n\nUsage:\n    python scripts/run_slug_collection.py --all\n    python scripts/run_slug_collection.py --source greenhouse --limit 5000\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport asyncio\nimport json\nfrom pathlib import Path\nfrom datetime import datetime\nfrom typing import Optional\n\ntry:\n    from loguru import logger\nexcept ImportError:\n    # Fallback if loguru not installed\n    import logging\n    logging.basicConfig(level=logging.INFO)\n    logger = logging.getLogger(__name__)\n\nOUTPUT_DIR = Path(\"data/companies\")\n\n\nasync def collect_greenhouse_cdx(limit: int = 10000) -> list[str]:\n    \"\"\"Collect Greenhouse board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"boards.greenhouse.io/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                # Extract slug from URL like https://boards.greenhouse.io/companyname\n                if \"boards.greenhouse.io/\" in url:\n                    parts = url.split(\"boards.greenhouse.io/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Greenhouse CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Greenhouse CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_lever_cdx(limit: int = 8000) -> list[str]:\n    \"\"\"Collect Lever board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"jobs.lever.co/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                # Extract slug from URL like https://lever.co/companyname\n                if \"jobs.lever.co/\" in url:\n                    parts = url.split(\"jobs.lever.co/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2 and slug not in (\"jobs\", \"careers\", \"api\"):\n                            slugs.add(slug)\n            logger.info(f\"Lever CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Lever CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_ashby_cdx(limit: int = 5000) -> list[str]:\n    \"\"\"Collect Ashby board slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"jobs.ashbyhq.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"ashbyhq.com/\" in url:\n                    parts = url.split(\"jobs.ashbyhq.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Ashby CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Ashby CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_workday_cdx(limit: int = 8000) -> list[str]:\n    \"\"\"Collect Workday tenant slugs from CDX archive.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"*.myworkdayjobs.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"myworkdayjobs.com/\" in url:\n                    parts = url.split(\"myworkdayjobs.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"Workday CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"Workday CDX failed: {e}\")\n\n    return list(slugs)\n\n\nasync def collect_smartrecruiters_cdx(limit: int = 5000) -> list[str]:\n    \"\"\"Collect SmartRecruiters board slugs.\"\"\"\n    import httpx\n\n    url = \"http://web.archive.org/cdx/search/cdx\"\n    params = {\n        \"url\": \"jobs.smartrecruiters.com/*\",\n        \"output\": \"json\",\n        \"fl\": \"original\",\n        \"collapse\": \"urlkey\",\n        \"limit\": limit,\n    }\n\n    slugs = set()\n    async with httpx.AsyncClient(timeout=30.0) as client:\n        try:\n            resp = await client.get(url, params=params)\n            data = resp.json()\n            for row in data:\n                url = row[0] if isinstance(row, list) else row.get(\"original\", \"\")\n                if \"smartrecruiters.com/\" in url:\n                    parts = url.split(\"jobs.smartrecruiters.com/\")\n                    if len(parts) > 1:\n                        slug = parts[1].split(\"/\")[0].split(\"?\")[0]\n                        if slug and len(slug) > 2:\n                            slugs.add(slug)\n            logger.info(f\"SmartRecruiters CDX: {len(slugs)} slugs\")\n        except Exception as e:\n            logger.error(f\"SmartRecruiters CDX failed: {e}\")\n\n    return list(slugs)\n\n\ndef save_slugs(slugs: list[str], name: str) -> None:\n    \"\"\"Save slugs to JSON file.\"\"\"\n    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)\n    path = OUTPUT_DIR / f\"{name}_slugs.json\"\n\n    # Merge with existing\n    existing = set()\n    if path.exists():\n        try:\n            existing = set(json.loads(path.read_text()))\n        except:\n            pass\n\n    merged = sorted(existing | set(slugs))\n    path.write_text(json.dumps(merged, indent=2))\n    logger.info(f\"Saved {len(merged)} slugs to {path}\")\n\n\nasync def collect_all(limit_per_source: int = 5000) -> dict[str, int]:\n    \"\"\"Collect from all sources.\"\"\"\n\n    tasks = [\n        (\"greenhouse\", collect_greenhouse_cdx(limit_per_source)),\n        (\"lever\", collect_lever_cdx(limit_per_source)),\n        (\"ashby\", collect_ashby_cdx(limit_per_source)),\n        (\"workday\", collect_workday_cdx(limit_per_source)),\n        (\"smartrecruiters\", collect_smartrecruiters_cdx(limit_per_source)),\n    ]\n\n    results = {}\n    for name, coro in tasks:\n        slugs = await coro\n        save_slugs(slugs, name)\n        results[name] = len(slugs)\n\n    return results\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=\"Collect company slugs\")\n    parser.add_argument(\"--all\", action=\"store_true\", help=\"Collect from all sources\")\n    parser.add_argument(\"--source\", type=str, help=\"Single source to collect\")\n    parser.add_argument(\"--limit\", type=int, default=5000, help=\"Limit per source\")\n    parser.add_argument(\"--dry-run\", action=\"store_true\", help=\"Show what would be collected\")\n    args = parser.parse_args()\n\n    if args.dry_run:\n        print(\"Would collect from: greenhouse, lever, ashby, workday, smartrecruiters\")\n        print(f\"Limit per source: {args.limit}\")\n        return\n\n    if args.all:\n        results = asyncio.run(collect_all(args.limit))\n        total = sum(results.values())\n        print(f\"\\nCollected {total} total slugs:\")\n        for name, count in sorted(results.items()):\n            print(f\"  {name}: {count}\")\n    elif args.source:\n        # Run single source\n        async def run_one():\n            if args.source == \"greenhouse\":\n                return await collect_greenhouse_cdx(args.limit)\n            elif args.source == \"lever\":\n                return await collect_lever_cdx(args.limit)\n            elif args.source == \"ashby\":\n                return await collect_ashby_cdx(args.limit)\n            elif args.source == \"workday\":\n                return await collect_workday_cdx(args.limit)\n            elif args.source == \"smartrecruiters\":\n                return await collect_smartrecruiters_cdx(args.limit)\n            else:\n                logger.error(f\"Unknown source: {args.source}\")\n                return []\n\n        slugs = asyncio.run(run_one())\n        save_slugs(slugs, args.source)\n        print(f\"Collected {len(slugs)} {args.source} slugs\")\n    else:\n        parser.print_help()\n\n\nif __name__ == \"__main__\":\n    main()\n\n🔍 286 lines read",
+        "role": "user",
+        "tool_result_id": "call_V6P2RK8hSIyqzRqjuJAn8JZE"
+      },
+      {
+        "content": "## Implementation Review Summary\n\n### Critical Issues\n\n**1. Slug Collection Target Not Met**\n- **Required**: 30,000 total slugs\n- **Actual**: 284 slugs (99% shortfall)\n- `greenhouse_slugs.json`: 0 slugs\n- `lever_slugs.json`: 0 slugs\n- `ashby_slugs.json`: 8 slugs\n- `workday_slugs.json`: 41 slugs\n- `smartrecruiters_slugs.json`: 235 slugs\n\nThe CDX archive URL patterns are failing to extract slugs correctly. The `boards.greenhouse.io/*` pattern returns empty results.\n\n**2. Missing Existing Slug Files**\nThe requirements state existing files should exist:\n- `greenhouse_slugs.json` (should have 4,662)\n- `lever_slugs.json` (should have 1,116)\n- `ashby_slugs.json` (should have 798)\n- `bamboohr_slugs.json` (should have 2,518)\n\nThese files either don't exist or are empty. The `bamboohr_slugs.json` file is entirely missing.\n\n### Working Components\n- ✅ `BatchValidator` - imports successfully\n- ✅ `CostTracker` - imports successfully\n- ✅ `ResumeTailor` - imports successfully\n- ✅ `StructuredLogger` - imports successfully\n- ✅ `ConfigValidator` - imports successfully\n- ✅ `config/settings.json` - logging config present\n\n### Required Fixes\n\n1. **Fix CDX URL patterns** - The patterns `boards.greenhouse.io/*` and `jobs.lever.co/*` are not matching. Try wildcard patterns like `*.greenhouse.io/*` or different CDX query parameters.\n\n2. **Add BambooHR collection** - Create `collect_bamboohr_cdx()` function and include in the collection list.\n\n3. **Restore pre-existing slug files** - If this is meant to extend existing data, the baseline files (4,662 greenhouse, 1,116 lever, etc.) are missing.\n\n4. **Verify CDX API responses** - Run collection with verbose logging to see what CDX actually returns.\n\n5. **Consider alternative sources** - If CDX is rate-limited, add fallback collection methods (GitHub awesome lists, direct API scraping).## Implementation Review Summary\n\n### Critical Issues\n\n**1. Slug Collection Target Not Met**\n- **Required**: 30,000 total slugs\n- **Actual**: 284 slugs (99% shortfall)\n- `greenhouse_slugs.json`: 0 slugs\n- `lever_slugs.json`: 0 slugs\n- `ashby_slugs.json`: 8 slugs\n- `workday_slugs.json`: 41 slugs\n- `smartrecruiters_slugs.json`: 235 slugs\n\nThe CDX archive URL patterns are failing to extract slugs correctly. The `boards.greenhouse.io/*` pattern returns empty results.\n\n**2. Missing Existing Slug Files**\nThe requirements state existing files should exist:\n- `greenhouse_slugs.json` (should have 4,662)\n- `lever_slugs.json` (should have 1,116)\n- `ashby_slugs.json` (should have 798)\n- `bamboohr_slugs.json` (should have 2,518)\n\nThese files either don't exist or are empty. The `bamboohr_slugs.json` file is entirely missing.\n\n### Working Components\n- ✅ `BatchValidator` - imports successfully\n- ✅ `CostTracker` - imports successfully\n- ✅ `ResumeTailor` - imports successfully\n- ✅ `StructuredLogger` - imports successfully\n- ✅ `ConfigValidator` - imports successfully\n- ✅ `config/settings.json` - logging config present\n\n### Required Fixes\n\n1. **Fix CDX URL patterns** - The patterns `boards.greenhouse.io/*` and `jobs.lever.co/*` are not matching. Try wildcard patterns like `*.greenhouse.io/*` or different CDX query parameters.\n\n2. **Add BambooHR collection** - Create `collect_bamboohr_cdx()` function and include in the collection list.\n\n3. **Restore pre-existing slug files** - If this is meant to extend existing data, the baseline files (4,662 greenhouse, 1,116 lever, etc.) are missing.\n\n4. **Verify CDX API responses** - Run collection with verbose logging to see what CDX actually returns.\n\n5. **Consider alternative sources** - If CDX is rate-limited, add fallback collection methods (GitHub awesome lists, direct API scraping).",
+        "role": "assistant"
+      }
+    ],
+    "percentage_used": 19.12458038330078,
+    "total_tokens": 98010,
+    "used_tokens": 18744
+  },
+  "session_id": "you_are_g3_in_coach_d82f5af43686550c",
+  "status": "completed",
+  "timestamp": 1773538299
+}

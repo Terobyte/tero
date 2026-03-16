@@ -1,0 +1,41 @@
+Tool result: On branch main
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   .g3/sessions/current_context_window
+	modified:   .g3/sessions/you_are_g3_in_implementation_12b706b9d5d3878d/context_summary.txt
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.g3/sessions/you_are_g3_in_coach_4fc8ada382a9686/
+	.g3/sessions/you_are_g3_in_coach_89ba4a4c655cbbdb/
+	.g3/sessions/you_are_g3_in_coach_cf775004f504eee8/
+	.g3/sessions/you_are_g3_in_implementation_12b706b9d5d3878d/tools/
+	.g3/sessions/you_are_g3_in_implementation_5e249c6fb9b3232d/
+	.g3/sessions/you_are_g3_in_implementation_819b51a98471335b/
+	src/applier/__init__.py
+	src/applier/ai_answerer.py
+	src/applier/answer_bank.py
+	src/applier/ashby_apply.py
+	src/applier/ats_detector.py
+	src/applier/bamboohr_apply.py
+	src/applier/easy_apply.py
+	src/applier/form_filler.py
+	src/applier/form_pattern_store.py
+	src/applier/gmail_reader.py
+	src/applier/greenhouse_apply.py
+	src/applier/human_review.py
+	src/applier/ia_legacy.py
+	src/applier/indeed_apply.py
+	src/applier/indeed_router.py
+	src/applier/indeed_screening.py
+	src/applier/lever_apply.py
+	src/applier/queue_manager.py
+	src/applier/selector_engine.py
+	src/applier/selector_health.py
+	src/applier/smartrecruiters_apply.py
+	src/applier/universal_ai_filler.py
+	src/applier/universal_screening/
+	src/applier/workday_apply.py
+
+no changes added to commit (use "git add" and/or "git commit -a")

@@ -1,0 +1,182 @@
+Tool result: # src/bot/main_bot.py
+"""
+Main Telegram bot entry point with aiogram Dispatcher.
+
+Registers all routers and starts polling.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from typing import Optional
+
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command
+from aiogram.types import Message
+from loguru import logger
+
+# Import all routers
+from src.bot.insights_handler import router as insights_router
+from src.bot.profiling_handler import router as profiling_router
+from src.bot.insights_market_handler import router as market_router
+
+
+# Bot token from environment
+BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID: Optional[int] = None
+if os.getenv("TELEGRAM_CHAT_ID"):
+    try:
+        CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
+    except ValueError:
+        logger.warning("Invalid TELEGRAM_CHAT_ID, must be integer")
+
+
+# Global bot and dispatcher instances
+bot: Optional[Bot] = None
+dp: Optional[Dispatcher] = None
+
+
+def create_bot(token: Optional[str] = None) -> Bot:
+    """Create and configure Bot instance."""
+    token = token or BOT_TOKEN
+    if not token:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable required")
+    
+    return Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
+
+
+def create_dispatcher() -> Dispatcher:
+    """Create and configure Dispatcher with all routers."""
+    dispatcher = Dispatcher()
+    
+    # Register all feature routers
+    dispatcher.include_router(insights_router)
+    dispatcher.include_router(profiling_router)
+    dispatcher.include_router(market_router)
+    
+    # Global commands
+    @dispatcher.message(Command("start"))
+    async def cmd_start(message: Message) -> None:
+        """Handle /start command."""
+        await message.answer(
+            "👋 *Welcome to CareerBot!*\n\n"
+            "I help you manage your job search:\n"
+            "• `/insights` - Daily profile enrichment questions\n"
+            "• `/profile` - Set up your candidate profile\n"
+            "• `/market` - View job market insights\n"
+            "• `/coverage` - Check profile completion\n\n"
+            "Let's find your next opportunity! 🚀",
+            parse_mode="Markdown"
+        )
+    
+    @dispatcher.message(Command("help"))
+    async def cmd_help(message: Message) -> None:
+        """Handle /help command."""
+        await message.answer(
+            "📚 *CareerBot Commands*\n\n"
+            "*Profile:*\n"
+            "• `/profile` - Start profile wizard\n"
+            "• `/profile_edit` - View current profile\n"
+            "• `/skip` - Skip optional field\n"
+            "• `/cancel` - Cancel current operation\n\n"
+            "*Insights:*\n"
+            "• `/insights` - Get daily questions\n"
+            "• `/answer <id> <value>` - Answer question\n"
+            "• `/coverage` - Profile completion status\n"
+            "• `/market` - Job market trends\n",
+            parse_mode="Markdown"
+        )
+    
+    logger.info(
+        f"Dispatcher created with {len(dispatcher.sub_router.handlers)} handlers"
+    )
+    return dispatcher
+
+
+async def on_startup(bot: Bot) -> None:
+    """Called when bot starts."""
+    logger.info("CareerBot starting up...")
+    
+    # Notify configured chat
+    if CHAT_ID:
+        try:
+            await bot.send_message(
+                CHAT_ID,
+                "🤖 *CareerBot started*\n\n"
+                "Ready to help with your job search!",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Could not send startup message: {e}")
+
+
+async def on_shutdown(bot: Bot) -> None:
+    """Called when bot shuts down."""
+    logger.info("CareerBot shutting down...")
+    
+    # Notify configured chat
+    if CHAT_ID:
+        try:
+            await bot.send_message(
+                CHAT_ID,
+                "👋 CareerBot shutting down. Goodbye!",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Could not send shutdown message: {e}")
+    
+    await bot.session.close()
+
+
+async def main() -> None:
+    """Main entry point for the bot."""
+    global bot, dp
+    
+    # Validate token
+    if not BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
+        print(
+            "Error: TELEGRAM_BOT_TOKEN required.\n"
+            "Set it via: export TELEGRAM_BOT_TOKEN='your-token-here'",
+            file=sys.stderr
+        )
+        sys.exit(1)
+    
+    # Create bot and dispatcher
+    bot = create_bot()
+    dp = create_dispatcher()
+    
+    # Register startup/shutdown hooks
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    # Start polling
+    logger.info("Starting polling...")
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt, shutting down...")
+    except asyncio.CancelledError:
+        logger.info("Bot cancelled, shutting down...")
+    finally:
+        await on_shutdown(bot)
+
+
+def run() -> None:
+    """Synchronous entry point."""
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    run()
+
+🔍 180 lines read

@@ -1,0 +1,12 @@
+Tool result: total 8
+-rw-r--r--@  1 terobyte  staff   92 Mar 10 15:53 __init__.py
+drwxr-xr-x@  3 terobyte  staff   96 Mar 10 20:54 __pycache__
+drwxr-xr-x@ 11 terobyte  staff  352 Mar 10 15:58 .
+drwxr-xr-x@ 11 terobyte  staff  352 Mar 10 15:52 ..
+drwxr-xr-x@  7 terobyte  staff  224 Mar 10 16:17 ai
+drwxr-xr-x@ 10 terobyte  staff  320 Mar 10 20:03 applier
+drwxr-xr-x@  5 terobyte  staff  160 Mar 10 20:07 hitl
+drwxr-xr-x@  5 terobyte  staff  160 Mar 10 16:15 models
+drwxr-xr-x@  2 terobyte  staff   64 Mar 10 15:52 queue
+drwxr-xr-x@  7 terobyte  staff  224 Mar 10 20:54 stealth
+drwxr-xr-x@  2 terobyte  staff   64 Mar 10 15:52 utils

@@ -1,0 +1,22 @@
+{
+  "logging": {
+    "json_output": false,
+    "log_file": "data/logs/careerbot.jsonl",
+    "level": "INFO"
+  },
+  "slug_collection": {
+    "sources": ["greenhouse", "lever", "ashby", "workday", "smartrecruiters"],
+    "limit_per_source": 5000,
+    "output_dir": "data/companies"
+  },
+  "ai": {
+    "default_provider": "gemini",
+    "fallback_provider": "openai",
+    "resume_tailor_model": "claude-3-5-sonnet",
+    "jd_parser_model": "gemini-2.0-flash"
+  },
+  "budgets": {
+    "daily_ai_spend_limit": 10.0,
+    "monthly_ai_spend_limit": 200.0
+  }
+}

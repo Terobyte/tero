@@ -1,0 +1,16 @@
+Tool result: total 520
+-rw-r--r--@  1 terobyte  staff   1095 Mar 13 14:59 __init__.py
+drwxr-xr-x@ 14 terobyte  staff    448 Mar 13 15:06 __pycache__
+drwxr-xr-x@ 15 terobyte  staff    480 Mar 13 14:58 .
+drwxr-xr-x@  9 terobyte  staff    288 Mar 13 13:49 ..
+-rw-r--r--@  1 terobyte  staff  19315 Mar 13 14:58 adaptive_learner.py
+-rw-r--r--@  1 terobyte  staff  25965 Mar 13 15:11 blind_applier.py
+-rw-r--r--@  1 terobyte  staff  26564 Mar 13 13:18 field_finder.py
+-rw-r--r--@  1 terobyte  staff   6657 Mar 13 14:06 models.py
+-rw-r--r--@  1 terobyte  staff  23918 Mar 13 14:27 outcome_detector.py
+-rw-r--r--@  1 terobyte  staff  22542 Mar 13 14:13 page_navigator.py
+-rw-r--r--@  1 terobyte  staff  23300 Mar 13 14:17 recon_agent.py
+-rw-r--r--@  1 terobyte  staff  15453 Mar 13 14:37 replay_recorder.py
+-rw-r--r--@  1 terobyte  staff  23676 Mar 13 13:27 site_pattern_store.py
+-rw-r--r--@  1 terobyte  staff  29212 Mar 13 13:19 vision_form_filler.py
+-rw-r--r--@  1 terobyte  staff  27912 Mar 13 14:13 wizard_engine.py

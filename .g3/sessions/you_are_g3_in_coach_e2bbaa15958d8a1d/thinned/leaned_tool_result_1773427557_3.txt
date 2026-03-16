@@ -1,0 +1,14 @@
+Tool result: ./tests/test_kimi_vision.py
+./tests/test_integration_blind.py
+./src/applier/blind/replay_recorder.py
+./src/applier/blind/models.py
+./src/applier/blind/wizard_engine.py
+./src/applier/blind/blind_applier.py
+./src/applier/blind/field_finder.py
+./src/applier/blind/__init__.py
+./src/applier/blind/vision_form_filler.py
+./src/applier/blind/page_navigator.py
+./src/applier/blind/outcome_detector.py
+./src/applier/blind/site_pattern_store.py
+./src/applier/blind/recon_agent.py
+./src/ai/kimi_vision.py

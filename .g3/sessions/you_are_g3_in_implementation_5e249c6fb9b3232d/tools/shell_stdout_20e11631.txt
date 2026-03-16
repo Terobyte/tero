@@ -1,0 +1,500 @@
+# src/applier/greenhouse_apply.py
+"""
+Greenhouse Applier — Playwright (patchright) форм-филлер.
+
+HTTP POST на boards.greenhouse.io заблокирован антиботом (400 на любой формат).
+Используем stealth-браузер как для Ashby/Indeed.
+
+URL формат:
+  boards-api.greenhouse.io/v1/boards/{token}/jobs/{id}  ← как хранит скрапер
+  → конвертируем в job-boards.greenhouse.io/{token}/jobs/{id}  ← новый UI
+
+Селекторы (React UI):
+  Поля формы: #first_name, #last_name, #email, #phone, #country (по id)
+  Кастомные:  input[id^='question_'] (текстовые, combobox, radio)
+  Файл:       input[type='file'] (первый видимый для resume)
+  Submit:     button[type='submit']
+  Success:    URL содержит /confirmation или /thank
+"""
+
+import asyncio
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from loguru import logger
+
+from src.stealth.browser_stealth import StealthBrowser
+from src.stealth.human_simulator import human_click_safe
+from src.stealth.timing_engine import gaussian_delay
+from src.applier.answer_bank import AnswerBank
+from src.applier.ai_answerer import AIAnswerer
+from src.applier.human_review import HumanReviewPrompter
+from src.applier.gmail_reader import GmailCodeReader
+from src.platforms.base_scraper import Job
+
+
+RESUME_PATH = Path(os.environ.get("RESUME_PDF_PATH", "data/resume.pdf"))
+COVER_LETTER_PATH = Path(os.environ.get("COVER_LETTER_PATH", "data/cover_letter.pdf"))
+SCREENSHOTS_DIR = Path("data/screenshots")
+SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# Greenhouse React UI (job-boards.greenhouse.io) — поля по id, name="" пустой
+SELECTORS = {
+    # Основные поля — по id (React UI)
+    "first_name":  "#first_name",
+    "last_name":   "#last_name",
+    "email":       "#email",
+    "phone":       "#phone",
+    "country":     "#country",
+
+    # Кастомные вопросы — id^='question_'
+    "custom_text": "input[id^='question_']:not([type='hidden']):not([type='radio']):not([type='checkbox']):not([type='file']):not([role='combobox']), "
+                   "textarea[id^='question_']",
+    "custom_combo": "input[id^='question_'][role='combobox']",
+
+    # Radio — по id префиксу
+    "custom_radio": "input[type='radio'][id^='question_']",
+
+    # Submit и успех
+    "submit":  "button[type='submit'], button:has-text('Submit Application'), button:has-text('Submit')",
+    "success": ".confirmation__content, h1:has-text('Thank'), [class*='confirmation'], div:has-text('application has been submitted')",
+}
+
+
+def _parse_greenhouse_url(url: str) -> Tuple[Optional[str], Optional[str]]:
+    """Извлечь board_token и job_id из любого Greenhouse URL."""
+    patterns = [
+        r'boards-api\.greenhouse\.io/v1/boards/([^/?#]+)/jobs/(\d+)',
+        r'(?:boards|job-boards)\.greenhouse\.io/([^/?#]+)/jobs/(\d+)',
+        r'([^./?#]+)\.greenhouse\.io/jobs/(\d+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, url)
+        if m:
+            return m.group(1), m.group(2)
+    return None, None
+
+
+class GreenhouseApplier:
+    """
+    Подаёт заявку на Greenhouse вакансию через patchright stealth-браузер.
+
+    Открывает job-boards.greenhouse.io/{token}/jobs/{id},
+    заполняет форму через Playwright, отправляет Submit.
+    """
+
+    def __init__(self):
+        self.bank = AnswerBank()
+        self.ai = AIAnswerer(profile=self.bank._profile)
+        self._hitl = HumanReviewPrompter()  # bot_mode читается из BOT_MODE env
+
+    def _page_url(self, apply_url: str) -> str:
+        """Конвертировать любой Greenhouse URL в job-boards.greenhouse.io для браузера."""
+        token, job_id = _parse_greenhouse_url(apply_url)
+        if token and job_id:
+            return f"https://job-boards.greenhouse.io/{token}/jobs/{job_id}"
+        # Если не распарсили — используем как есть (браузер сам сделает редиректы)
+        return apply_url
+
+    async def apply_http(self, job: Job, resume_path: str = None) -> Dict[str, Any]:
+        """
+        Подать заявку через Playwright stealth-браузер.
+        Метод называется apply_http для совместимости с IndeedRouter и GreenhouseScraper.
+        """
+        self._job_context = {
+            "job_title": job.title,
+            "company": job.company,
+            "url": job.apply_url or "",
+        }
+        resume_file = Path(resume_path) if resume_path else RESUME_PATH
+        if not resume_file.exists():
+            logger.error(f"❌ Greenhouse: резюме не найдено: {resume_file}")
+            return {"success": False, "error": "resume_not_found"}
+
+        apply_url = job.apply_url
+        if not apply_url:
+            logger.error(f"❌ Greenhouse: нет apply_url у вакансии {job.id}")
+            return {"success": False, "error": "no_apply_url"}
+
+        page_url = self._page_url(apply_url)
+        logger.info(f"🟢 Greenhouse apply: {job.title} @ {job.company} → {page_url}")
+
+        try:
+            async with StealthBrowser(headed=True) as browser:
+                async with await browser.new_context() as ctx:
+                    page = await browser.new_page(ctx)
+                    await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(gaussian_delay(2.0, 3.5))
+
+                    # Стандартные поля (React UI — по id)
+                    await self._fill(page, SELECTORS["first_name"],
+                                     self.bank.get_answer("first_name") or "")
+                    await self._fill(page, SELECTORS["last_name"],
+                                     self.bank.get_answer("last_name") or "")
+                    await self._fill(page, SELECTORS["email"],
+                                     self.bank.get_answer("email") or "")
+                    await self._fill(page, SELECTORS["phone"],
+                                     self.bank.get_answer("phone") or "")
+
+                    # Country — combobox (React dropdown)
+                    await self._fill_combobox(page, SELECTORS["country"],
+                                             self.bank.get_answer("country") or "United States")
+
+                    # EEO / Demographic fields (по прямому id, не question_ префикс)
+                    for field_id in ("gender", "hispanic_ethnicity", "veteran_status", "disability_status"):
+                        answer = self.bank.get_answer(field_id)
+                        if answer:
+                            await self._fill_combobox(page, f"#{field_id}", answer)
+
+                    # Загрузить резюме
+                    await self._upload_resume(page, resume_file)
+
+                    # Cover letter если есть
+                    if COVER_LETTER_PATH.exists():
+                        logger.debug(f"📎 Greenhouse: загружаем cover letter: {COVER_LETTER_PATH}")
+                        await self._upload_cover_letter(page, COVER_LETTER_PATH)
+
+                    # Кастомные вопросы
+                    await self._fill_custom_questions(page)
+
+                    # Скриншот ДО submit — чтобы видеть заполненную форму
+                    safe_company = job.company.lower().replace(' ', '_').replace('/', '_')
+                    job_id_short = str(job.id)[:8]
+                    pre_screenshot = SCREENSHOTS_DIR / f"gh_{safe_company}_{job_id_short}_pre.png"
+                    await page.screenshot(path=str(pre_screenshot), full_page=True)
+                    logger.debug(f"📸 Pre-submit screenshot: {pre_screenshot}")
+
+                    # ── Проверка пустых полей перед Submit ─────────────────
+                    empty_required = await self._find_empty_required_fields(page)
+                    if empty_required:
+                        logger.warning(
+                            f"⚠️ Greenhouse: {len(empty_required)} незаполненных обязательных полей:"
+                        )
+                        for lbl in empty_required:
+                            logger.warning(f"   ❌ {lbl}")
+                        logger.warning(
+                            f"⏸️  Пауза 90 сек — заполните поля вручную в браузере.\n"
+                            f"   Скриншот: {pre_screenshot.name}"
+                        )
+                        await asyncio.sleep(90)
+                        # Пересканируем после паузы
+                        still_empty = await self._find_empty_required_fields(page)
+                        if still_empty:
+                            logger.error(f"🛑 Поля всё ещё пусты: {still_empty} — Submit отменён")
+                            return {
+                                "success": False, "error": "required_fields_empty",
+                                "missing": still_empty, "screenshot_path": str(pre_screenshot),
+                            }
+                        logger.info("✅ Все поля заполнены после паузы — продолжаем Submit")
+                    # ────────────────────────────────────────────────────────
+
+                    # Submit
+                    submit_btn = await page.query_selector(SELECTORS["submit"])
+                    if not submit_btn:
+                        logger.warning("⚠️ Greenhouse: кнопка Submit не найдена")
+                        return {"success": False, "error": "no_submit_button",
+                                "screenshot_path": str(pre_screenshot)}
+
+                    # Явный scroll к кнопке Submit + пауза для рендера.
+                    # Страховка: human_click_safe тоже делает scroll, но здесь
+                    # даём браузеру время перерисовать layout после заполнения полей.
+                    await submit_btn.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.5)
+
+                    submit_text = await submit_btn.inner_text()
+                    logger.info(f"🖱️ Greenhouse: Submit найден ('{submit_text.strip()}'), кликаем...")
+                    await human_click_safe(page, submit_btn)
+                    await asyncio.sleep(gaussian_delay(3.0, 5.0))
+
+                    # ── Security Code (Greenhouse Email Verification) ────────
+                    # После первого submit Greenhouse может показать поле для
+                    # ввода кода из письма — проверяем это и обрабатываем через HITL
+                    security_handled = await self._handle_security_code(page, job)
+                    if security_handled:
+                        # После ввода кода ждём ещё немного
+                        await asyncio.sleep(gaussian_delay(3.0, 5.0))
+                    # ────────────────────────────────────────────────────────
+
+                    # Проверить успех: URL меняется на /confirmation
+                    current_url = page.url
+                    success_el = await page.query_selector(SELECTORS["success"])
+                    logger.debug(f"Greenhouse: URL после submit = {current_url}")
+
+                    # Скриншот ПОСЛЕ submit — видим результат
+                    post_screenshot = SCREENSHOTS_DIR / f"gh_{safe_company}_{job_id_short}_post.png"
+                    await page.screenshot(path=str(post_screenshot), full_page=True)
+                    logger.info(f"📸 Post-submit screenshot: {post_screenshot}")
+
+                    success_confirmed = (
+                        "/confirmation" in current_url
+                        or "thank" in current_url.lower()
+                        or success_el is not None
+                    )
+                    if success_confirmed:
+                        logger.success(f"✅ Greenhouse: подали на {job.title} @ {job.company}")
+                        return {"success": True, "screenshot_path": str(post_screenshot)}
+
+                    logger.warning(
+                        f"⚠️ Greenhouse: успех не подтверждён. URL={current_url}  "
+                        f"success_el={'да' if success_el else 'нет'}. "
+                        f"Смотри скриншоты: {pre_screenshot.name} / {post_screenshot.name}"
+                    )
+                    return {"success": False, "warning": "no_confirmation",
+                            "screenshot_path": str(post_screenshot)}
+
+        except Exception as e:
+            logger.error(f"❌ Greenhouse apply error: {e}")
+            return {"success": False, "error": str(e)}
+
+    # ─── Helpers ────────────────────────────────────────────────────────────
+
+    async def _find_empty_required_fields(self, page) -> list:
+        """
+        Найти все видимые обязательные поля которые пустые.
+        Возвращает список label-строк пустых полей.
+        """
+        empty = []
+        seen_ids = set()
+
+        # Все input/textarea/select с aria-required или required
+        candidates = await page.query_selector_all(
+            "input[aria-required='true'], input[required], "
+            "select[aria-required='true'], select[required], "
+            "textarea[aria-required='true'], textarea[required]"
+        )
+        for el in candidates:
+            el_type = (await el.get_attribute("type") or "text").lower()
+            if el_type in ("hidden", "file", "submit", "button", "reset", "image"):
+                continue
+            if not await el.is_visible():
+                continue
+            # Combobox инпуты (role='combobox') обрабатываются отдельно ниже —
+            # input_value() для react-select всегда "" даже после выбора
+            el_role = (await el.get_attribute("role") or "").lower()
+            if el_role == "combobox":
+                continue
+            el_id = await el.get_attribute("id") or ""
+            if el_id in seen_ids:
+                continue
+            seen_ids.add(el_id)
+
+            tag = await el.evaluate("e => e.tagName.toLowerCase()")
+            if tag == "select":
+                val = await el.evaluate(
+                    "e => e.selectedIndex <= 0 ? '' : (e.options[e.selectedIndex]?.value || '')"
+                )
+            else:
+                val = await el.input_value()
+
+            if not val.strip():
+                label = await self._get_label(page, el)
+                empty.append(label or el_id or "unknown")
+
+        # Также проверяем combobox (React Select — не имеет native required)
+        # Их обязательность определяем по aria-required на самом input
+        # ВАЖНО: после выбора input_value() = "" (react-select очищает текстовый инпут).
+        # Реальное значение — в [class*='single-value'] контейнере рядом с инпутом.
+        combos = await page.query_selector_all("input[role='combobox'][aria-required='true']")
+        for el in combos:
+            if not await el.is_visible():
+                continue
+            el_id = await el.get_attribute("id") or ""
+            if el_id in seen_ids:
+                continue
+            seen_ids.add(el_id)
+            # Проверяем заполнен ли react-select combobox.
+            # Greenhouse использует emotion CSS-in-JS с чистыми хешами (css-1abc234) —
+            # class-based селекторы ненадёжны. Главный метод — структурный (M5).
+            val = await el.evaluate("""
+                (el) => {
+                    // ── M5: Структурный (не требует читаемых class-имён) ─────────────────
+                    // react-select structure: ValueContainer > [singleValue|placeholder, Input > el]
+                    // Когда заполнено: singleValue видим + placeholder скрыт (display:none)
+                    // Когда пусто:     только placeholder видим, hidden-siblings нет
+                    const inputWrapper = el.parentElement;
+                    const vc5 = inputWrapper && inputWrapper.parentElement;
+                    if (vc5) {
+                        let visText = null, hasHiddenSibling = false;
+                        for (const child of vc5.children) {
+                            if (child === inputWrapper || child.contains(el)) continue;
+                            // Пропускаем indicator-иконки (стрелка, крестик)
+                            if (child.querySelector && child.querySelector('svg')) continue;
+                            const st = window.getComputedStyle(child);
+                            const t = child.innerText && child.innerText.trim();
+                            if (!t) continue;
+                            if (st.display === 'none' || st.visibility === 'hidden' || child.offsetParent === null) {
+                                hasHiddenSibling = true;
+                            } else {
+                                visText = t;
+                            }
+                        }
+                        // Заполнено: есть видимый текст (value) И скрытый sibling (placeholder)
+                        if (visText && hasHiddenSibling) return 'M5:' + visText;
+                    }
+
+                    // ── Class-based методы (запасные — работают при семантических классах) ─
+                    // Пробуем первые 4 ancestor-а (не closest() — может уйти слишком далеко)
+                    const ancestors = [];
+                    let node = el;
+                    for (let i = 0; i < 5; i++) {
+                        node = node.parentElement;
+                        if (!node) break;
+                        ancestors.push(node);
+                        if (i >= 3) break;
+                    }
+
+                    // M1: single-value class
+                    for (const anc of ancestors) {
+                        const sv = anc.querySelector(
+                            '[class*="single-value"],[class*="singleValue"],[class*="-singleValue"],[class*="SingleValue"]'
+                        );
+                        if (sv) {
+                            const st = window.getComputedStyle(sv);
+                            if (st.display !== 'none' && st.visibility !== 'hidden' && sv.offsetParent !== null) {
+                                const t = sv.innerText && sv.innerText.trim();
+                                if (t) return 'M1:' + t;
+                            }
+                        }
+                    }
+
+                    // M2: placeholder visibility (react-select всегда скрывает при выборе)
+                    for (const anc of ancestors) {
+                        const ph = anc.querySelector(
+                            '[class*="placeholder"],[class*="-placeholder"],[class*="Placeholder"]'
+                        );
+                        if (ph) {
+                            const st = window.getComputedStyle(ph);
+                            const hidden = st.display === 'none' || st.visibility === 'hidden' || ph.offsetParent === null;
+                            return hidden ? 'M2:__has_value__' : 'M2:__empty__';
+                        }
+                    }
+
+                    // M3: ValueContainer children
+                    for (const anc of ancestors) {
+                        const vcEl = anc.querySelector(
+                            '[class*="ValueContainer"],[class*="value-container"],[class*="-value-container"],[class*="values"]'
+                        );
+                        if (vcEl) {
+                            for (const child of vcEl.children) {
+                                if (child.tagName === 'INPUT' || child.contains(el)) continue;
+                                const st = window.getComputedStyle(child);
+                                if (st.display === 'none') continue;
+                                if ((child.className || '').toLowerCase().includes('placeholder')) continue;
+                                const t = child.innerText && child.innerText.trim();
+                                if (t) return 'M3:' + t;
+                            }
+                        }
+                    }
+
+                    // M4: aria-selected
+                    for (const anc of ancestors) {
+                        const sel = anc.querySelector('[aria-selected="true"]');
+                        if (sel && sel.offsetParent !== null) {
+                            const t = sel.innerText && sel.innerText.trim();
+                            if (t) return 'M4:' + t;
+                        }
+                    }
+
+                    return el.value || '';
+                }
+            """)
+            raw = val.strip()
+            # JS возвращает: 'Mx:value' или 'M2:__has_value__' = заполнено
+            #                'M2:__empty__' или '' = пусто
+            is_empty = (not raw) or (raw == "M2:__empty__")
+            logger.debug(f"Combobox '{el_id}': raw='{raw[:60]}' → {'EMPTY' if is_empty else 'FILLED'}")
+            if is_empty:
+                label = await self._get_label(page, el)
+                empty.append(label or el_id or "unknown combobox")
+
+        return empty
+
+    async def _handle_security_code(self, page, job) -> bool:
+        """
+        Обработать Greenhouse Email Verification (Security Code).
+
+        После submit Greenhouse иногда показывает форму с полем для ввода
+        кода из письма — это стандартная email-верификация, НЕ CAPTCHA.
+
+        Стратегия (полностью автоматическая):
+          1. Проверить появилось ли поле для security code
+          2. Если да — через GmailCodeReader читаем код из почты
+          3. Заполнить поле и нажать Submit сноваа
+
+        Returns:
+            True если security code был обнаружен и обработан
+        """
+        # Селекторы для поля security code (Greenhouse использует разные варианты)
+        CODE_SELECTORS = [
+            "input[name*='security']",
+            "input[placeholder*='security' i]",
+            "input[placeholder*='code' i]",
+            "input[aria-label*='security' i]",
+            "input[aria-label*='code' i]",
+            "input[id*='security']",
+            "input[id*='code'][type='text']",
+            "input[autocomplete='one-time-code']",
+        ]
+        code_el = None
+        for sel in CODE_SELECTORS:
+            el = await page.query_selector(sel)
+            if el and await el.is_visible():
+                code_el = el
+                logger.info(f"🔐 Greenhouse: обнаружен security code field ({sel})")
+                break
+
+        if not code_el:
+            # Дополнительная проверка по тексту на странице
+            page_text = await page.evaluate("() => document.body.innerText")
+            security_keywords = ["security code", "verification code", "confirm your email",
+                                  "enter the code", "check your email"]
+            if not any(kw in page_text.lower() for kw in security_keywords):
+                return False  # Никакого security code нет
+
+            # Текст есть, но поле не нашли — попробуем найти любой видимый text input
+            all_inputs = await page.query_selector_all("input[type='text'], input[type='number']")
+            for inp in all_inputs:
+                if await inp.is_visible():
+                    val = (await inp.input_value()).strip()
+                    if not val:
+                        code_el = inp
+                        logger.info("🔐 Greenhouse: security code field найден по тексту страницы")
+                        break
+
+        if not code_el:
+            logger.debug("🔐 Greenhouse: security code field не обнаружен")
+            return False
+
+        # Скриншот — видим что случилось
+        safe_company = job.company.lower().replace(' ', '_').replace('/', '_')
+        code_screenshot = SCREENSHOTS_DIR / f"gh_{safe_company}_security_code.png"
+        await page.screenshot(path=str(code_screenshot), full_page=False)
+        logger.info(f"📸 Security code screenshot: {code_screenshot}")
+
+        # Автоматически читаем код из Gmail
+        email_addr = self.bank.get_answer("email") or ""
+        code = None
+
+        gmail_reader = GmailCodeReader.from_env(email_addr)
+        if gmail_reader:
+            logger.info(f"📧 GmailReader: ждём письмо от Greenhouse на {email_addr}...")
+            # Читаем в отдельном потоке — не блокируем event loop
+            import asyncio
+            code = await asyncio.to_thread(
+                gmail_reader.fetch_security_code,
+                30,   # ждём письмо макс 30 секунд
+                3,    # проверяем каждые 3 секунды
+            )
+        else:
+            logger.warning(
+                "📧 GmailReader: GMAIL_APP_PASSWORD не настроен.\n"
+                "   Добавьте GMAIL_APP_PASSWORD в .env и повторите."
+            )
+
+        if not code:
+            logger.error("🔐 Greenhouse: security code не получен — пропускаем submit")
+            return False
+
+        # Вводим код автоматически

@@ -1,0 +1,176 @@
+Tool result: 📋 Plan 'top10-features-implementation' rev 1 (approved at rev 1): 5/10 done, 0 doing, 0 blocked, 5 todo
+
+```yaml
+plan_id: top10-features-implementation
+revision: 1
+approved_revision: 1
+items:
+- id: I1
+  description: WebRTC Leak Prevention - Add flags to browser_stealth.py
+  state: done
+  touches:
+  - src/stealth/browser_stealth.py
+  checks:
+    happy:
+      desc: WebRTC flags present in launch args
+      target: browser_stealth.py
+    negative:
+    - desc: Flags work even without proxy
+      target: browser_stealth.py
+    boundary:
+    - desc: ICE candidates empty with flags
+      target: tests/stealth/test_webrtc_leak.py
+  evidence:
+  - src/stealth/browser_stealth.py
+  notes: WebRTC flags already added to STEALTH_ARGS and check_fingerprint_exposure
+- id: I2
+  description: Screening Batch Validation - Create session_context.py and batch_validator.py
+  state: todo
+  touches:
+  - src/applier/universal_screening/session_context.py
+  - src/applier/universal_screening/batch_validator.py
+  checks:
+    happy:
+      desc: BatchValidator validates session and returns corrections
+      target: batch_validator.py
+    negative:
+    - desc: Empty session returns empty corrections
+      target: batch_validator.py
+    boundary:
+    - desc: Critical errors are properly flagged
+      target: batch_validator.py
+- id: I3
+  description: Slug Collection - Create CDX slug collector scripts
+  state: todo
+  touches:
+  - scripts/collect_cdx_slugs.py
+  - scripts/validate_slugs.py
+  checks:
+    happy:
+      desc: CDX API returns slugs
+      target: scripts/collect_cdx_slugs.py
+    negative:
+    - desc: Invalid ATS raises error
+      target: scripts/collect_cdx_slugs.py
+    boundary:
+    - desc: Junk slugs are filtered
+      target: scripts/collect_cdx_slugs.py
+- id: I4
+  description: LinkedIn Voyager API - Create API client
+  state: todo
+  touches:
+  - src/platforms/linkedin_voyager.py
+  checks:
+    happy:
+      desc: VoyagerClient searches jobs via API
+      target: linkedin_voyager.py
+    negative:
+    - desc: 401 error handled gracefully
+      target: linkedin_voyager.py
+    boundary:
+    - desc: Empty response parsed correctly
+      target: linkedin_voyager.py
+- id: I5
+  description: RAG + BERT Embeddings - SemanticAnswerBank already exists
+  state: done
+  touches:
+  - src/applier/semantic_answer_bank.py
+  checks:
+    happy:
+      desc: Semantic search finds similar questions
+      target: semantic_answer_bank.py
+    negative:
+    - desc: Unrelated question returns None
+      target: semantic_answer_bank.py
+    boundary:
+    - desc: Regex match takes priority over semantic
+      target: semantic_answer_bank.py
+  evidence:
+  - src/applier/semantic_answer_bank.py
+  notes: SemanticAnswerBank already implemented with BERT + FAISS
+- id: I6
+  description: Canvas Noise Injection v2 - Already implemented in fingerprint_scripts.py
+  state: done
+  touches:
+  - src/stealth/fingerprint_scripts.py
+  checks:
+    happy:
+      desc: Canvas hash differs across sessions
+      target: fingerprint_scripts.py
+    negative:
+    - desc: Noise script handles errors gracefully
+      target: fingerprint_scripts.py
+    boundary:
+    - desc: Different seeds produce different scripts
+      target: fingerprint_scripts.py
+  evidence:
+  - src/stealth/fingerprint_scripts.py
+  notes: canvas_noise_script with getImageData/toDataURL/toBlob patches
+- id: I7
+  description: AudioContext Fingerprint Spoofing - Already implemented
+  state: done
+  touches:
+  - src/stealth/fingerprint_scripts.py
+  checks:
+    happy:
+      desc: Audio hash differs across sessions
+      target: fingerprint_scripts.py
+    negative:
+    - desc: Handles missing AudioContext
+      target: fingerprint_scripts.py
+    boundary:
+    - desc: Noise level imperceptible
+      target: fingerprint_scripts.py
+  evidence:
+  - src/stealth/fingerprint_scripts.py
+  notes: audio_noise_script with getChannelData/getFloatFrequencyData patches
+- id: I8
+  description: Battery API Spoofing - Already implemented
+  state: done
+  touches:
+  - src/stealth/fingerprint_scripts.py
+  checks:
+    happy:
+      desc: getBattery returns laptop-like values
+      target: fingerprint_scripts.py
+    negative:
+    - desc: Works even without native Battery API
+      target: fingerprint_scripts.py
+    boundary:
+    - desc: Level in 65-95% range
+      target: fingerprint_scripts.py
+  evidence:
+  - src/stealth/fingerprint_scripts.py
+  notes: battery_spoof_script with realistic laptop battery values
+- id: I9
+  description: Indeed GraphQL API - Create API client
+  state: todo
+  touches:
+  - src/platforms/indeed_api.py
+  checks:
+    happy:
+      desc: IndeedAPIClient searches jobs via GraphQL
+      target: indeed_api.py
+    negative:
+    - desc: 401 error handled gracefully
+      target: indeed_api.py
+    boundary:
+    - desc: Malformed response parsed safely
+      target: indeed_api.py
+- id: I10
+  description: Geo-Location Consistency Check - Create validator
+  state: todo
+  touches:
+  - src/stealth/geo_consistency.py
+  checks:
+    happy:
+      desc: Consistent timezone passes check
+      target: geo_consistency.py
+    negative:
+    - desc: Mismatch detected and reported
+      target: geo_consistency.py
+    boundary:
+    - desc: Unknown region returns None
+      target: geo_consistency.py
+```
+_No envelope generated._

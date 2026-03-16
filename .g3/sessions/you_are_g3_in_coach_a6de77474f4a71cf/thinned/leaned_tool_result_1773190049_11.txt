@@ -1,0 +1,643 @@
+Tool result: """
+AI Fallback Chain - Multi-provider LLM fallback system.
+
+Phase 2: Provides resilience through multiple LLM providers.
+When one fails (rate limit, timeout), automatically tries the next.
+
+Providers:
+- Gemini Flash (primary)
+- Kimi 2.5 (fallback)
+- DeepSeek (fallback)
+"""
+
+import asyncio
+import logging
+import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
+
+
+class ProviderError(Exception):
+    """Base exception for provider errors."""
+    pass
+
+
+class RateLimitError(ProviderError):
+    """Rate limit exceeded."""
+    pass
+
+
+class TimeoutError(ProviderError):
+    """Request timeout."""
+    pass
+
+
+class APIError(ProviderError):
+    """Generic API error."""
+    pass
+
+
+@dataclass
+class ProviderConfig:
+    """Configuration for an LLM provider."""
+    name: str
+    model: str
+    api_key_env: str
+    endpoint: str | None = None
+    max_retries: int = 2
+    timeout_seconds: int = 30
+    cost_per_1k_tokens: float = 0.0  # For budget tracking
+
+
+class ProviderType(Enum):
+    """Supported LLM providers."""
+    GEMINI = "gemini"
+    BLACKBOXAI = "blackboxai"  # Kimi
+    OPENROUTER = "openrouter"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
+# Default fallback chain configuration
+AI_FALLBACK_CHAIN: list[ProviderConfig] = [
+    ProviderConfig(
+        name="gemini",
+        model="gemini-2.0-flash",
+        api_key_env="GEMINI_API_KEY",
+        endpoint="https://generativelanguage.googleapis.com/v1beta/models",
+        cost_per_1k_tokens=0.0001,
+    ),
+    ProviderConfig(
+        name="blackboxai",
+        model="kimi-2.5",
+        api_key_env="BLACKBOX_API_KEY",
+        endpoint="https://api.blackbox.ai/v1/chat/completions",
+        cost_per_1k_tokens=0.0005,
+    ),
+    ProviderConfig(
+        name="openrouter",
+        model="deepseek/deepseek-chat-v3:free",
+        api_key_env="OPENROUTER_API_KEY",
+        endpoint="https://openrouter.ai/api/v1/chat/completions",
+        cost_per_1k_tokens=0.0,  # Free tier
+    ),
+]
+
+
+def fuzzy_match(
+    query: str,
+    options: list[str],
+    threshold: float = 0.65,
+) -> str | None:
+    """
+    Find the best fuzzy match for a query in a list of options.
+    
+    Uses multiple matching strategies:
+    1. Exact match
+    2. Case-insensitive match
+    3. Substring match
+    4. Word-based similarity
+    
+    Args:
+        query: The string to match
+        options: List of options to search
+        threshold: Minimum similarity score (0.0 to 1.0)
+    
+    Returns:
+        Best matching option or None if no match above threshold
+    """
+    if not query or not options:
+        return None
+    
+    query_lower = query.lower().strip()
+    
+    # 1. Exact match
+    for opt in options:
+        if opt.lower().strip() == query_lower:
+            return opt
+    
+    # 2. Substring match
+    for opt in options:
+        opt_lower = opt.lower().strip()
+        if query_lower in opt_lower or opt_lower in query_lower:
+            return opt
+    
+    # 3. Word overlap similarity
+    query_words = set(query_lower.split())
+    best_match = None
+    best_score = 0.0
+    
+    for opt in options:
+        opt_words = set(opt.lower().split())
+        overlap = len(query_words & opt_words)
+        total = len(query_words | opt_words)
+        score = overlap / total if total > 0 else 0.0
+        
+        if score > best_score and score >= threshold:
+            best_score = score
+            best_match = opt
+    
+    return best_match
+
+
+@dataclass
+class LLMResponse:
+    """Response from an LLM call."""
+    provider: str
+    model: str
+    content: str
+    usage: dict = field(default_factory=dict)
+    latency_ms: int = 0
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    error: str | None = None
+
+
+@dataclass
+class CallResult:
+    """Result of calling the fallback chain."""
+    success: bool
+    response: LLMResponse | None = None
+    provider_used: str | None = None
+    total_attempts: int = 0
+    total_latency_ms: int = 0
+
+
+class LLMChain:
+    """
+    Multi-provider LLM fallback chain.
+    
+    Tries providers in order until one succeeds or all fail.
+    Handles rate limits, timeouts, and API errors gracefully.
+    """
+    
+    def __init__(
+        self,
+        chain: list[ProviderConfig] | None = None,
+        budget_tracker: Any = None,  # ApplicationBudget
+    ):
+        self.chain = chain or AI_FALLBACK_CHAIN
+        self.budget_tracker = budget_tracker
+        self._provider_status: dict[str, dict] = {}
+        # Track provider health
+        for provider in self.chain:
+            self._provider_status[provider.name] = {
+                "healthy": True,
+                "last_error": None,
+                "error_count": 0,
+                "last_success": None,
+            }
+    
+    async def call(
+        self,
+        prompt: str,
+        screenshot: bytes | None = None,
+        context: dict | None = None,
+        verify_fn: Callable | None = None,
+        page: Any = None,
+    ) -> CallResult:
+        """
+        Call the fallback chain with verification.
+        
+        Args:
+            prompt: Text prompt for the LLM
+            screenshot: Optional screenshot bytes for vision models
+            context: Additional context for the call
+            verify_fn: Optional async function to verify result
+                       Signature: async fn(page, result) -> bool
+            page: Page object for verification
+        
+        Returns:
+            CallResult with success status and response details
+        """
+        total_attempts = 0
+        total_latency_ms = 0
+        
+        for provider in self.chain:
+            total_attempts += 1
+            
+            # Check budget before calling
+            if self.budget_tracker and not self.budget_tracker.check():
+                logger.warning(f"⚠️ Budget exhausted, skipping {provider.name}")
+                continue
+            
+            # Skip unhealthy providers (but try them on retries)
+            if self._is_provider_unhealthy(provider.name):
+                logger.debug(f"Skipping unhealthy provider: {provider.name}")
+                continue
+            
+            try:
+                start_time = datetime.utcnow()
+                
+                result = await self._call_provider(
+                    provider=provider,
+                    prompt=prompt,
+                    screenshot=screenshot,
+                    context=context,
+                )
+                
+                latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                total_latency_ms += latency_ms
+                
+                if not result or not result.content:
+                    self._record_error(provider.name, "Empty response")
+                    continue
+                
+                # Verify result if verify_fn provided
+                if verify_fn and page:
+                    try:
+                        verified = await verify_fn(page, result.content)
+                        if not verified:
+                            logger.warning(f"⚠️ {provider.name} result failed verification")
+                            self._record_error(provider.name, "Verification failed")
+                            continue
+                    except Exception as e:
+                        logger.warning(f"⚠️ Verification error: {e}")
+                        continue
+                
+                # Success!
+                self._record_success(provider.name)
+                
+                if self.budget_tracker:
+                    self.budget_tracker.record_llm_call(
+                        provider=provider.name,
+                        tokens=result.usage.get("total_tokens", 0),
+                        cost=result.usage.get("cost", 0),
+                    )
+                
+                return CallResult(
+                    success=True,
+                    response=result,
+                    provider_used=provider.name,
+                    total_attempts=total_attempts,
+                    total_latency_ms=total_latency_ms,
+                )
+                
+            except RateLimitError as e:
+                logger.warning(f"⚠️ {provider.name} rate limited: {e}")
+                self._record_error(provider.name, "rate_limit")
+                continue
+                
+            except TimeoutError as e:
+                logger.warning(f"⚠️ {provider.name} timeout: {e}")
+                self._record_error(provider.name, "timeout")
+                continue
+                
+            except APIError as e:
+                logger.warning(f"⚠️ {provider.name} API error: {e}")
+                self._record_error(provider.name, str(e))
+                continue
+                
+            except Exception as e:
+                logger.error(f"❌ {provider.name} unexpected error: {e}")
+                self._record_error(provider.name, str(e))
+                continue
+        
+        # All providers failed
+        return CallResult(
+            success=False,
+            total_attempts=total_attempts,
+            total_latency_ms=total_latency_ms,
+        )
+    
+    async def _call_provider(
+        self,
+        provider: ProviderConfig,
+        prompt: str,
+        screenshot: bytes | None,
+        context: dict | None,
+    ) -> LLMResponse | None:
+        """
+        Call a specific provider.
+        
+        This is a stub that should be implemented with actual API calls.
+        """
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            logger.warning(f"⚠️ No API key for {provider.name} ({provider.api_key_env})")
+            return None
+        
+        # Provider-specific implementations
+        if provider.name == "gemini":
+            return await self._call_gemini(provider, prompt, screenshot, context)
+        elif provider.name == "blackboxai":
+            return await self._call_blackboxai(provider, prompt, screenshot, context)
+        elif provider.name == "openrouter":
+            return await self._call_openrouter(provider, prompt, screenshot, context)
+        else:
+            logger.warning(f"⚠️ Unknown provider: {provider.name}")
+            return None
+    
+    async def _call_gemini(
+        self,
+        provider: ProviderConfig,
+        prompt: str,
+        screenshot: bytes | None,
+        context: dict | None,
+    ) -> LLMResponse | None:
+        """Call Gemini API."""
+        try:
+            # Import here to avoid dependency issues
+            import google.generativeai as genai
+        except ImportError:
+            logger.warning("⚠️ google-generativeai not installed")
+            return None
+        
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            return None
+        
+        genai.configure(api_key=api_key)
+        
+        model = genai.GenerativeModel(provider.model)
+        
+        content_parts = []
+        content_parts.append(prompt)
+        
+        if screenshot:
+            # Add image for vision model
+            content_parts.append({
+                "mime_type": "image/png",
+                "data": screenshot,
+            })
+        
+        try:
+            response = await asyncio.to_thread(
+                model.generate_content,
+                content_parts,
+            )
+            
+            return LLMResponse(
+                provider=provider.name,
+                model=provider.model,
+                content=response.text,
+                usage={
+                    "prompt_tokens": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
+                    "completion_tokens": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0,
+                },
+            )
+            
+        except Exception as e:
+            if "429" in str(e) or "rate" in str(e).lower():
+                raise RateLimitError(str(e))
+            elif "timeout" in str(e).lower():
+                raise TimeoutError(str(e))
+            else:
+                raise APIError(str(e))
+    
+    async def _call_blackboxai(
+        self,
+        provider: ProviderConfig,
+        prompt: str,
+        screenshot: bytes | None,
+        context: dict | None,
+    ) -> LLMResponse | None:
+        """Call BlackboxAI/Kimi API."""
+        # Stub - implement with actual API call
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            return None
+        
+        # TODO: Implement actual API call
+        logger.warning(f"⚠️ BlackboxAI integration not implemented")
+        return None
+    
+    async def _call_openrouter(
+        self,
+        provider: ProviderConfig,
+        prompt: str,
+        screenshot: bytes | None,
+        context: dict | None,
+    ) -> LLMResponse | None:
+        """Call OpenRouter API."""
+        # Stub - implement with actual API call
+        api_key = os.environ.get(provider.api_key_env)
+        if not api_key:
+            return None
+        
+        # TODO: Implement actual API call
+        logger.warning(f"⚠️ OpenRouter integration not implemented")
+        return None
+    
+    def _is_provider_unhealthy(self, provider_name: str) -> bool:
+        """Check if a provider is marked unhealthy."""
+        status = self._provider_status.get(provider_name, {})
+        return (
+            status.get("error_count", 0) >= 3
+            and status.get("healthy", True) is False
+        )
+    
+    def _record_error(self, provider_name: str, error: str):
+        """Record a provider error."""
+        status = self._provider_status.get(provider_name, {})
+        status["error_count"] = status.get("error_count", 0) + 1
+        status["last_error"] = error
+        status["last_error_time"] = datetime.utcnow()
+        
+        # Mark unhealthy after 3 consecutive errors
+        if status["error_count"] >= 3:
+            status["healthy"] = False
+            logger.warning(f"⚠️ Provider {provider_name} marked unhealthy")
+    
+    def _record_success(self, provider_name: str):
+        """Record a provider success."""
+        status = self._provider_status.get(provider_name, {})
+        status["healthy"] = True
+        status["error_count"] = 0
+        status["last_success"] = datetime.utcnow()
+        self._provider_status[provider_name] = status
+    
+    def get_provider_status(self) -> dict:
+        """Get health status of all providers."""
+        return self._provider_status.copy()
+
+
+# Convenience function
+async def call_chain_verified(
+    page: Any,
+    screenshot: bytes,
+    prompt: str,
+    verify_fn: Callable | None = None,
+    chain: list[ProviderConfig] | None = None,
+    budget_tracker: Any = None,
+) -> dict | None:
+    """
+    Convenience function to call the fallback chain.
+    
+    Returns the result content if successful, None otherwise.
+    """
+    llm_chain = LLMChain(chain=chain, budget_tracker=budget_tracker)
+    result = await llm_chain.call(
+        prompt=prompt,
+        screenshot=screenshot,
+        verify_fn=verify_fn,
+        page=page,
+    )
+    
+    if result.success and result.response:
+        return {"content": result.response.content, "provider": result.provider_used}
+    
+    return None
+
+
+async def ai_choose_option(
+    question: str,
+    options: list[str],
+    page: Any = None,
+    screenshot: bytes | None = None,
+) -> str | None:
+    """
+    Use AI to choose the best option from a list.
+    
+    Used by fill_select() when fuzzy matching fails.
+    
+    Args:
+        question: The question/prompt to match
+        options: List of available options
+        page: Optional page for screenshot
+        screenshot: Optional pre-captured screenshot
+    
+    Returns:
+        Best matching option or None
+    """
+    prompt = f"""Choose the best option from this list that matches the question.
+
+Question: {question}
+
+Available options:
+{chr(10).join(f"{i+1}. {opt}" for i, opt in enumerate(options))}
+
+Respond with ONLY the option text (exact match) or the number.
+If none match well, respond with "NONE".
+"""
+    
+    if screenshot:
+        prompt += "\n\nAlso consider the visual context in the screenshot."
+    
+    result = await call_chain_verified(
+        page=page,
+        screenshot=screenshot,
+        prompt=prompt,
+    )
+    
+    if not result:
+        return None
+    
+    content = result.get("content", "").strip()
+    
+    # Try to match against options
+    # First try exact match
+    if content in options:
+        return content
+    
+    # Try case-insensitive match
+    content_lower = content.lower()
+    for opt in options:
+        if opt.lower() == content_lower:
+            return opt
+    
+    # Try number match
+    try:
+        num = int(content)
+        if 1 <= num <= len(options):
+            return options[num - 1]
+    except ValueError:
+        pass
+    
+    # Try partial match
+    for opt in options:
+        if content_lower in opt.lower() or opt.lower() in content_lower:
+            return opt
+    
+    logger.warning(f"⚠️ AI response '{content}' doesn't match any option")
+    return None
+
+
+async def ai_click_fallback(
+    page: Any,
+    screenshot: bytes,
+    element_description: str,
+    action_type: str = "click",
+    verify_fn: Callable | None = None,
+) -> bool:
+    """
+    AI-based click fallback when all DOM strategies fail.
+    
+    Uses vision model to identify element coordinates and click.
+    
+    Args:
+        page: Playwright page object
+        screenshot: Screenshot bytes of the page
+        element_description: Description of what element to click
+        action_type: Type of action - "click", "check", or "uncheck"
+        verify_fn: Optional verification function after action
+    
+    Returns:
+        True if action succeeded, False otherwise
+    """
+    if not screenshot:
+        logger.warning("⚠️ ai_click_fallback: no screenshot provided")
+        return False
+    
+    prompt = f"""Look at the screenshot and identify the {element_description}.
+
+The screenshot has numbered bounding boxes on interactive elements.
+Find the element that matches: {element_description}
+
+Respond with:
+1. The box number of the element
+2. The coordinates if visible (format: x,y)
+
+If you cannot find the element, respond with "NOT_FOUND".
+"""
+    
+    result = await call_chain_verified(
+        page=page,
+        screenshot=screenshot,
+        prompt=prompt,
+    )
+    
+    if not result:
+        logger.warning("⚠️ ai_click_fallback: all providers failed")
+        return False
+    
+    content = result.get("content", "").strip()
+    
+    # Parse the response to get coordinates
+    import re
+    
+    # Try to extract box number
+    box_match = re.search(r'box\s*(\d+)', content, re.IGNORECASE)
+    if box_match:
+        # We need to get coordinates from bounding boxes
+        # This would be injected by inject_bounding_boxes
+        # For now, we'll try to extract coordinates directly
+        pass
+    
+    # Try to extract coordinates directly
+    coord_match = re.search(r'(\d+)\s*,\s*(\d+)', content)
+    if coord_match:
+        x, y = int(coord_match.group(1)), int(coord_match.group(2))
+        
+        try:
+            if action_type == "click":
+                await page.mouse.click(x, y)
+            else:
+                # For check/uncheck, we click at the coordinates
+                await page.mouse.click(x, y)
+            
+            # Verify if verification function provided
+            if verify_fn:
+                return await verify_fn(page)
+            
+            return True
+        except Exception as e:
+            logger.error(f"❌ ai_click_fallback: click failed: {e}")
+            return False
+    
+    logger.warning(f"⚠️ ai_click_fallback: could not parse coordinates from: {content}")
+    return False
+🔍 642 lines read

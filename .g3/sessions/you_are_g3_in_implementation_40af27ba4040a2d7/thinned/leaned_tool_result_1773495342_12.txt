@@ -1,0 +1,147 @@
+Tool result: # src/stealth/geo_consistency.py
+"""
+GeoConsistencyValidator — проверяет соответствие IP геолокации и браузерного timezone.
+
+Использование:
+    validator = GeoConsistencyValidator()
+    result = await validator.check(page, proxy_ip="104.18.0.1")
+    if not result.is_consistent:
+        # Нужно пересоздать контекст с правильным timezone
+        correct_tz = result.expected_timezone
+"""
+import asyncio
+from dataclasses import dataclass
+from typing import Optional
+import httpx
+from loguru import logger
+
+
+# Маппинг: country/state → timezone (для USA)
+US_STATE_TO_TIMEZONE = {
+    "NY": "America/New_York", "MA": "America/New_York",
+    "PA": "America/New_York", "NJ": "America/New_York",
+    "VA": "America/New_York", "DC": "America/New_York",
+    "FL": "America/New_York", "GA": "America/New_York",
+    "OH": "America/New_York", "MI": "America/Detroit",
+    "IL": "America/Chicago", "TX": "America/Chicago",
+    "MN": "America/Chicago", "MO": "America/Chicago",
+    "CO": "America/Denver", "AZ": "America/Phoenix",
+    "UT": "America/Denver", "CA": "America/Los_Angeles",
+    "WA": "America/Los_Angeles", "OR": "America/Los_Angeles",
+    "NV": "America/Los_Angeles", "AK": "America/Anchorage",
+    "HI": "Pacific/Honolulu",
+}
+
+
+@dataclass
+class GeoCheckResult:
+    is_consistent: bool
+    browser_timezone: str
+    ip_timezone: Optional[str]  # что должно быть
+    proxy_ip: Optional[str]
+    ip_city: Optional[str]
+    ip_country: Optional[str]
+    mismatch_detail: Optional[str] = None
+
+
+class GeoConsistencyValidator:
+    """Проверяет соответствие IP локации и браузерного timezone."""
+
+    def __init__(self):
+        self._ip_cache: dict[str, dict] = {}
+
+    async def check(
+        self, page, proxy_ip: Optional[str] = None
+    ) -> GeoCheckResult:
+        """
+        Проверяет geo consistency.
+
+        Args:
+            page: Playwright page
+            proxy_ip: IP прокси (если None — используем текущий внешний IP)
+
+        Returns:
+            GeoCheckResult с деталями
+        """
+        # Читаем timezone браузера
+        browser_tz = await page.evaluate(
+            "() => Intl.DateTimeFormat().resolvedOptions().timeZone"
+        )
+
+        # Определяем реальный IP (если не передан)
+        if not proxy_ip:
+            proxy_ip = await self._get_current_ip()
+
+        if not proxy_ip:
+            # Не можем проверить — считаем OK
+            return GeoCheckResult(
+                is_consistent=True,
+                browser_timezone=browser_tz,
+                ip_timezone=None,
+                proxy_ip=None,
+                ip_city=None,
+                ip_country=None,
+            )
+
+        # Получаем гео данные IP
+        geo = await self._get_ip_geo(proxy_ip)
+        expected_tz = self._infer_timezone(geo)
+
+        is_ok = (expected_tz is None) or (browser_tz == expected_tz)
+
+        if not is_ok:
+            logger.warning(
+                f"Geo mismatch: proxy_ip={proxy_ip} ({geo.get('city')}) "
+                f"expects TZ={expected_tz}, but browser TZ={browser_tz}"
+            )
+
+        return GeoCheckResult(
+            is_consistent=is_ok,
+            browser_timezone=browser_tz,
+            ip_timezone=expected_tz,
+            proxy_ip=proxy_ip,
+            ip_city=geo.get("city"),
+            ip_country=geo.get("countryCode"),
+            mismatch_detail=(
+                f"IP in {geo.get('city')} expects {expected_tz}, browser has {browser_tz}"
+                if not is_ok else None
+            ),
+        )
+
+    async def _get_ip_geo(self, ip: str) -> dict:
+        """Запрос к ip-api.com — бесплатно, без ключа, 45 req/min."""
+        if ip in self._ip_cache:
+            return self._ip_cache[ip]
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"http://ip-api.com/json/{ip}",
+                    params={"fields": "countryCode,regionCode,city,timezone"},
+                )
+                data = resp.json()
+                self._ip_cache[ip] = data
+                return data
+        except Exception as e:
+            logger.warning(f"IP geo lookup failed for {ip}: {e}")
+            return {}
+
+    async def _get_current_ip(self) -> Optional[str]:
+        """Определяем текущий внешний IP."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get("https://api.ipify.org?format=json")
+                return resp.json().get("ip")
+        except Exception:
+            return None
+
+    def _infer_timezone(self, geo: dict) -> Optional[str]:
+        """Определяет ожидаемый timezone по гео данным IP."""
+        # ip-api.com часто возвращает timezone напрямую
+        if tz := geo.get("timezone"):
+            return tz
+        # Fallback: по штату США
+        region = geo.get("regionCode", "")
+        return US_STATE_TO_TIMEZONE.get(region)
+
+🔍 145 lines read

@@ -1,0 +1,239 @@
+Tool result: # src/applier/greenhouse/combobox_js.py
+"""
+JS-шаблоны для page.evaluate() — вынесены из combobox_engine.py для читаемости.
+
+Все JS-строки как Python-константы.Изменения в JS логике не требуют чтения Python кода.
+"""
+
+# Получить все опции из видимого listbox# Greenhouse использует CSS-классы ('-option') вместо role='option'
+GET_OPTS_JS = """
+    (el) => {
+        // Сначала пробуем aria-owns/aria-controls
+        const ownedId = el.getAttribute('aria-owns') || el.getAttribute('aria-controls');
+        let list = ownedId ? document.getElementById(ownedId) : null;
+        if (!list) {
+            // Видимый listbox по role
+            for (const lb of document.querySelectorAll("[role='listbox']")) {
+                if (lb.offsetParent !== null) { list = lb; break; }            }
+        }
+        if (!list) {
+            // Видимый menu-контейнер (react-select / Greenhouse custom)
+            for (const m of document.querySelectorAll("[class*='menu']")) {
+                const cls = m.className || '';
+                if (m.offsetParent !== null && !cls.match(/control|container|indicator/i)) {
+                    list = m; break;
+                }
+            }
+        }
+        if (!list) return [];
+        // Ищем опции: сначала role='option', потом CSS-class паттерн
+        let opts = Array.from(list.querySelectorAll("[role='option']"));
+        if (opts.length === 0) {
+            opts = Array.from(list.querySelectorAll("[class*='-option']")).filter(o => {
+                const cls = o.className || '';
+                return o.offsetParent !== null && !cls.match(/control|container|placeholder|group-heading/i);
+            });
+        }
+        return opts.map(o => ({ text: o.innerText.trim(), id: o.id || '' }));
+    }
+"""
+
+# Найти кнопку "Other" / "I don't see my school" в dropdown
+FIND_OTHER_OPTION_JS = """
+    () => {
+        const keywords = ["other", "not listed", "i don't see", "don't see",
+                           "none of the above", "not in the list",
+                           "my school", "school not listed", "can't find"];
+        // Ищем в любом видимом dropdown/menu/listbox И рядом с ним
+        const candidates = document.querySelectorAll(
+            "[role='option'], [class*='-option'], " +
+            "[role='listbox'] *, [class*='menu'] *, " +
+            "[class*='select'] button, [class*='select'] a, " +
+            "[class*='menu'] button, [class*='menu'] a, " +
+            "[class*='menu'] div, [class*='menu'] span"
+        );
+        for (const el of candidates) {
+            if (el.offsetParent === null) continue;
+            const t = (el.innerText || el.textContent || '').trim();
+            if (t.length < 3 || t.length > 150) continue;
+            const tl = t.toLowerCase();
+            for (const kw of keywords) {
+                if (tl.includes(kw)) {
+                    el.scrollIntoView({block: 'center', behavior: 'instant'});
+                    const r = el.getBoundingClientRect();
+                    return {
+                        text: t, tag: el.tagName,
+                        id: el.id || '', cls: el.className || '',
+                        x: r.x + r.width / 2, y: r.y + r.height / 2
+                    };
+                }
+            }
+        }
+        return null;
+    }
+"""
+
+# Найти кнопку "I don't see my school" в широкой области вокруг combobox
+FIND_SCHOOL_OTHER_JS = """
+    (el) => {
+        const keywords = [
+            "don't see", "dont see", "not listed", "not in the list",
+            "other", "i don't see my school", "school not listed",
+            "none of the above", "can't find"
+        ];
+        // Поднимаемся по 6 ancestor-ам от combobox-инпута
+        let container = el;
+        for (let i = 0; i < 6; i++) {
+            container = container.parentElement;
+            if (!container) break;
+        }
+        if (!container) container = document.body;
+        // Ищем кликабельные элементы: button, a, option, div/span с нужными словами
+        const candidates = container.querySelectorAll(
+            'button, a, [role="option"], [class*="-option"], ' +
+            '[class*="menu"] *, [role="listbox"] *, div, span, li'
+        );
+        for (const c of candidates) {
+            if (c.offsetParent === null) continue;
+            const t = (c.innerText || c.textContent || '').trim();
+            const tl = t.toLowerCase();
+            if (tl.length < 3 || tl.length > 150) continue;
+            for (const kw of keywords) {
+                if (tl.includes(kw)) {
+                    c.scrollIntoView({block: 'center', behavior: 'instant'});
+                    const r = c.getBoundingClientRect();
+                    return {
+                        text: t, tag: c.tagName, id: c.id || '',
+                        x: r.x + r.width / 2, y: r.y + r.height / 2
+                    };
+                }
+            }
+        }
+        return null;
+    }
+"""
+
+# Кликнуть по тексту через JS dispatchEvent
+CLICK_BY_TEXT_JS = """
+    (text) => {
+        for (const el of document.querySelectorAll(
+            "[role='option'], [class*='-option'], " +
+            "[role='listbox'] *, [class*='menu'] *, " +
+            "button, a, [class*='select'] *, div, span, li"
+        )) {
+            if (el.offsetParent === null) continue;
+            const t = (el.innerText || '').trim();
+            if (t === text || t.toLowerCase() === text.toLowerCase()) {
+                // Полная цепочка событий мыши (React слушает именно их)
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+                el.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+                return true;
+            }
+        }
+        return false;
+    }
+"""
+
+# Открыть dropdown через JS-клик по control-контейнеру
+OPEN_CONTROL_JS = """
+    (el) => {
+        const control = el.closest('[class*="control"]') ||
+                        el.closest('[class*="Select"]') ||
+                        el.parentElement?.closest('[class*="container"]');
+        if (control) control.click();
+        else el.click();
+    }
+"""
+
+# Найти поле "Other (specify)" после выбора Other в combobox
+FIND_OTHER_TEXT_INPUT_JS = """
+    (el) => {
+        // Ищем в том же контейнере-секции
+        const container = el.closest(
+            '[class*="education"], [class*="section"], fieldset, ' +
+            '[class*="group"], [class*="row"], form'
+        ) || el.parentElement;
+        if (!container) return null;
+        const candidates = container.querySelectorAll(
+            'input[type="text"], input:not([type]):not([role="combobox"])'
+        );
+        for (const inp of candidates) {
+            // Пропускаем сам combobox и уже заполненные поля
+            if (inp === el) continue;
+            if (inp.offsetParent === null) continue;  // скрытый
+            if (inp.value.trim()) continue;           // уже заполнен
+            return inp.id || inp.name || '__found__';
+        }
+        return null;
+    }
+"""
+
+# Получить все видимые опции из menu (без role='listbox')
+GET_MENU_OPTS_JS = """
+    () => {
+        const selectors = [
+            "[role='option']",
+            "[class*='-option']",
+            "[class*='menu'] *",
+            "[class*='menu'] button",
+            "[class*='menu'] a",
+            "[class*='menu'] div",
+            "[class*='menu'] span"
+        ];
+        const results = [];
+        const seen = new Set();
+        for (const sel of selectors) {
+            for (const el of document.querySelectorAll(sel)) {
+                const t = (el.innerText || '').trim();
+                if (t && el.offsetParent !== null && t.length < 100 && !seen.has(t)) {
+                    seen.add(t);
+                    const r = el.getBoundingClientRect();
+                    results.push({
+                        text: t, id: el.id || '',
+                        x: r.x + r.width / 2, y: r.y + r.height / 2
+                    });
+                }
+            }
+            if (results.length) break;
+        }
+        return results;
+    }
+"""
+
+# Получить выделенную (highlighted) опцию в dropdown
+GET_HIGHLIGHTED_OPT_JS = """
+    () => {
+        // react-select подсвечивает опцию через aria-selected=true или class focused
+        const sel = document.querySelector(
+            "[role='option'][aria-selected='true'], " +
+            "[id$='option-focused'], " +
+            "[class*='option--is-focused']"
+        );
+        return sel ? sel.innerText.trim() : '';
+    }
+"""
+
+# Получить опции из контейнера без role='listbox' (напр. School typeahead)
+GET_NO_LISTBOX_OPTS_JS = """
+    () => {
+        const results = [];
+        const containers = [
+            ...Array.from(document.querySelectorAll("[role='listbox']")).filter(e => e.offsetParent !== null),
+            ...Array.from(document.querySelectorAll("[class$='-menu']")).filter(e => e.offsetParent !== null),
+            ...Array.from(document.querySelectorAll("[class*='-menu-list']")).filter(e => e.offsetParent !== null),
+        ];
+        for (const c of containers) {
+            for (const el of c.querySelectorAll("[role='option'], [class*='-option'], button, a, li, div")) {
+                if (el.offsetParent === null) continue;
+                const t = el.innerText?.trim();
+                if (t && t.length > 2 && t.length < 150 && !results.some(r => r.text === t)) {
+                    results.push({ text: t, id: el.id || '' });
+                }
+            }
+            if (results.length) break;
+        }
+        return results;
+    }
+"""
+🔍 238 lines read

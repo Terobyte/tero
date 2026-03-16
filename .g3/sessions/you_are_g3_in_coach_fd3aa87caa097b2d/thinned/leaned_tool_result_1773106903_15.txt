@@ -1,0 +1,60 @@
+Tool result: # src/applier/__init__.py
+"""
+Easy Apply Engine — Automated job application system.
+
+ВАЖНО: Все heavy-импорты здесь lazy (только TYPE_CHECKING).
+Причина: src/applier импортируется и в скрапер-боте (для ATSDetector),
+а playwright нужен только при реальной подаче, не при скане.
+
+SelectorEngine / SelectorHealthMonitor — тоже lazy (PEP 562 __getattr__).
+"""
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Эти импорты видны только для type checkers (mypy, pyright)
+    # и НЕ загружаются при runtime — playwright не нужен при скане!
+    from .answer_bank import AnswerBank
+    from .form_filler import FormFiller
+    from .easy_apply import EasyApplyFlow, ApplicationResult
+    from .queue_manager import QueueManager
+    from .ashby_apply import AshbyApplier
+    from .smartrecruiters_apply import SmartRecruitersApplier
+    from .bamboohr_apply import BambooHRApplier
+    from .universal_ai_filler import UniversalAIFiller
+    from .selector_engine import SelectorEngine, INTENT_REGISTRY, IntentConfig
+    from .selector_health import SelectorHealthMonitor
+
+# ATSDetector — единственный модуль который реально нужен в скане
+# Он НЕ импортирует playwright напрямую
+from .ats_detector import ATSDetector
+
+__all__ = [
+    "AnswerBank",
+    "FormFiller",
+    "EasyApplyFlow",
+    "ApplicationResult",
+    "QueueManager",
+    "ATSDetector",
+    "AshbyApplier",
+    "SmartRecruitersApplier",
+    "BambooHRApplier",
+    "UniversalAIFiller",
+    "SelectorEngine",
+    "SelectorHealthMonitor",
+    "INTENT_REGISTRY",
+    "IntentConfig",
+]
+
+
+def __getattr__(name: str):
+    """Lazy-load browser-dependent modules only when first accessed (PEP 562)."""
+    if name in ("SelectorEngine", "INTENT_REGISTRY", "IntentConfig"):
+        from .selector_engine import SelectorEngine, INTENT_REGISTRY, IntentConfig
+        globals().update(
+            SelectorEngine=SelectorEngine,
+            INTENT_REGISTRY=INTENT_REGISTRY,
+            IntentConfig=IntentConfig,
+        )
+        return globals()[name]
