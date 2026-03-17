@@ -3,13 +3,24 @@
 import asyncio
 import inspect
 import os
+import shlex
 import signal
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
-from src.config import Config, CcgEnv, short_model_name
-from src.feedback import parse_coach_output, Approved, Feedback
+from src.config import Config, load_provider_configs
+from src.feedback import (
+    parse_coach_output,
+    parse_review_output,
+    Approved,
+    Feedback,
+    NoVerdict,
+    ReviewPassed,
+    ReviewIssues,
+    is_invalid_feedback,
+)
 from src.learning.recorder import RunRecord, RunRecorder, TurnDetail, generate_run_id
 from src.plan_tracker import (
     get_current_step_index,
@@ -21,14 +32,19 @@ from src.plan_tracker import (
 from src.prompts import (
     COACH_STRICT_SYSTEM_PROMPT,
     PLAYER_SYSTEM_PROMPT,
+    PLAYER_BATCH_SYSTEM_PROMPT,
+    TEST_WRITER_SYSTEM_PROMPT,
+    CODE_REVIEWER_SYSTEM_PROMPT,
     build_coach_step_prompt,
     build_player_step_prompt,
+    build_test_writer_prompt,
+    build_code_review_prompt,
 )
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
 from src.providers.ccg import run_agent
 from src import streaming as streaming_ui
-from src.streaming import BOLD, RESET, GREEN, RED
+from src.streaming import BOLD, RESET, GREEN, RED, YELLOW
 
 
 @dataclass
@@ -58,46 +74,39 @@ class SessionResult:
 class CoachPlayerSession:
     """Runs step-by-step coach-player feedback loop."""
 
+    BATCH_REVIEW_MAX_TURNS = 4
+    REQUIRED_PLAYER_REPORT_HEADERS = ("what changed:", "evidence:", "verification:")
+
     def __init__(self, config: Config, requirements: str, plan_file_path: str = ""):
         self.config = config
         self.requirements = requirements
         self.plan_file_path = plan_file_path
-        self.ccg_env = CcgEnv.from_env(config.claude_home)
         self.recorder = RunRecorder(f"{config.working_dir}/.g3/knowledge")
         self._interrupted = False
 
-        # Create providers based on config
-        provider_configs = self._load_provider_configs()
-        self.player_provider = create_provider(
-            config.player_provider,
-            self.ccg_env,
-            provider_configs.get(config.player_provider),
-        )
-        self.coach_provider = create_provider(
-            config.coach_provider,
-            self.ccg_env,
-            provider_configs.get(config.coach_provider),
-        )
+        # Load provider configs and create providers (supports multi-account)
+        self.provider_configs = self._load_provider_configs()
+        self._provider_cache: dict[str, object] = {}
+        self.player_provider = self._get_or_create_provider(config.player_provider)
+        self.coach_provider = self._get_or_create_provider(config.coach_provider)
 
         # Verify providers are ready
         self._verify_providers_ready()
 
-        # Resolve display names
-        self.player_model = self.player_provider.display_name
-        self.coach_model = self.coach_provider.display_name
+        # Resolve role labels using the actual runtime model/provider config.
+        self.player_model = self._build_role_display("player")
+        self.coach_model = self._build_role_display("coach")
+
+        # Initialize review provider if code_review is enabled
+        self.review_provider = None
+        self.review_provider_name = ""
+        self.review_model = ""
+        if self.config.code_review:
+            self._init_review_provider()
 
     def _load_provider_configs(self) -> dict:
-        """Read providers: section from .g3/config.yaml."""
-        yaml_path = os.path.join(self.config.working_dir, ".g3", "config.yaml")
-        if os.path.exists(yaml_path):
-            try:
-                import yaml
-                with open(yaml_path) as f:
-                    data = yaml.safe_load(f) or {}
-                return data.get("providers", {})
-            except Exception:
-                pass
-        return {}
+        """Load provider configs from global, bundled, and working-dir config."""
+        return load_provider_configs(self.config.working_dir)
 
     def _verify_providers_ready(self) -> None:
         """Verify all providers are ready, raise if not."""
@@ -112,6 +121,108 @@ class CoachPlayerSession:
                 raise RuntimeError(
                     f"{name} provider ({provider_name}) not ready: {reason}"
                 )
+
+    def _init_review_provider(self) -> None:
+        """Initialize review provider for code review phase."""
+        review_provider_name = self.config.review_provider
+        if not review_provider_name:
+            # Auto-detect: try codex first, then coach
+            try:
+                codex_prov = self._get_or_create_provider("codex")
+                ok, _ = codex_prov.check_ready()
+            except Exception:
+                ok = False
+
+            review_provider_name = "codex" if ok else self.config.coach_provider
+
+        self.review_provider = self._get_or_create_provider(review_provider_name)
+        self.review_provider_name = review_provider_name
+        self.review_model = self.config.review_model
+
+    def _get_or_create_provider(self, provider_name: str):
+        """Return a cached provider instance by configured name."""
+        if provider_name not in self._provider_cache:
+            self._provider_cache[provider_name] = create_provider(
+                provider_name,
+                None,
+                self.provider_configs.get(provider_name),
+            )
+        return self._provider_cache[provider_name]
+
+    def _provider_name_for_role(self, role: str) -> str:
+        """Return the configured provider name backing a runtime role."""
+        if role == "player":
+            return self.config.player_provider
+        if role in ("coach", "test_writer"):
+            return self.config.coach_provider
+        if role == "reviewer":
+            return self.review_provider_name or self.config.review_provider or self.config.coach_provider
+        if role == "coach_fallback":
+            return self.config.coach_fallback_provider or self.config.coach_provider
+        raise ValueError(f"Unknown role: {role}")
+
+    def _provider_for_role(self, role: str):
+        """Return the provider instance backing a role."""
+        if role == "player":
+            return self.player_provider
+        if role in ("coach", "test_writer"):
+            return self.coach_provider
+        if role == "reviewer":
+            return self.review_provider or self.coach_provider
+        if role == "coach_fallback":
+            return self._get_or_create_provider(self.config.coach_fallback_provider)
+        raise ValueError(f"Unknown role: {role}")
+
+    @staticmethod
+    def _provider_model(provider) -> str:
+        """Best-effort lookup of the model that provider will use by default."""
+        env = getattr(provider, "env", None)
+        if env is not None:
+            model = getattr(env, "model", "")
+            if model:
+                return model
+
+        provider_config = getattr(provider, "config", None)
+        if provider_config is not None:
+            for attr in ("default_model", "model"):
+                value = getattr(provider_config, attr, "")
+                if value:
+                    return value
+
+        return ""
+
+    @staticmethod
+    def _provider_account(provider) -> str:
+        """Best-effort lookup of an account label for display."""
+        env = getattr(provider, "env", None)
+        if env is not None:
+            return getattr(env, "account_label", "") or ""
+        return ""
+
+    def _build_role_display(self, role: str) -> str:
+        """Build a stable label showing provider, model, and account."""
+        provider_name = self._provider_name_for_role(role)
+        provider = self._provider_for_role(role)
+        return self._format_provider_display(provider_name, provider, getattr(self.config, f"{role}_model", ""))
+
+    def _format_provider_display(self, provider_name: str, provider, model_override: str = "") -> str:
+        """Build a display label for any provider/model combination."""
+        resolved_model = (
+            model_override
+            or self._provider_model(provider)
+            or "default"
+        )
+        account = self._provider_account(provider)
+
+        parts = [provider_name, f"model={resolved_model}"]
+        if account:
+            parts.append(f"account={account}")
+        return " | ".join(parts)
+
+    def build_provider_display(self, provider_name: str, model_override: str = "") -> str:
+        """Public helper for UI labels outside the main role pair."""
+        provider = self._get_or_create_provider(provider_name)
+        return self._format_provider_display(provider_name, provider, model_override)
 
     def _setup_interrupt_handler(self):
         def handler(signum, frame):
@@ -146,6 +257,67 @@ class CoachPlayerSession:
                 pass
         if new_pids and self.config.verbose:
             print(f"  [cleanup] убито процессов: {len(new_pids)}")
+
+    @staticmethod
+    def _build_step_fallback_feedback(step_text: str, prefix_issue: str | None = None) -> Feedback:
+        """Fallback feedback when the coach fails to produce a valid review."""
+        lines: list[str] = []
+        if prefix_issue:
+            lines.append(f"1. {prefix_issue}")
+            start_num = 2
+        else:
+            start_num = 1
+
+        lines.append(f"{start_num}. Complete the current step exactly: {step_text}")
+        lines.append(f"{start_num + 1}. Verify the change with the most relevant test, command, or file inspection.")
+        lines.append(f"{start_num + 2}. If the code already exists, prove it by making the missing fix instead of only stating that it is done.")
+        return Feedback("\n".join(lines))
+
+    @staticmethod
+    def _build_phase_fallback_feedback(
+        phase,
+        completed_steps: list[str] | None,
+        prefix_issue: str | None = None,
+    ) -> Feedback:
+        """Fallback batch feedback when the reviewer fails to produce usable output."""
+        completed = set(completed_steps or [])
+        missing_steps = [step.text for step in phase.steps if step.text not in completed]
+
+        lines: list[str] = []
+        next_num = 1
+        if prefix_issue:
+            lines.append(f"{next_num}. {prefix_issue}")
+            next_num += 1
+
+        if missing_steps:
+            for missing_step in missing_steps:
+                lines.append(f"{next_num}. Complete the missing planned step: {missing_step}")
+                next_num += 1
+        else:
+            lines.append(f"{next_num}. Re-check the whole phase `{phase.name}` and fix any missing implementation details.")
+            next_num += 1
+
+        lines.append(f"{next_num}. Run the most relevant verification before finishing this phase.")
+        next_num += 1
+        lines.append(
+            f"{next_num}. End with plain-text completion markers: `Step N done: ...` and `PHASE_COMPLETE: {phase.name}`, plus `What changed`, `Evidence`, and `Verification`."
+        )
+        return Feedback("\n".join(lines))
+
+    @classmethod
+    def _has_required_player_report(cls, text: str) -> bool:
+        """Return True when Player included the mandatory completion report."""
+        lowered = text.lower()
+        return all(header in lowered for header in cls.REQUIRED_PLAYER_REPORT_HEADERS)
+
+    @staticmethod
+    def _build_missing_player_report_feedback(step_text: str) -> Feedback:
+        """Structured feedback when Player omitted the final completion report."""
+        return Feedback(
+            "1. Your final response is missing the required completion report.\n"
+            "2. Re-send the completion response with `What changed`, `Evidence`, and `Verification`.\n"
+            f"3. If no code changes were needed for `{step_text}`, say that explicitly and cite the files or checks proving it was already implemented."
+        )
 
     async def run(self) -> SessionResult:
         """Run the step-by-step coach-player loop."""
@@ -197,13 +369,42 @@ class CoachPlayerSession:
 
                 feedback = None
                 step_approved = False
+                tests_written = False  # TDD: tests written once per step
+
+                # --- TDD Mode: Test Writer phase (once per step) ---
+                if self.config.tdd_mode and not tests_written:
+                    streaming_ui.print_test_writer_header(step_num, total_steps)
+                    test_prompt = build_test_writer_prompt(
+                        current_step=step.text,
+                        step_num=step_num,
+                        total_steps=total_steps,
+                        completed_steps=completed_steps,
+                    )
+                    try:
+                        await self._run_turn(
+                            role="test_writer",
+                            prompt=test_prompt,
+                            system_prompt=TEST_WRITER_SYSTEM_PROMPT,
+                            max_turns=15,
+                            timeout_s=self.config.coach_timeout_s,
+                            model_override=self.config.coach_model,
+                        )
+                        tests_written = True
+                    except TimeoutError:
+                        print(f"\n  {BOLD}{YELLOW}⚠ Test writer timed out, continuing...{RESET}")
 
                 for attempt in range(1, self.config.max_turns + 1):
                     if self._interrupted:
                         break
 
                     # --- Player turn ---
-                    streaming_ui.print_player_header(step_num, total_steps, attempt, self.config.max_turns)
+                    streaming_ui.print_player_header(
+                        step_num,
+                        total_steps,
+                        attempt,
+                        self.config.max_turns,
+                        self.player_model,
+                    )
                     pids_before = self._snapshot_pids()
 
                     player_prompt = build_player_step_prompt(
@@ -239,7 +440,23 @@ class CoachPlayerSession:
                     if self._interrupted:
                         break
 
-                    # --- Coach turn ---
+                    if not CoachPlayerSession._has_required_player_report(player_result.text):
+                        feedback = CoachPlayerSession._build_missing_player_report_feedback(step.text)
+                        streaming_ui.print_step_rejected(feedback.text)
+                        continue
+
+                    # --- TDD Mode: Run tests after player attempt ---
+                    if self.config.tdd_mode:
+                        test_passed, test_output = await self._run_tests()
+                        streaming_ui.print_tdd_status(test_passed, test_output)
+                        if not test_passed:
+                            feedback = Feedback(
+                                f"1. Tests are still failing:\n{test_output[:500]}\n"
+                                "2. Fix the implementation until tests pass."
+                            )
+                            continue  # Skip coach, retry player
+
+                    # --- Coach turn with retry on NoVerdict ---
                     streaming_ui.print_coach_header(step_num, total_steps, attempt, self.coach_model)
                     pids_before_coach = self._snapshot_pids()
 
@@ -250,39 +467,105 @@ class CoachPlayerSession:
                         completed_steps=completed_steps,
                     )
 
-                    try:
-                        coach_result = await self._run_turn(
-                            role="coach",
-                            prompt=coach_prompt,
-                            system_prompt=COACH_STRICT_SYSTEM_PROMPT,
-                            max_turns=8,
-                            timeout_s=self.config.coach_timeout_s,
-                            model_override=self.config.coach_model,
-                        )
-                    except TimeoutError as exc:
-                        turn_details.append(TurnDetail(role="coach", duration_s=float(self.config.coach_timeout_s), tools_used=0))
-                        feedback = Feedback(
-                            f"1. {exc}\n"
-                            "2. Review the current implementation yourself and fix obvious issues."
-                        )
-                        self._kill_new_processes(pids_before_coach)
-                        continue
+                    # Coach retry loop for NoVerdict
+                    verdict = None
+                    coach_retry_max = self.config.coach_retry_max
+                    for coach_attempt in range(1, coach_retry_max + 1):
+                        try:
+                            coach_result = await self._run_turn(
+                                role="coach",
+                                prompt=coach_prompt,
+                                system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                                max_turns=8,
+                                timeout_s=self.config.coach_timeout_s,
+                                model_override=self.config.coach_model,
+                            )
+                        except TimeoutError as exc:
+                            turn_details.append(TurnDetail(role="coach", duration_s=float(self.config.coach_timeout_s), tools_used=0))
+                            verdict = Feedback(f"1. {exc}\n2. Review the current implementation yourself.")
+                            break
+
+                        turn_details.append(TurnDetail(role="coach", duration_s=coach_result.duration_s, tools_used=coach_result.tools_used))
+                        verdict = parse_coach_output(coach_result.messages)
+
+                        if not isinstance(verdict, NoVerdict):
+                            break  # Got a real verdict
+
+                        if coach_attempt < coach_retry_max:
+                            streaming_ui.print_coach_no_verdict_retry(coach_attempt, coach_retry_max)
+                    else:
+                        # Exhausted retries - try fallback
+                        if self.config.coach_fallback_provider:
+                            fallback_provider = self._get_or_create_provider(self.config.coach_fallback_provider)
+                            streaming_ui.print_coach_fallback_escalation(fallback_provider.display_name)
+                            try:
+                                fallback_result = await self._run_turn(
+                                    role="coach_fallback",
+                                    prompt=coach_prompt,
+                                    system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                                    max_turns=8,
+                                    timeout_s=self.config.coach_timeout_s,
+                                    model_override=self.config.coach_fallback_model,
+                                    provider_override=fallback_provider,
+                                )
+                                verdict = parse_coach_output(fallback_result.messages)
+                            except TimeoutError:
+                                verdict = Feedback("1. Fallback coach timed out.\n2. Proceed with current state.")
+
+                        if isinstance(verdict, NoVerdict):
+                            # Even fallback failed - skip step
+                            print(f"\n  {BOLD}{YELLOW}⚠ Coach silent - approving step{RESET}")
+                            verdict = Approved()
 
                     self._kill_new_processes(pids_before_coach)
 
-                    turn_details.append(TurnDetail(role="coach", duration_s=coach_result.duration_s, tools_used=coach_result.tools_used))
-
-                    verdict = parse_coach_output(coach_result.messages)
-
                     if isinstance(verdict, Approved):
+                        # --- Code Review phase (after coach approval) ---
+                        if self.config.code_review and self.review_provider:
+                            streaming_ui.print_code_review_header(
+                                step_num, total_steps, self.review_provider.display_name
+                            )
+                            review_prompt = build_code_review_prompt(
+                                current_step=step.text,
+                                step_num=step_num,
+                                total_steps=total_steps,
+                            )
+                            try:
+                                review_result = await self._run_turn(
+                                    role="reviewer",
+                                    prompt=review_prompt,
+                                    system_prompt=CODE_REVIEWER_SYSTEM_PROMPT,
+                                    max_turns=8,
+                                    timeout_s=self.config.coach_timeout_s,
+                                    model_override=self.review_model,
+                                    provider_override=self.review_provider,
+                                )
+                                review_verdict = parse_review_output(review_result.messages)
+                                if isinstance(review_verdict, ReviewPassed):
+                                    streaming_ui.print_review_passed(step_num)
+                                else:
+                                    streaming_ui.print_review_issues(review_verdict.text)
+                                    feedback = Feedback(review_verdict.text)
+                                    continue  # Retry player
+                            except TimeoutError:
+                                print(f"\n  {BOLD}{YELLOW}⚠ Code review timed out, approving...{RESET}")
+
                         step_approved = True
                         plan_items = mark_step_done(plan_items, step_index)
                         if self.plan_file_path:
                             write_checklist_back(self.plan_file_path, plan_items)
                         streaming_ui.print_step_approved(step_num, step.text)
                         break
+                    elif isinstance(verdict, Feedback):
+                        feedback = (
+                            CoachPlayerSession._build_step_fallback_feedback(step.text)
+                            if is_invalid_feedback(verdict)
+                            else verdict
+                        )
+                        streaming_ui.print_step_rejected(feedback.text)
                     else:
-                        feedback = verdict
+                        # NoVerdict after retries - shouldn't happen but handle it
+                        feedback = CoachPlayerSession._build_step_fallback_feedback(step.text)
                         streaming_ui.print_step_rejected(feedback.text)
 
                 if not step_approved and not self._interrupted:
@@ -320,7 +603,7 @@ class CoachPlayerSession:
             turn_details=turn_details,
         )
         self.recorder.record(record)
-        self._print_session_report(record, steps_completed, total_steps)
+        self._print_session_report(record, steps_completed, total_steps, plan_items)
 
         return SessionResult(
             approved=all_done,
@@ -341,20 +624,19 @@ class CoachPlayerSession:
         max_turns: int,
         timeout_s: int,
         model_override: str = "",
+        provider_override=None,
     ) -> TurnResult:
         """Run a single agent turn using the appropriate provider."""
         start = time.time()
         messages = []
         tools_used = 0
+        tokens_used = 0
 
-        provider = (
-            self.player_provider if role == "player"
-            else self.coach_provider
-        )
+        provider = provider_override or self._provider_for_role(role)
         model = model_override or ""
 
         async def _collect() -> None:
-            nonlocal tools_used
+            nonlocal tools_used, tokens_used
             if self._interrupted:
                 return
 
@@ -367,6 +649,15 @@ class CoachPlayerSession:
             ):
                 if self._interrupted:
                     return
+
+                # Extract token usage from ResultMessage before adapting
+                if not isinstance(msg, dict) and type(msg).__name__ == "ResultMessage":
+                    usage = getattr(msg, "usage", None) or {}
+                    if isinstance(usage, dict):
+                        tokens_used = (
+                            usage.get("input_tokens", 0)
+                            + usage.get("output_tokens", 0)
+                        )
 
                 # Adapt message if needed (for native CLI JSON)
                 adapted = None
@@ -392,9 +683,11 @@ class CoachPlayerSession:
             raise TimeoutError(f"{role} exceeded timeout of {timeout_s}s") from exc
 
         duration = time.time() - start
-        streaming_ui.print_turn_timing(role, duration, tools_used)
+        resolved_model = model or self._provider_model(provider)
+        from src.config import get_context_window
+        context_window = get_context_window(resolved_model)
+        streaming_ui.print_turn_timing(role, duration, tools_used, tokens_used, context_window)
 
-        # Extract text from assistant messages
         text_parts = [
             msg.get_text_content()
             for msg in messages
@@ -415,6 +708,7 @@ class CoachPlayerSession:
             tools_used=tools_used,
             messages=messages,
             text=result_text,
+            tokens_used=tokens_used,
         )
 
     def _has_completion_markers(self, text: str, role: str) -> bool:
@@ -476,7 +770,66 @@ class CoachPlayerSession:
 
         return result
 
-    def _print_session_report(self, record: RunRecord, steps_completed: int, total_steps: int):
+    async def _run_coach_turn_for_phase(
+        self,
+        phase,
+        last_player_result,
+        completed_steps: list[str] | None = None,
+        provider_name_override: str | None = None,
+        model_override: str = "",
+        review_role: str = "coach",
+    ) -> "Approved | Feedback":
+        """Run Coach review for a phase attempt."""
+        from src.prompts import build_phase_coach_prompt
+
+        prompt = build_phase_coach_prompt(phase, last_player_result, completed_steps)
+        provider_override = None
+        if provider_name_override:
+            provider_override = self._get_or_create_provider(provider_name_override)
+            ok, reason = provider_override.check_ready()
+            if not ok:
+                return Feedback(
+                    f"1. {review_role} provider ({provider_name_override}) not ready: {reason}\n"
+                    "2. Continue from the current state and keep iterating with the regular reviewer."
+                )
+
+        pids_before = self._snapshot_pids()
+        review_turn_budget = min(
+            self.config.max_turns,
+            CoachPlayerSession.BATCH_REVIEW_MAX_TURNS,
+        )
+
+        try:
+            result = await self._run_turn(
+                role=review_role,
+                prompt=prompt,
+                system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                max_turns=review_turn_budget,
+                timeout_s=self.config.coach_timeout_s,
+                model_override=model_override or self.config.coach_model,
+                provider_override=provider_override,
+            )
+        except TimeoutError as exc:
+            self._kill_new_processes(pids_before)
+            return CoachPlayerSession._build_phase_fallback_feedback(
+                phase,
+                completed_steps,
+                prefix_issue=str(exc),
+            )
+
+        self._kill_new_processes(pids_before)
+        verdict = parse_coach_output(result.messages)
+        if isinstance(verdict, Feedback) and is_invalid_feedback(verdict):
+            return CoachPlayerSession._build_phase_fallback_feedback(phase, completed_steps)
+        return verdict
+
+    def _print_session_report(
+        self,
+        record: RunRecord,
+        steps_completed: int,
+        total_steps: int,
+        plan_items: list | None = None,
+    ):
         """Print final session report."""
         print(f"\n{BOLD}--- Итог ---{RESET}")
         print(f"  Шагов: {steps_completed}/{total_steps}")
@@ -484,3 +837,51 @@ class CoachPlayerSession:
         print(f"  Время: {record.total_duration_s:.0f}s")
         status_color = GREEN if record.status == "approved" else RED
         print(f"  Статус: {BOLD}{status_color}{record.status.upper()}{RESET}")
+
+        if plan_items:
+            streaming_ui.print_step_list(plan_items)
+
+    async def _run_tests(self) -> tuple[bool, str]:
+        """Run tests for TDD mode. Returns (passed, output)."""
+        # Determine test command
+        if self.config.test_command:
+            test_cmd = shlex.split(self.config.test_command)
+        else:
+            test_cmd = self._detect_test_command()
+
+        try:
+            result = subprocess.run(
+                test_cmd,
+                cwd=self.config.working_dir,
+                capture_output=True,
+                text=True,
+                timeout=self.config.test_timeout_s,
+            )
+            output = result.stdout + result.stderr
+            return result.returncode == 0, output
+        except subprocess.TimeoutExpired:
+            return False, f"Test command timed out after {self.config.test_timeout_s}s"
+        except Exception as e:
+            return False, f"Test command failed: {e}"
+
+    def _detect_test_command(self) -> list[str]:
+        """Auto-detect the project test command."""
+        working_dir = Path(self.config.working_dir)
+        pyproject_path = working_dir / "pyproject.toml"
+
+        if (working_dir / "pytest.ini").exists():
+            return ["pytest", "-q"]
+        if pyproject_path.exists():
+            try:
+                pyproject_text = pyproject_path.read_text()
+            except OSError:
+                pyproject_text = ""
+            if "[tool.pytest" in pyproject_text or "[tool.pytest.ini_options]" in pyproject_text:
+                return ["pytest", "-q"]
+        if (working_dir / "package.json").exists():
+            return ["npm", "test"]
+        if (working_dir / "Cargo.toml").exists():
+            return ["cargo", "test"]
+        if (working_dir / "Makefile").exists():
+            return ["make", "test"]
+        return ["pytest", "-q"]
