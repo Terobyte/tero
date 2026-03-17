@@ -339,7 +339,7 @@ class BatchExecutor:
                 model_name=self._role_label("player"),
             )
             try:
-                result = await self.session._run_turn(
+                result = await self.session._run_with_continuation(
                     role="player",
                     prompt=prompt,
                     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
