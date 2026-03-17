@@ -11,6 +11,40 @@ except ImportError:
     ClaudeAgentOptions = None
 
 
+def _make_compact_hooks(context_limit: int, threshold: float) -> dict:
+    """Build SDK hooks dict with PreCompact handler for mid-turn compaction.
+
+    Args:
+        context_limit: Maximum context tokens
+        threshold: Fraction of limit at which to compact (0.85 = 85%)
+
+    Returns:
+        Dict with PreCompact hook for SDK
+    """
+    compact_at = int(context_limit * threshold)
+
+    async def on_pre_compact(hook_input, tool_name, context) -> dict:
+        """Handler called by SDK when context approaches limit.
+
+        Returns instruction for the model to summarize compactly.
+        """
+        return {
+            "continue_": True,
+            "systemMessage": (
+                "Summarize the conversation compactly. Preserve: "
+                "completed steps with proof, file paths changed, "
+                "current implementation state, pending work. "
+                f"Target: under {compact_at // 1000}k tokens."
+            ),
+        }
+
+    return {
+        "PreCompact": [
+            {"matcher": None, "hooks": [on_pre_compact], "timeout": None}
+        ]
+    }
+
+
 # Keep the original function for backwards compatibility
 async def run_agent(
     prompt: str,
@@ -19,11 +53,15 @@ async def run_agent(
     ccg_env: CcgEnv,
     max_turns: int = 30,
     model: str = "",
+    context_limit: int = 110_000,
+    compact_threshold: float = 0.85,
 ):
     """Run a Claude Code agent via SDK with ccg env vars.
 
     Yields SDK messages as they stream in.
     model: if non-empty, overrides ANTHROPIC_MODEL for this call.
+    context_limit: Max context tokens before compaction (default: 110k)
+    compact_threshold: Fraction of limit to trigger compaction (default: 0.85)
     """
     if not SDK_AVAILABLE:
         raise ImportError(
@@ -45,6 +83,7 @@ async def run_agent(
         env=env,
         permission_mode="bypassPermissions",
         max_turns=max_turns,
+        hooks=_make_compact_hooks(context_limit, compact_threshold),
     )
 
     async for message in query(prompt=prompt, options=options):
@@ -72,6 +111,8 @@ class CcgProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        context_limit: int = 110_000,
+        compact_threshold: float = 0.85,
     ):
         """Run a turn using the CCG API.
 
@@ -81,6 +122,8 @@ class CcgProvider:
             working_dir: Working directory
             max_turns: Maximum turns
             model: Optional model override
+            context_limit: Max context tokens (default: 110k)
+            compact_threshold: Fraction to trigger compaction (default: 0.85)
 
         Yields:
             SDK messages from the agent
@@ -92,6 +135,8 @@ class CcgProvider:
             ccg_env=self.env,
             max_turns=max_turns,
             model=model,
+            context_limit=context_limit,
+            compact_threshold=compact_threshold,
         ):
             yield msg
 
