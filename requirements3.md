@@ -19,10 +19,10 @@
 ### Task 1: Phase dataclass + type constants
 
 **Files:**
-- Modify: `g3/src/plan_tracker.py` — add constants and Phase at top
-- Test: `g3/tests/test_batch_executor.py` — create file, add Phase tests
+- [x] Modify: `g3/src/plan_tracker.py` — add constants and Phase at top
+- [x] Test: `g3/tests/test_batch_executor.py` — create file, add Phase tests
 
-- [ ] **Step 1: Create test file and write Phase tests**
+- [x] **Step 1: Create test file and write Phase tests**
 
 ```python
 # g3/tests/test_batch_executor.py
@@ -57,7 +57,7 @@ class TestPhaseDataclass:
         assert DEFAULT_STEP_TYPE == "update"
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd /Users/terobyte/Desktop/Projects/Active/tero/g3
@@ -65,7 +65,7 @@ pytest tests/test_batch_executor.py::TestPhaseDataclass -v
 ```
 Expected: `ERROR` — `Phase` cannot be imported yet.
 
-- [ ] **Step 3: Add constants and Phase to plan_tracker.py**
+- [x] **Step 3: Add constants and Phase to plan_tracker.py**
 
 Add after the existing `PlanItem` dataclass (after line 11):
 
@@ -94,14 +94,14 @@ class Phase:
     attempts: int = 0
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 pytest tests/test_batch_executor.py::TestPhaseDataclass -v
 ```
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plan_tracker.py tests/test_batch_executor.py
@@ -113,10 +113,10 @@ git commit -m "feat: add Phase dataclass and type constants to plan_tracker"
 ### Task 2: detect_step_type
 
 **Files:**
-- Modify: `g3/src/plan_tracker.py` — add `detect_step_type`
-- Test: `g3/tests/test_batch_executor.py` — add `TestDetectStepType`
+- [x] Modify: `g3/src/plan_tracker.py` — add `detect_step_type`
+- [x] Test: `g3/tests/test_batch_executor.py` — add `TestDetectStepType`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add to `test_batch_executor.py`:
 
@@ -148,14 +148,14 @@ class TestDetectStepType:
         assert detect_step_type(PlanItem(text="implement and refactor")) == "create"
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 pytest tests/test_batch_executor.py::TestDetectStepType -v
 ```
 Expected: `ImportError` for `detect_step_type`.
 
-- [ ] **Step 3: Implement in plan_tracker.py**
+- [x] **Step 3: Implement in plan_tracker.py**
 
 Add after the `Phase` dataclass:
 
@@ -169,14 +169,14 @@ def detect_step_type(item: "PlanItem") -> str:
     return DEFAULT_STEP_TYPE
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 ```bash
 pytest tests/test_batch_executor.py::TestDetectStepType -v
 ```
 Expected: 7 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plan_tracker.py tests/test_batch_executor.py
@@ -188,8 +188,8 @@ git commit -m "feat: add detect_step_type to plan_tracker"
 ### Task 3: auto_group_phases
 
 **Files:**
-- Modify: `g3/src/plan_tracker.py` — add `_make_phase`, `auto_group_phases`
-- Test: `g3/tests/test_batch_executor.py` — add `TestAutoGroupPhases`
+- [ ] Modify: `g3/src/plan_tracker.py` — add `_make_phase`, `auto_group_phases`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestAutoGroupPhases`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -317,8 +317,8 @@ git commit -m "feat: add auto_group_phases to plan_tracker"
 ### Task 4: PlanTracker class
 
 **Files:**
-- Modify: `g3/src/plan_tracker.py` — add `PlanTracker` class at bottom
-- Test: `g3/tests/test_batch_executor.py` — add `TestPlanTracker`
+- [ ] Modify: `g3/src/plan_tracker.py` — add `PlanTracker` class at bottom
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestPlanTracker`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -456,8 +456,8 @@ git commit -m "feat: add PlanTracker class with dashboard to plan_tracker"
 ### Task 5: build_batch_prompt + parse_completed_steps
 
 **Files:**
-- Create: `g3/src/batch_executor.py`
-- Test: `g3/tests/test_batch_executor.py` — add `TestBuildBatchPrompt`, `TestParseCompletedSteps`
+- [ ] Create: `g3/src/batch_executor.py`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestBuildBatchPrompt`, `TestParseCompletedSteps`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -667,8 +667,8 @@ git commit -m "feat: add build_batch_prompt and parse_completed_steps"
 ### Task 6: PhaseFailedError
 
 **Files:**
-- Modify: `g3/src/batch_executor.py` — add `PhaseFailedError`
-- Test: `g3/tests/test_batch_executor.py` — add `TestPhaseFailedError`
+- [ ] Modify: `g3/src/batch_executor.py` — add `PhaseFailedError`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestPhaseFailedError`
 
 - [ ] **Step 1: Write failing test**
 
@@ -755,8 +755,8 @@ git commit -m "feat: add PhaseFailedError to batch_executor"
 ### Task 7: BatchExecutor._run_phase
 
 **Files:**
-- Modify: `g3/src/batch_executor.py` — add `BatchExecutor` class with `_run_phase`
-- Test: `g3/tests/test_batch_executor.py` — add `TestRunPhase`
+- [ ] Modify: `g3/src/batch_executor.py` — add `BatchExecutor` class with `_run_phase`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestRunPhase`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -982,7 +982,7 @@ git commit -m "feat: add BatchExecutor with _run_phase"
 ### Task 8: BatchExecutor.run (integration test)
 
 **Files:**
-- Test: `g3/tests/test_batch_executor.py` — add `TestBatchExecutorRun`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestBatchExecutorRun`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1080,7 +1080,7 @@ git commit -m "test: add BatchExecutor.run integration tests"
 ### Task 9: TurnResult.text field
 
 **Files:**
-- Modify: `g3/src/coach_player.py` — add `text: str = ""` to `TurnResult`, populate in `_run_turn`
+- [ ] Modify: `g3/src/coach_player.py` — add `text: str = ""` to `TurnResult`, populate in `_run_turn`
 
 - [ ] **Step 1: Write failing test**
 
@@ -1169,8 +1169,8 @@ git commit -m "feat: add text field to TurnResult, populated from AdaptedMessage
 ### Task 10: build_phase_coach_prompt
 
 **Files:**
-- Modify: `g3/src/prompts.py` — add `build_phase_coach_prompt`
-- Test: `g3/tests/test_batch_executor.py` — add `TestBuildPhaseCoachPrompt`
+- [ ] Modify: `g3/src/prompts.py` — add `build_phase_coach_prompt`
+- [ ] Test: `g3/tests/test_batch_executor.py` — add `TestBuildPhaseCoachPrompt`
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1273,7 +1273,7 @@ git commit -m "feat: add build_phase_coach_prompt to prompts"
 ### Task 11: _run_coach_turn_for_phase
 
 **Files:**
-- Modify: `g3/src/coach_player.py` — add `_run_coach_turn_for_phase` method
+- [ ] Modify: `g3/src/coach_player.py` — add `_run_coach_turn_for_phase` method
 
 - [ ] **Step 1: Write failing test**
 
@@ -1366,7 +1366,7 @@ git commit -m "feat: add _run_coach_turn_for_phase to CoachPlayerSession"
 ### Task 12: Config.batch_mode
 
 **Files:**
-- Modify: `g3/src/config.py` — add `batch_mode` field + env var
+- [ ] Modify: `g3/src/config.py` — add `batch_mode` field + env var
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1443,7 +1443,7 @@ git commit -m "feat: add batch_mode to Config with G3_BATCH_MODE env var"
 ### Task 13: --batch CLI flag + entry point
 
 **Files:**
-- Modify: `g3/g3.py` — add `--batch` arg, update `_resolve_go_config` and `run_go`
+- [ ] Modify: `g3/g3.py` — add `--batch` arg, update `_resolve_go_config` and `run_go`
 
 - [ ] **Step 1: Add --batch argument to argparse in g3.py**
 
@@ -1524,7 +1524,7 @@ git commit -m "feat: add --batch CLI flag and batch execution entry point to g3.
 ### Task 14: Menu toggle
 
 **Files:**
-- Modify: `g3/src/menu.py` — add Batch Mode toggle to `_questionary_menu` and `_edit_setting_questionary`
+- [ ] Modify: `g3/src/menu.py` — add Batch Mode toggle to `_questionary_menu` and `_edit_setting_questionary`
 
 - [ ] **Step 1: Add batch_mode display to `_questionary_menu`**
 

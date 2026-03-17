@@ -1,0 +1,64 @@
+<h2>Как должно выглядеть меню при запуске <code>tero go</code>?</h2>
+<p class="subtitle">Выбери стиль интерактивного меню</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0d1117;padding:20px;font-family:monospace;font-size:13px;color:#e6edf3;border-radius:8px;line-height:1.7">
+      <div style="color:#58a6ff;margin-bottom:8px">┌─ tero — настройка ──────────────────┐</div>
+      <div style="color:#8b949e">  Coach модель:</div>
+      <div style="color:#3fb950">  ❯ GLM-5 (текущая)</div>
+      <div style="color:#e6edf3;padding-left:4px">    Sonnet</div>
+      <div style="color:#e6edf3;padding-left:4px">    Opus</div>
+      <div style="color:#8b949e;margin-top:8px">  Ход: 10  Файл: requirements.md</div>
+      <div style="color:#8b949e;margin-top:8px">  ↑↓ выбор  Enter подтвердить</div>
+      <div style="color:#58a6ff;margin-top:8px">└────────────────────────────────────┘</div>
+    </div>
+    <div class="card-body">
+      <h3>A — Стрелки (интерактивный)</h3>
+      <p>Навигация ↑↓ стрелками, как в настоящем TUI. Красиво, но требует библиотеку <code>questionary</code> или <code>prompt_toolkit</code>.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0d1117;padding:20px;font-family:monospace;font-size:13px;color:#e6edf3;border-radius:8px;line-height:1.7">
+      <div style="color:#58a6ff">  tero — конфигурация</div>
+      <div style="color:#8b949e;margin-top:6px">  [1] Coach модель: <span style="color:#3fb950">GLM-5</span></div>
+      <div style="color:#8b949e">  [2] Макс. ходов:  <span style="color:#3fb950">10</span></div>
+      <div style="color:#8b949e">  [3] Файл плана:   <span style="color:#3fb950">requirements.md</span></div>
+      <div style="color:#8b949e">  [4] Verbose:       <span style="color:#e6edf3">выкл</span></div>
+      <div style="color:#8b949e">  [5] Автономный:   <span style="color:#e6edf3">выкл</span></div>
+      <div style="color:#e6edf3;margin-top:8px">  Enter — старт   q — выход</div>
+      <div style="color:#58a6ff;margin-top:4px">  › <span style="color:#e6edf3">_</span></div>
+    </div>
+    <div class="card-body">
+      <h3>B — Числа (простой список)</h3>
+      <p>Вводишь номер → тебя спрашивают новое значение. Максимально простой, без зависимостей, работает везде.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0d1117;padding:20px;font-family:monospace;font-size:13px;color:#e6edf3;border-radius:8px;line-height:1.7">
+      <div style="color:#58a6ff">  ⚙  tero ready</div>
+      <div style="margin-top:8px">
+        <span style="color:#8b949e">  Coach  </span><span style="color:#3fb950">GLM-5</span><span style="color:#444;font-size:11px">  (c)</span>
+      </div>
+      <div>
+        <span style="color:#8b949e">  Ходы   </span><span style="color:#3fb950">10</span><span style="color:#444;font-size:11px">  (n)</span>
+      </div>
+      <div>
+        <span style="color:#8b949e">  Файл   </span><span style="color:#3fb950">requirements.md</span><span style="color:#444;font-size:11px">  (f)</span>
+      </div>
+      <div>
+        <span style="color:#8b949e">  Verbose </span><span style="color:#e6edf3">выкл</span><span style="color:#444;font-size:11px">  (v)</span>
+      </div>
+      <div style="margin-top:10px;color:#e6edf3">  Enter — запустить   q — выход</div>
+      <div style="color:#58a6ff;margin-top:4px">  › <span style="color:#e6edf3">_</span></div>
+    </div>
+    <div class="card-body">
+      <h3>C — Горячие клавиши (быстрый)</h3>
+      <p>Видишь текущие настройки, жмёшь одну букву чтобы изменить конкретную. Самый быстрый для частого использования.</p>
+    </div>
+  </div>
+
+</div>

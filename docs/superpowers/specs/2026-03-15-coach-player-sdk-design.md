@@ -69,7 +69,7 @@ CCG_ENV = {
     "ANTHROPIC_BASE_URL": "https://api.blackbox.ai",
     "ANTHROPIC_AUTH_TOKEN": "<from env: ANTHROPIC_AUTH_TOKEN or BLACKBOX_ACCOUNT_A_TOKEN>",
     "ANTHROPIC_MODEL": "blackboxai/z-ai/glm-5",
-    "ANTHROPIC_SMALL_FAST_MODEL": "kimi-k2.5",
+    "ANTHROPIC_SMALL_FAST_MODEL": "minimax-2.5",
     "CLAUDE_HOME": os.path.expanduser("~/.claude-glm"),
 }
 
