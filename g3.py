@@ -32,6 +32,9 @@ def _resolve_go_config(args):
         "coach_retry_max": getattr(args, "coach_retry_max", None),
         "coach_fallback_provider": getattr(args, "coach_fallback_provider", None),
         "coach_fallback_model": getattr(args, "coach_fallback_model", None),
+        "context_limit": getattr(args, "context_limit", None),
+        "compact_threshold": getattr(args, "compact_threshold", None),
+        "max_continuation_attempts": getattr(args, "max_continuation_attempts", None),
     })
 
 
@@ -183,6 +186,27 @@ def main():
         type=str,
         default=None,
         help="Model override for the fallback coach",
+    )
+
+    # Context management
+    go_parser.add_argument(
+        "--context-limit",
+        type=int,
+        default=None,
+        help="Max context tokens (default: 110000)",
+    )
+    go_parser.add_argument(
+        "--compact-threshold",
+        type=float,
+        default=None,
+        help="Compact at this fraction of limit (default: 0.85)",
+    )
+    go_parser.add_argument(
+        "--max-continuation",
+        type=int,
+        default=None,
+        dest="max_continuation_attempts",
+        help="Continuation agent retries (default: 2)",
     )
 
     # `history` subcommand
