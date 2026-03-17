@@ -38,6 +38,9 @@ Thumbs.db
 g3/.g3/sessions/
 .g3/
 
+# Git worktrees (isolated development)
+.worktrees/
+
 # Secrets
 .env
 .env.*
