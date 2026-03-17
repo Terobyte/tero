@@ -25,6 +25,7 @@ from src.prompts import (
     build_player_step_prompt,
 )
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
+from src.providers.message_adapter import AdaptedMessage
 from src.providers.ccg import run_agent
 from src import streaming as streaming_ui
 from src.streaming import BOLD, RESET, GREEN, RED
@@ -37,6 +38,8 @@ class TurnResult:
     duration_s: float
     tools_used: int
     messages: list
+    text: str = ""  # Concatenated assistant text output
+    tokens_used: int = 0  # Total tokens (input + output) from ResultMessage
 
 
 @dataclass
@@ -391,7 +394,87 @@ class CoachPlayerSession:
         duration = time.time() - start
         streaming_ui.print_turn_timing(role, duration, tools_used)
 
-        return TurnResult(role=role, duration_s=duration, tools_used=tools_used, messages=messages)
+        # Extract text from assistant messages
+        text_parts = [
+            msg.get_text_content()
+            for msg in messages
+            if isinstance(msg, AdaptedMessage) and msg.role == "assistant"
+        ]
+        result_text = "\n".join(p for p in text_parts if p)
+
+        # Fallback: if no text from AssistantMessages, use ResultMessage.result
+        if not result_text:
+            for msg in messages:
+                if type(msg).__name__ == "ResultMessage":
+                    result_text = getattr(msg, "result", "") or ""
+                    break
+
+        return TurnResult(
+            role=role,
+            duration_s=duration,
+            tools_used=tools_used,
+            messages=messages,
+            text=result_text,
+        )
+
+    def _has_completion_markers(self, text: str, role: str) -> bool:
+        """Return True when the turn output contains the required completion markers."""
+        from src.batch_executor import _PHASE_COMPLETE_RE, _REQUIRED_REPORT_HEADERS
+        from src.feedback import _APPROVED_MARKER_RE, _NUMBERED_ISSUE_RE
+
+        if role == "player":
+            if not _PHASE_COMPLETE_RE.search(text):
+                return False
+            lowered = text.lower()
+            return all(h in lowered for h in _REQUIRED_REPORT_HEADERS)
+        # coach/reviewer: needs IMPLEMENTATION_APPROVED or numbered issues
+        if _APPROVED_MARKER_RE.search(text):
+            return True
+        return bool(_NUMBERED_ISSUE_RE.search(text))
+
+    async def _run_with_continuation(
+        self,
+        role: str,
+        prompt: str,
+        system_prompt: str,
+        max_turns: int,
+        timeout_s: int,
+        model_override: str = "",
+        provider_override=None,
+    ) -> TurnResult:
+        """Run a turn, retrying with compact context if no completion markers found."""
+        from src.context_manager import _build_compact_summary, _build_continuation_prompt
+        from src import streaming as streaming_ui
+
+        result = await self._run_turn(
+            role=role,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            timeout_s=timeout_s,
+            model_override=model_override,
+            provider_override=provider_override,
+        )
+
+        for attempt in range(self.config.max_continuation_attempts):
+            if self._has_completion_markers(result.text, role):
+                return result
+
+            streaming_ui.print_continuation_started(role, attempt + 1, self.config.max_continuation_attempts)
+            summary = _build_compact_summary(result.messages)
+            continuation_prompt = _build_continuation_prompt(summary, role)
+
+            result = await self._run_turn(
+                role=role,
+                prompt=continuation_prompt,
+                system_prompt=system_prompt,
+                max_turns=max_turns,
+                timeout_s=timeout_s,
+                model_override=model_override,
+                provider_override=provider_override,
+            )
+
+        return result
 
     def _print_session_report(self, record: RunRecord, steps_completed: int, total_steps: int):
         """Print final session report."""
