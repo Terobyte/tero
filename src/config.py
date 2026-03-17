@@ -1,101 +1,121 @@
-"""Загрузка и merge конфигурации: defaults → user → project → env → CLI."""
+"""Configuration: defaults -> .g3/config.yaml -> env -> CLI args."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 
 
 @dataclass
-class ProviderConfig:
-    """Configuration for a single provider."""
-    name: str
-    type: str
-    command: str
-    claude_home: str | None = None
-    account_label: str | None = None
-    default_timeout: int = 600
+class CcgEnv:
+    """Environment variables for ccg (Blackbox.ai via Claude CLI)."""
+    base_url: str
+    auth_token: str
+    model: str
+    small_model: str
+    claude_home: str
+
+    @classmethod
+    def from_env(cls, claude_home: str = "~/.claude-glm") -> "CcgEnv":
+        token = (
+            os.environ.get("ANTHROPIC_AUTH_TOKEN")
+            or os.environ.get("BLACKBOX_ACCOUNT_A_TOKEN")
+            or ""
+        )
+        return cls(
+            base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
+            auth_token=token,
+            model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
+            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "kimi-k2.5"),
+            claude_home=os.path.expanduser(claude_home),
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "ANTHROPIC_BASE_URL": self.base_url,
+            "ANTHROPIC_AUTH_TOKEN": self.auth_token,
+            "ANTHROPIC_MODEL": self.model,
+            "ANTHROPIC_SMALL_FAST_MODEL": self.small_model,
+            "CLAUDE_HOME": self.claude_home,
+        }
 
 
 @dataclass
-class ResolvedConfig:
-    """Merged configuration from all sources."""
-    max_rounds: int = 3
+class Config:
+    """Resolved configuration."""
+    max_turns: int = 10
     autonomous: bool = False
-    run_tests: bool = True
-    judge_mode: str = "single"
-    selection: str = "best"
-    agent_a: str = "ccg"
-    agent_b: str = "ccg2"
-    judge: str = "ccg"
-    judge_2: str | None = None
-    worktree_mode: str = "auto"
     verbose: bool = False
-    dry_run: bool = False
-    working_dir: str = "."
     plan_file: str = "requirements.md"
-    run_bug_detection: bool = True
-    ask_feedback: bool = True
-    timeout_s: int = 600
-    agent_a_workspace: str = "g"
-    agent_b_workspace: str = "g1"
+    working_dir: str = "."
+    player_timeout_s: int = 600
+    coach_timeout_s: int = 300
+    claude_home: str = "~/.claude-glm"
+    coach_model: str = ""  # empty = use default model from env
+
+    # Provider selection (NEW)
+    player_provider: str = "ccg"  # "ccg" | "claude"
+    coach_provider: str = "ccg"   # "ccg" | "claude"
+    player_model: str = ""        # model for player (empty = provider default)
 
 
-def load_yaml(path: Path) -> dict[str, Any]:
-    """Load YAML file if it exists."""
+def short_model_name(model: str) -> str:
+    """Get short display name from a model string."""
+    m = model.lower()
+    if "opus" in m:
+        return "OPUS"
+    if "sonnet" in m:
+        return "SONNET"
+    if "haiku" in m:
+        return "HAIKU"
+    if "glm" in m:
+        return "GLM-5"
+    if "kimi" in m:
+        return "KIMI"
+    if not model:
+        return "DEFAULT"
+    return model.split("/")[-1].upper()[:10]
+
+
+def _load_yaml(path: Path) -> dict:
     if path.exists():
         with open(path) as f:
             return yaml.safe_load(f) or {}
     return {}
 
 
-def load_providers(raw: dict[str, Any]) -> dict[str, ProviderConfig]:
-    """Extract provider configurations from raw config dict."""
-    result: dict[str, ProviderConfig] = {}
-    for name, cfg in raw.get("providers", {}).items():
-        result[name] = ProviderConfig(
-            name=name,
-            type=cfg["type"],
-            command=cfg["command"],
-            claude_home=cfg.get("claude_home"),
-            account_label=cfg.get("account_label"),
-            default_timeout=cfg.get("default_timeout", 600),
-        )
-    return result
+def resolve_config(cli_args: dict) -> Config:
+    """Merge: defaults -> .g3/config.yaml -> env -> CLI args."""
+    defaults = {}
+    working_dir = cli_args.get("working_dir") or "."
+    working_dir = str(Path(working_dir).expanduser().resolve())
 
+    # Load project config
+    project = _load_yaml(Path(working_dir) / ".g3" / "config.yaml")
+    defaults.update(project.get("defaults", {}))
 
-def resolve_config(cli_args: dict[str, Any]) -> tuple[ResolvedConfig, dict[str, ProviderConfig]]:
-    """Merge всех слоёв. Возвращает конфиг и провайдеры."""
-    user_raw = load_yaml(Path.home() / ".config" / "g3" / "config.yaml")
-    project_raw = load_yaml(Path(".g3") / "config.yaml")
-
-    # Провайдеры: user < project (project переопределяет)
-    providers = {**load_providers(user_raw), **load_providers(project_raw)}
-
-    # Defaults: user < project < env < CLI
-    defaults: dict[str, Any] = {
-        "max_rounds": 3, "autonomous": False, "run_tests": True,
-        "judge_mode": "single", "selection": "best",
-        "agent_a": "ccg", "agent_b": "ccg2", "judge": "ccg",
-        "run_bug_detection": True, "ask_feedback": True,
-        "timeout_s": 600,
-    }
-
-    for layer in [user_raw.get("defaults", {}), project_raw.get("defaults", {})]:
-        defaults.update({k: v for k, v in layer.items() if v is not None})
-
-    env_map: dict[str, tuple[str, Any]] = {
-        "G3_MAX_ROUNDS": ("max_rounds", int),
-        "G3_DEFAULT_JUDGE": ("judge", str),
+    # Env overrides
+    env_map = {
+        "G3_MAX_TURNS": ("max_turns", int),
         "G3_AUTONOMOUS": ("autonomous", lambda x: x.lower() == "true"),
+        "G3_PLAYER_PROVIDER": ("player_provider", str),
+        "G3_COACH_PROVIDER": ("coach_provider", str),
+        "G3_PLAYER_MODEL": ("player_model", str),
+        "G3_COACH_MODEL": ("coach_model", str),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):
             defaults[cfg_key] = conv(val)
 
+    # CLI overrides (highest priority, skip None values)
     defaults.update({k: v for k, v in cli_args.items() if v is not None})
-    valid_fields = ResolvedConfig.__dataclass_fields__
-    cfg = ResolvedConfig(**{k: v for k, v in defaults.items() if k in valid_fields})
-    return cfg, providers
+    defaults["working_dir"] = working_dir
+
+    # Provider config
+    provider = project.get("provider", {})
+    if claude_home := provider.get("claude_home"):
+        defaults["claude_home"] = claude_home
+
+    valid_fields = Config.__dataclass_fields__
+    return Config(**{k: v for k, v in defaults.items() if k in valid_fields})
