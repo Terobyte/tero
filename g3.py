@@ -23,6 +23,15 @@ def _resolve_go_config(args):
         "player_provider": getattr(args, "player_provider", None),
         "coach_provider": getattr(args, "coach_provider", None),
         "player_model": getattr(args, "player_model", None),
+        "tdd_mode": getattr(args, "tdd_mode", None),
+        "test_command": getattr(args, "test_command", None),
+        "test_timeout_s": getattr(args, "test_timeout_s", None),
+        "code_review": getattr(args, "code_review", None),
+        "review_provider": getattr(args, "review_provider", None),
+        "review_model": getattr(args, "review_model", None),
+        "coach_retry_max": getattr(args, "coach_retry_max", None),
+        "coach_fallback_provider": getattr(args, "coach_fallback_provider", None),
+        "coach_fallback_model": getattr(args, "coach_fallback_model", None),
     })
 
 
@@ -94,15 +103,15 @@ def main():
         "--player-provider", "-pp",
         type=str,
         default=None,
-        choices=["ccg", "claude"],
-        help="Provider for player: ccg (Blackbox) or claude (Pro)",
+        choices=["ccg", "ccg2", "claude", "codex"],
+        help="Provider for player: ccg, ccg2, claude, or codex",
     )
     go_parser.add_argument(
         "--coach-provider", "-cp",
         type=str,
         default=None,
-        choices=["ccg", "claude"],
-        help="Provider for coach: ccg (Blackbox) or claude (Pro)",
+        choices=["ccg", "ccg2", "claude", "codex"],
+        help="Provider for coach: ccg, ccg2, claude, or codex",
     )
     go_parser.add_argument(
         "--player-model", "-pm",
@@ -116,6 +125,64 @@ def main():
         default=None,
         dest="coach_model",
         help="Model for coach (e.g., sonnet, opus, haiku for Claude)",
+    )
+    go_parser.add_argument(
+        "--tdd",
+        dest="tdd_mode",
+        action="store_true",
+        default=None,
+        help="Enable TDD mode",
+    )
+    go_parser.add_argument(
+        "--test-command",
+        type=str,
+        default=None,
+        help="Override auto-detected test command",
+    )
+    go_parser.add_argument(
+        "--test-timeout-s",
+        type=int,
+        default=None,
+        dest="test_timeout_s",
+        help="Timeout for enforced test runs in seconds",
+    )
+    go_parser.add_argument(
+        "--code-review",
+        action="store_true",
+        default=None,
+        help="Enable final code review after coach approval",
+    )
+    go_parser.add_argument(
+        "--review-provider",
+        type=str,
+        default=None,
+        choices=["ccg", "ccg2", "claude", "codex"],
+        help="Provider for final code review",
+    )
+    go_parser.add_argument(
+        "--review-model",
+        type=str,
+        default=None,
+        help="Model override for the review provider",
+    )
+    go_parser.add_argument(
+        "--coach-retry-max",
+        type=int,
+        default=None,
+        help="How many times to retry the main coach on missing verdicts",
+    )
+    go_parser.add_argument(
+        "--coach-fallback-provider",
+        type=str,
+        default=None,
+        choices=["ccg", "ccg2", "claude", "codex"],
+        help="Provider to use when the main coach stays silent",
+    )
+    go_parser.add_argument(
+        "--coach-fallback-model",
+        type=str,
+        default=None,
+        help="Model override for the fallback coach",
     )
 
     # `history` subcommand
