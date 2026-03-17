@@ -1,0 +1,3 @@
+[submodule "ai-cli-proxy-api"]
+	path = ai-cli-proxy-api
+	url = https://github.com/Terobyte/ai-cli-proxy-api.git
