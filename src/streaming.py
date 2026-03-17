@@ -185,3 +185,31 @@ def _progress_bar(done: int, total: int, width: int = 20) -> str:
     bar = "■" * filled + "□" * (width - filled)
     pct = int(100 * done / total)
     return f"[{bar}] {done}/{total} ({pct}%)"
+
+
+def print_continuation_started(role: str, attempt: int, max_attempts: int) -> None:
+    """Print notification when continuation agent starts."""
+    print(f"\n{BOLD}🔄 [{role}]{RESET} No completion markers — "
+          f"continuation agent {attempt}/{max_attempts}...")
+
+
+def print_compact_triggered(tokens_used: int, context_limit: int) -> None:
+    """Print notification when context compaction fires."""
+    print(f"\n{BOLD}⚡ Context compacted{RESET} "
+          f"({tokens_used // 1000}k/{context_limit // 1000}k tokens) — continuing...")
+
+
+def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attempts: int, model_name: str = ""):
+    """Print a batch phase turn header with explicit role/model labeling."""
+    role_upper = role.upper()
+    colors = {
+        "player": BLUE,
+        "coach": YELLOW,
+        "judge": GREEN,
+    }
+    color = colors.get(role, CYAN)
+    model_info = f" [{model_name}]" if model_name else ""
+    print(
+        f"\n{BOLD}{color}═══ {role_upper}{model_info} — фаза {phase_name} "
+        f"попытка {attempt}/{max_attempts} {RESET}"
+    )

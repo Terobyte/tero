@@ -1,6 +1,18 @@
 """Base protocol for agent providers."""
 
+from dataclasses import dataclass
 from typing import AsyncIterator, Protocol, runtime_checkable
+
+
+@dataclass
+class AgentResult:
+    """Compatibility result object used by duel/orchestrator flows."""
+
+    success: bool
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration_s: float
 
 
 @runtime_checkable
