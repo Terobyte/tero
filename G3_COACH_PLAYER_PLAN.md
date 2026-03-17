@@ -248,7 +248,7 @@ set -euo pipefail
 export ANTHROPIC_BASE_URL="https://api.blackbox.ai"
 export ANTHROPIC_AUTH_TOKEN="${BLACKBOX_ACCOUNT_A_TOKEN:?Set BLACKBOX_ACCOUNT_A_TOKEN in env}"
 export ANTHROPIC_MODEL="blackboxai/z-ai/glm-5"
-export ANTHROPIC_SMALL_FAST_MODEL="kimi-k2.5"
+export ANTHROPIC_SMALL_FAST_MODEL="minimax-2.5"
 export CLAUDE_HOME="${HOME}/.claude-glm-a"
 
 mkdir -p "${CLAUDE_HOME}"
@@ -277,7 +277,7 @@ set -euo pipefail
 export ANTHROPIC_BASE_URL="https://api.blackbox.ai"
 export ANTHROPIC_AUTH_TOKEN="${BLACKBOX_ACCOUNT_B_TOKEN:?Set BLACKBOX_ACCOUNT_B_TOKEN in env}"
 export ANTHROPIC_MODEL="blackboxai/z-ai/glm-5"
-export ANTHROPIC_SMALL_FAST_MODEL="kimi-k2.5"
+export ANTHROPIC_SMALL_FAST_MODEL="minimax-2.5"
 export CLAUDE_HOME="${HOME}/.claude-glm-b"
 
 mkdir -p "${CLAUDE_HOME}"

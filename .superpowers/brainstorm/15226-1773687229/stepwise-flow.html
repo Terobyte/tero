@@ -1,0 +1,76 @@
+<h2>Пошаговое выполнение плана</h2>
+<p class="subtitle">Как должен работать цикл player → coach на каждый шаг</p>
+
+<div class="split">
+
+  <div class="mockup">
+    <div class="mockup-header" style="background:#3d1010;color:#ff6b6b">✗ Сейчас (сломано)</div>
+    <div class="mockup-body" style="background:#0d1117;padding:16px;font-family:monospace;font-size:12px;color:#e6edf3;line-height:1.7">
+      <div style="color:#8b949e">=== Turn 1/10 -- PLAYER ===</div>
+      <div style="color:#8b949e;font-size:11px;margin:4px 0 8px">Получает ВСЕ 14 требований сразу</div>
+      <div style="color:#e6edf3">  [tool] Read: ...<br>  [tool] Write: calculator.py<br>  <span style="color:#8b949e"># пишет сразу всё</span></div>
+      <div style="color:#8b949e;margin-top:8px">=== Turn 1/10 -- COACH ===</div>
+      <div style="color:#ffa657">  Coach Verdict: NOT APPROVED</div>
+      <div style="color:#8b949e;font-size:11px">  Issues: (пусто или нет вывода)</div>
+      <div style="margin-top:12px;color:#8b949e;border-top:1px solid #21262d;padding-top:8px">
+        Plan Progress:<br>
+        <span style="color:#ff6b6b">[ ] 1. [ ] 2. [ ] 3. ... [ ] 14.</span><br>
+        <span style="color:#8b949e;font-size:11px">← галочки никогда не ставятся</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header" style="background:#0d3318;color:#3fb950">✓ Как должно быть</div>
+    <div class="mockup-body" style="background:#0d1117;padding:16px;font-family:monospace;font-size:12px;color:#e6edf3;line-height:1.7">
+      <div style="color:#58a6ff">── Шаг 1/14 ──────────────────</div>
+      <div style="color:#8b949e;font-size:11px;margin:2px 0 6px">Задача: Фон окна #1A1A2E</div>
+      <div style="color:#8b949e">=== PLAYER ===</div>
+      <div style="color:#e6edf3;padding-left:4px">реализует ТОЛЬКО шаг 1</div>
+      <div style="color:#8b949e;margin-top:6px">=== COACH [GLM-5] ===</div>
+      <div style="color:#3fb950">  ✓ Шаг 1 выполнен → APPROVED</div>
+      <div style="color:#3fb950;font-size:11px;padding-left:4px">  [x] 1. Фон окна #1A1A2E</div>
+
+      <div style="color:#58a6ff;margin-top:8px">── Шаг 2/14 ──────────────────</div>
+      <div style="color:#8b949e;font-size:11px;margin:2px 0 6px">Задача: Скруглённые края</div>
+      <div style="color:#8b949e">=== PLAYER ===</div>
+      <div style="color:#e6edf3;padding-left:4px">реализует ТОЛЬКО шаг 2</div>
+      <div style="color:#8b949e;margin-top:6px">=== COACH [GLM-5] ===</div>
+      <div style="color:#ffa657">  ✗ Не скруглено → NOT APPROVED</div>
+      <div style="color:#ffa657;font-size:11px;padding-left:4px">  1. overrideredirect не вызван</div>
+      <div style="color:#8b949e;margin-top:4px">=== PLAYER (повтор) ===</div>
+      <div style="color:#3fb950;margin-top:4px">  ✓ APPROVED</div>
+      <div style="color:#3fb950;font-size:11px;padding-left:4px">  [x] 2. Скруглённые края</div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:24px">
+  <h3>Настройки строгости коуча</h3>
+  <p class="subtitle">Что проверяет коуч на каждом шаге?</p>
+
+  <div class="options">
+    <div class="option" data-choice="strict-basic" onclick="toggleSelect(this)">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>Базовая проверка</h3>
+        <p>Код существует + импортируется без ошибок. Быстро, мало API вызовов.</p>
+      </div>
+    </div>
+    <div class="option" data-choice="strict-run" onclick="toggleSelect(this)">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>Запуск + визуальная проверка</h3>
+        <p>Запускает код, проверяет что конкретное требование видно/работает. <strong>Рекомендуется.</strong></p>
+      </div>
+    </div>
+    <div class="option" data-choice="strict-test" onclick="toggleSelect(this)">
+      <div class="letter">3</div>
+      <div class="content">
+        <h3>Тесты на каждый шаг</h3>
+        <p>Коуч пишет тест под каждый пункт плана и прогоняет его. Медленно но надёжно.</p>
+      </div>
+    </div>
+  </div>
+</div>

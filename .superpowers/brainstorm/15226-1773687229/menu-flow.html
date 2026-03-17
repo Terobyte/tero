@@ -1,0 +1,62 @@
+<h2>Как работает навигация по меню?</h2>
+<p class="subtitle">Два подхода к структуре TUI меню</p>
+
+<div class="split">
+
+  <div class="mockup" style="cursor:pointer" data-choice="a" onclick="toggleSelect(this)">
+    <div class="mockup-header">A — Последовательные вопросы</div>
+    <div class="mockup-body" style="background:#0d1117;padding:16px;font-family:monospace;font-size:12.5px;color:#e6edf3;line-height:1.8">
+      <div style="color:#8b949e;margin-bottom:4px">tero go</div>
+      <div style="margin-bottom:12px"></div>
+      <div style="color:#58a6ff">? Coach модель:</div>
+      <div style="color:#3fb950">  ❯ GLM-5</div>
+      <div style="color:#e6edf3;padding-left:4px">    Sonnet</div>
+      <div style="color:#e6edf3;padding-left:4px">    Opus</div>
+      <div style="color:#e6edf3;padding-left:4px">    [ввести вручную]</div>
+      <div style="color:#8b949e;margin-top:16px">── следующий вопрос ──</div>
+      <div style="color:#58a6ff;margin-top:12px">? Макс. ходов: <span style="color:#3fb950">(10)</span> _</div>
+      <div style="color:#8b949e;margin-top:12px">── следующий вопрос ──</div>
+      <div style="color:#58a6ff;margin-top:12px">? Verbose? <span style="color:#3fb950">(y/N)</span></div>
+      <div style="color:#8b949e;margin-top:16px">→ Старт!</div>
+    </div>
+    <div style="padding:12px 0 4px;color:#8b949e;font-size:12px">
+      Шаг за шагом. Каждый вопрос отдельно.<br>Простая реализация, привычная логика.
+    </div>
+  </div>
+
+  <div class="mockup" style="cursor:pointer" data-choice="b" onclick="toggleSelect(this)">
+    <div class="mockup-header">B — Единый экран настроек</div>
+    <div class="mockup-body" style="background:#0d1117;padding:16px;font-family:monospace;font-size:12.5px;color:#e6edf3;line-height:1.9">
+      <div style="color:#58a6ff;margin-bottom:8px">⚙  tero — настройка</div>
+      <div style="background:#161b22;padding:4px 8px;border-radius:4px;border:1px solid #3fb950;color:#3fb950">
+        ❯  Coach модель   GLM-5
+      </div>
+      <div style="padding:4px 8px;color:#8b949e">
+           Макс. ходов   10
+      </div>
+      <div style="padding:4px 8px;color:#8b949e">
+           Файл плана    requirements.md
+      </div>
+      <div style="padding:4px 8px;color:#8b949e">
+           Verbose       выкл
+      </div>
+      <div style="padding:4px 8px;color:#8b949e">
+           Автономный    выкл
+      </div>
+      <div style="margin-top:12px;color:#444;border-top:1px solid #21262d;padding-top:8px">
+        ↑↓ навигация   Enter изменить   S старт   Q выход
+      </div>
+    </div>
+    <div style="padding:12px 0 4px;color:#8b949e;font-size:12px">
+      Всё видно сразу. Стрелки переключают строки,<br>Enter открывает редактирование выбранного поля.
+    </div>
+  </div>
+
+</div>
+
+<style>
+.mockup[data-choice].selected {
+  outline: 2px solid #3fb950;
+  border-radius: 8px;
+}
+</style>

@@ -214,7 +214,7 @@ class CcgEnv:
             base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
             auth_token=token,
             model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
-            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "kimi-k2.5"),
+            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "minimax-2.5"),
             claude_home=os.path.expanduser(claude_home),
         )
 
