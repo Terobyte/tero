@@ -59,6 +59,11 @@ class Config:
     coach_provider: str = "ccg"   # "ccg" | "claude"
     player_model: str = ""        # model for player (empty = provider default)
 
+    # Context Management
+    context_limit: int = 110_000
+    compact_threshold: float = 0.85
+    max_continuation_attempts: int = 2
+
 
 def short_model_name(model: str) -> str:
     """Get short display name from a model string."""
@@ -103,6 +108,9 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_COACH_PROVIDER": ("coach_provider", str),
         "G3_PLAYER_MODEL": ("player_model", str),
         "G3_COACH_MODEL": ("coach_model", str),
+        "G3_CONTEXT_LIMIT": ("context_limit", int),
+        "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
+        "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):

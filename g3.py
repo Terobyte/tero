@@ -23,6 +23,9 @@ def _resolve_go_config(args):
         "player_provider": getattr(args, "player_provider", None),
         "coach_provider": getattr(args, "coach_provider", None),
         "player_model": getattr(args, "player_model", None),
+        "context_limit": getattr(args, "context_limit", None),
+        "compact_threshold": getattr(args, "compact_threshold", None),
+        "max_continuation_attempts": getattr(args, "max_continuation_attempts", None),
     })
 
 
@@ -116,6 +119,27 @@ def main():
         default=None,
         dest="coach_model",
         help="Model for coach (e.g., sonnet, opus, haiku for Claude)",
+    )
+
+    # Context management
+    go_parser.add_argument(
+        "--context-limit",
+        type=int,
+        default=None,
+        help="Max context tokens (default: 110000)",
+    )
+    go_parser.add_argument(
+        "--compact-threshold",
+        type=float,
+        default=None,
+        help="Compact at this fraction of limit (default: 0.85)",
+    )
+    go_parser.add_argument(
+        "--max-continuation",
+        type=int,
+        default=None,
+        dest="max_continuation_attempts",
+        help="Continuation agent retries (default: 2)",
     )
 
     # `history` subcommand
