@@ -5,9 +5,9 @@
 Расширение tero (G3 coach-player loop) четырьмя независимыми фичами:
 
 - [x] **CCG Multi-Account** — два аккаунта Blackbox (ccg / ccg2) с разными токенами, параллельная работа
-- [ ] **Codex Provider** — новый провайдер через ai-cli-proxy-api (OpenAI-compatible)
-- [ ] **TDD Mode** — toggle: Test Writer пишет тесты перед имплементацией
-- [ ] **Code Review** — toggle: финальный review через Codex после Coach approval
+- [x] **Codex Provider** — новый провайдер через ai-cli-proxy-api (OpenAI-compatible)
+- [x] **TDD Mode** — toggle: Test Writer пишет тесты перед имплементацией
+- [x] **Code Review** — toggle: финальный review через Codex после Coach approval
 
 Фичи независимы друг от друга. TDD и Code Review — тогглы в меню, можно включать по отдельности или оба сразу.
 
@@ -24,12 +24,12 @@
 - [ ] Launcher scripts `launcher/ccg` и `launcher/ccg2` уже используют разные токены и CLAUDE_HOME
 - [ ] `BLACKBOX_ACCOUNT_A_TOKEN` → ccg (Account A, `~/.claude-glm-a`)
 - [ ] `BLACKBOX_ACCOUNT_B_TOKEN` → ccg2 (Account B, `~/.claude-glm-b`)
-- [ ] Но `CcgEnv.from_env()` всегда читает только `ACCOUNT_A_TOKEN`
-- [ ] `create_provider("ccg2")` создаёт тот же CcgProvider с тем же env — баг
+- [ ] Legacy helper `CcgEnv.from_env()` должен указывать на Account A home (`~/.claude-glm-a`)
+- [ ] Основной runtime путь для `ccg`/`ccg2` должен идти через `CcgEnv.for_account()` / `create_provider()`
 
 ### 0.3 Решение: два CcgEnv
 
-**config.py — добавить `from_env_b()` и общий `_build()`:**
+**config.py — использовать `for_account()` как основной путь, а `from_env*()` оставить как legacy helpers:**
 
 ```python
 @dataclass
@@ -41,36 +41,24 @@ class CcgEnv:
     claude_home: str
 
     @classmethod
-    def from_env(cls, claude_home: str = "~/.claude-glm") -> "CcgEnv":
-        """Account A (default)."""
-        return cls._build(
-            token_vars=["ANTHROPIC_AUTH_TOKEN", "BLACKBOX_ACCOUNT_A_TOKEN"],
-            claude_home=claude_home,
-        )
+    def from_env(cls, claude_home: str = "~/.claude-glm-a") -> "CcgEnv":
+        """Legacy helper for Account A."""
+        ...
 
     @classmethod
     def from_env_b(cls, claude_home: str = "~/.claude-glm-b") -> "CcgEnv":
-        """Account B (second key)."""
-        return cls._build(
-            token_vars=["BLACKBOX_ACCOUNT_B_TOKEN"],
-            claude_home=claude_home,
-        )
+        """Legacy helper for Account B. Must not fall back to Account A token."""
+        ...
 
     @classmethod
-    def _build(cls, token_vars: list[str], claude_home: str) -> "CcgEnv":
-        token = ""
-        for var in token_vars:
-            if val := os.environ.get(var):
-                token = val
-                break
-        return cls(
-            base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
-            auth_token=token,
-            model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
-            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "minimax-2.5"),
-            claude_home=os.path.expanduser(claude_home),
-        )
+    def for_account(cls, account_name: str, provider_config: dict | None = None) -> "CcgEnv":
+        """Primary constructor used by the provider factory and registry."""
+        ...
 ```
+
+Важно:
+- `from_env_b()` намеренно читает только `BLACKBOX_ACCOUNT_B_TOKEN`, без fallback на Account A.
+- Основной runtime путь для `ccg`/`ccg2` проходит через `for_account()`, а не через `_build()`.
 
 ### 0.4 Провайдер ccg2
 
@@ -98,14 +86,21 @@ class CoachPlayerSession:
         self.ccg_env = CcgEnv.from_env(config.claude_home)      # Account A
         self.ccg_env_b = CcgEnv.from_env_b()                     # Account B
 
+        def _get_ccg_env(provider_name: str):
+            if provider_name == "ccg":
+                return self.ccg_env
+            if provider_name == "ccg2":
+                return self.ccg_env_b
+            return None
+
         self.player_provider = create_provider(
             config.player_provider,
-            self.ccg_env if config.player_provider == "ccg" else self.ccg_env_b,
+            _get_ccg_env(config.player_provider),
             provider_configs.get(config.player_provider),
         )
         self.coach_provider = create_provider(
             config.coach_provider,
-            self.ccg_env if config.coach_provider == "ccg" else self.ccg_env_b,
+            _get_ccg_env(config.coach_provider),
             provider_configs.get(config.coach_provider),
         )
 ```
@@ -140,14 +135,10 @@ tero go --player-provider=ccg --coach-provider=ccg2
 class CcgProvider:
     @property
     def display_name(self) -> str:
-        # Определяем аккаунт по claude_home
-        home = self.env.claude_home
-        if "glm-b" in home:
-            account = "B"
-        else:
-            account = "A"
+        # Используем account_label, а не string matching по пути
         model = ...  # existing logic
-        return f"CCG-{account} ({model})"
+        account = self.env.account_label
+        return f"CCG ({model}/{account})"
 ```
 
 ### 0.9 Use Cases
@@ -179,16 +170,16 @@ class CcgProvider:
 ```
 tero (Python)
   ↓
-providers/codex_proxy.py
+providers/codex.py
   ↓ HTTP (OpenAI-compatible API)
-ai-cli-proxy-api (Go) — localhost:8317
+ai-cli-proxy-api (Go) — localhost:8765
   ↓ OAuth
-OpenAI Codex (GPT-5.4, GPT-4o, codex-mini)
+OpenAI Codex (GPT-5.4, GPT-5.4 HIGH, GPT-5.4 ULTRA-HIGH)
 ```
 
-### 1.3 Провайдер: `CodexProxyProvider`
+### 1.3 Провайдер: `CodexProvider`
 
-**Файл:** `g3/src/providers/codex_proxy.py`
+**Файл:** `g3/src/providers/codex.py`
 
 **Интерфейс:** реализует `AgentProvider` protocol (base.py):
 - [ ] `async run(prompt, system_prompt, working_dir, max_turns, model)` → AsyncIterator
@@ -199,10 +190,10 @@ OpenAI Codex (GPT-5.4, GPT-4o, codex-mini)
 
 ```python
 @dataclass
-class CodexProxyConfig:
-    base_url: str = "http://127.0.0.1:8317"
-    api_key: str = "g3-local-key"
-    default_model: str = "gpt-5.4"
+class CodexConfig:
+    api_url: str = "http://localhost:8765"
+    api_key: str = ""
+    model: str = "gpt-5.4-medium"
 ```
 
 **Реализация run():**
@@ -228,18 +219,9 @@ ai-cli-proxy-api возвращает OpenAI-формат SSE:
 
 Нужен адаптер OpenAI SSE → AdaptedMessage (уже есть TextBlock, ToolUseBlock, ToolResultBlock в message_adapter.py).
 
-**Новая функция в message_adapter.py:**
+**Примечание по реализации:**
 
-```python
-def adapt_openai_sse_chunk(chunk: dict) -> AdaptedMessage | None:
-    """Convert OpenAI SSE chunk to AdaptedMessage."""
-```
-
-**Логика:**
-- [ ] `choices[0].delta.content` → TextBlock
-- [ ] `choices[0].delta.tool_calls` → ToolUseBlock (если прокси поддерживает)
-- [ ] `finish_reason == "stop"` → финальное сообщение
-- [ ] Накопление partial content в буфер для streaming display
+В текущем коде адаптация OpenAI SSE делается приватным методом `CodexProvider._adapt_chunk()`, а не общей функцией `adapt_openai_sse_chunk()` в `message_adapter.py`.
 
 ### 1.5 Интеграция в фабрику провайдеров
 
@@ -249,13 +231,13 @@ def adapt_openai_sse_chunk(chunk: dict) -> AdaptedMessage | None:
 
 ```python
 if provider_name == "codex":
-    from .codex_proxy import CodexProxyProvider, CodexProxyConfig
-    codex_cfg = CodexProxyConfig(
-        base_url=provider_config.get("base_url", "http://127.0.0.1:8317"),
-        api_key=provider_config.get("api_key", "g3-local-key"),
-        default_model=provider_config.get("default_model", "gpt-5.4"),
+    from .codex import CodexProvider, CodexConfig
+    codex_cfg = CodexConfig(
+        api_url=provider_config.get("api_url", provider_config.get("base_url", "http://localhost:8765")),
+        api_key=provider_config.get("api_key", ""),
+        model=provider_config.get("model", provider_config.get("default_model", "gpt-5.4-medium")),
     )
-    return CodexProxyProvider(codex_cfg)
+    return CodexProvider(codex_cfg)
 ```
 
 ### 1.6 Config & CLI
@@ -275,14 +257,15 @@ if provider_name == "codex":
 ```python
 PROVIDER_PRESETS = {
     "CCG (Blackbox/GLM-5)": "ccg",
+    "CCG2 (Blackbox B)": "ccg2",
     "Claude Pro (native)": "claude",
     "Codex (GPT via proxy)": "codex",
 }
 
 CODEX_MODEL_PRESETS = {
-    "GPT-5.4 (strongest)": "gpt-5.4",
-    "GPT-4o  (balanced)": "gpt-4o",
-    "Codex Mini (fast)": "codex-mini",
+    "GPT-5.4 Medium     (gpt-5.4-medium)": "gpt-5.4-medium",
+    "GPT-5.4 High       (gpt-5.4-high)": "gpt-5.4-high",
+    "GPT-5.4 Ultra High (gpt-5.4-ultra-high)": "gpt-5.4-ultra-high",
 }
 ```
 
@@ -293,10 +276,10 @@ CODEX_MODEL_PRESETS = {
 ```yaml
 providers:
   codex:
-    type: codex_proxy
-    base_url: "http://127.0.0.1:8317"
-    api_key: "g3-local-key"
-    default_model: "gpt-5.4"
+    type: codex
+    api_url: "http://localhost:8765"
+    api_key: ""
+    model: "gpt-5.4-medium"
 ```
 
 ### 1.9 Зависимости
@@ -306,11 +289,11 @@ providers:
 
 ### 1.10 Тесты
 
-- [ ] `tests/test_codex_proxy.py`:
-  - [ ] Unit: CodexProxyConfig defaults
-  - [ ] Unit: adapt_openai_sse_chunk() для text, tool_calls, finish_reason
+- [ ] `tests/test_codex_provider.py`:
+  - [ ] Unit: CodexConfig defaults
+  - [ ] Unit: `CodexProvider._adapt_chunk()` для text, role-only delta, finish_reason
   - [ ] Unit: check_ready() с mock httpx
-  - [ ] Integration: create_provider("codex") возвращает CodexProxyProvider
+  - [ ] Integration: create_provider("codex") возвращает CodexProvider
 
 ---
 
@@ -344,18 +327,18 @@ Test Writer generates tests → Player implements (tests must pass) → Coach re
 TEST_WRITER_SYSTEM_PROMPT = """You are a Test Architect. Your job is to write comprehensive tests BEFORE implementation.
 
 RULES:
-- [ ] Read the requirement carefully
-- [ ] Look at the existing codebase to understand the testing patterns, framework, and structure
-- [ ] Write tests that will FAIL right now (the feature is not implemented yet)
-- [ ] Tests must cover: happy path, edge cases, error handling
-- [ ] Use the project's existing test framework and conventions
-- [ ] Place tests in the correct test directory following project conventions
-- [ ] Tests should be specific and verifiable — no vague assertions
-- [ ] Do NOT implement the feature — only write tests
+- Read the requirement carefully
+- Look at the existing codebase to understand the testing patterns, framework, and structure
+- Write tests that will FAIL right now (the feature is not implemented yet)
+- Tests must cover: happy path, edge cases, error handling
+- Use the project's existing test framework and conventions
+- Place tests in the correct test directory following project conventions
+- Tests should be specific and verifiable — no vague assertions
+- Do NOT implement the feature — only write tests
 
 OUTPUT:
-- [ ] Create test file(s) with all tests
-- [ ] Print summary of what tests cover"""
+- Create test file(s) with all tests
+- Print summary of what tests cover"""
 ```
 
 ### 2.5 Test Writer Prompt Builder
@@ -407,8 +390,10 @@ if self.config.tdd_mode:
 Требования к этому шагу:
 - [ ] Если тесты падают, Coach **не запускается**
 - [ ] Если тесты проходят, только тогда начинается Coach review
-- [ ] Использовать существующую test command проекта, если она однозначно определяется
 - [ ] Разрешить override через config: `test_command` (если пусто, использовать autodetect)
+- [ ] Выполнять команду без `shell=True`
+- [ ] Добавить `test_timeout_s` в config/env/CLI
+- [ ] Автодетект команд держать простым и детерминированным: `pytest.ini`/pytest в `pyproject.toml` → `pytest -q`, `package.json` → `npm test`, `Cargo.toml` → `cargo test`, `Makefile` → `make test`
 
 ### 2.7 Config
 
@@ -418,11 +403,13 @@ class Config:
     # ... existing fields ...
     tdd_mode: bool = False  # TDD toggle
     test_command: str = ""  # empty = auto-detect project test command
+    test_timeout_s: int = 60
 ```
 
 **CLI:** `--tdd` flag
 **Env:** `G3_TDD_MODE=true`
 **Env:** `G3_TEST_COMMAND="pytest -q"`
+**Env:** `G3_TEST_TIMEOUT_S=60`
 **Config yaml:** `defaults.tdd_mode: true`, `defaults.test_command: "pytest -q"`
 
 ### 2.8 Меню
@@ -543,22 +530,22 @@ You are reviewing code that has ALREADY been approved by a coach. Your job is to
 the coach missed.
 
 FOCUS AREAS:
-- [ ] Security vulnerabilities (injection, XSS, auth bypass, secrets in code)
-- [ ] Logic bugs (off-by-one, race conditions, null handling)
-- [ ] Performance issues (N+1 queries, memory leaks, blocking calls)
-- [ ] Error handling gaps (unhandled exceptions, silent failures)
-- [ ] Best practices violations specific to the language/framework
+- Security vulnerabilities (injection, XSS, auth bypass, secrets in code)
+- Logic bugs (off-by-one, race conditions, null handling)
+- Performance issues (N+1 queries, memory leaks, blocking calls)
+- Error handling gaps (unhandled exceptions, silent failures)
+- Best practices violations specific to the language/framework
 
 DO NOT review:
-- [ ] Code style or formatting
-- [ ] Naming conventions
-- [ ] Minor refactoring suggestions
+- Code style or formatting
+- Naming conventions
+- Minor refactoring suggestions
 
 PROCESS:
-- [ ] Read the changed/new files for the current step
-- [ ] Analyze for the focus areas above
-- [ ] If critical issues found → numbered list of issues
-- [ ] If no critical issues → CODE_REVIEW_PASSED
+- Read the changed/new files for the current step
+- Analyze for the focus areas above
+- If critical issues found → numbered list of issues
+- If no critical issues → CODE_REVIEW_PASSED
 
 Your verdict MUST end with either CODE_REVIEW_PASSED or a numbered list of critical issues."""
 ```
@@ -644,19 +631,16 @@ def parse_review_output(messages: list) -> ReviewPassed | ReviewIssues:
 if self.config.code_review:
     review_provider_name = self.config.review_provider
     if not review_provider_name:
-        # Auto-detect: use codex if available, else coach
-        codex_prov = create_provider("codex", self.ccg_env, provider_configs.get("codex"))
-        ok, _ = codex_prov.check_ready()
-        if ok:
-            review_provider_name = "codex"
-        else:
-            review_provider_name = self.config.coach_provider
+        # Auto-detect: use codex if available, else coach.
+        # Guard check_ready() so review auto-detect cannot crash session init.
+        try:
+            codex_prov = create_provider("codex", None, provider_configs.get("codex"))
+            ok, _ = codex_prov.check_ready()
+        except Exception:
+            ok = False
+        review_provider_name = "codex" if ok else self.config.coach_provider
 
-    self.review_provider = create_provider(
-        review_provider_name,
-        self.ccg_env if review_provider_name == "ccg" else self.ccg_env_b if review_provider_name == "ccg2" else None,
-        provider_configs.get(review_provider_name),
-    )
+    self.review_provider = create_provider(review_provider_name, None, provider_configs.get(review_provider_name))
 ```
 
 `review_provider` должен реально использоваться в `_run_turn()`. Недостаточно просто создать `self.review_provider`;
@@ -665,12 +649,7 @@ if self.config.code_review:
 Например:
 
 ```python
-provider = {
-    "player": self.player_provider,
-    "coach": self.coach_provider,
-    "test_writer": self.coach_provider,
-    "reviewer": self.review_provider,
-}[role]
+provider = self._provider_for_role(role)
 ```
 
 ### 3.10 Меню
@@ -715,8 +694,8 @@ def print_review_issues(issues_text):
 
 ```
 .g3/reviews/
-  step-1-review-2024-01-15.md
-  step-2-review-2024-01-15.md
+  <run-id>/step-1-review.md
+  <run-id>/step-2-review.md
 ```
 
 Формат:
@@ -795,20 +774,20 @@ def print_review_issues(issues_text):
 ### 5.1 Новые файлы
 
 ```
-g3/src/providers/codex_proxy.py     — Codex провайдер
-g3/tests/test_codex_proxy.py        — тесты Codex провайдера
+g3/src/providers/codex.py           — Codex провайдер
+g3/tests/test_codex_provider.py     — тесты Codex провайдера
 g3/tests/test_tdd_mode.py           — тесты TDD mode
 g3/tests/test_code_review.py        — тесты Code Review
-g3/tests/test_ccg_multi.py          — тесты CCG multi-account
+g3/tests/test_ccg_multiaccount.py   — тесты CCG multi-account
 ```
 
 ### 5.2 Изменяемые файлы
 
 ```
-g3/src/config.py                    — CcgEnv.from_env_b(), tdd_mode, code_review, review_provider, review_model
-                                   — test_command
+g3/src/config.py                    — CcgEnv.from_env_b(), for_account(), tdd_mode, code_review, review_provider, review_model
+                                   — test_command, test_timeout_s
 g3/src/providers/__init__.py        — ccg2 + codex в create_provider()
-g3/src/providers/message_adapter.py — добавить adapt_openai_sse_chunk()
+g3/src/providers/codex.py           — адаптация OpenAI SSE внутри `_adapt_chunk()`
 g3/src/coach_player.py              — ccg_env_b, TDD и Code Review фазы в loop
 g3/src/prompts.py                   — добавить TEST_WRITER и CODE_REVIEWER prompts
 g3/src/menu.py                      — добавить ccg2, codex, тогглы в меню
@@ -823,7 +802,7 @@ g3/requirements.txt                 — добавить httpx (если нет)
 ## Часть 6: Порядок реализации
 
 ### Phase 0: CCG Multi-Account
-- [ ] 0.1 Добавить `CcgEnv.from_env_b()` и `CcgEnv._build()` в config.py
+- [ ] 0.1 Добавить `CcgEnv.from_env_b()` и `for_account()` в config.py
 - [ ] 0.2 Обновить `create_provider("ccg2")` — принимать выбранный env, без автоподмены внутри фабрики
 - [ ] 0.3 Обновить CoachPlayerSession — передавать правильный env для ccg/ccg2
 - [ ] 0.4 Добавить `ccg2` в CLI choices (g3.py)
@@ -832,8 +811,8 @@ g3/requirements.txt                 — добавить httpx (если нет)
 - [ ] 0.7 Тесты multi-account
 
 ### Phase 1: Codex Provider
-- [ ] 1.1 Создать `codex_proxy.py` с CodexProxyConfig и CodexProxyProvider
-- [ ] 1.2 Добавить `adapt_openai_sse_chunk()` в message_adapter.py
+- [ ] 1.1 Создать `codex.py` с CodexConfig и CodexProvider
+- [ ] 1.2 Адаптировать OpenAI SSE внутри `CodexProvider._adapt_chunk()`
 - [ ] 1.3 Добавить `codex` в `create_provider()` (__init__.py)
 - [ ] 1.4 Добавить `codex` в CLI choices и config
 - [ ] 1.5 Добавить Codex в меню (PROVIDER_PRESETS + CODEX_MODEL_PRESETS)
@@ -842,6 +821,7 @@ g3/requirements.txt                 — добавить httpx (если нет)
 ### Phase 2: TDD Mode
 - [ ] 2.1 Добавить `tdd_mode` в Config, CLI, env
 - [ ] 2.1.1 Добавить `test_command` в Config, CLI, env
+- [ ] 2.1.2 Добавить `test_timeout_s` в Config, CLI, env
 - [ ] 2.2 Добавить TEST_WRITER_SYSTEM_PROMPT и build_test_writer_prompt() в prompts.py
 - [ ] 2.3 Добавить TDD toggle в меню
 - [ ] 2.4 Добавить print_test_writer_header() в streaming.py
@@ -872,11 +852,10 @@ g3/requirements.txt                 — добавить httpx (если нет)
 GLM-5 (через CCG provider) регулярно завершает сессию без финального текстового сообщения —
 последний SDK message является tool result, а не текстом. Реже такое случается с Sonnet.
 
-Текущее поведение системы при отсутствии вердикта:
-- [ ] `parse_coach_output` возвращает `Feedback("Coach produced no output — проверь текущую реализацию...")`
-- [ ] Этот текст идёт **Player**-у как якобы реальный фидбек
-- [ ] Player начинает "чинить" код который может быть идеальным
-- [ ] Цикл крутится до `max_turns` — шаг не одобряется никогда
+Проблемное поведение, которое нужно исключить:
+- [ ] `parse_coach_output` не должен превращать отсутствие вердикта в обычный player-feedback
+- [ ] Player не должен получать фиктивный фидбек, когда молчит именно coach
+- [ ] Step-level retry должен повторять coach, а не заставлять Player бессмысленно переписывать код
 
 ### 7.2 Два отдельных бага
 
@@ -938,17 +917,9 @@ Verdict = Approved | Feedback | NoVerdict
 
 ```python
 def parse_coach_output(messages: list) -> Verdict:
-    last_assistant_msg = None
-    for msg in messages:
-        if _is_assistant_message(msg):
-            last_assistant_msg = msg
+    text = _latest_assistant_text(messages)
 
-    if last_assistant_msg is None:
-        return NoVerdict()
-
-    text = _extract_text_from_message(last_assistant_msg)
-
-    if not text.strip():
+    if not text:
         return NoVerdict()
 
     if "IMPLEMENTATION_APPROVED" in text:
