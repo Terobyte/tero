@@ -1,0 +1,62 @@
+defaults:
+  max_rounds: 3
+  max_turns: 10
+  autonomous: false
+  run_tests: true
+  run_bug_detection: true
+  ask_feedback: true
+  player_provider: ccg
+  coach_provider: ccg
+  verbose: false
+
+providers:
+  ccg:
+    type: claude_glm
+    command: ccg
+    claude_home: "~/.claude-glm-a"
+    account_label: "blackbox-a"
+
+  ccg2:
+    type: claude_glm
+    command: ccg2
+    claude_home: "~/.claude-glm-b"
+    account_label: "blackbox-b"
+
+  claude:
+    type: claude_native
+    command: claude
+    claude_home: "~/.claude"
+    default_model: sonnet
+    default_timeout: 600
+
+  codex:
+    type: codex
+    command: codex
+    default_timeout: 900
+
+presets:
+  default:
+    player_provider: ccg
+    coach_provider: ccg
+    max_rounds: 3
+    run_tests: true
+
+  fast:
+    player_provider: ccg
+    coach_provider: ccg
+    max_rounds: 1
+    run_tests: false
+    run_bug_detection: false
+
+  pro:
+    player_provider: ccg
+    coach_provider: claude
+    coach_model: sonnet
+    max_rounds: 3
+
+  full_claude:
+    player_provider: claude
+    coach_provider: claude
+    player_model: sonnet
+    coach_model: opus
+    max_rounds: 5
