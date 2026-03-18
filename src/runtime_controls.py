@@ -315,3 +315,115 @@ class Picker:
             sys.stdout.flush()
         except OSError:
             pass
+
+
+import signal
+
+
+class RuntimeControls:
+    """Orchestrates KeyboardListener, StatusBar, and Picker for runtime coach/player switching."""
+
+    def __init__(self) -> None:
+        self._listener = KeyboardListener()
+        self._status_bar = StatusBar()
+        self._picker = Picker()
+        self._compact_requested = False
+        self._current_coach_idx: int = 0
+        self._current_player_idx: int = 0
+        self._ctx_pct: int = 0
+        self._player_name: str = ""
+        self._coach_name: str = ""
+        self._running = False
+
+    def start(self, player_name: str = "", coach_name: str = "") -> None:
+        """Start listener thread and render initial status bar."""
+        self._player_name = player_name
+        self._coach_name = coach_name
+        self._status_bar.update(player_name, coach_name, 0)
+        self._listener.start()
+        self._running = True
+        # Handle terminal resize
+        try:
+            signal.signal(signal.SIGWINCH, lambda *_: self._status_bar._render())
+        except (OSError, ValueError):
+            pass  # SIGWINCH not available on all platforms
+
+    def stop(self) -> None:
+        """Stop listener thread and clear status bar."""
+        if not self._running:
+            return
+        self._listener.stop()
+        self._status_bar.clear()
+        self._running = False
+
+    def update_context(self, tokens: int, context_window: int) -> None:
+        """Update context percentage in the status bar."""
+        if context_window > 0:
+            self._ctx_pct = int(100 * tokens / context_window)
+        else:
+            self._ctx_pct = 0
+        self._status_bar.update(self._player_name, self._coach_name, self._ctx_pct)
+
+    @property
+    def compact_requested(self) -> bool:
+        return self._compact_requested
+
+    def clear_compact(self) -> None:
+        self._compact_requested = False
+
+    def apply_pending(self, session) -> None:
+        """Process queued keypresses and apply any confirmed coach/player changes."""
+        # Drain the keyboard action queue
+        while True:
+            action = self._listener.pop_action()
+            if action is None:
+                break
+            result = self._picker.handle_action(
+                action,
+                current_coach_idx=self._current_coach_idx,
+                current_player_idx=self._current_player_idx,
+            )
+            if result == "compact":
+                self._compact_requested = True
+
+        # Apply any confirmed model change
+        pending = self._picker.pop_pending_change()
+        if pending is None:
+            return
+
+        role, provider_name, model = pending
+
+        # Verify provider is ready before switching
+        try:
+            provider = session._get_or_create_provider(provider_name)
+            ok, reason = provider.check_ready()
+        except Exception as e:
+            ok, reason = False, str(e)
+
+        if not ok:
+            self._status_bar.show_warning(f"{role.capitalize()} {provider_name} not ready: {reason}")
+            return
+
+        if role == "coach":
+            session.config.coach_provider = provider_name
+            session.config.coach_model = model
+            session.coach_provider = session._get_or_create_provider(provider_name)
+            session.coach_model = session._build_role_display("coach")
+            self._coach_name = session.coach_model
+            # Find and store new index
+            self._current_coach_idx = next(
+                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
+                self._current_coach_idx,
+            )
+        elif role == "player":
+            session.config.player_provider = provider_name
+            session.config.player_model = model
+            session.player_provider = session._get_or_create_provider(provider_name)
+            session.player_model = session._build_role_display("player")
+            self._player_name = session.player_model
+            self._current_player_idx = next(
+                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
+                self._current_player_idx,
+            )
+
+        self._status_bar.update(self._player_name, self._coach_name, self._ctx_pct)
