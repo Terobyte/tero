@@ -33,6 +33,19 @@ def _make_mock_provider():
     return provider
 
 
+def _player_report(summary: str) -> str:
+    """Build a valid player completion report for step-mode tests."""
+    return (
+        f"{summary}\n"
+        "What changed:\n"
+        "- Updated the implementation.\n"
+        "Evidence:\n"
+        "- Checked the relevant files for the required behavior.\n"
+        "Verification:\n"
+        "- pytest\n"
+    )
+
+
 def test_session_passes_role_specific_system_prompts(tmp_path, monkeypatch):
     """Player and coach should receive different system prompts."""
     captured_prompts = []
@@ -42,7 +55,7 @@ def test_session_passes_role_specific_system_prompts(tmp_path, monkeypatch):
         if system_prompt == COACH_STRICT_SYSTEM_PROMPT:
             yield MockAssistantMessage([MockTextBlock("IMPLEMENTATION_APPROVED")])
         else:
-            yield MockAssistantMessage([MockTextBlock("Implemented")])
+            yield MockAssistantMessage([MockTextBlock(_player_report("Implemented"))])
         yield MockResultMessage()
 
     mock_player = _make_mock_provider()
@@ -104,7 +117,7 @@ def test_player_timeout_is_enforced(tmp_path, monkeypatch):
             yield MockAssistantMessage([MockTextBlock("Too late")])
             return
 
-        yield MockAssistantMessage([MockTextBlock("Implemented on retry")])
+        yield MockAssistantMessage([MockTextBlock(_player_report("Implemented on retry"))])
         yield MockResultMessage()
 
     async def coach_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
@@ -147,7 +160,7 @@ def test_coach_timeout_continues_to_next_turn(tmp_path, monkeypatch):
 
     async def player_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
         player_prompts.append(prompt)
-        yield MockAssistantMessage([MockTextBlock("Implemented")])
+        yield MockAssistantMessage([MockTextBlock(_player_report("Implemented"))])
         yield MockResultMessage()
 
     async def slow_coach_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
@@ -216,3 +229,62 @@ def test_interrupt_stops_collecting_mid_turn(tmp_path, monkeypatch):
 
     assert result.status == "interrupted"
     assert streamed_messages == 1
+
+
+def test_run_turn_passes_context_config_to_ccg_like_provider(tmp_path, monkeypatch):
+    """Providers that support context settings should receive resolved config values."""
+    captured = {}
+
+    class FakeProvider:
+        def check_ready(self):
+            return True, ""
+
+        async def run(
+            self,
+            prompt,
+            system_prompt,
+            working_dir,
+            max_turns=30,
+            model="",
+            context_limit=0,
+            compact_threshold=0.0,
+        ):
+            captured["prompt"] = prompt
+            captured["system_prompt"] = system_prompt
+            captured["working_dir"] = working_dir
+            captured["max_turns"] = max_turns
+            captured["model"] = model
+            captured["context_limit"] = context_limit
+            captured["compact_threshold"] = compact_threshold
+            yield MockAssistantMessage([MockTextBlock("Implemented")])
+            yield MockResultMessage()
+
+    provider = FakeProvider()
+    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.streaming.print_turn_timing", lambda *args, **kwargs: None)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        context_limit=123_000,
+        compact_threshold=0.72,
+    )
+    session = object.__new__(CoachPlayerSession)
+    session.config = cfg
+    session._interrupted = False
+    session._provider_for_role = lambda role: provider
+    session._provider_model = lambda prov: ""
+
+    result = asyncio.run(
+        session._run_turn(
+            role="player",
+            prompt="do the thing",
+            system_prompt="system",
+            max_turns=7,
+            timeout_s=30,
+        )
+    )
+
+    assert result.text == "Implemented"
+    assert captured["working_dir"] == str(tmp_path)
+    assert captured["context_limit"] == 123_000
+    assert captured["compact_threshold"] == 0.72

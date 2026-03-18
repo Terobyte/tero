@@ -272,7 +272,6 @@ class BatchExecutor:
         from src.plan_tracker import auto_group_phases, write_checklist_back
         from src.streaming import BOLD, RESET
 
-        self._reset_tracker_progress_for_batch_run()
         phases = auto_group_phases(self.tracker.items)
         if not phases:
             logging.warning("BatchExecutor.run(): no phases generated, nothing to do")
@@ -295,6 +294,11 @@ class BatchExecutor:
 
         try:
             for phase in phases:
+                if all(s.done for s in phase.steps):
+                    phase.status = "done"
+                    self.tracker.render_dashboard()
+                    continue
+
                 phase.status = "in_progress"
                 self.tracker.render_dashboard()
 
@@ -343,7 +347,7 @@ class BatchExecutor:
                     role="player",
                     prompt=prompt,
                     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
-                    max_turns=self.session.config.max_turns,
+                    max_turns=self.session.config.player_turns_per_session,
                     timeout_s=self.session.config.player_timeout_s,
                     model_override=self.session.config.player_model,
                 )

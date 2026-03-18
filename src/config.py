@@ -222,6 +222,7 @@ class Config:
     context_limit: int = 110_000
     compact_threshold: float = 0.85
     max_continuation_attempts: int = 2
+    player_turns_per_session: int = 8  # max CCG internal turns per player call
 
 
 @dataclass
@@ -377,6 +378,7 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_CONTEXT_LIMIT": ("context_limit", int),
         "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
         "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
+        "G3_PLAYER_TURNS_PER_SESSION": ("player_turns_per_session", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):

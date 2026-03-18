@@ -59,9 +59,9 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
     async for chunk in provider.run(
         prompt=compact_prompt,
         system_prompt="You are a concise summarizer.",
-        working_dir=".",
+        working_dir=config.working_dir,
         max_turns=3,
-        model=config.coach_model or "",
+        model=getattr(config, "player_model", "") or getattr(config, "coach_model", "") or "",
     ):
         text = getattr(chunk, "text", None) or ""
         if text:

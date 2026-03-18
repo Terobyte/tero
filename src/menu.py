@@ -68,6 +68,7 @@ def _questionary_menu(config: Config) -> Config | None:
             questionary.Choice(f"    Автономный:     {autonomous_display}", value="autonomous"),
             questionary.Separator("─────────────────────────────────────────"),
             questionary.Choice("💾  Сохранить как default", value="save_default"),
+            questionary.Choice("🔄  Начать заново (сбросить прогресс)", value="reset_progress"),
             questionary.Choice("✗   Выход", value="quit"),
         ]
 
@@ -84,6 +85,9 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer == "save_default":
             _save_global_default(config)
             continue
+        if answer == "reset_progress":
+            _reset_plan_progress(config)
+            return config
 
         config = _edit_setting_questionary(config, answer)
 
@@ -190,6 +194,19 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
     return config
 
 
+def _reset_plan_progress(config: Config) -> None:
+    """Reset all [x] checkboxes to [ ] in the plan file."""
+    import re
+    plan_path = Path(config.working_dir) / config.plan_file
+    if not plan_path.exists():
+        print(f"\n  Файл плана не найден: {plan_path}\n")
+        return
+    content = plan_path.read_text()
+    reset = re.sub(r"- \[x\]", "- [ ]", content, flags=re.IGNORECASE)
+    plan_path.write_text(reset)
+    print(f"\n  Прогресс сброшен: {plan_path}\n")
+
+
 def _save_global_default(config: Config) -> None:
     """Save current settings to ~/.g3/config.yaml as global defaults."""
     global_config_path = Path("~/.g3/config.yaml").expanduser()
@@ -230,6 +247,7 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [4] Verbose:       {'вкл' if config.verbose else 'выкл'}")
         print(f"  [5] Автономный:    {'вкл' if config.autonomous else 'выкл'}")
         print(f"  [s] Сохранить как default")
+        print(f"  [r] Начать заново (сбросить прогресс)")
         print(f"  [Enter] Запустить")
         print(f"  [q] Выход\n")
 
@@ -241,6 +259,9 @@ def _fallback_menu(config: Config) -> Config | None:
             return None
         if answer == "s":
             _save_global_default(config)
+        elif answer == "r":
+            _reset_plan_progress(config)
+            return config
         elif answer == "p":
             print("  Провайдеры: ccg, claude")
             val = input(f"  Player provider [{config.player_provider}]: ").strip()

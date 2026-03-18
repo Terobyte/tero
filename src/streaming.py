@@ -119,10 +119,17 @@ def _summarize_tool_args(name: str, args: dict) -> str:
         return ""
 
 
-def print_player_header(step_num: int, total_steps: int, attempt: int, max_attempts: int):
+def print_player_header(
+    step_num: int,
+    total_steps: int,
+    attempt: int,
+    max_attempts: int,
+    model_name: str = "",
+):
     """Print player turn header."""
     attempt_info = f"  попытка {attempt}/{max_attempts}" if attempt > 1 else ""
-    print(f"\n{BOLD}{BLUE}═══ PLAYER — шаг {step_num}/{total_steps}{attempt_info} {RESET}")
+    model_info = f" [{model_name}]" if model_name else ""
+    print(f"\n{BOLD}{BLUE}═══ PLAYER{model_info} — шаг {step_num}/{total_steps}{attempt_info} {RESET}")
 
 
 def print_coach_header(step_num: int, total_steps: int, attempt: int, model_name: str):
@@ -152,9 +159,19 @@ def print_step_rejected(issues_text: str):
             print(f"    {RED}{line}{RESET}")
 
 
-def print_turn_timing(role: str, duration_s: float, tools_used: int):
-    """Print turn completion timing."""
-    print(f"\n  {DIM}{role.capitalize()}: {duration_s:.0f}s | Инструменты: {tools_used}{RESET}")
+def print_turn_timing(
+    role: str,
+    duration_s: float,
+    tools_used: int,
+    tokens_used: int = 0,
+    context_window: int = 0,
+):
+    """Print turn completion timing with optional token usage."""
+    token_info = ""
+    if tokens_used > 0:
+        pct = f" | {int(100 * tokens_used / context_window)}% ctx" if context_window > 0 else ""
+        token_info = f" | {tokens_used:,} ◉{pct}"
+    print(f"\n  {DIM}{role.capitalize()}: {duration_s:.0f}s | Инструменты: {tools_used}{token_info}{RESET}")
 
 
 def print_all_done(total_steps: int):
@@ -213,3 +230,10 @@ def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attemp
         f"\n{BOLD}{color}═══ {role_upper}{model_info} — фаза {phase_name} "
         f"попытка {attempt}/{max_attempts} {RESET}"
     )
+
+
+def print_step_list(plan_items: list) -> None:
+    """Print done/remaining step list for session summary."""
+    for item in plan_items:
+        icon = f"{GREEN}✓{RESET}" if item.done else f"{RED}□{RESET}"
+        print(f"    {icon} {item.text}")
