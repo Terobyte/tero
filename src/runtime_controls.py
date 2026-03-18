@@ -96,3 +96,73 @@ class KeyboardListener(threading.Thread):
                     self._action_queue.put(action)
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+class StatusBar:
+    """Renders a persistent status line at the terminal's bottom row using ANSI escape codes."""
+
+    def __init__(self) -> None:
+        self._player_name = ""
+        self._coach_name = ""
+        self._ctx_pct: int = 0
+        self._warning_text: Optional[str] = None
+        self._warning_timer: Optional[threading.Timer] = None
+        self._lock = threading.Lock()
+
+    def update(self, player_name: str, coach_name: str, ctx_pct: int) -> None:
+        """Update displayed values and re-render immediately."""
+        with self._lock:
+            self._player_name = player_name
+            self._coach_name = coach_name
+            self._ctx_pct = ctx_pct
+            self._warning_text = None
+        self._render()
+
+    def show_warning(self, text: str, duration_s: float = 3.0) -> None:
+        """Temporarily show a warning message, then revert to normal status."""
+        with self._lock:
+            if self._warning_timer is not None:
+                self._warning_timer.cancel()
+            self._warning_text = text
+        self._render()
+        timer = threading.Timer(duration_s, self._revert_warning)
+        with self._lock:
+            self._warning_timer = timer
+        timer.daemon = True
+        timer.start()
+
+    def _revert_warning(self) -> None:
+        with self._lock:
+            self._warning_text = None
+            self._warning_timer = None
+        self._render()
+
+    def clear(self) -> None:
+        """Erase the status bar line (called on session stop)."""
+        try:
+            h = os.get_terminal_size().lines
+            sys.stdout.write(f"\0337\033[{h};1H\033[K\0338")
+            sys.stdout.flush()
+        except OSError:
+            pass
+
+    def _render(self) -> None:
+        """Write the status bar to the terminal bottom line."""
+        try:
+            h = os.get_terminal_size().lines
+        except OSError:
+            return
+
+        with self._lock:
+            warning = self._warning_text
+            if warning:
+                line = f" ⚠ {warning}"
+            else:
+                line = (
+                    f" Player: {self._player_name} [A/D]"
+                    f"   Coach: {self._coach_name} [←/→]"
+                    f"   Ctx: {self._ctx_pct}% [ESC=compact]"
+                )
+
+        sys.stdout.write(f"\0337\033[{h};1H\033[K{line}\0338")
+        sys.stdout.flush()
