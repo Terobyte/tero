@@ -109,3 +109,79 @@ class TestStatusBar:
             time.sleep(0.15)  # wait for timer to fire
             # Should have been called at least twice: once for warning, once for revert
             assert len(render_calls) >= 2
+
+
+MODEL_PRESETS_TEST = [
+    ("GLM-1", "ccg", "blackboxai/z-ai/glm-5"),
+    ("Sonnet", "claude", "claude-sonnet-4-6"),
+    ("Opus", "claude", "claude-opus-4-6"),
+]
+
+
+class TestPicker:
+    def _make_picker(self):
+        from src.runtime_controls import Picker
+        picker = Picker(presets=MODEL_PRESETS_TEST)
+        return picker
+
+    def test_initial_state_closed(self):
+        picker = self._make_picker()
+        assert picker.state == "CLOSED"
+
+    def test_coach_right_opens_coach_picker(self):
+        picker = self._make_picker()
+        picker._current_coach_idx = 0
+        picker._current_player_idx = 0
+        with patch.object(picker, "_render"):
+            picker.handle_action("coach_right", current_coach_idx=0, current_player_idx=0)
+        assert picker.state == "OPEN"
+        assert picker.role == "coach"
+
+    def test_cycling_wraps_around(self):
+        picker = self._make_picker()
+        picker.state = "OPEN"
+        picker.role = "coach"
+        picker._open_idx = 2  # last item
+        with patch.object(picker, "_render"):
+            picker.handle_action("coach_right", current_coach_idx=0, current_player_idx=0)
+        assert picker._open_idx == 0  # wrapped
+
+    def test_enter_in_open_moves_to_confirming(self):
+        picker = self._make_picker()
+        picker.state = "OPEN"
+        picker.role = "coach"
+        picker._open_idx = 1  # Sonnet
+        with patch.object(picker, "_render"), patch.object(picker, "_schedule_dismiss"):
+            picker.handle_action("confirm", current_coach_idx=0, current_player_idx=0)
+        assert picker.state == "CONFIRMING"
+        pending = picker.pop_pending_change()
+        assert pending is not None
+        role, provider, model = pending
+        assert role == "coach"
+        assert provider == "claude"
+        assert model == "claude-sonnet-4-6"
+
+    def test_esc_in_open_closes_without_compact(self):
+        picker = self._make_picker()
+        picker.state = "OPEN"
+        picker.role = "coach"
+        with patch.object(picker, "_render"):
+            picker.handle_action("compact", current_coach_idx=0, current_player_idx=0)
+        assert picker.state == "CLOSED"
+        # compact_requested must NOT be set by picker; that's RuntimeControls' job
+        assert not hasattr(picker, "_compact_requested") or not picker._compact_requested
+
+    def test_switch_role_while_open(self):
+        picker = self._make_picker()
+        picker.state = "OPEN"
+        picker.role = "coach"
+        picker._open_idx = 0
+        with patch.object(picker, "_render"):
+            # Press A/D while coach picker open → switch to player
+            picker.handle_action("player_right", current_coach_idx=0, current_player_idx=0)
+        assert picker.role == "player"
+        assert picker.state == "OPEN"
+
+    def test_pop_pending_change_returns_none_when_empty(self):
+        picker = self._make_picker()
+        assert picker.pop_pending_change() is None
