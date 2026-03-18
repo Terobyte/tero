@@ -362,15 +362,6 @@ class BatchExecutor:
                 cleanup_processes(pids_before)
 
             completed_steps = parse_completed_steps(result, phase)
-            if len(completed_steps) < len(phase.steps):
-                coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
-                streaming_ui.print_step_rejected(coach_feedback)
-                continue
-
-            if not has_required_completion_report(result.text):
-                coach_feedback = build_missing_report_feedback(phase)
-                streaming_ui.print_step_rejected(coach_feedback)
-                continue
 
             strategy = self._review_strategy(attempt_num)
 

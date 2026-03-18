@@ -338,6 +338,7 @@ class TestRunPhase:
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.player_turns_per_session = 30
         session.player_model = "ccg | model=glm-5 | account=blackbox-a"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
@@ -351,7 +352,7 @@ class TestRunPhase:
             r.messages = []
             results.append(r)
 
-        session._run_turn = AsyncMock(side_effect=results)
+        session._run_with_continuation = AsyncMock(side_effect=results)
         session._run_coach_turn_for_phase = AsyncMock(
             return_value=coach_verdict or Approved()
         )
@@ -375,22 +376,25 @@ class TestRunPhase:
 
     @pytest.mark.asyncio
     async def test_retry_on_incomplete_then_success(self):
-        from src.feedback import Approved
+        from src.feedback import Approved, Feedback
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
             ["Step 1 done: created a.py", "PHASE_COMPLETE: Create"]
         )
-        session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
+        # First coach call rejects (incomplete), second approves
+        session._run_coach_turn_for_phase = AsyncMock(
+            side_effect=[Feedback(text="Missing step 2"), Approved()]
+        )
         executor = self._make_executor(session)
         result = await executor._run_phase(phase)
         assert result is True
         assert phase.attempts == 2
-        assert session._run_coach_turn_for_phase.await_count == 1
+        assert session._run_coach_turn_for_phase.await_count == 2
 
     @pytest.mark.asyncio
     async def test_phase_complete_without_report_retries_before_coach_review(self):
-        from src.feedback import Approved
+        from src.feedback import Approved, Feedback
         from src.batch_executor import BatchExecutor
 
         items = [PlanItem(text="create a.py")]
@@ -406,6 +410,7 @@ class TestRunPhase:
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.player_turns_per_session = 30
         session.player_model = "ccg | model=glm-5 | account=blackbox-a"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
@@ -425,15 +430,18 @@ class TestRunPhase:
             "- pytest"
         )
         result_two.messages = []
-        session._run_turn = AsyncMock(side_effect=[result_one, result_two])
-        session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
+        session._run_with_continuation = AsyncMock(side_effect=[result_one, result_two])
+        # First coach call rejects (missing report), second approves
+        session._run_coach_turn_for_phase = AsyncMock(
+            side_effect=[Feedback(text="Missing report"), Approved()]
+        )
         executor = self._make_executor(session)
 
         result = await executor._run_phase(phase)
 
         assert result is True
         assert phase.attempts == 2
-        assert session._run_coach_turn_for_phase.await_count == 1
+        assert session._run_coach_turn_for_phase.await_count == 2
 
     @pytest.mark.asyncio
     async def test_retry_on_coach_rejection_then_success(self):
@@ -561,7 +569,7 @@ class TestRunPhase:
 
         await executor._run_phase(phase)
 
-        assert session._run_turn.await_args.kwargs["system_prompt"] == PLAYER_BATCH_SYSTEM_PROMPT
+        assert session._run_with_continuation.await_args.kwargs["system_prompt"] == PLAYER_BATCH_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
     async def test_coach_feedback_included_in_retry_prompt(self):
@@ -571,7 +579,7 @@ class TestRunPhase:
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
-            ["did work but no markers", "PHASE_COMPLETE: Create", "PHASE_COMPLETE: Create"]
+            ["did work but no markers", "PHASE_COMPLETE: Create"]
         )
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[Feedback(text="Missing implementation details"), Approved()]
@@ -581,8 +589,8 @@ class TestRunPhase:
         result = await executor._run_phase(phase)
 
         assert result is True
-        third_prompt = session._run_turn.await_args_list[2].kwargs["prompt"]
-        assert "Missing implementation details" in third_prompt
+        second_prompt = session._run_with_continuation.await_args_list[1].kwargs["prompt"]
+        assert "Missing implementation details" in second_prompt
 
     @pytest.mark.asyncio
     async def test_player_timeout_retries_instead_of_crashing(self):
@@ -598,7 +606,7 @@ class TestRunPhase:
         success_result = MagicMock()
         success_result.text = self._with_batch_report("PHASE_COMPLETE: Create")
         success_result.messages = []
-        session._run_turn = AsyncMock(side_effect=[timeout_exc, success_result])
+        session._run_with_continuation = AsyncMock(side_effect=[timeout_exc, success_result])
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         executor = self._make_executor(session)
 
@@ -640,7 +648,7 @@ class TestBatchExecutorRun:
                 "- pytest\n"
             )
         r = MagicMock(); r.text = player_text; r.messages = []
-        session._run_turn = AsyncMock(return_value=r)
+        session._run_with_continuation = AsyncMock(return_value=r)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         return session
 
@@ -698,7 +706,8 @@ class TestBatchExecutorRun:
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
         session.config.player_model = ""
-        session._run_turn = AsyncMock(return_value=r)
+        session.config.player_turns_per_session = 30
+        session._run_with_continuation = AsyncMock(return_value=r)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
         executor = BatchExecutor(session=session, tracker=tracker)
         with pytest.raises(PhaseFailedError):
@@ -725,7 +734,16 @@ class TestBatchExecutorRun:
         ]
         tracker = MagicMock()
         tracker.items = items
-        session = self._make_full_session("PHASE_COMPLETE: Create (1 steps)")
+        tracker.render_dashboard = MagicMock()
+        tracker.start_dashboard = MagicMock()
+        tracker.stop_dashboard = MagicMock()
+
+        def mark_phase_done(phase):
+            for item in phase.steps:
+                item.done = True
+
+        tracker.phase_done = MagicMock(side_effect=mark_phase_done)
+        session = self._make_full_session("PHASE_COMPLETE: Create (2 steps)")
         executor = BatchExecutor(session=session, tracker=tracker)
 
         await executor.run()
@@ -735,7 +753,8 @@ class TestBatchExecutorRun:
             "create done.py",
             "create pending.py",
         ]
-        assert all(item.done is False for item in items)
+        # After successful phase completion, items are marked done by phase_done
+        assert all(item.done is True for item in items)
 
     @pytest.mark.asyncio
     async def test_run_persists_completed_phases_to_plan_file(self, tmp_path):
@@ -909,3 +928,96 @@ class TestTurnResultText:
         r = TurnResult(role="player", duration_s=1.0, tools_used=0, messages=[])
         assert hasattr(r, "text")
         assert isinstance(r.text, str)
+
+
+class TestCoachAlwaysCalled:
+    """Tests verifying that coach is always called, never bypassed by auto-reject."""
+
+    def _make_phase(self, name: str, steps: list[str]) -> Phase:
+        return Phase(name=name, type="update", steps=[PlanItem(text=s) for s in steps])
+
+    @pytest.mark.asyncio
+    async def test_coach_called_when_phase_complete_missing(self):
+        """Coach must be called even when player output has no PHASE_COMPLETE marker."""
+        from src.batch_executor import BatchExecutor
+        from src.feedback import Approved
+
+        phase = self._make_phase("Update", ["Step A", "Step B"])
+
+        # Player result: no PHASE_COMPLETE, no report headers
+        player_result = MagicMock()
+        player_result.text = "I explored the codebase."  # no markers
+
+        session = MagicMock()
+        session.config.max_turns = 3
+        session.config.player_model = ""
+        session.config.coach_model = ""
+        session.config.player_timeout_s = 60
+        session.config.player_provider = "ccg"
+        session.config.coach_provider = "claude"
+        session.config.batch_pre_judge_attempts = 3
+        session.config.batch_judge_attempts = 1
+        session.config.batch_post_judge_attempts = 1
+        session.config.player_turns_per_session = 30
+
+        session._run_with_continuation = AsyncMock(return_value=player_result)
+
+        # Coach returns Approved on first call
+        session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+        session.build_provider_display = MagicMock(return_value="claude | model=sonnet")
+
+        tracker = MagicMock()
+        tracker.items = []
+        tracker.render_dashboard = MagicMock()
+        tracker.phase_done = MagicMock()
+
+        executor = BatchExecutor(session, tracker)
+        result = await executor._run_phase(phase)
+
+        assert result is True
+        # Coach must have been called despite missing PHASE_COMPLETE
+        session._run_coach_turn_for_phase.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_coach_called_when_report_headers_missing(self):
+        """Coach must be called even when player output has PHASE_COMPLETE but no report headers."""
+        from src.batch_executor import BatchExecutor
+        from src.feedback import Approved
+
+        phase = self._make_phase("Update", ["Step A"])
+
+        player_result = MagicMock()
+        # Has PHASE_COMPLETE but no What changed / Evidence / Verification
+        player_result.text = "Step 1 done: done\nPHASE_COMPLETE: Update"
+
+        session = MagicMock()
+        session.config.max_turns = 3
+        session.config.player_model = ""
+        session.config.coach_model = ""
+        session.config.player_timeout_s = 60
+        session.config.player_provider = "ccg"
+        session.config.coach_provider = "claude"
+        session.config.batch_pre_judge_attempts = 3
+        session.config.batch_judge_attempts = 1
+        session.config.batch_post_judge_attempts = 1
+        session.config.player_turns_per_session = 30
+
+        session._run_with_continuation = AsyncMock(return_value=player_result)
+
+        session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+        session.build_provider_display = MagicMock(return_value="claude | model=sonnet")
+
+        tracker = MagicMock()
+        tracker.items = []
+        tracker.render_dashboard = MagicMock()
+        tracker.phase_done = MagicMock()
+
+        executor = BatchExecutor(session, tracker)
+        result = await executor._run_phase(phase)
+
+        assert result is True
+        session._run_coach_turn_for_phase.assert_called_once()
