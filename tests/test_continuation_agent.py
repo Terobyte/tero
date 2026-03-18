@@ -1,6 +1,7 @@
 """Tests for _run_with_continuation in CoachPlayerSession."""
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from src.config import Config
@@ -107,3 +108,56 @@ async def test_continuation_exhausted_returns_last_result():
     )
     # 1 original + 2 continuation = 3 total calls
     assert result.text == "no markers here ever"
+
+
+@pytest.mark.asyncio
+async def test_continuation_uses_codex_compaction_when_token_threshold_hit(monkeypatch):
+    """High Codex prompt token usage should trigger compact-summary retry."""
+    session = make_session(max_continuation=1)
+    session.config.context_limit = 100_000
+    session.config.compact_threshold = 0.85
+    session.config.working_dir = "/tmp/project"
+    session.config.player_model = "gpt-5.4-high"
+
+    provider = SimpleNamespace(_last_input_tokens=90_000)
+    session._provider_for_role = MagicMock(return_value=provider)
+
+    calls = []
+
+    async def fake_run_turn(*args, **kwargs):
+        calls.append(kwargs["prompt"])
+        if len(calls) == 1:
+            return TurnResult(
+                role="player",
+                duration_s=1.0,
+                tools_used=0,
+                messages=[],
+                text="explored only, no completion markers",
+            )
+        return TurnResult(
+            role="player",
+            duration_s=1.0,
+            tools_used=0,
+            messages=[],
+            text="PHASE_COMPLETE: Update\nWhat changed:\n- added\nEvidence:\n- file\nVerification:\n- ok",
+        )
+
+    session._run_turn = fake_run_turn
+
+    compact_mock = AsyncMock(return_value="very compact summary")
+    print_compact_mock = MagicMock()
+    monkeypatch.setattr("src.context_manager._compact_codex_context", compact_mock)
+    monkeypatch.setattr("src.streaming.print_compact_triggered", print_compact_mock)
+
+    result = await session._run_with_continuation(
+        role="player",
+        prompt="do stuff",
+        system_prompt="",
+        max_turns=10,
+        timeout_s=60,
+    )
+
+    assert "PHASE_COMPLETE" in result.text
+    compact_mock.assert_awaited_once()
+    print_compact_mock.assert_called_once_with(90_000, 100_000)
+    assert "very compact summary" in calls[1]

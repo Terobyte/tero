@@ -83,7 +83,9 @@ DEFAULT_STEP_TYPE = "update"
 
 **Detection rules:**
 - Case-insensitive scan of `PlanItem.text`
-- First keyword matched in `STEP_TYPE_MAP` dict-order wins (create > update > test > review)
+- Match whole words/phrases only (`\b...\b`), not raw substring containment
+- Priority order is `review > test > create > update` so phrases like "write tests" stay in
+  `test`, not `create`
 - No match → `DEFAULT_STEP_TYPE`
 
 ### Phase Dataclass
@@ -105,11 +107,18 @@ class Phase:
 Added to `plan_tracker.py`:
 
 ```python
-def detect_step_type(item: PlanItem) -> str:
-    """Return step type by keyword match. Case-insensitive."""
-    text = item.text.lower()
-    for step_type, keywords in STEP_TYPE_MAP.items():
-        if any(kw in text for kw in keywords):
+def detect_step_type(item: PlanItem | str) -> str:
+    """Return step type by keyword match using word boundaries."""
+    text = item.text if isinstance(item, PlanItem) else item
+    text = text.lower()
+
+    def has_keyword(keyword: str) -> bool:
+        pattern = r"\b" + re.escape(keyword) + r"\b"
+        return bool(re.search(pattern, text))
+
+    for step_type in ("review", "test", "create", "update"):
+        keywords = STEP_TYPE_MAP[step_type]
+        if any(has_keyword(kw) for kw in keywords):
             return step_type
     return DEFAULT_STEP_TYPE
 
@@ -164,8 +173,11 @@ class PlanTracker:
     # --- Phase progress ---
 
     def phase_done(self, phase: Phase) -> None:
-        """Mark all PlanItems in phase as done and re-render dashboard."""
-        # phase.status is already "done" when this is called
+        """Mark all PlanItems in phase as done and re-render dashboard.
+
+        Persistence is handled by the caller (`write_checklist_back`) so that batch mode
+        remains resumable after every approved phase.
+        """
         for item in phase.steps:
             item.done = True
         self.render_dashboard()
@@ -259,6 +271,7 @@ class PhaseFailedError(Exception):
     """Raised when a phase exhausts all retry attempts."""
     phase: Phase
     attempts: int
+    completed_steps: list[str]
 
     def __post_init__(self):
         # Needed: @dataclass does not call Exception.__init__, so args is empty
@@ -266,10 +279,9 @@ class PhaseFailedError(Exception):
         super().__init__(str(self))
 
     def __str__(self) -> str:
-        completed = [s.text for s in self.phase.steps if s.done]
         return (
             f"Phase '{self.phase.name}' failed after {self.attempts} attempts. "
-            f"Completed steps: {completed}"
+            f"Completed steps: {self.completed_steps}"
         )
 ```
 
@@ -282,7 +294,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from src.plan_tracker import PlanItem, Phase, PlanTracker, auto_group_phases
+from src.plan_tracker import Phase, PlanTracker, auto_group_phases, write_checklist_back
 from src.feedback import Approved, Feedback
 
 
@@ -297,8 +309,9 @@ class BatchExecutor:
         self.tracker = tracker
 
     async def run(self) -> None:
-        """Execute all phases. Raises PhaseFailedError on unrecoverable failure."""
-        phases = auto_group_phases(self.tracker.items)
+        """Execute all pending phases. Raises PhaseFailedError on unrecoverable failure."""
+        pending_items = [item for item in self.tracker.items if not item.done]
+        phases = auto_group_phases(pending_items)
         if not phases:
             logging.warning("BatchExecutor.run(): no phases generated, nothing to do")
             return
@@ -311,26 +324,22 @@ class BatchExecutor:
                 phase.status = "in_progress"
                 self.tracker.render_dashboard()
 
-                success = await self._run_phase(phase)
+                completed_steps = await self._run_phase(phase)
 
-                if success:
-                    phase.status = "done"
-                    self.tracker.phase_done(phase)
-                else:
-                    phase.status = "failed"
-                    self.tracker.render_dashboard()
-                    raise PhaseFailedError(phase=phase, attempts=phase.attempts)
+                phase.status = "done"
+                self.tracker.phase_done(phase)
+                if self.session.plan_file_path:
+                    write_checklist_back(self.session.plan_file_path, self.tracker.items)
         finally:
             self.tracker.stop_dashboard()
 
-    async def _run_phase(self, phase: Phase) -> bool:
+    async def _run_phase(self, phase: Phase) -> list[str]:
         """
         Execute all steps in one Player turn. Retry if incomplete or Coach rejects.
 
-        On Coach rejection: reset completed_steps=[] and include coach_feedback in
-        the next prompt. This is intentional — any step may have issues, so the
-        whole phase is redone. Player sees exactly what to fix.
-        MAX_ATTEMPTS covers both incomplete-phase and coach-rejection retries.
+        Returns the final confirmed step texts when the phase is approved.
+        Raises `PhaseFailedError` with the last confirmed partial progress when all attempts
+        are exhausted.
         """
         MAX_ATTEMPTS = 3
         completed_steps: list[str] = []
@@ -342,11 +351,11 @@ class BatchExecutor:
 
             prompt = build_batch_prompt(phase, completed_steps, coach_feedback)
 
-            from src.prompts import PLAYER_SYSTEM_PROMPT
+            from src.prompts import PLAYER_BATCH_SYSTEM_PROMPT
             result = await self.session._run_turn(
                 role="player",
                 prompt=prompt,
-                system_prompt=PLAYER_SYSTEM_PROMPT,
+                system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
                 max_turns=self.session.config.max_turns,
                 timeout_s=self.session.config.player_timeout_s,
                 model_override=self.session.config.player_model,
@@ -357,12 +366,16 @@ class BatchExecutor:
             if len(completed_steps) == len(phase.steps):
                 verdict = await self.session._run_coach_turn_for_phase(phase, result)
                 if isinstance(verdict, Approved):
-                    return True
+                    return completed_steps
                 # Coach rejected — include feedback in next attempt
                 coach_feedback = verdict.text if isinstance(verdict, Feedback) else str(verdict)
                 completed_steps = []
 
-        return False
+        raise PhaseFailedError(
+            phase=phase,
+            attempts=phase.attempts,
+            completed_steps=completed_steps,
+        )
 ```
 
 ### Batch Prompt Builder
@@ -379,10 +392,15 @@ def build_batch_prompt(
     completed_steps: PlanItem.text values completed in a previous attempt (empty on first try)
     coach_feedback:  Coach rejection message (empty if no rejection yet)
 
-    Player must output 'Step X done: [desc]' after each step (1-based)
-    and 'PHASE_COMPLETE: <phase_name>' at the end.
+    Player must keep the original per-phase numbering stable across retries and emit:
+    - `Step X done: [desc]` for each completed step
+    - `PHASE_COMPLETE: <phase_name>` only after all steps are complete
     """
-    remaining = [s for s in phase.steps if s.text not in completed_steps]
+    remaining = [
+        (idx + 1, step)
+        for idx, step in enumerate(phase.steps)
+        if step.text not in completed_steps
+    ]
     sections: list[str] = []
 
     if coach_feedback:
@@ -395,7 +413,7 @@ def build_batch_prompt(
         done_list = "\n".join(f"  ✅ {s}" for s in completed_steps)
         sections.append(f"Already completed in this attempt:\n{done_list}")
 
-    steps_list = "\n".join(f"  {i+1}. {s.text}" for i, s in enumerate(remaining))
+    steps_list = "\n".join(f"  {step_num}. {step.text}" for step_num, step in remaining)
     sections.append(
         f"Execute ALL of the following steps in sequence.\n"
         f"Complete ALL steps before returning.\n\n"
@@ -403,9 +421,13 @@ def build_batch_prompt(
         f"Steps:\n{steps_list}"
     )
 
+    confirmations = "\n".join(
+        f"  Step {step_num} done: [one-line description]"
+        for step_num, _step in remaining
+    )
     sections.append(
         "After completing each step, output exactly:\n"
-        "  Step X done: [one-line description]\n\n"
+        f"{confirmations}\n\n"
         f"When ALL steps are complete, output exactly:\n"
         f"  PHASE_COMPLETE: {phase.name}"
     )
@@ -417,27 +439,33 @@ def build_batch_prompt(
 
 ```python
 _STEP_DONE_RE = re.compile(r"step\s+(\d+)\s+done\s*:", re.IGNORECASE)
-_PHASE_COMPLETE_RE = re.compile(r"PHASE_COMPLETE\s*:", re.IGNORECASE)
+_PHASE_COMPLETE_RE = re.compile(r"^\s*PHASE_COMPLETE\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def parse_completed_steps(result: "TurnResult", phase: Phase) -> list[str]:
     """
     Extract confirmed-done step names (PlanItem.text) from Player output (result.text).
 
-    PHASE_COMPLETE anywhere in output → unconditionally return all step texts.
-    Otherwise scan for 'Step X done:' (1-based, case-insensitive).
-    Out-of-range indices are silently ignored.
+    Scan for explicit `Step X done:` markers using the original phase numbering.
+    `PHASE_COMPLETE: <phase.name>` only upgrades the result to "all steps done" when:
+    - the phase name matches exactly, and
+    - every step index for this phase was already explicitly confirmed
     """
     text = result.text
-
-    if _PHASE_COMPLETE_RE.search(text):
-        return [s.text for s in phase.steps]
 
     confirmed: set[int] = set()
     for match in _STEP_DONE_RE.finditer(text):
         idx = int(match.group(1)) - 1  # 1-based → 0-based
         if 0 <= idx < len(phase.steps):
             confirmed.add(idx)
+
+    phase_complete_match = _PHASE_COMPLETE_RE.search(text)
+    if (
+        phase_complete_match
+        and phase_complete_match.group(1).strip() == phase.name
+        and len(confirmed) == len(phase.steps)
+    ):
+        return [s.text for s in phase.steps]
 
     return [phase.steps[i].text for i in sorted(confirmed)]
 ```
@@ -474,6 +502,7 @@ def build_phase_coach_prompt(phase: Phase, last_player_result: TurnResult) -> st
     """Build Coach review prompt for a completed phase.
 
     Includes planned steps + truncated Player output (≤2000 chars) for context.
+    Coach is expected to verify against the workspace, not trust the summary blindly.
     """
     steps_list = "\n".join(f"  - {s.text}" for s in phase.steps)
     player_summary = last_player_result.text[:2000]
@@ -483,6 +512,7 @@ def build_phase_coach_prompt(phase: Phase, last_player_result: TurnResult) -> st
         f"Player output summary:\n{player_summary}\n\n"
         f"Review the changes made. Check correctness, quality, and "
         f"that all planned steps were actually implemented. "
+        f"Use tools to inspect the workspace; do not rely only on the summary above. "
         f"Respond with APPROVED or specific numbered feedback."
     )
 ```
@@ -537,16 +567,14 @@ parser.add_argument("--batch", action="store_true", dest="batch_mode", default=N
 
 ```python
 if config.batch_mode:
-    tracker = PlanTracker(items)  # items from parse_requirements()
-    executor = BatchExecutor(session, tracker)
-    try:
-        await executor.run()
-    except PhaseFailedError as e:
-        print(f"\n❌ {e}")
-        raise SystemExit(1)
+    result = await session.run_batch(items)  # wraps BatchExecutor but preserves SessionResult/history
+    raise SystemExit(0 if result.approved else 1)
 else:
     await session.run()  # existing path, unchanged
 ```
+
+`run_batch()` should reuse the existing reporting/recording pipeline (`RunRecord`,
+final summary, exit semantics) instead of bypassing it.
 
 ### Menu Toggle
 
@@ -561,8 +589,9 @@ else:
 
 ## Section 5: Tests (`test_batch_executor.py`)
 
-All tests use `PlanItem(text=..., done=False)` as input. Mock `CoachPlayerSession._run_turn`
-to return a `TurnResult` with a specific `.text` value.
+Most tests use `PlanItem(text=..., done=False)` as input; resume/persistence tests also
+cover pre-existing `done=True` items. Mock `CoachPlayerSession._run_turn` to return a
+`TurnResult` with a specific `.text` value.
 
 | Test | Scenario | Key assertion |
 |---|---|---|
@@ -571,18 +600,22 @@ to return a `TurnResult` with a specific `.text` value.
 | `test_auto_group_phases_unknown_type` | Item "do something" (no keyword) | type == DEFAULT_STEP_TYPE |
 | `test_auto_group_phases_type_change` | [create, create, update, update] | 2 phases |
 | `test_parse_completed_steps_by_index` | result.text = "Step 1 done: created file" | returns [items[0].text] |
-| `test_parse_completed_steps_phase_complete` | result.text contains "PHASE_COMPLETE:" | returns all item texts |
+| `test_parse_completed_steps_phase_complete` | all `Step N done` markers + exact `PHASE_COMPLETE: <phase.name>` | returns all item texts |
+| `test_parse_completed_steps_ignores_stray_phase_complete` | output mentions `PHASE_COMPLETE:` but missing step markers or wrong phase name | does **not** return all item texts |
 | `test_parse_completed_steps_partial` | "Step 1 done" + "Step 3 done" (no step 2) | returns 2 texts |
 | `test_parse_completed_steps_empty` | result.text = "I tried but failed" | returns [] |
 | `test_build_batch_prompt_first_attempt` | No completed_steps, no feedback | no "Already completed" section, no "REJECTED" section |
 | `test_build_batch_prompt_with_done_steps` | completed_steps=["create x.py"] | "Already completed" section present |
+| `test_build_batch_prompt_keeps_original_step_numbers` | completed_steps=[items[0].text] | remaining steps keep original indices (e.g. 2, 3, 4) |
 | `test_build_batch_prompt_with_coach_feedback` | coach_feedback="step 2 missing" | "REJECTED BY COACH" section present |
-| `test_run_phase_success_first_attempt` | Mock: PHASE_COMPLETE + Approved | returns True, phase.attempts==1 |
-| `test_run_phase_retry_on_incomplete` | Mock: attempt 1 partial, attempt 2 PHASE_COMPLETE + Approved | returns True, phase.attempts==2 |
-| `test_run_phase_retry_on_coach_rejection` | Mock: attempt 1 PHASE_COMPLETE + Rejected, attempt 2 PHASE_COMPLETE + Approved | returns True |
-| `test_run_phase_exhausts_attempts` | Mock: 3 attempts all partial | returns False |
-| `test_run_raises_on_failed_phase` | _run_phase returns False | PhaseFailedError raised |
-| `test_phase_failed_error_message` | PhaseFailedError(phase, 3).__str__() | contains phase.name and "3 attempts" |
+| `test_run_phase_success_first_attempt` | Mock: all markers + Approved | returns all phase step texts, phase.attempts==1 |
+| `test_run_phase_retry_on_incomplete` | Mock: attempt 1 partial, attempt 2 full markers + Approved | returns all phase step texts, phase.attempts==2 |
+| `test_run_phase_retry_on_coach_rejection` | Mock: attempt 1 full markers + Rejected, attempt 2 full markers + Approved | returns all phase step texts |
+| `test_run_phase_exhausts_attempts` | Mock: 3 attempts all partial | `_run_phase()` raises `PhaseFailedError` with partial `completed_steps` |
+| `test_run_raises_on_failed_phase` | `BatchExecutor.run()` hits exhausted phase | `PhaseFailedError` raised |
+| `test_run_only_groups_pending_items` | Some `PlanItem.done=True` before batch start | done items are skipped |
+| `test_run_writes_checklist_after_each_approved_phase` | 2 phases, first approved | `write_checklist_back()` called before phase 2 starts |
+| `test_phase_failed_error_message` | `PhaseFailedError(phase, 3, ["step a"]).__str__()` | contains phase.name, "3 attempts", and partial progress |
 
 ---
 
@@ -592,18 +625,19 @@ to return a `TurnResult` with a specific `.text` value.
 ```
 g3/src/batch_executor.py         — PhaseFailedError, BatchExecutor,
                                    build_batch_prompt, parse_completed_steps
-g3/tests/test_batch_executor.py  — 17 tests (see table above)
+g3/tests/test_batch_executor.py  — batch execution tests (see table above)
 ```
 
 ### Modified files
 ```
 g3/src/plan_tracker.py           — STEP_TYPE_MAP, PHASE_SIZE, Phase dataclass,
                                    detect_step_type, auto_group_phases, PlanTracker class
-g3/src/coach_player.py           — TurnResult.text field, _run_coach_turn_for_phase method
+g3/src/coach_player.py           — TurnResult.text field, _run_coach_turn_for_phase method,
+                                   `run_batch()` wrapper preserving SessionResult/history
 g3/src/prompts.py                — build_phase_coach_prompt
 g3/src/config.py                 — Config.batch_mode field, G3_BATCH_MODE in env_map
 g3/src/menu.py                   — Batch Mode toggle
-g3/g3.py                         — --batch CLI flag, PlanTracker init, PhaseFailedError handling
+g3/g3.py                         — --batch CLI flag, route to `run_batch()`
 ```
 
 ---

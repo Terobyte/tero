@@ -420,7 +420,7 @@ class CoachPlayerSession:
                             role="player",
                             prompt=player_prompt,
                             system_prompt=PLAYER_SYSTEM_PROMPT,
-                            max_turns=30,
+                            max_turns=self.config.player_turns_per_session,
                             timeout_s=self.config.player_timeout_s,
                             model_override=self.config.player_model,
                         )
@@ -640,13 +640,24 @@ class CoachPlayerSession:
             if self._interrupted:
                 return
 
-            async for msg in provider.run(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                working_dir=self.config.working_dir,
-                max_turns=max_turns,
-                model=model,
-            ):
+            run_kwargs = {
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "working_dir": self.config.working_dir,
+                "max_turns": max_turns,
+                "model": model,
+            }
+
+            params = inspect.signature(provider.run).parameters
+            accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            if "context_limit" in params or accepts_kwargs:
+                run_kwargs["context_limit"] = self.config.context_limit
+            if "compact_threshold" in params or accepts_kwargs:
+                run_kwargs["compact_threshold"] = self.config.compact_threshold
+
+            async for msg in provider.run(**run_kwargs):
                 if self._interrupted:
                     return
 
@@ -737,8 +748,16 @@ class CoachPlayerSession:
         provider_override=None,
     ) -> TurnResult:
         """Run a turn, retrying with compact context if no completion markers found."""
-        from src.context_manager import _build_compact_summary, _build_continuation_prompt
+        from src.context_manager import (
+            _build_compact_summary,
+            _build_continuation_prompt,
+            _compact_codex_context,
+        )
         from src import streaming as streaming_ui
+
+        compact_threshold_tokens = int(
+            self.config.context_limit * self.config.compact_threshold
+        )
 
         result = await self._run_turn(
             role=role,
@@ -754,8 +773,27 @@ class CoachPlayerSession:
             if self._has_completion_markers(result.text, role):
                 return result
 
-            streaming_ui.print_continuation_started(role, attempt + 1, self.config.max_continuation_attempts)
+            streaming_ui.print_continuation_started(
+                role, attempt + 1, self.config.max_continuation_attempts
+            )
             summary = _build_compact_summary(result.messages)
+            provider = provider_override
+            if provider is None:
+                try:
+                    provider = self._provider_for_role(role)
+                except AttributeError:
+                    provider = None
+
+            tokens_used = result.tokens_used
+            if tokens_used >= compact_threshold_tokens:
+                streaming_ui.print_compact_triggered(
+                    tokens_used, self.config.context_limit
+                )
+                compact_summary = await _compact_codex_context(
+                    provider, result.messages, self.config
+                )
+                if compact_summary:
+                    summary = compact_summary
             continuation_prompt = _build_continuation_prompt(summary, role)
 
             result = await self._run_turn(

@@ -1,5 +1,9 @@
 """Tests for context_manager.py utilities."""
 
+from types import SimpleNamespace
+
+import pytest
+
 from src.context_manager import _build_compact_summary, _build_continuation_prompt
 from src.providers.message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock
 
@@ -44,3 +48,37 @@ def test_continuation_prompt_coach():
     prompt = _build_continuation_prompt("Found null issue.", role="coach")
     assert "IMPLEMENTATION_APPROVED" in prompt or "verdict" in prompt.lower()
     assert "Found null issue." in prompt
+
+
+@pytest.mark.asyncio
+async def test_compact_codex_context_uses_config_working_dir_and_player_model():
+    """Codex compaction should run inside the configured workspace."""
+    from src.context_manager import _compact_codex_context
+
+    captured = {}
+
+    class FakeChunk:
+        def __init__(self, text: str):
+            self.text = text
+
+    class FakeProvider:
+        async def run(self, prompt, system_prompt, working_dir, max_turns=30, model=""):
+            captured["prompt"] = prompt
+            captured["system_prompt"] = system_prompt
+            captured["working_dir"] = working_dir
+            captured["max_turns"] = max_turns
+            captured["model"] = model
+            yield FakeChunk("condensed summary")
+
+    messages = [_make_assistant_msg("Step 1 done: updated config")]
+    config = SimpleNamespace(
+        working_dir="/tmp/project",
+        player_model="gpt-5.4-high",
+        coach_model="",
+    )
+
+    summary = await _compact_codex_context(FakeProvider(), messages, config)
+
+    assert summary == "condensed summary"
+    assert captured["working_dir"] == "/tmp/project"
+    assert captured["model"] == "gpt-5.4-high"

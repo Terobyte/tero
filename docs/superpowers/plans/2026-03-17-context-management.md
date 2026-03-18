@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prevent GLM-5 (and all providers) from stalling mid-turn due to context overflow — via SDK PreCompact hook for CCG/Claude and a universal Continuation Agent fallback.
+**Goal:** Prevent GLM-5 and other providers from stalling due to context overflow — via SDK `PreCompact` for the SDK-backed CCG provider, Codex token tracking plus between-turn compaction, and a continuation fallback for batch Player turns.
 
-**Architecture:** CCG/Claude providers register a `PreCompact` hook in `ClaudeAgentOptions` that fires mid-turn and injects a compaction summary instruction via `systemMessage`. Codex tracks `prompt_tokens` from SSE `usage` field and compacts between turns. All providers get a `_run_with_continuation()` wrapper that retries with a compact context summary when a turn ends without required markers.
+**Architecture:** In Part 1, only `g3/src/providers/ccg.py` gets an SDK `PreCompact` hook; `g3/src/providers/claude_native.py` is out of scope because it does not use `ClaudeAgentOptions`. Codex tracks `prompt_tokens` from SSE `usage`, and `CoachPlayerSession._run_with_continuation()` actively uses that signal to compact before the next retry. The continuation wrapper is batch-specific in Part 1: `batch_executor.py` calls it for phase Player turns, while the single-step Player path and reviewer loop keep their existing completion semantics.
 
 **Tech Stack:** `claude_agent_sdk` (PreCompact hook API), `httpx` (Codex SSE), Python async, pytest
 
@@ -75,7 +75,7 @@ In `resolve_config()`, add to `env_map`:
 cd g3 && python -m pytest tests/test_context_config.py -v
 ```
 
-- [ ] **Step 5: Add CLI flags to g3.py**
+- [ ] **Step 5: Add CLI flags to g3.py and forward them through `_resolve_go_config()`**
 
 Find the argparse section in `g3/g3.py` where `--player-provider` etc. are defined. Add:
 
@@ -87,6 +87,14 @@ parser.add_argument("--compact-threshold", type=float, default=None,
 parser.add_argument("--max-continuation", type=int, default=None,
                     dest="max_continuation_attempts",
                     help="Continuation agent retries (default: 2)")
+```
+
+Also update `_resolve_go_config()` so the new CLI values are not dropped:
+
+```python
+"context_limit": getattr(args, "context_limit", None),
+"compact_threshold": getattr(args, "compact_threshold", None),
+"max_continuation_attempts": getattr(args, "max_continuation_attempts", None),
 ```
 
 - [ ] **Step 6: Commit**
@@ -134,14 +142,19 @@ def test_compact_summary_empty_messages():
     assert _build_compact_summary([]) == ""
 
 def test_continuation_prompt_player():
-    prompt = _build_continuation_prompt("Did step 1 and 2.", role="player")
+    prompt = _build_continuation_prompt("Did step 1 and 2.", mode="batch_player")
     assert "PHASE_COMPLETE" in prompt
     assert "Did step 1 and 2." in prompt
 
 def test_continuation_prompt_coach():
-    prompt = _build_continuation_prompt("Found null issue.", role="coach")
+    prompt = _build_continuation_prompt("Found null issue.", mode="coach")
     assert "IMPLEMENTATION_APPROVED" in prompt or "verdict" in prompt.lower()
     assert "Found null issue." in prompt
+
+def test_continuation_prompt_reviewer():
+    prompt = _build_continuation_prompt("Reviewed the diff.", mode="reviewer")
+    assert "CODE_REVIEW_PASSED" in prompt
+    assert "Reviewed the diff." in prompt
 ```
 
 - [ ] **Step 2: Run test — expect FAIL**
@@ -181,9 +194,9 @@ def _build_compact_summary(messages: list) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _build_continuation_prompt(summary: str, role: str) -> str:
-    """Build continuation prompt for a given role."""
-    if role == "player":
+def _build_continuation_prompt(summary: str, mode: str) -> str:
+    """Build continuation prompt for the specific continuation mode."""
+    if mode == "batch_player":
         return (
             f"You are continuing previous work. Here is what was already done:\n\n"
             f"{summary}\n\n"
@@ -193,7 +206,14 @@ def _build_continuation_prompt(summary: str, role: str) -> str:
             "  Evidence:\n  - ...\n"
             "  Verification:\n  - ..."
         )
-    # coach / reviewer
+    if mode == "reviewer":
+        return (
+            f"You are continuing a code review. Here is what was assessed so far:\n\n"
+            f"{summary}\n\n"
+            "Now output your final verdict: either CODE_REVIEW_PASSED "
+            "or a numbered list of concrete issues to fix."
+        )
+    # coach
     return (
         f"You are continuing a review. Here is what was assessed so far:\n\n"
         f"{summary}\n\n"
@@ -216,9 +236,9 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
     async for chunk in provider.run(
         prompt=compact_prompt,
         system_prompt="You are a concise summarizer.",
-        working_dir=".",
+        working_dir=config.working_dir,
         max_turns=3,
-        model=config.coach_model or "",
+        model=config.player_model or config.coach_model or "",
     ):
         text = getattr(chunk, "text", None) or ""
         if text:
@@ -274,6 +294,8 @@ git commit -m "feat: add context_manager.py with compact summary, continuation p
 ## Chunk 2: PreCompact Hook (CCG) + Codex token tracking
 
 ### Task 3: PreCompact hook in ccg.py
+
+Part 1 scope note: this task applies only to the SDK-backed `CcgProvider`. Do not try to force the same hook shape into `ClaudeNativeProvider`; that provider uses the native CLI path and will need a separate plan.
 
 **Files:**
 - Modify: `g3/src/providers/ccg.py`
@@ -493,7 +515,7 @@ def test_continuation_returns_immediately_when_markers_present():
 
     async def run():
         return await session._run_with_continuation(
-            role="player", prompt="do stuff",
+            role="player", completion_mode="batch_player", prompt="do stuff",
             system_prompt="", max_turns=10, timeout_s=60,
         )
 
@@ -517,7 +539,7 @@ def test_continuation_retries_when_no_markers():
 
     async def run():
         return await session._run_with_continuation(
-            role="player", prompt="do stuff",
+            role="player", completion_mode="batch_player", prompt="do stuff",
             system_prompt="", max_turns=10, timeout_s=60,
         )
 
@@ -535,7 +557,7 @@ def test_continuation_exhausted_returns_last_result():
 
     async def run():
         return await session._run_with_continuation(
-            role="player", prompt="do stuff",
+            role="player", completion_mode="batch_player", prompt="do stuff",
             system_prompt="", max_turns=10, timeout_s=60,
         )
 
@@ -555,15 +577,20 @@ cd g3 && python -m pytest tests/test_continuation_agent.py -v
 Add these two methods to `CoachPlayerSession` class in `g3/src/coach_player.py`:
 
 ```python
-def _has_completion_markers(self, text: str, role: str) -> bool:
+def _has_completion_markers(self, text: str, completion_mode: str) -> bool:
     """Return True when the turn output contains the required completion markers."""
     from src.batch_executor import _PHASE_COMPLETE_RE, _REQUIRED_REPORT_HEADERS
-    if role == "player":
+    if completion_mode == "batch_player":
         if not _PHASE_COMPLETE_RE.search(text):
             return False
         lowered = text.lower()
         return all(h in lowered for h in _REQUIRED_REPORT_HEADERS)
-    # coach/reviewer: needs IMPLEMENTATION_APPROVED or numbered issues
+    if completion_mode == "reviewer":
+        from src.feedback import _CODE_REVIEW_PASSED_RE, _NUMBERED_ISSUE_RE
+        if _CODE_REVIEW_PASSED_RE.search(text):
+            return True
+        return bool(_NUMBERED_ISSUE_RE.search(text))
+    # coach: needs IMPLEMENTATION_APPROVED or numbered issues
     from src.feedback import _APPROVED_MARKER_RE, _NUMBERED_ISSUE_RE
     if _APPROVED_MARKER_RE.search(text):
         return True
@@ -572,6 +599,7 @@ def _has_completion_markers(self, text: str, role: str) -> bool:
 async def _run_with_continuation(
     self,
     role: str,
+    completion_mode: str,
     prompt: str,
     system_prompt: str,
     max_turns: int,
@@ -580,7 +608,11 @@ async def _run_with_continuation(
     provider_override=None,
 ) -> "TurnResult":
     """Run a turn, retrying with compact context if no completion markers found."""
-    from src.context_manager import _build_compact_summary, _build_continuation_prompt
+    from src.context_manager import (
+        _build_compact_summary,
+        _build_continuation_prompt,
+        _compact_codex_context,
+    )
     from src import streaming as streaming_ui
 
     result = await self._run_turn(
@@ -594,13 +626,22 @@ async def _run_with_continuation(
     )
 
     for attempt in range(self.config.max_continuation_attempts):
-        if self._has_completion_markers(result.text, role):
+        if self._has_completion_markers(result.text, completion_mode):
             return result
 
         streaming_ui.print_continuation_started(role, attempt + 1,
                                                  self.config.max_continuation_attempts)
-        summary = _build_compact_summary(result.messages)
-        continuation_prompt = _build_continuation_prompt(summary, role)
+        provider = provider_override or self._provider_for_role(role)
+        threshold = int(self.config.context_limit * self.config.compact_threshold)
+        tokens = getattr(provider, "_last_input_tokens", 0)
+
+        if tokens >= threshold:
+            streaming_ui.print_compact_triggered(tokens, self.config.context_limit)
+            summary = await _compact_codex_context(provider, result.messages, self.config)
+        else:
+            summary = _build_compact_summary(result.messages)
+
+        continuation_prompt = _build_continuation_prompt(summary, completion_mode)
 
         result = await self._run_turn(
             role=role,
@@ -653,6 +694,8 @@ def test_batch_player_uses_run_with_continuation(monkeypatch):
     session = MagicMock()
     session.config = Config()
     session._interrupted = False
+    tracker = MagicMock()
+    tracker.render_dashboard = MagicMock()
 
     # _run_with_continuation returns a result with PHASE_COMPLETE markers
     complete_text = (
@@ -666,8 +709,8 @@ def test_batch_player_uses_run_with_continuation(monkeypatch):
     from src.feedback import Approved
     session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
 
-    executor = BatchExecutor(session)
-    phase = Phase(name="Test", steps=[PlanItem(text="step one")], status="pending")
+    executor = BatchExecutor(session=session, tracker=tracker)
+    phase = Phase(name="Test", type="update", steps=[PlanItem(text="step one")], status="pending")
 
     asyncio.get_event_loop().run_until_complete(executor._run_phase(phase))
 
@@ -700,6 +743,7 @@ Replace with:
 ```python
 result = await self.session._run_with_continuation(
     role="player",
+    completion_mode="batch_player",
     prompt=prompt,
     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
     max_turns=self.session.config.max_turns,
@@ -823,3 +867,7 @@ cd g3 && python -m pytest -v
 tero go --batch --context-limit=10000 --compact-threshold=0.5
 # Should see "⚡ Context compacted" or "🔄 continuation agent" messages
 ```
+
+Notes:
+- This Part 1 verification covers `CcgProvider` and `CodexProvider` batch Player turns only.
+- Native Claude CLI (`claude_native.py`) is intentionally excluded from this plan and needs a follow-up design if parity is required.
