@@ -185,3 +185,77 @@ class TestPicker:
     def test_pop_pending_change_returns_none_when_empty(self):
         picker = self._make_picker()
         assert picker.pop_pending_change() is None
+
+
+class TestRuntimeControls:
+    def _make_controls(self):
+        from src.runtime_controls import RuntimeControls
+        with patch("src.runtime_controls.KeyboardListener") as MockKB:
+            mock_kb = MagicMock()
+            mock_kb.pop_action.return_value = None
+            MockKB.return_value = mock_kb
+            controls = RuntimeControls.__new__(RuntimeControls)
+            controls._listener = mock_kb
+            controls._status_bar = MagicMock()
+            controls._picker = MagicMock()
+            controls._picker.pop_pending_change.return_value = None
+            controls._compact_requested = False
+            controls._current_coach_idx = 0
+            controls._current_player_idx = 0
+            controls._player_name = ""
+            controls._coach_name = ""
+            controls._ctx_pct = 0
+        return controls
+
+    def test_update_context_computes_percentage(self):
+        controls = self._make_controls()
+        controls.update_context(tokens=50_000, context_window=100_000)
+        controls._status_bar.update.assert_called_once()
+        call_args = controls._status_bar.update.call_args[0]
+        assert call_args[2] == 50
+
+    def test_compact_requested_false_initially(self):
+        controls = self._make_controls()
+        assert controls.compact_requested is False
+
+    def test_clear_compact_resets_flag(self):
+        controls = self._make_controls()
+        controls._compact_requested = True
+        controls.clear_compact()
+        assert controls.compact_requested is False
+
+    def test_apply_pending_updates_session_coach(self):
+        controls = self._make_controls()
+        controls._picker.pop_pending_change.return_value = ("coach", "claude", "claude-sonnet-4-6")
+
+        session = MagicMock()
+        session.config.coach_provider = "ccg"
+        session.config.coach_model = ""
+        mock_provider = MagicMock()
+        mock_provider.check_ready.return_value = (True, "")
+        session._get_or_create_provider.return_value = mock_provider
+        session._build_role_display.return_value = "claude | model=claude-sonnet-4-6"
+        session.player_model = "GLM-1"
+        session.coach_model = "GLM-1"
+
+        controls.apply_pending(session)
+
+        assert session.config.coach_provider == "claude"
+        assert session.config.coach_model == "claude-sonnet-4-6"
+        session._get_or_create_provider.assert_called_with("claude")
+
+    def test_apply_pending_skips_if_provider_not_ready(self):
+        controls = self._make_controls()
+        controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4-high")
+
+        session = MagicMock()
+        session.config.coach_provider = "ccg"
+        mock_provider = MagicMock()
+        mock_provider.check_ready.return_value = (False, "Proxy not reachable")
+        session._get_or_create_provider.return_value = mock_provider
+
+        controls.apply_pending(session)
+
+        # coach_provider should NOT have changed
+        assert session.config.coach_provider == "ccg"
+        controls._status_bar.show_warning.assert_called_once()
