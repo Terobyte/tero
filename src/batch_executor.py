@@ -179,8 +179,6 @@ class BatchExecutor:
     DEFAULT_PRE_JUDGE_ATTEMPTS = 3
     DEFAULT_JUDGE_ATTEMPTS = 1
     DEFAULT_POST_JUDGE_ATTEMPTS = 1
-    JUDGE_PROVIDER = "claude"
-    JUDGE_MODEL = "sonnet"
 
     def __init__(self, session, tracker):
         self.session = session
@@ -203,11 +201,15 @@ class BatchExecutor:
         return role
 
     def _judge_label(self) -> str:
-        """Display label for the one-off batch judge attempt."""
+        """Display label for the batch judge slot."""
+        provider = self.session.config.batch_judge_provider
+        model = self.session.config.batch_judge_model
         builder = getattr(self.session, "build_provider_display", None)
         if callable(builder):
-            return builder(self.JUDGE_PROVIDER, self.JUDGE_MODEL)
-        return f"{self.JUDGE_PROVIDER} | model={self.JUDGE_MODEL}"
+            return builder(provider, model)
+        if model:
+            return f"{provider} | model={model}"
+        return provider
 
     def _reset_tracker_progress_for_batch_run(self) -> None:
         """Start each batch run from the plan itself, not stale checklist state."""
@@ -253,16 +255,16 @@ class BatchExecutor:
             return {
                 "header_role": "judge",
                 "label": self._judge_label(),
-                "provider_name_override": self.JUDGE_PROVIDER,
-                "model_override": self.JUDGE_MODEL,
+                "provider_name_override": self.session.config.batch_judge_provider,
+                "model_override": self.session.config.batch_judge_model,
                 "review_role": "judge",
             }
 
         return {
             "header_role": "coach",
             "label": self._role_label("coach"),
-            "provider_name_override": "",
-            "model_override": self.session.config.coach_model,
+            "provider_name_override": self.session.config.batch_pre_provider,
+            "model_override": self.session.config.batch_pre_model,
             "review_role": "coach",
         }
 
@@ -280,8 +282,9 @@ class BatchExecutor:
         self.tracker.phases = phases
         pre_attempts, judge_attempts, post_attempts = self._schedule_counts()
         max_phase_attempts = self._max_phase_attempts()
+        done_count = sum(1 for p in phases if all(s.done for s in p.steps))
         print(f"\n{BOLD}--- tero batch ---{RESET}")
-        print(f"  Фаз: {len(phases)}  |  Макс. попыток на фазу: {max_phase_attempts}")
+        print(f"  Фаз: {len(phases)}  |  Выполнено: {done_count}  |  Макс. попыток на фазу: {max_phase_attempts}")
         print(f"  Player: {self._role_label('player')}")
         print(f"  Coach: {self._role_label('coach')}")
         print(f"  Judge: {self._judge_label()}")
@@ -290,17 +293,29 @@ class BatchExecutor:
             "(coach / judge / coach)"
         )
         print()
+        runtime = getattr(self.session, "_runtime", None)
+        if runtime is not None:
+            runtime.start(
+                player_name=self._role_label("player"),
+                coach_name=self._role_label("coach"),
+            )
+            runtime.pause_render()
+
         self.tracker.start_dashboard()
 
         try:
             for phase in phases:
-                if all(s.done for s in phase.steps):
+                # Resume: skip phases already fully completed in the plan file
+                if all(step.done for step in phase.steps):
                     phase.status = "done"
                     self.tracker.render_dashboard()
                     continue
 
                 phase.status = "in_progress"
                 self.tracker.render_dashboard()
+                runtime = getattr(self.session, "_runtime", None)
+                if runtime is not None:
+                    runtime.apply_pending(self.session)
 
                 success = await self._run_phase(phase)
 
@@ -315,6 +330,9 @@ class BatchExecutor:
                     raise PhaseFailedError(phase=phase, attempts=phase.attempts)
         finally:
             self.tracker.stop_dashboard()
+            if runtime is not None:
+                runtime.resume_render()
+                runtime.stop()
 
     async def _run_phase(self, phase: Phase) -> bool:
         """Execute all steps in one Player turn. Retry on incomplete or Coach rejection."""
@@ -324,11 +342,14 @@ class BatchExecutor:
         completed_steps: list[str] = []
         coach_feedback: str = ""
         max_phase_attempts = self._max_phase_attempts()
+        runtime = getattr(self.session, "_runtime", None)
 
         for attempt in range(max_phase_attempts):
             attempt_num = attempt + 1
             phase.attempts = attempt_num
             self.tracker.render_dashboard()
+            if runtime is not None:
+                runtime.apply_pending(self.session)
 
             prompt = build_batch_prompt(phase, completed_steps, coach_feedback)
             snapshot_pids = getattr(self.session, "_snapshot_pids", None)
@@ -343,11 +364,11 @@ class BatchExecutor:
                 model_name=self._role_label("player"),
             )
             try:
-                result = await self.session._run_with_continuation(
+                result = await self.session._run_turn(
                     role="player",
                     prompt=prompt,
                     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
-                    max_turns=self.session.config.player_turns_per_session,
+                    max_turns=self.session.config.max_turns,
                     timeout_s=self.session.config.player_timeout_s,
                     model_override=self.session.config.player_model,
                 )
@@ -362,6 +383,15 @@ class BatchExecutor:
                 cleanup_processes(pids_before)
 
             completed_steps = parse_completed_steps(result, phase)
+            if len(completed_steps) < len(phase.steps):
+                coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
+                streaming_ui.print_step_rejected(coach_feedback)
+                continue
+
+            if not has_required_completion_report(result.text):
+                coach_feedback = build_missing_report_feedback(phase)
+                streaming_ui.print_step_rejected(coach_feedback)
+                continue
 
             strategy = self._review_strategy(attempt_num)
 

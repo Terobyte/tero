@@ -338,3 +338,14 @@ The following step has been implemented and approved by the coach:
 - If no critical issues, respond with CODE_REVIEW_PASSED
 
 Your verdict must end with either CODE_REVIEW_PASSED or a numbered list of issues."""
+
+
+def build_player_fix_prompt(issues_text: str) -> str:
+    """Build Player prompt to fix issues found by code review."""
+    return (
+        "Code review found critical issues. Fix ONLY these numbered issues:\n\n"
+        f"{issues_text}\n\n"
+        "After fixing, run the relevant tests/verification. "
+        "Do not change code unrelated to these issues.\n"
+        "End with your standard completion markers (PHASE_COMPLETE or Step N done)."
+    )

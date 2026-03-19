@@ -122,6 +122,7 @@ class ClaudeNativeProvider:
         cmd = [
             self.config.command,
             "-p",
+            "--verbose",
             "--model", resolved_model,
             "--max-turns", str(max_turns),
             "--permission-mode", "bypassPermissions",
