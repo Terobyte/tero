@@ -85,16 +85,42 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
     etype = event.get("type", "")
 
     # Text response from assistant
+    # Claude CLI stream-json nests content: {"type":"assistant","message":{"content":[...]}}
     if etype in ("assistant", "text"):
-        text = event.get("text", event.get("content", ""))
-        return AdaptedMessage(
-            role="assistant",
-            content=[TextBlock(text=text)],
-            stop_reason=event.get("stop_reason", ""),
-            model=event.get("model", ""),
-        )
+        text = event.get("text", "")
+        message = event.get("message", {})
 
-    # Tool use request
+        if not text and isinstance(message, dict):
+            blocks = []
+            for block in message.get("content", []):
+                if isinstance(block, dict):
+                    btype = block.get("type", "")
+                    if btype == "text":
+                        blocks.append(TextBlock(text=block.get("text", "")))
+                    elif btype == "tool_use":
+                        blocks.append(ToolUseBlock(
+                            name=block.get("name", "unknown"),
+                            input=block.get("input", {}),
+                            id=block.get("id", ""),
+                        ))
+            if blocks:
+                return AdaptedMessage(
+                    role="assistant",
+                    content=blocks,
+                    stop_reason=message.get("stop_reason", ""),
+                    model=message.get("model", event.get("model", "")),
+                )
+
+        if text:
+            return AdaptedMessage(
+                role="assistant",
+                content=[TextBlock(text=text)],
+                stop_reason=event.get("stop_reason", ""),
+                model=event.get("model", ""),
+            )
+        return None
+
+    # Tool use request (flat format)
     if etype == "tool_use":
         return AdaptedMessage(
             role="assistant",
@@ -150,7 +176,31 @@ def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
     if isinstance(msg, AdaptedMessage):
         return msg
 
-    # SDK object with role attribute
+    type_name = type(msg).__name__
+
+    # claude_agent_sdk.AssistantMessage — no .role, has .content list
+    if type_name == "AssistantMessage":
+        content = []
+        if hasattr(msg, "content"):
+            raw_content = msg.content
+            if isinstance(raw_content, str):
+                content = [TextBlock(text=raw_content)]
+            elif isinstance(raw_content, list):
+                content = raw_content
+            else:
+                content = [TextBlock(text=str(raw_content))]
+        return AdaptedMessage(
+            role="assistant",
+            content=content,
+            stop_reason="",
+            model=getattr(msg, "model", ""),
+        )
+
+    # claude_agent_sdk.ResultMessage — skip here; handled as fallback in _run_turn
+    if type_name == "ResultMessage":
+        return None
+
+    # Legacy SDK objects that do have a .role attribute
     if hasattr(msg, "role"):
         content = []
         if hasattr(msg, "content"):

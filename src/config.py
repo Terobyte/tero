@@ -221,8 +221,18 @@ class Config:
     # Context Management
     context_limit: int = 110_000
     compact_threshold: float = 0.85
-    max_continuation_attempts: int = 2
-    player_turns_per_session: int = 8  # max CCG internal turns per player call
+
+    # Batch role providers + models (configurable per slot)
+    batch_pre_provider: str = "ccg"
+    batch_pre_model: str = ""                # GLM-5 default
+    batch_judge_provider: str = "codex"      # was hardcoded "claude"
+    batch_judge_model: str = "gpt-5.4-high"  # was hardcoded "sonnet"
+    batch_post_provider: str = "ccg"
+    batch_post_model: str = ""               # GLM-5 default
+    test_writer_provider: str = "ccg"
+    test_writer_model: str = ""
+    # Code review loop
+    max_review_iterations: int = 3
 
 
 @dataclass
@@ -374,11 +384,16 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_COACH_RETRY_MAX": ("coach_retry_max", int),
         "G3_COACH_FALLBACK_PROVIDER": ("coach_fallback_provider", str),
         "G3_COACH_FALLBACK_MODEL": ("coach_fallback_model", str),
-        # Context Management
-        "G3_CONTEXT_LIMIT": ("context_limit", int),
-        "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
-        "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
-        "G3_PLAYER_TURNS_PER_SESSION": ("player_turns_per_session", int),
+        # Batch roles
+        "G3_BATCH_PRE_PROVIDER":        ("batch_pre_provider", str),
+        "G3_BATCH_PRE_MODEL":           ("batch_pre_model", str),
+        "G3_BATCH_JUDGE_PROVIDER":      ("batch_judge_provider", str),
+        "G3_BATCH_JUDGE_MODEL":         ("batch_judge_model", str),
+        "G3_BATCH_POST_PROVIDER":       ("batch_post_provider", str),
+        "G3_BATCH_POST_MODEL":          ("batch_post_model", str),
+        "G3_TEST_WRITER_PROVIDER":      ("test_writer_provider", str),
+        "G3_TEST_WRITER_MODEL":         ("test_writer_model", str),
+        "G3_MAX_REVIEW_ITERATIONS":     ("max_review_iterations", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):

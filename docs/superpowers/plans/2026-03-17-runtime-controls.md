@@ -528,6 +528,11 @@ class StatusBar:
 
     def clear(self) -> None:
         """Erase the status bar line (called on session stop)."""
+        with self._lock:
+            if self._warning_timer is not None:
+                self._warning_timer.cancel()
+                self._warning_timer = None
+            self._warning_text = None
         try:
             h = os.get_terminal_size().lines
             sys.stdout.write(f"\0337\033[{h};1H\033[K\0338")
@@ -823,6 +828,15 @@ class Picker:
             sys.stdout.flush()
         except OSError:
             pass
+
+    def dismiss_immediately(self) -> None:
+        """Cancel any pending auto-dismiss and clear the picker right away."""
+        with self._lock:
+            if self._dismiss_timer is not None:
+                self._dismiss_timer.cancel()
+                self._dismiss_timer = None
+            self.state = "CLOSED"
+        self._clear_top_line()
 ```
 
 - [ ] **Step 4.4: Run tests to confirm they pass**
@@ -868,6 +882,11 @@ class TestRuntimeControls:
             controls._compact_requested = False
             controls._current_coach_idx = 0
             controls._current_player_idx = 0
+            controls._ctx_pct = 0
+            controls._player_name = "GLM-1"
+            controls._coach_name = "Sonnet"
+            controls._running = True
+            controls._sigwinch_prev_handler = None
         return controls
 
     def test_update_context_computes_percentage(self):
@@ -950,36 +969,77 @@ class RuntimeControls:
         self._status_bar = StatusBar()
         self._picker = Picker()
         self._compact_requested = False
-        self._current_coach_idx: int = 0
-        self._current_player_idx: int = 0
+        self._current_coach_idx: int | None = None
+        self._current_player_idx: int | None = None
         self._ctx_pct: int = 0
         self._player_name: str = ""
         self._coach_name: str = ""
         self._running = False
+        self._sigwinch_prev_handler = None
 
-    def start(self, player_name: str = "", coach_name: str = "") -> None:
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    def _find_preset_index(self, provider_name: str, model: str) -> Optional[int]:
+        for i, (_name, preset_provider, preset_model) in enumerate(MODEL_PRESETS):
+            if preset_provider == provider_name and preset_model == model:
+                return i
+        return None
+
+    def _preset_label(self, idx: Optional[int], fallback_name: str) -> str:
+        if idx is None:
+            return fallback_name
+        return MODEL_PRESETS[idx][0]
+
+    def start(
+        self,
+        *,
+        player_provider: str,
+        player_model: str,
+        coach_provider: str,
+        coach_model: str,
+        player_fallback_name: str = "",
+        coach_fallback_name: str = "",
+    ) -> None:
         """Start listener thread and render initial status bar."""
-        self._player_name = player_name
-        self._coach_name = coach_name
-        self._status_bar.update(player_name, coach_name, 0)
+        if self._running:
+            return
+
+        self._current_player_idx = self._find_preset_index(player_provider, player_model)
+        self._current_coach_idx = self._find_preset_index(coach_provider, coach_model)
+        self._player_name = self._preset_label(self._current_player_idx, player_fallback_name)
+        self._coach_name = self._preset_label(self._current_coach_idx, coach_fallback_name)
+        self._status_bar.update(self._player_name, self._coach_name, 0)
+        self._listener = KeyboardListener()  # fresh thread each start
         self._listener.start()
         self._running = True
-        # Handle terminal resize
         try:
+            self._sigwinch_prev_handler = signal.getsignal(signal.SIGWINCH)
             signal.signal(signal.SIGWINCH, lambda *_: self._status_bar._render())
         except (OSError, ValueError):
-            pass  # SIGWINCH not available on all platforms
+            self._sigwinch_prev_handler = None
 
     def stop(self) -> None:
-        """Stop listener thread and clear status bar."""
+        """Stop listener thread, tear down runtime UI, and restore signal handlers."""
         if not self._running:
             return
-        self._listener.stop()
-        self._status_bar.clear()
         self._running = False
+        self._listener.stop()
+        self._listener.join(timeout=0.2)
+        self._picker.dismiss_immediately()
+        self._status_bar.clear()
+        try:
+            if self._sigwinch_prev_handler is not None:
+                signal.signal(signal.SIGWINCH, self._sigwinch_prev_handler)
+        except (OSError, ValueError):
+            pass
+        self._sigwinch_prev_handler = None
 
     def update_context(self, tokens: int, context_window: int) -> None:
         """Update context percentage in the status bar."""
+        if not self._running:
+            return
         if context_window > 0:
             self._ctx_pct = int(100 * tokens / context_window)
         else:
@@ -1002,53 +1062,47 @@ class RuntimeControls:
                 break
             result = self._picker.handle_action(
                 action,
-                current_coach_idx=self._current_coach_idx,
-                current_player_idx=self._current_player_idx,
+                current_coach_idx=self._current_coach_idx or 0,
+                current_player_idx=self._current_player_idx or 0,
             )
             if result == "compact":
                 self._compact_requested = True
 
-        # Apply any confirmed model change
-        pending = self._picker.pop_pending_change()
-        if pending is None:
-            return
+        while True:
+            pending = self._picker.pop_pending_change()
+            if pending is None:
+                return
 
-        role, provider_name, model = pending
+            role, provider_name, model = pending
 
-        # Verify provider is ready before switching
-        try:
-            provider = session._get_or_create_provider(provider_name)
-            ok, reason = provider.check_ready()
-        except Exception as e:
-            ok, reason = False, str(e)
+            try:
+                provider = session._get_or_create_provider(provider_name)
+                ok, reason = provider.check_ready()
+            except Exception as e:
+                ok, reason = False, str(e)
 
-        if not ok:
-            self._status_bar.show_warning(f"{role.capitalize()} {provider_name} not ready: {reason}")
-            return
+            if not ok:
+                self._status_bar.show_warning(f"{role.capitalize()} {provider_name} not ready: {reason}")
+                continue
 
-        if role == "coach":
-            session.config.coach_provider = provider_name
-            session.config.coach_model = model
-            session.coach_provider = session._get_or_create_provider(provider_name)
-            session.coach_model = session._build_role_display("coach")
-            self._coach_name = session.coach_model
-            # Find and store new index
-            self._current_coach_idx = next(
-                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
-                self._current_coach_idx,
-            )
-        elif role == "player":
-            session.config.player_provider = provider_name
-            session.config.player_model = model
-            session.player_provider = session._get_or_create_provider(provider_name)
-            session.player_model = session._build_role_display("player")
-            self._player_name = session.player_model
-            self._current_player_idx = next(
-                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
-                self._current_player_idx,
-            )
+            idx = self._find_preset_index(provider_name, model)
 
-        self._status_bar.update(self._player_name, self._coach_name, self._ctx_pct)
+            if role == "coach":
+                session.config.coach_provider = provider_name
+                session.config.coach_model = model
+                session.coach_provider = session._get_or_create_provider(provider_name)
+                session.coach_model = session._build_role_display("coach")
+                self._current_coach_idx = idx
+                self._coach_name = self._preset_label(idx, session.coach_model)
+            elif role == "player":
+                session.config.player_provider = provider_name
+                session.config.player_model = model
+                session.player_provider = session._get_or_create_provider(provider_name)
+                session.player_model = session._build_role_display("player")
+                self._current_player_idx = idx
+                self._player_name = self._preset_label(idx, session.player_model)
+
+            self._status_bar.update(self._player_name, self._coach_name, self._ctx_pct)
 ```
 
 - [ ] **Step 5.4: Run tests to confirm they pass**
@@ -1081,7 +1135,7 @@ git commit -m "feat: add RuntimeControls orchestrator with apply_pending and com
 **Files:**
 - Modify: `src/coach_player.py`
 
-**Context:** `RuntimeControls` is started in `run()`, stopped in `finally`. `apply_pending` called at top of outer step loop. `update_context` called inside `_run_turn`. ESC compact handled before player turn. Note: the player now uses `self.config.player_turns_per_session` instead of a hardcoded 30 for `max_turns` — this was already fixed in the source code and no additional change is needed here.
+**Context:** `RuntimeControls` is interactive-only: instantiate and start it inside `run()` after the early-return checks, and stop it in the matching `finally`. `apply_pending` must run at each turn boundary (before player turns and before coach turns), not just once per step. `update_context` stays inside `_run_turn`, but must no-op when controls were never started. ESC compact is still handled before the next player turn. Note: the player now uses `self.config.player_turns_per_session` instead of a hardcoded 30 for `max_turns` — this was already fixed in the source code and no additional change is needed here.
 
 - [ ] **Step 6.1: Read the relevant sections of coach_player.py**
 
@@ -1093,8 +1147,8 @@ In `tests/test_coach_player.py`, add:
 
 ```python
 @pytest.mark.asyncio
-async def test_runtime_controls_started_and_stopped(tmp_path, monkeypatch):
-    """RuntimeControls.start() is called when run() begins and stop() in finally."""
+async def test_runtime_controls_started_and_stopped_on_normal_run(tmp_path, monkeypatch):
+    """RuntimeControls.start() is called for a normal interactive run and stop() in finally."""
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
 
     with patch("src.coach_player.RuntimeControls") as MockRC:
@@ -1110,18 +1164,37 @@ async def test_runtime_controls_started_and_stopped(tmp_path, monkeypatch):
         session.player_provider = mock_provider
         session.coach_provider = mock_provider
 
-        # Make it return immediately (all steps done)
-        with patch.object(session, "_run_turn", new_callable=AsyncMock):
-            with patch("src.coach_player.parse_requirements", return_value=[]):
-                await session.run()
+        with patch("src.coach_player.parse_requirements", return_value=[PlanItem(text="step 1")]):
+            with patch.object(session, "_run_turn", new_callable=AsyncMock) as mock_turn:
+                mock_turn.return_value = MagicMock(
+                    text="What changed:\n- done\nEvidence:\n- file\nVerification:\n- check",
+                    duration_s=1.0, tools_used=0, tokens_used=0, messages=[]
+                )
+                with patch("src.coach_player.parse_coach_output", return_value=Approved()):
+                    await session.run()
 
         mock_rc.start.assert_called_once()
         mock_rc.stop.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_apply_pending_called_each_step(tmp_path, monkeypatch):
-    """apply_pending is called once per step at the top of the outer loop."""
+async def test_runtime_controls_not_started_when_all_steps_done(tmp_path, monkeypatch):
+    """No runtime controls are created when run() exits through the all-done fast path."""
+    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+
+    with patch("src.coach_player.RuntimeControls") as MockRC:
+        cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=1)
+        session = CoachPlayerSession(cfg, "1. Ship feature")
+
+        with patch("src.coach_player.parse_requirements", return_value=[]):
+            await session.run()
+
+        MockRC.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_pending_called_before_each_turn(tmp_path, monkeypatch):
+    """apply_pending is called at each turn boundary, not just once per step."""
     from src.plan_tracker import PlanItem
     from src.feedback import Approved
 
@@ -1151,14 +1224,14 @@ async def test_apply_pending_called_each_step(tmp_path, monkeypatch):
                 with patch("src.coach_player.parse_coach_output", return_value=Approved()):
                     await session.run()
 
-        # apply_pending called once per step (2 steps)
-        assert mock_rc.apply_pending.call_count == 2
+        # 2 steps => player + coach boundary for each step = 4 calls
+        assert mock_rc.apply_pending.call_count == 4
 ```
 
 - [ ] **Step 6.3: Run to confirm tests fail**
 
 ```bash
-python -m pytest tests/test_coach_player.py::test_runtime_controls_started_and_stopped tests/test_coach_player.py::test_apply_pending_called_each_step -v 2>&1 | tail -20
+python -m pytest tests/test_coach_player.py::test_runtime_controls_started_and_stopped_on_normal_run tests/test_coach_player.py::test_runtime_controls_not_started_when_all_steps_done tests/test_coach_player.py::test_apply_pending_called_before_each_turn -v 2>&1 | tail -20
 ```
 
 Expected: FAIL
@@ -1167,16 +1240,20 @@ Expected: FAIL
 
 In `src/coach_player.py`:
 
-**In `__init__` after existing setup:**
+**At module top with the other imports:**
 ```python
 from src.runtime_controls import RuntimeControls
-self.runtime_controls = RuntimeControls()
+```
+
+**In `__init__` after existing setup:**
+```python
+        self.runtime_controls: RuntimeControls | None = None
 ```
 
 **In `_run_turn()`, after the `streaming_ui.print_turn_timing(...)` call (line ~700):**
 ```python
         # Update status bar context percentage
-        if hasattr(self, "runtime_controls"):
+        if self.runtime_controls is not None and self.runtime_controls.is_running:
             self.runtime_controls.update_context(tokens_used, context_window)
 ```
 
@@ -1184,15 +1261,20 @@ self.runtime_controls = RuntimeControls()
 
 In `src/coach_player.py`, `run()`:
 
-**After `self._setup_interrupt_handler()` (line ~324):**
+**After the all-done / resume checks, but before the main `try:` block:**
 ```python
+        self.runtime_controls = RuntimeControls()
         self.runtime_controls.start(
-            player_name=self.player_model,
-            coach_name=self.coach_model,
+            player_provider=self.config.player_provider,
+            player_model=self.config.player_model,
+            coach_provider=self.config.coach_provider,
+            coach_model=self.config.coach_model,
+            player_fallback_name=self.player_model,
+            coach_fallback_name=self.coach_model,
         )
 ```
 
-**Wrap the existing `try:` block to add `finally: self.runtime_controls.stop()`:**
+**Wrap the interactive run body in `try/finally` so `stop()` always matches `start()`:**
 ```python
         try:
             for step_index in range(start_index, total_steps):
@@ -1200,14 +1282,18 @@ In `src/coach_player.py`, `run()`:
         except Exception as exc:
             # ... existing ...
         finally:
-            self.runtime_controls.stop()
+            if self.runtime_controls is not None:
+                self.runtime_controls.stop()
 ```
 
 **At the top of the outer `for step_index` loop, before the `attempt` loop:**
 ```python
-                # Runtime controls: apply any pending coach/player switches
-                self.runtime_controls.apply_pending(self)
                 self._last_turn_result: TurnResult | None = None  # reset per step
+```
+
+**Immediately before each player turn and immediately before each coach turn:**
+```python
+                    self.runtime_controls.apply_pending(self)
 ```
 
 - [ ] **Step 6.6: Add ESC compact handling before player turn**
@@ -1248,7 +1334,7 @@ After successful player turn (after `player_result = await self._run_turn(...)`)
 - [ ] **Step 6.7: Run integration tests**
 
 ```bash
-python -m pytest tests/test_coach_player.py::test_runtime_controls_started_and_stopped tests/test_coach_player.py::test_apply_pending_called_each_step -v
+python -m pytest tests/test_coach_player.py::test_runtime_controls_started_and_stopped_on_normal_run tests/test_coach_player.py::test_runtime_controls_not_started_when_all_steps_done tests/test_coach_player.py::test_apply_pending_called_before_each_turn -v
 ```
 
 Expected: PASS

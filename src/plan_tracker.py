@@ -165,7 +165,10 @@ def detect_step_type(item: "PlanItem | str") -> str:
 
 def _make_phase(ptype: str, items: list["PlanItem"]) -> "Phase":
     """Create a named phase for a batch of plan items."""
-    name = f"{ptype.capitalize()} ({len(items)} steps)"
+    snippet = items[0].text if items else ""
+    if len(snippet) > 45:
+        snippet = snippet[:45].rstrip() + "…"
+    name = f"{ptype.capitalize()} · {snippet}" if snippet else ptype.capitalize()
     return Phase(name=name, type=ptype, steps=items)
 
 

@@ -154,6 +154,7 @@ def render(self):
 API:
 - `update(player_name, coach_name, ctx_pct)` — updates fields and re-renders immediately (thread-safe)
 - `show_warning(text: str, duration_s: float = 3.0)` — temporarily replaces the status line with `text` for `duration_s` seconds, then reverts to normal status. Uses `threading.Timer` to schedule revert. If another `show_warning` is called while timer is active, the previous timer is cancelled.
+- `clear()` — clears the bottom line and cancels any active warning timer so no delayed redraw fires after shutdown.
 
 Handles `SIGWINCH` (terminal resize) by re-rendering at new height.
 
@@ -194,17 +195,17 @@ for role, provider_name, model in pending:
 
 #### Changes to `src/coach_player.py`
 
-**`__init__`:** add `self.runtime_controls = RuntimeControls(config)`
+**`__init__`:** add `self.runtime_controls: RuntimeControls | None = None`
 
 **`run()`:**
-- After `_setup_interrupt_handler()` → `self.runtime_controls.start()`
-- Wrap entire run body in `try/finally: self.runtime_controls.stop()`
-- At the **top of each outer step loop iteration** (before the attempt loop): call `self.runtime_controls.apply_pending(self)` — NOT after every internal `_run_turn()` call
+- After the all-done / resume checks, create and start `self.runtime_controls`
+- Wrap the interactive run body in `try/finally: self.runtime_controls.stop()`
+- Call `self.runtime_controls.apply_pending(self)` at each turn boundary, immediately before player turns and immediately before coach turns
 - Before each player turn (start of attempt loop): check `self.runtime_controls.compact_requested` → if True, apply compact and call `self.runtime_controls.clear_compact()`
 
 **Context tracking — `_run_turn()`:** after computing `tokens_used` and `context_window`, call:
 ```python
-if hasattr(self, "runtime_controls"):
+if self.runtime_controls is not None and self.runtime_controls.is_running:
     self.runtime_controls.update_context(tokens_used, context_window)
 ```
 `_run_turn()` already has access to `self` so no parameter threading needed.
@@ -236,6 +237,8 @@ player_prompt = compact_prompt_override or build_player_step_prompt(
 `_build_continuation_prompt` from `context_manager.py` is NOT used here — it produces batch-mode `PHASE_COMPLETE` markers which are wrong for step-by-step sessions. The compact prompt is inlined above.
 
 **`self._last_turn_result` initialization:** initialized to `None` once before the outer `for step_index in range(...)` loop. Updated to `player_result` after each successful player turn inside the attempt loop. Reset to `None` at the start of each new step (top of the for-loop body, before the attempt loop).
+
+**Batch-mode isolation:** batch execution still reuses `session._run_turn()`, so runtime controls must stay disabled unless the interactive `run()` path explicitly created and started them.
 
 #### Changes to `src/streaming.py`
 

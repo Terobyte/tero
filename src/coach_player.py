@@ -39,12 +39,14 @@ from src.prompts import (
     build_player_step_prompt,
     build_test_writer_prompt,
     build_code_review_prompt,
+    build_player_fix_prompt,
 )
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
 from src.providers.ccg import run_agent
 from src import streaming as streaming_ui
 from src.streaming import BOLD, RESET, GREEN, RED, YELLOW
+from src.runtime_controls import RuntimeControls
 
 
 @dataclass
@@ -92,6 +94,8 @@ class CoachPlayerSession:
 
         # Verify providers are ready
         self._verify_providers_ready()
+
+        self._runtime = RuntimeControls()
 
         # Resolve role labels using the actual runtime model/provider config.
         self.player_model = self._build_role_display("player")
@@ -354,6 +358,7 @@ class CoachPlayerSession:
             print(f"  Продолжаем с шага {start_index + 1} ({start_index} шагов уже сделано)\n")
 
         try:
+            self._runtime.start(player_name=self.player_model, coach_name=self.coach_model)
             for step_index in range(start_index, total_steps):
                 if self._interrupted:
                     break
@@ -365,6 +370,7 @@ class CoachPlayerSession:
                 step_num = step_index + 1
                 completed_steps = [p.text for p in plan_items[:step_index] if p.done]
 
+                self._runtime.apply_pending(self)
                 streaming_ui.print_step_header(step_num, total_steps, step.text)
 
                 feedback = None
@@ -420,7 +426,7 @@ class CoachPlayerSession:
                             role="player",
                             prompt=player_prompt,
                             system_prompt=PLAYER_SYSTEM_PROMPT,
-                            max_turns=self.config.player_turns_per_session,
+                            max_turns=30,
                             timeout_s=self.config.player_timeout_s,
                             model_override=self.config.player_model,
                         )
@@ -520,35 +526,54 @@ class CoachPlayerSession:
                     self._kill_new_processes(pids_before_coach)
 
                     if isinstance(verdict, Approved):
-                        # --- Code Review phase (after coach approval) ---
+                        # --- Code Review phase (iterative until zero bugs) ---
                         if self.config.code_review and self.review_provider:
-                            streaming_ui.print_code_review_header(
-                                step_num, total_steps, self.review_provider.display_name
-                            )
-                            review_prompt = build_code_review_prompt(
-                                current_step=step.text,
-                                step_num=step_num,
-                                total_steps=total_steps,
-                            )
-                            try:
-                                review_result = await self._run_turn(
-                                    role="reviewer",
-                                    prompt=review_prompt,
-                                    system_prompt=CODE_REVIEWER_SYSTEM_PROMPT,
-                                    max_turns=8,
-                                    timeout_s=self.config.coach_timeout_s,
-                                    model_override=self.review_model,
-                                    provider_override=self.review_provider,
+                            max_iter = self.config.max_review_iterations
+                            for review_iter in range(max_iter):
+                                streaming_ui.print_code_review_header(
+                                    step_num, total_steps,
+                                    self.review_provider.display_name,
+                                    iteration=review_iter + 1,
+                                    max_iterations=max_iter,
                                 )
+                                review_prompt = build_code_review_prompt(
+                                    current_step=step.text,
+                                    step_num=step_num,
+                                    total_steps=total_steps,
+                                )
+                                try:
+                                    review_result = await self._run_turn(
+                                        role="reviewer",
+                                        prompt=review_prompt,
+                                        system_prompt=CODE_REVIEWER_SYSTEM_PROMPT,
+                                        max_turns=8,
+                                        timeout_s=self.config.coach_timeout_s,
+                                        model_override=self.review_model,
+                                        provider_override=self.review_provider,
+                                    )
+                                except TimeoutError:
+                                    print(f"\n  {BOLD}{YELLOW}⚠ Code review timed out{RESET}")
+                                    break
+
                                 review_verdict = parse_review_output(review_result.messages)
+
                                 if isinstance(review_verdict, ReviewPassed):
                                     streaming_ui.print_review_passed(step_num)
-                                else:
-                                    streaming_ui.print_review_issues(review_verdict.text)
-                                    feedback = Feedback(review_verdict.text)
-                                    continue  # Retry player
-                            except TimeoutError:
-                                print(f"\n  {BOLD}{YELLOW}⚠ Code review timed out, approving...{RESET}")
+                                    break
+
+                                # Bugs found — player fixes, then re-review
+                                streaming_ui.print_review_issues(review_verdict.text)
+                                if review_iter < max_iter - 1:
+                                    fix_prompt = build_player_fix_prompt(review_verdict.text)
+                                    run_fn = getattr(self, "_run_with_continuation", self._run_turn)
+                                    await run_fn(
+                                        role="player",
+                                        prompt=fix_prompt,
+                                        system_prompt=PLAYER_SYSTEM_PROMPT,
+                                        max_turns=self.config.max_turns,
+                                        timeout_s=self.config.player_timeout_s,
+                                        model_override=self.player_model,
+                                    )
 
                         step_approved = True
                         plan_items = mark_step_done(plan_items, step_index)
@@ -575,6 +600,8 @@ class CoachPlayerSession:
         except Exception as exc:
             error = str(exc)
             print(f"\n  {RED}[ошибка] сессия упала: {error}{RESET}")
+        finally:
+            self._runtime.stop()
 
         total_duration = time.time() - start_time
         steps_completed = sum(1 for item in plan_items if item.done)
@@ -648,6 +675,7 @@ class CoachPlayerSession:
                 "model": model,
             }
 
+            # Pass context limits to providers that support them (CCG)
             params = inspect.signature(provider.run).parameters
             accepts_kwargs = any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
@@ -698,6 +726,7 @@ class CoachPlayerSession:
         from src.config import get_context_window
         context_window = get_context_window(resolved_model)
         streaming_ui.print_turn_timing(role, duration, tools_used, tokens_used, context_window)
+        self._runtime.update_context(tokens_used, context_window)
 
         text_parts = [
             msg.get_text_content()
@@ -721,92 +750,6 @@ class CoachPlayerSession:
             text=result_text,
             tokens_used=tokens_used,
         )
-
-    def _has_completion_markers(self, text: str, role: str) -> bool:
-        """Return True when the turn output contains the required completion markers."""
-        from src.batch_executor import _PHASE_COMPLETE_RE, _REQUIRED_REPORT_HEADERS
-        from src.feedback import _APPROVED_MARKER_RE, _NUMBERED_ISSUE_RE
-
-        if role == "player":
-            if not _PHASE_COMPLETE_RE.search(text):
-                return False
-            lowered = text.lower()
-            return all(h in lowered for h in _REQUIRED_REPORT_HEADERS)
-        # coach/reviewer: needs IMPLEMENTATION_APPROVED or numbered issues
-        if _APPROVED_MARKER_RE.search(text):
-            return True
-        return bool(_NUMBERED_ISSUE_RE.search(text))
-
-    async def _run_with_continuation(
-        self,
-        role: str,
-        prompt: str,
-        system_prompt: str,
-        max_turns: int,
-        timeout_s: int,
-        model_override: str = "",
-        provider_override=None,
-    ) -> TurnResult:
-        """Run a turn, retrying with compact context if no completion markers found."""
-        from src.context_manager import (
-            _build_compact_summary,
-            _build_continuation_prompt,
-            _compact_codex_context,
-        )
-        from src import streaming as streaming_ui
-
-        compact_threshold_tokens = int(
-            self.config.context_limit * self.config.compact_threshold
-        )
-
-        result = await self._run_turn(
-            role=role,
-            prompt=prompt,
-            system_prompt=system_prompt,
-            max_turns=max_turns,
-            timeout_s=timeout_s,
-            model_override=model_override,
-            provider_override=provider_override,
-        )
-
-        for attempt in range(self.config.max_continuation_attempts):
-            if self._has_completion_markers(result.text, role):
-                return result
-
-            streaming_ui.print_continuation_started(
-                role, attempt + 1, self.config.max_continuation_attempts
-            )
-            summary = _build_compact_summary(result.messages)
-            provider = provider_override
-            if provider is None:
-                try:
-                    provider = self._provider_for_role(role)
-                except AttributeError:
-                    provider = None
-
-            tokens_used = result.tokens_used
-            if tokens_used >= compact_threshold_tokens:
-                streaming_ui.print_compact_triggered(
-                    tokens_used, self.config.context_limit
-                )
-                compact_summary = await _compact_codex_context(
-                    provider, result.messages, self.config
-                )
-                if compact_summary:
-                    summary = compact_summary
-            continuation_prompt = _build_continuation_prompt(summary, role)
-
-            result = await self._run_turn(
-                role=role,
-                prompt=continuation_prompt,
-                system_prompt=system_prompt,
-                max_turns=max_turns,
-                timeout_s=timeout_s,
-                model_override=model_override,
-                provider_override=provider_override,
-            )
-
-        return result
 
     async def _run_coach_turn_for_phase(
         self,
@@ -844,7 +787,7 @@ class CoachPlayerSession:
                 system_prompt=COACH_STRICT_SYSTEM_PROMPT,
                 max_turns=review_turn_budget,
                 timeout_s=self.config.coach_timeout_s,
-                model_override=model_override or self.config.coach_model,
+                model_override=model_override or (self.config.coach_model if not provider_name_override else ""),
                 provider_override=provider_override,
             )
         except TimeoutError as exc:

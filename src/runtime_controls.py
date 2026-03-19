@@ -107,6 +107,7 @@ class StatusBar:
         self._ctx_pct: int = 0
         self._warning_text: Optional[str] = None
         self._warning_timer: Optional[threading.Timer] = None
+        self._paused = False
         self._lock = threading.Lock()
 
     def update(self, player_name: str, coach_name: str, ctx_pct: int) -> None:
@@ -131,6 +132,26 @@ class StatusBar:
         timer.daemon = True
         timer.start()
 
+    def pause(self) -> None:
+        """Pause rendering while Rich Live (or similar) owns the terminal."""
+        with self._lock:
+            self._paused = True
+
+    def resume(self) -> None:
+        """Resume rendering; immediately re-draws the status bar."""
+        with self._lock:
+            self._paused = False
+        self._render()
+
+    def clear_warning(self) -> None:
+        """Immediately cancel any active warning and revert to normal status."""
+        with self._lock:
+            if self._warning_timer is not None:
+                self._warning_timer.cancel()
+                self._warning_timer = None
+            self._warning_text = None
+        self._render()
+
     def _revert_warning(self) -> None:
         with self._lock:
             self._warning_text = None
@@ -141,7 +162,7 @@ class StatusBar:
         """Erase the status bar line (called on session stop)."""
         try:
             h = os.get_terminal_size().lines
-            sys.stdout.write(f"\0337\033[{h};1H\033[K\0338")
+            sys.stdout.write(f"\x1b7\x1b[{h};1H\x1b[K\x1b8")
             sys.stdout.flush()
         except OSError:
             pass
@@ -154,6 +175,8 @@ class StatusBar:
             return
 
         with self._lock:
+            if self._paused:
+                return
             warning = self._warning_text
             if warning:
                 line = f" ⚠ {warning}"
@@ -164,7 +187,7 @@ class StatusBar:
                     f"   Ctx: {self._ctx_pct}% [ESC=compact]"
                 )
 
-        sys.stdout.write(f"\0337\033[{h};1H\033[K{line}\0338")
+        sys.stdout.write(f"\x1b7\x1b[{h};1H\x1b[K{line}\x1b8")
         sys.stdout.flush()
 
 
@@ -181,93 +204,92 @@ MODEL_PRESETS: list[tuple[str, str, str]] = [
 
 
 class Picker:
-    """Top-line model picker with state machine: CLOSED → OPEN → CONFIRMING → CLOSED."""
+    """Inline model selector: press ←/→ (coach) or A/D (player) to cycle,
+    Enter to apply, ESC to cancel. Selection shown in status bar."""
 
-    DISMISS_DELAY_S = 1.5
+    CANCEL_DELAY_S = 5.0  # auto-cancel if no key within this many seconds
 
-    def __init__(self, presets: list[tuple[str, str, str]] = MODEL_PRESETS) -> None:
+    def __init__(
+        self,
+        presets: list[tuple[str, str, str]],
+        status_bar: "StatusBar",
+    ) -> None:
         self._presets = presets
-        self.state = "CLOSED"
-        self.role: str = "coach"
-        self._open_idx: int = 0
-        self._pending_change: Optional[tuple[str, str, str]] = None  # (role, provider, model)
-        self._dismiss_timer: Optional[threading.Timer] = None
+        self._status_bar = status_bar
+        self._role: Optional[str] = None   # None = idle, "coach"/"player" = selecting
+        self._idx: int = 0
+        self._pending_change: Optional[tuple[str, str, str]] = None
+        self._cancel_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
 
     def handle_action(
         self, action: str, current_coach_idx: int, current_player_idx: int
     ) -> Optional[str]:
-        """Process one action token. Returns 'compact' if ESC pressed in CLOSED state."""
+        """Process one action token. Returns 'compact' if ESC pressed while idle."""
         with self._lock:
             return self._handle_locked(action, current_coach_idx, current_player_idx)
 
     def _handle_locked(self, action: str, coach_idx: int, player_idx: int) -> Optional[str]:
         n = len(self._presets)
+        is_coach = action in ("coach_right", "coach_left")
+        is_player = action in ("player_right", "player_left")
 
-        if self.state == "CONFIRMING":
-            # Any key cancels auto-dismiss and is re-processed in CLOSED state
-            if self._dismiss_timer:
-                self._dismiss_timer.cancel()
-                self._dismiss_timer = None
-            self.state = "CLOSED"
-            self._clear_top_line()
-            # Re-dispatch the action in CLOSED state
-            return self._handle_locked(action, coach_idx, player_idx)
+        # Always cancel the existing idle-timeout on any keypress
+        if self._cancel_timer:
+            self._cancel_timer.cancel()
+            self._cancel_timer = None
 
-        if self.state == "CLOSED":
-            if action == "coach_right":
-                self.role, self._open_idx = "coach", coach_idx
-                self.state = "OPEN"
-                self._render()
-            elif action == "coach_left":
-                self.role, self._open_idx = "coach", coach_idx
-                self.state = "OPEN"
-                self._render()
-            elif action == "player_right":
-                self.role, self._open_idx = "player", player_idx
-                self.state = "OPEN"
-                self._render()
-            elif action == "player_left":
-                self.role, self._open_idx = "player", player_idx
-                self.state = "OPEN"
-                self._render()
+        if self._role is None:  # ── IDLE ──────────────────────────────────
+            if is_coach:
+                self._role = "coach"
+                step = 1 if action == "coach_right" else -1
+                self._idx = (coach_idx + step) % n
+                self._show_preview()
+                self._schedule_cancel()
+            elif is_player:
+                self._role = "player"
+                step = 1 if action == "player_right" else -1
+                self._idx = (player_idx + step) % n
+                self._show_preview()
+                self._schedule_cancel()
             elif action == "compact":
                 return "compact"
-            # confirm / unknown: no-op in CLOSED
             return None
 
-        if self.state == "OPEN":
-            is_coach_action = action in ("coach_right", "coach_left")
-            is_player_action = action in ("player_right", "player_left")
-
-            if action == "compact":
-                # ESC closes picker WITHOUT triggering compact
-                self.state = "CLOSED"
-                self._clear_top_line()
-            elif action == "confirm":
-                name, provider, model = self._presets[self._open_idx]
-                self._pending_change = (self.role, provider, model)
-                self.state = "CONFIRMING"
-                self._render()  # show confirmation highlight
-                self._schedule_dismiss()
-            elif is_coach_action and self.role == "coach":
-                step = 1 if action == "coach_right" else -1
-                self._open_idx = (self._open_idx + step) % n
-                self._render()
-            elif is_player_action and self.role == "player":
-                step = 1 if action == "player_right" else -1
-                self._open_idx = (self._open_idx + step) % n
-                self._render()
-            elif is_player_action and self.role == "coach":
-                # Switch to player picker
-                self.role = "player"
-                self._open_idx = player_idx
-                self._render()
-            elif is_coach_action and self.role == "player":
-                # Switch to coach picker
-                self.role = "coach"
-                self._open_idx = coach_idx
-                self._render()
+        # ── SELECTING ─────────────────────────────────────────────────────
+        if is_coach and self._role == "coach":
+            step = 1 if action == "coach_right" else -1
+            self._idx = (self._idx + step) % n
+            self._show_preview()
+            self._schedule_cancel()
+        elif is_player and self._role == "player":
+            step = 1 if action == "player_right" else -1
+            self._idx = (self._idx + step) % n
+            self._show_preview()
+            self._schedule_cancel()
+        elif is_coach and self._role == "player":
+            # Switch to coach selection, step from current coach idx
+            self._role = "coach"
+            step = 1 if action == "coach_right" else -1
+            self._idx = (coach_idx + step) % n
+            self._show_preview()
+            self._schedule_cancel()
+        elif is_player and self._role == "coach":
+            # Switch to player selection, step from current player idx
+            self._role = "player"
+            step = 1 if action == "player_right" else -1
+            self._idx = (player_idx + step) % n
+            self._show_preview()
+            self._schedule_cancel()
+        elif action == "confirm":
+            name, provider, model = self._presets[self._idx]
+            self._pending_change = (self._role, provider, model)
+            self._status_bar.show_warning(f"✓ {self._role.capitalize()}: {name}", duration_s=2.0)
+            self._role = None
+        elif action == "compact":
+            # ESC cancels selection; immediately clear the preview
+            self._role = None
+            self._status_bar.clear_warning()
 
         return None
 
@@ -278,43 +300,25 @@ class Picker:
             self._pending_change = None
         return pending
 
-    def _schedule_dismiss(self) -> None:
-        timer = threading.Timer(self.DISMISS_DELAY_S, self._auto_dismiss)
+    def _show_preview(self) -> None:
+        name, _, _ = self._presets[self._idx]
+        keys = "[A/D]" if self._role == "player" else "[←/→]"
+        role_label = self._role.capitalize()
+        self._status_bar.show_warning(
+            f"{role_label} ► {name}  {keys} navigate  Enter apply  ESC cancel",
+            duration_s=self.CANCEL_DELAY_S,
+        )
+
+    def _schedule_cancel(self) -> None:
+        timer = threading.Timer(self.CANCEL_DELAY_S, self._auto_cancel)
         timer.daemon = True
-        self._dismiss_timer = timer
+        self._cancel_timer = timer
         timer.start()
 
-    def _auto_dismiss(self) -> None:
+    def _auto_cancel(self) -> None:
         with self._lock:
-            self.state = "CLOSED"
-            self._dismiss_timer = None
-        self._clear_top_line()
-
-    def _render(self) -> None:
-        """Render picker at top line (row 1)."""
-        try:
-            labels = []
-            for i, (name, _, _) in enumerate(self._presets):
-                if i == self._open_idx:
-                    if self.state == "CONFIRMING":
-                        labels.append(f"✓{name}✓")
-                    else:
-                        labels.append(f"[{name}]")
-                else:
-                    labels.append(name)
-            role_label = self.role.capitalize()
-            line = f" {role_label}: ◄ {' | '.join(labels)} ►"
-            sys.stdout.write(f"\0337\033[1;1H\033[K{line}\0338")
-            sys.stdout.flush()
-        except OSError:
-            pass
-
-    def _clear_top_line(self) -> None:
-        try:
-            sys.stdout.write("\0337\033[1;1H\033[K\0338")
-            sys.stdout.flush()
-        except OSError:
-            pass
+            self._role = None
+            self._cancel_timer = None
 
 
 import signal
@@ -326,7 +330,7 @@ class RuntimeControls:
     def __init__(self) -> None:
         self._listener = KeyboardListener()
         self._status_bar = StatusBar()
-        self._picker = Picker()
+        self._picker = Picker(MODEL_PRESETS, self._status_bar)
         self._compact_requested = False
         self._current_coach_idx: int = 0
         self._current_player_idx: int = 0
@@ -337,6 +341,8 @@ class RuntimeControls:
 
     def start(self, player_name: str = "", coach_name: str = "") -> None:
         """Start listener thread and render initial status bar."""
+        if self._running:
+            return
         self._player_name = player_name
         self._coach_name = coach_name
         self._status_bar.update(player_name, coach_name, 0)
@@ -355,6 +361,14 @@ class RuntimeControls:
         self._listener.stop()
         self._status_bar.clear()
         self._running = False
+
+    def pause_render(self) -> None:
+        """Pause status bar rendering (call when Rich Live takes over the terminal)."""
+        self._status_bar.pause()
+
+    def resume_render(self) -> None:
+        """Resume status bar rendering after Rich Live stops."""
+        self._status_bar.resume()
 
     def update_context(self, tokens: int, context_window: int) -> None:
         """Update context percentage in the status bar."""

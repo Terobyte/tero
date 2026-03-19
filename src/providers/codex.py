@@ -48,7 +48,6 @@ class CodexProvider:
 
     def __init__(self, config: CodexConfig | None = None):
         self.config = config or CodexConfig()
-        self._last_input_tokens: int = 0
 
     async def run(
         self,
@@ -106,6 +105,10 @@ class CodexProvider:
             ) as response:
                 response.raise_for_status()
 
+                # Buffer consecutive text tokens so the display shows complete
+                # lines instead of one [text] per character.
+                text_buf = ""
+
                 async for line in response.aiter_lines():
                     if not line or line == "data: [DONE]":
                         continue
@@ -113,14 +116,28 @@ class CodexProvider:
                         data_str = line[6:]  # Remove "data: " prefix
                         try:
                             data = json.loads(data_str)
-                            # Track prompt_tokens from usage field
-                            if usage := data.get("usage"):
-                                self._last_input_tokens = usage.get("prompt_tokens", 0)
                             chunk = self._adapt_chunk(data)
-                            if chunk:
+                            if not chunk:
+                                continue
+
+                            if chunk.get("type") == "text":
+                                text_buf += chunk["text"]
+                                while "\n" in text_buf:
+                                    complete, text_buf = text_buf.split("\n", 1)
+                                    if complete:
+                                        yield {"type": "text", "text": complete + "\n",
+                                               "role": chunk.get("role", "assistant")}
+                            else:
+                                if text_buf.strip():
+                                    yield {"type": "text", "text": text_buf,
+                                           "role": "assistant"}
+                                    text_buf = ""
                                 yield chunk
                         except json.JSONDecodeError:
                             continue
+
+                if text_buf.strip():
+                    yield {"type": "text", "text": text_buf, "role": "assistant"}
 
     def _adapt_chunk(self, data: dict) -> dict | None:
         """Adapt OpenAI streaming chunk to internal format.

@@ -137,6 +137,22 @@ def print_coach_header(step_num: int, total_steps: int, attempt: int, model_name
     print(f"\n{BOLD}{YELLOW}═══ COACH [{model_name}] — шаг {step_num}/{total_steps} попытка {attempt} {RESET}")
 
 
+def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attempts: int, model_name: str = ""):
+    """Print a batch phase turn header with explicit role/model labeling."""
+    role_upper = role.upper()
+    colors = {
+        "player": BLUE,
+        "coach": YELLOW,
+        "judge": GREEN,
+    }
+    color = colors.get(role, CYAN)
+    model_info = f" [{model_name}]" if model_name else ""
+    print(
+        f"\n{BOLD}{color}═══ {role_upper}{model_info} — фаза {phase_name} "
+        f"попытка {attempt}/{max_attempts} {RESET}"
+    )
+
+
 def print_step_header(step_num: int, total_steps: int, step_text: str):
     """Print step start header."""
     bar = _progress_bar(step_num - 1, total_steps)
@@ -204,32 +220,46 @@ def _progress_bar(done: int, total: int, width: int = 20) -> str:
     return f"[{bar}] {done}/{total} ({pct}%)"
 
 
-def print_continuation_started(role: str, attempt: int, max_attempts: int) -> None:
-    """Print notification when continuation agent starts."""
-    print(f"\n{BOLD}🔄 [{role}]{RESET} No completion markers — "
-          f"continuation agent {attempt}/{max_attempts}...")
+def print_test_writer_header(step_num: int, total_steps: int):
+    """Print header for test writer phase."""
+    print(f"\n{BOLD}{CYAN}🧪 TEST WRITER — шаг {step_num}/{total_steps}{RESET}")
 
 
-def print_compact_triggered(tokens_used: int, context_limit: int) -> None:
-    """Print notification when context compaction fires."""
-    print(f"\n{BOLD}⚡ Context compacted{RESET} "
-          f"({tokens_used // 1000}k/{context_limit // 1000}k tokens) — continuing...")
+def print_tdd_status(tests_passed: bool, test_output: str):
+    """Print TDD test run results."""
+    if tests_passed:
+        print(f"\n  {BOLD}{GREEN}✓ Тесты прошли{RESET}")
+    else:
+        print(f"\n  {BOLD}{RED}✗ Тесты упали:{RESET}")
+        for line in test_output.strip().splitlines()[:10]:
+            if line.strip():
+                print(f"    {RED}{line}{RESET}")
 
 
-def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attempts: int, model_name: str = ""):
-    """Print a batch phase turn header with explicit role/model labeling."""
-    role_upper = role.upper()
-    colors = {
-        "player": BLUE,
-        "coach": YELLOW,
-        "judge": GREEN,
-    }
-    color = colors.get(role, CYAN)
-    model_info = f" [{model_name}]" if model_name else ""
-    print(
-        f"\n{BOLD}{color}═══ {role_upper}{model_info} — фаза {phase_name} "
-        f"попытка {attempt}/{max_attempts} {RESET}"
-    )
+def print_code_review_header(
+    step_num: int,
+    total_steps: int,
+    provider_name: str = "",
+    iteration: int = 1,
+    max_iterations: int = 1,
+):
+    """Print header for code review phase."""
+    provider_info = f" ({provider_name})" if provider_name else ""
+    iter_info = f" iter {iteration}/{max_iterations}" if max_iterations > 1 else ""
+    print(f"\n{BOLD}{YELLOW}🔍 CODE REVIEW{provider_info} — шаг {step_num}/{total_steps}{iter_info}{RESET}")
+
+
+def print_review_passed(step_num: int):
+    """Print code review passed message."""
+    print(f"\n  {BOLD}{GREEN}✓ Code Review passed — no critical issues{RESET}")
+
+
+def print_review_issues(issues_text: str):
+    """Print code review issues found."""
+    print(f"\n  {BOLD}{YELLOW}⚠ Code Review found issues:{RESET}")
+    for line in issues_text.strip().splitlines()[:10]:
+        if line.strip():
+            print(f"    {YELLOW}{line}{RESET}")
 
 
 def print_step_list(plan_items: list) -> None:
@@ -237,3 +267,13 @@ def print_step_list(plan_items: list) -> None:
     for item in plan_items:
         icon = f"{GREEN}✓{RESET}" if item.done else f"{RED}□{RESET}"
         print(f"    {icon} {item.text}")
+
+
+def print_coach_no_verdict_retry(attempt: int, max_attempts: int):
+    """Print coach retry message on NoVerdict."""
+    print(f"\n  {BOLD}{YELLOW}⚠ Coach не дал вердикт — повтор {attempt}/{max_attempts}...{RESET}")
+
+
+def print_coach_fallback_escalation(fallback_name: str):
+    """Print fallback coach escalation message."""
+    print(f"\n  {BOLD}{YELLOW}⚠ Coach молчит — передаю {fallback_name} для вердикта...{RESET}")
