@@ -26,6 +26,7 @@ from src.plan_tracker import (
     get_current_step_index,
     mark_step_done,
     parse_requirements,
+    reset_all_progress,
     write_checklist_back,
     format_checklist,
 )
@@ -43,6 +44,7 @@ from src.prompts import (
 )
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
+from src.providers.codex import CodexProvider
 from src.providers.ccg import run_agent
 from src import streaming as streaming_ui
 from src.streaming import BOLD, RESET, GREEN, RED, YELLOW
@@ -96,6 +98,7 @@ class CoachPlayerSession:
         self._verify_providers_ready()
 
         self._runtime = RuntimeControls()
+        self._last_turn_result: TurnResult | None = None
 
         # Resolve role labels using the actual runtime model/provider config.
         self.player_model = self._build_role_display("player")
@@ -130,7 +133,8 @@ class CoachPlayerSession:
         """Initialize review provider for code review phase."""
         review_provider_name = self.config.review_provider
         if not review_provider_name:
-            # Auto-detect: try codex first, then coach
+            # Preserve the documented auto-detect behavior: prefer Codex review
+            # when available, otherwise fall back to the coach provider.
             try:
                 codex_prov = self._get_or_create_provider("codex")
                 ok, _ = codex_prov.check_ready()
@@ -315,6 +319,111 @@ class CoachPlayerSession:
         return all(header in lowered for header in cls.REQUIRED_PLAYER_REPORT_HEADERS)
 
     @staticmethod
+    def _needs_phase_complete(prompt: str) -> bool:
+        """Heuristic: batch prompts explicitly require PHASE_COMPLETE markers."""
+        return "PHASE_COMPLETE" in (prompt or "")
+
+    @classmethod
+    def _player_output_complete(cls, text: str, prompt: str) -> bool:
+        """Return True when player output contains the expected completion markers."""
+        if not cls._has_required_player_report(text):
+            return False
+        if cls._needs_phase_complete(prompt):
+            return "PHASE_COMPLETE" in (text or "").upper()
+        return True
+
+    async def _build_continuation_retry_prompt(
+        self,
+        role: str,
+        base_prompt: str,
+        last_result: TurnResult,
+        provider,
+    ) -> str:
+        """Build a continuation prompt, compacting aggressively when context is near the limit."""
+        from src.context_manager import (
+            _build_compact_summary,
+            _build_continuation_prompt,
+            _compact_codex_context,
+        )
+
+        prompt_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
+        compact_limit = int(self.config.context_limit * self.config.compact_threshold)
+
+        if prompt_tokens > compact_limit:
+            compact_summary = await _compact_codex_context(provider, last_result.messages, self.config)
+            if compact_summary:
+                streaming_ui.print_compact_triggered(prompt_tokens, self.config.context_limit)
+                return (
+                    f"Context compacted. Summary of previous work:\n{compact_summary}\n\n"
+                    f"Original task:\n{base_prompt}"
+                )
+
+        summary = _build_compact_summary(last_result.messages) or last_result.text or base_prompt
+        continuation = _build_continuation_prompt(
+            summary,
+            role=role,
+            require_phase_complete=self._needs_phase_complete(base_prompt),
+        )
+        return f"{continuation}\n\nOriginal task:\n{base_prompt}"
+
+    async def _run_with_continuation(
+        self,
+        role: str,
+        prompt: str,
+        system_prompt: str,
+        max_turns: int,
+        timeout_s: int,
+        model_override: str = "",
+        provider_override=None,
+    ) -> TurnResult:
+        """Retry incomplete player outputs with a continuation prompt."""
+        result = await self._run_turn(
+            role=role,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            timeout_s=timeout_s,
+            model_override=model_override,
+            provider_override=provider_override,
+        )
+
+        if role != "player":
+            return result
+
+        max_attempts = max(0, int(getattr(self.config, "max_continuation_attempts", 0) or 0))
+        current_prompt = prompt
+
+        for attempt in range(1, max_attempts + 1):
+            if self._player_output_complete(result.text, current_prompt):
+                return result
+
+            provider = provider_override
+            if provider is None:
+                try:
+                    provider = self._provider_for_role(role)
+                except Exception:
+                    provider = None
+
+            streaming_ui.print_continuation_started(role, attempt, max_attempts)
+            current_prompt = await self._build_continuation_retry_prompt(
+                role=role,
+                base_prompt=current_prompt,
+                last_result=result,
+                provider=provider,
+            )
+            result = await self._run_turn(
+                role=role,
+                prompt=current_prompt,
+                system_prompt=system_prompt,
+                max_turns=max_turns,
+                timeout_s=timeout_s,
+                model_override=model_override,
+                provider_override=provider_override,
+            )
+
+        return result
+
+    @staticmethod
     def _build_missing_player_report_feedback(step_text: str) -> Feedback:
         """Structured feedback when Player omitted the final completion report."""
         return Feedback(
@@ -322,6 +431,15 @@ class CoachPlayerSession:
             "2. Re-send the completion response with `What changed`, `Evidence`, and `Verification`.\n"
             f"3. If no code changes were needed for `{step_text}`, say that explicitly and cite the files or checks proving it was already implemented."
         )
+
+    def _reset_plan_progress(self, plan_items: list) -> list:
+        """Reset plan execution progress for the current run and persisted checklist."""
+        reset_items = reset_all_progress(plan_items)
+        self._last_turn_result = None
+        if self.plan_file_path:
+            write_checklist_back(self.plan_file_path, reset_items)
+        print(f"\n  {BOLD}{YELLOW}↺ Прогресс плана сброшен — начинаем заново с шага 1{RESET}")
+        return reset_items
 
     async def run(self) -> SessionResult:
         """Run the step-by-step coach-player loop."""
@@ -359,23 +477,33 @@ class CoachPlayerSession:
 
         try:
             self._runtime.start(player_name=self.player_model, coach_name=self.coach_model)
-            for step_index in range(start_index, total_steps):
+            step_index = start_index
+            while step_index < total_steps:
                 if self._interrupted:
                     break
 
+                self._runtime.apply_pending(self)
+                if self._runtime.reset_requested:
+                    self._runtime.clear_reset()
+                    plan_items = self._reset_plan_progress(plan_items)
+                    step_index = 0
+                    continue
+
                 step = plan_items[step_index]
                 if step.done:
+                    step_index += 1
                     continue
 
                 step_num = step_index + 1
                 completed_steps = [p.text for p in plan_items[:step_index] if p.done]
+                self._last_turn_result = None
 
-                self._runtime.apply_pending(self)
                 streaming_ui.print_step_header(step_num, total_steps, step.text)
 
                 feedback = None
                 step_approved = False
                 tests_written = False  # TDD: tests written once per step
+                restart_requested = False
 
                 # --- TDD Mode: Test Writer phase (once per step) ---
                 if self.config.tdd_mode and not tests_written:
@@ -403,6 +531,14 @@ class CoachPlayerSession:
                     if self._interrupted:
                         break
 
+                    self._runtime.apply_pending(self)
+                    if self._runtime.reset_requested:
+                        self._runtime.clear_reset()
+                        plan_items = self._reset_plan_progress(plan_items)
+                        step_index = 0
+                        restart_requested = True
+                        break
+
                     # --- Player turn ---
                     streaming_ui.print_player_header(
                         step_num,
@@ -413,7 +549,29 @@ class CoachPlayerSession:
                     )
                     pids_before = self._snapshot_pids()
 
-                    player_prompt = build_player_step_prompt(
+                    compact_prompt_override = None
+                    if self._runtime.compact_requested:
+                        self._runtime.clear_compact()
+                        if self._last_turn_result is not None:
+                            from src.context_manager import _build_compact_summary
+
+                            summary = _build_compact_summary(self._last_turn_result.messages)
+                            if summary:
+                                if self._last_turn_result.tokens_used > 0:
+                                    streaming_ui.print_compact_triggered(
+                                        self._last_turn_result.tokens_used,
+                                        self.config.context_limit,
+                                    )
+                                compact_prompt_override = (
+                                    f"Context compacted. Summary of previous work:\n{summary}\n\n"
+                                    f"Continue implementing the current step: {step.text}\n"
+                                    "When done, include:\n"
+                                    "What changed:\n- ...\n"
+                                    "Evidence:\n- ...\n"
+                                    "Verification:\n- ..."
+                                )
+
+                    player_prompt = compact_prompt_override or build_player_step_prompt(
                         current_step=step.text,
                         step_num=step_num,
                         total_steps=total_steps,
@@ -422,7 +580,7 @@ class CoachPlayerSession:
                     )
 
                     try:
-                        player_result = await self._run_turn(
+                        player_result = await self._run_with_continuation(
                             role="player",
                             prompt=player_prompt,
                             system_prompt=PLAYER_SYSTEM_PROMPT,
@@ -440,6 +598,7 @@ class CoachPlayerSession:
                         continue
 
                     self._kill_new_processes(pids_before)
+                    self._last_turn_result = player_result
 
                     turn_details.append(TurnDetail(role="player", duration_s=player_result.duration_s, tools_used=player_result.tools_used))
 
@@ -593,9 +752,15 @@ class CoachPlayerSession:
                         feedback = CoachPlayerSession._build_step_fallback_feedback(step.text)
                         streaming_ui.print_step_rejected(feedback.text)
 
+                if restart_requested:
+                    continue
+
                 if not step_approved and not self._interrupted:
                     print(f"\n  {BOLD}{RED}⚠ Шаг {step_num} не принят за {self.config.max_turns} попыток{RESET}")
                     break
+
+                if step_approved:
+                    step_index += 1
 
         except Exception as exc:
             error = str(exc)
@@ -662,9 +827,42 @@ class CoachPlayerSession:
         provider = provider_override or self._provider_for_role(role)
         model = model_override or ""
 
+        def _update_native_usage() -> None:
+            nonlocal tokens_used
+            input_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
+            output_tokens = int(getattr(provider, "_last_output_tokens", 0) or 0)
+            native_total = input_tokens + output_tokens
+            if native_total > 0:
+                tokens_used = native_total
+
         async def _collect() -> None:
             nonlocal tools_used, tokens_used
             if self._interrupted:
+                return
+
+            # For code review with CodexProvider, use native run_review() method
+            if role == "reviewer" and isinstance(provider, CodexProvider):
+                async for msg in provider.run_review(
+                    working_dir=self.config.working_dir,
+                    review_prompt=prompt,
+                    model=model,
+                    uncommitted=True,
+                ):
+                    if self._interrupted:
+                        return
+
+                    # Adapt message for streaming
+                    if isinstance(msg, AdaptedMessage):
+                        messages.append(msg)
+                        tools_used += streaming_ui.stream_messages(
+                            msg, verbose=self.config.verbose, role=role
+                        )
+                    else:
+                        messages.append(msg)
+                        tools_used += streaming_ui.stream_messages(
+                            msg, verbose=self.config.verbose, role=role
+                        )
+                _update_native_usage()
                 return
 
             run_kwargs = {
@@ -715,6 +913,7 @@ class CoachPlayerSession:
                     tools_used += streaming_ui.stream_messages(
                         msg, verbose=self.config.verbose, role=role
                     )
+            _update_native_usage()
 
         try:
             await asyncio.wait_for(_collect(), timeout=timeout_s)
@@ -726,7 +925,9 @@ class CoachPlayerSession:
         from src.config import get_context_window
         context_window = get_context_window(resolved_model)
         streaming_ui.print_turn_timing(role, duration, tools_used, tokens_used, context_window)
-        self._runtime.update_context(tokens_used, context_window)
+        runtime = getattr(self, "_runtime", None)
+        if runtime is not None:
+            runtime.update_context(tokens_used, context_window)
 
         text_parts = [
             msg.get_text_content()
@@ -774,32 +975,83 @@ class CoachPlayerSession:
                     "2. Continue from the current state and keep iterating with the regular reviewer."
                 )
 
-        pids_before = self._snapshot_pids()
         review_turn_budget = min(
             self.config.max_turns,
             CoachPlayerSession.BATCH_REVIEW_MAX_TURNS,
         )
 
-        try:
-            result = await self._run_turn(
-                role=review_role,
-                prompt=prompt,
-                system_prompt=COACH_STRICT_SYSTEM_PROMPT,
-                max_turns=review_turn_budget,
-                timeout_s=self.config.coach_timeout_s,
-                model_override=model_override or (self.config.coach_model if not provider_name_override else ""),
-                provider_override=provider_override,
-            )
-        except TimeoutError as exc:
-            self._kill_new_processes(pids_before)
-            return CoachPlayerSession._build_phase_fallback_feedback(
-                phase,
-                completed_steps,
-                prefix_issue=str(exc),
-            )
+        verdict = NoVerdict()
+        coach_retry_max = max(1, int(getattr(self.config, "coach_retry_max", 1) or 1))
+        current_model_override = model_override or (self.config.coach_model if not provider_name_override else "")
 
-        self._kill_new_processes(pids_before)
-        verdict = parse_coach_output(result.messages)
+        for coach_attempt in range(1, coach_retry_max + 1):
+            pids_before = self._snapshot_pids()
+            try:
+                result = await self._run_turn(
+                    role=review_role,
+                    prompt=prompt,
+                    system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                    max_turns=review_turn_budget,
+                    timeout_s=self.config.coach_timeout_s,
+                    model_override=current_model_override,
+                    provider_override=provider_override,
+                )
+            except TimeoutError as exc:
+                self._kill_new_processes(pids_before)
+                return CoachPlayerSession._build_phase_fallback_feedback(
+                    phase,
+                    completed_steps,
+                    prefix_issue=str(exc),
+                )
+
+            self._kill_new_processes(pids_before)
+            verdict = parse_coach_output(result.messages)
+            if not isinstance(verdict, NoVerdict):
+                break
+
+            if coach_attempt < coach_retry_max:
+                streaming_ui.print_coach_no_verdict_retry(coach_attempt, coach_retry_max)
+
+        if isinstance(verdict, NoVerdict):
+            fallback_name = getattr(self.config, "coach_fallback_provider", "") or ""
+            current_provider_name = provider_name_override or self.config.coach_provider
+            if fallback_name and fallback_name != current_provider_name:
+                fallback_provider = self._get_or_create_provider(fallback_name)
+                ok, reason = fallback_provider.check_ready()
+                if not ok:
+                    return CoachPlayerSession._build_phase_fallback_feedback(
+                        phase,
+                        completed_steps,
+                        prefix_issue=f"{review_role} produced no verdict and fallback provider ({fallback_name}) not ready: {reason}",
+                    )
+
+                streaming_ui.print_coach_fallback_escalation(fallback_provider.display_name)
+                pids_before = self._snapshot_pids()
+                try:
+                    fallback_result = await self._run_turn(
+                        role="coach_fallback",
+                        prompt=prompt,
+                        system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                        max_turns=review_turn_budget,
+                        timeout_s=self.config.coach_timeout_s,
+                        model_override=self.config.coach_fallback_model,
+                        provider_override=fallback_provider,
+                    )
+                except TimeoutError as exc:
+                    self._kill_new_processes(pids_before)
+                    return CoachPlayerSession._build_phase_fallback_feedback(
+                        phase,
+                        completed_steps,
+                        prefix_issue=f"Fallback reviewer timed out: {exc}",
+                    )
+
+                self._kill_new_processes(pids_before)
+                verdict = parse_coach_output(fallback_result.messages)
+
+        if isinstance(verdict, NoVerdict):
+            print(f"\n  {BOLD}{YELLOW}⚠ Reviewer silent - approving phase{RESET}")
+            return Approved()
+
         if isinstance(verdict, Feedback) and is_invalid_feedback(verdict):
             return CoachPlayerSession._build_phase_fallback_feedback(phase, completed_steps)
         return verdict
@@ -839,6 +1091,10 @@ class CoachPlayerSession:
                 timeout=self.config.test_timeout_s,
             )
             output = result.stdout + result.stderr
+            # Exit code 5 = no tests collected — treat as pass (test_writer may not have
+            # created tests yet, or they're in an undetected location; don't block the player).
+            if result.returncode == 5:
+                return True, "No tests collected — skipping test validation"
             return result.returncode == 0, output
         except subprocess.TimeoutExpired:
             return False, f"Test command timed out after {self.config.test_timeout_s}s"

@@ -43,6 +43,7 @@ class AdaptedMessage:
     content: list  # [TextBlock, ToolUseBlock, ...]
     stop_reason: str = ""  # "end_turn", "max_tokens", "tool_use", etc.
     model: str = ""  # Model that generated this message
+    type: str = ""  # Event type: "text", "assistant", "tool_use", "tool_result", "result"
 
     @property
     def __class_name__(self) -> str:
@@ -52,6 +53,17 @@ class AdaptedMessage:
         if self.role == "tool":
             return "ToolResultMessage"
         return "UserMessage"
+
+    def __getitem__(self, key: str) -> Any:
+        """Dict-like access for backward compatibility."""
+        if key == "text":
+            return self.get_text_content()
+        return getattr(self, key)
+
+    @property
+    def text(self) -> str:
+        """Convenience property for text content."""
+        return self.get_text_content()
 
     def get_text_content(self) -> str:
         """Extract all text from content blocks."""
@@ -109,6 +121,7 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
                     content=blocks,
                     stop_reason=message.get("stop_reason", ""),
                     model=message.get("model", event.get("model", "")),
+                    type=etype,
                 )
 
         if text:
@@ -117,6 +130,18 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
                 content=[TextBlock(text=text)],
                 stop_reason=event.get("stop_reason", ""),
                 model=event.get("model", ""),
+                type=etype,
+            )
+
+        # Role-only delta (message start indicator)
+        role = event.get("role", "")
+        if role:
+            return AdaptedMessage(
+                role=role,
+                content=[],
+                stop_reason="",
+                model=event.get("model", ""),
+                type=etype,
             )
         return None
 
@@ -130,6 +155,7 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
                 id=event.get("id", ""),
             )],
             stop_reason="tool_use",
+            type=etype,
         )
 
     # Tool result
@@ -141,6 +167,7 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
                 content=event.get("content", ""),
                 is_error=event.get("is_error", False),
             )],
+            type=etype,
         )
 
     # Final result (end of conversation)
@@ -151,7 +178,15 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
                 role="assistant",
                 content=[TextBlock(text=text)],
                 stop_reason=event.get("stop_reason", "end_turn"),
+                type=etype,
             )
+        # Result without content signals end of stream
+        return AdaptedMessage(
+            role="assistant",
+            content=[],
+            stop_reason=event.get("stop_reason", "end_turn"),
+            type=etype,
+        )
 
     # Ignored event types: init, system, permission_request, etc.
     return None
@@ -194,6 +229,7 @@ def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
             content=content,
             stop_reason="",
             model=getattr(msg, "model", ""),
+            type="assistant",
         )
 
     # claude_agent_sdk.ResultMessage — skip here; handled as fallback in _run_turn
@@ -217,6 +253,7 @@ def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
             content=content,
             stop_reason=getattr(msg, "stop_reason", ""),
             model=getattr(msg, "model", ""),
+            type=getattr(msg, "type", "assistant"),
         )
 
     # Dict from native CLI

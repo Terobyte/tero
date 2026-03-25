@@ -1,6 +1,7 @@
 """Runtime controls: keyboard-driven coach/player switching and context status bar."""
 from __future__ import annotations
 
+import io
 import os
 import queue
 import select
@@ -30,6 +31,8 @@ def _char_to_action(ch: str) -> str:
         return "player_left"
     if ch in ("d", "D"):
         return "player_right"
+    if ch in ("r", "R"):
+        return "reset_progress"
     if ch in ("\r", "\n"):
         return "confirm"
     return ""
@@ -58,8 +61,11 @@ class KeyboardListener(threading.Thread):
             return None
 
     def run(self) -> None:
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
+        try:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+        except (io.UnsupportedOperation, OSError, termios.error):
+            return
         try:
             tty.setcbreak(fd)
             while not self._stop_event.is_set():
@@ -175,7 +181,7 @@ class StatusBar:
             return
 
         with self._lock:
-            if self._paused:
+            if getattr(self, "_paused", False):
                 return
             warning = self._warning_text
             if warning:
@@ -184,7 +190,7 @@ class StatusBar:
                 line = (
                     f" Player: {self._player_name} [A/D]"
                     f"   Coach: {self._coach_name} [←/→]"
-                    f"   Ctx: {self._ctx_pct}% [ESC=compact]"
+                    f"   Ctx: {self._ctx_pct}% [ESC=compact, R=reset plan]"
                 )
 
         sys.stdout.write(f"\x1b7\x1b[{h};1H\x1b[K{line}\x1b8")
@@ -197,9 +203,9 @@ MODEL_PRESETS: list[tuple[str, str, str]] = [
     ("GLM-2",         "ccg2",   "blackboxai/z-ai/glm-5"),
     ("Sonnet",        "claude",  "claude-sonnet-4-6"),
     ("Opus",          "claude",  "claude-opus-4-6"),
-    ("GPT-5.4 Med",   "codex",   "gpt-5.4-medium"),
-    ("GPT-5.4 High",  "codex",   "gpt-5.4-high"),
-    ("GPT-5.4 Ultra", "codex",   "gpt-5.4-ultra-high"),
+    ("GPT-5.4",       "codex",   ""),
+    ("o3",            "codex",   "o3"),
+    ("o4-mini",       "codex",   "o4-mini"),
 ]
 
 
@@ -212,20 +218,62 @@ class Picker:
     def __init__(
         self,
         presets: list[tuple[str, str, str]],
-        status_bar: "StatusBar",
+        status_bar: "StatusBar | None" = None,
     ) -> None:
         self._presets = presets
-        self._status_bar = status_bar
+        self._status_bar = status_bar or StatusBar()
         self._role: Optional[str] = None   # None = idle, "coach"/"player" = selecting
         self._idx: int = 0
         self._pending_change: Optional[tuple[str, str, str]] = None
         self._cancel_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
 
+    @property
+    def state(self) -> str:
+        """Backward-compatible picker state for tests and older callers."""
+        if self._pending_change is not None:
+            return "CONFIRMING"
+        if self._role is not None:
+            return "OPEN"
+        return "CLOSED"
+
+    @state.setter
+    def state(self, value: str) -> None:
+        if value == "OPEN":
+            if self._role is None:
+                self._role = "coach"
+            self._pending_change = None
+            return
+        if value == "CONFIRMING":
+            self._pending_change = self._pending_change or ("coach", "", "")
+            return
+        self._role = None
+        self._pending_change = None
+
+    @property
+    def role(self) -> Optional[str]:
+        return self._role
+
+    @role.setter
+    def role(self, value: Optional[str]) -> None:
+        self._role = value
+
+    @property
+    def _open_idx(self) -> int:
+        return self._idx
+
+    @_open_idx.setter
+    def _open_idx(self, value: int) -> None:
+        self._idx = value
+
     def handle_action(
         self, action: str, current_coach_idx: int, current_player_idx: int
     ) -> Optional[str]:
-        """Process one action token. Returns 'compact' if ESC pressed while idle."""
+        """Process one action token.
+
+        Returns an out-of-band runtime action such as ``compact`` or
+        ``reset_progress`` when triggered from the idle state.
+        """
         with self._lock:
             return self._handle_locked(action, current_coach_idx, current_player_idx)
 
@@ -244,43 +292,45 @@ class Picker:
                 self._role = "coach"
                 step = 1 if action == "coach_right" else -1
                 self._idx = (coach_idx + step) % n
-                self._show_preview()
-                self._schedule_cancel()
+                self._render()
+                self._schedule_dismiss()
             elif is_player:
                 self._role = "player"
                 step = 1 if action == "player_right" else -1
                 self._idx = (player_idx + step) % n
-                self._show_preview()
-                self._schedule_cancel()
+                self._render()
+                self._schedule_dismiss()
             elif action == "compact":
                 return "compact"
+            elif action == "reset_progress":
+                return "reset_progress"
             return None
 
         # ── SELECTING ─────────────────────────────────────────────────────
         if is_coach and self._role == "coach":
             step = 1 if action == "coach_right" else -1
             self._idx = (self._idx + step) % n
-            self._show_preview()
-            self._schedule_cancel()
+            self._render()
+            self._schedule_dismiss()
         elif is_player and self._role == "player":
             step = 1 if action == "player_right" else -1
             self._idx = (self._idx + step) % n
-            self._show_preview()
-            self._schedule_cancel()
+            self._render()
+            self._schedule_dismiss()
         elif is_coach and self._role == "player":
             # Switch to coach selection, step from current coach idx
             self._role = "coach"
             step = 1 if action == "coach_right" else -1
             self._idx = (coach_idx + step) % n
-            self._show_preview()
-            self._schedule_cancel()
+            self._render()
+            self._schedule_dismiss()
         elif is_player and self._role == "coach":
             # Switch to player selection, step from current player idx
             self._role = "player"
             step = 1 if action == "player_right" else -1
             self._idx = (player_idx + step) % n
-            self._show_preview()
-            self._schedule_cancel()
+            self._render()
+            self._schedule_dismiss()
         elif action == "confirm":
             name, provider, model = self._presets[self._idx]
             self._pending_change = (self._role, provider, model)
@@ -309,11 +359,19 @@ class Picker:
             duration_s=self.CANCEL_DELAY_S,
         )
 
+    def _render(self) -> None:
+        """Backward-compatible preview renderer."""
+        self._show_preview()
+
     def _schedule_cancel(self) -> None:
         timer = threading.Timer(self.CANCEL_DELAY_S, self._auto_cancel)
         timer.daemon = True
         self._cancel_timer = timer
         timer.start()
+
+    def _schedule_dismiss(self) -> None:
+        """Backward-compatible alias for tests/older callers."""
+        self._schedule_cancel()
 
     def _auto_cancel(self) -> None:
         with self._lock:
@@ -332,6 +390,7 @@ class RuntimeControls:
         self._status_bar = StatusBar()
         self._picker = Picker(MODEL_PRESETS, self._status_bar)
         self._compact_requested = False
+        self._reset_requested = False
         self._current_coach_idx: int = 0
         self._current_player_idx: int = 0
         self._ctx_pct: int = 0
@@ -385,6 +444,13 @@ class RuntimeControls:
     def clear_compact(self) -> None:
         self._compact_requested = False
 
+    @property
+    def reset_requested(self) -> bool:
+        return self._reset_requested
+
+    def clear_reset(self) -> None:
+        self._reset_requested = False
+
     def apply_pending(self, session) -> None:
         """Process queued keypresses and apply any confirmed coach/player changes."""
         # Drain the keyboard action queue
@@ -399,6 +465,8 @@ class RuntimeControls:
             )
             if result == "compact":
                 self._compact_requested = True
+            elif result == "reset_progress":
+                self._reset_requested = True
 
         # Apply any confirmed model change
         pending = self._picker.pop_pending_change()

@@ -22,9 +22,10 @@ CCG_MODEL_PRESETS = {
 
 # Codex model IDs
 CODEX_MODEL_PRESETS = {
-    "GPT-5.4 Medium     (gpt-5.4-medium)": "gpt-5.4-medium",
-    "GPT-5.4 High       (gpt-5.4-high)": "gpt-5.4-high",
-    "GPT-5.4 Ultra High (gpt-5.4-ultra-high)": "gpt-5.4-ultra-high",
+    "GPT-5.4 (default)": "",
+    "GPT-5.4 xhigh reasoning": "gpt-5.4",
+    "o3": "o3",
+    "o4-mini": "o4-mini",
     "Ввести вручную...": "__custom__",
 }
 
@@ -33,7 +34,7 @@ PROVIDER_PRESETS = {
     "CCG (Blackbox/GLM-5)": "ccg",
     "CCG2 (Blackbox B)": "ccg2",
     "Claude Pro (native)": "claude",
-    "Codex (GPT via proxy)": "codex",
+    "Codex (native CLI)": "codex",
 }
 
 # Claude model choices (for native provider)
@@ -412,32 +413,36 @@ def _fallback_menu(config: Config) -> Config | None:
         if answer == "s":
             _save_global_default(config)
         elif answer == "p":
-            print("  Провайдеры: ccg, claude, codex")
+            print("  Провайдеры: ccg, ccg2, claude, codex")
             val = input(f"  Player provider [{config.player_provider}]: ").strip()
-            if val in ("ccg", "claude", "codex"):
+            if val in ("ccg", "ccg2", "claude", "codex"):
                 config = Config(**{**config.__dict__, "player_provider": val})
                 if val == "claude":
                     print("  Модели: sonnet, opus, haiku")
                     model = input("  Player model [sonnet]: ").strip() or "sonnet"
                     config = Config(**{**config.__dict__, "player_model": model})
                 elif val == "codex":
-                    print("  Модели: gpt-5.4-medium, gpt-5.4-high, gpt-5.4-ultra-high")
-                    model = input("  Player model [gpt-5.4-medium]: ").strip() or "gpt-5.4-medium"
+                    print("  Модели: default, gpt-5.4, o3, o4-mini")
+                    model = input("  Player model [default]: ").strip()
+                    if model.lower() == "default":
+                        model = ""
                     config = Config(**{**config.__dict__, "player_model": model})
                 else:
                     config = Config(**{**config.__dict__, "player_model": ""})
         elif answer == "c":
-            print("  Провайдеры: ccg, claude, codex")
+            print("  Провайдеры: ccg, ccg2, claude, codex")
             val = input(f"  Coach provider [{config.coach_provider}]: ").strip()
-            if val in ("ccg", "claude", "codex"):
+            if val in ("ccg", "ccg2", "claude", "codex"):
                 config = Config(**{**config.__dict__, "coach_provider": val})
                 if val == "claude":
                     print("  Модели: sonnet, opus, haiku")
                     model = input("  Coach model [sonnet]: ").strip() or "sonnet"
                     config = Config(**{**config.__dict__, "coach_model": model})
                 elif val == "codex":
-                    print("  Модели: gpt-5.4-medium, gpt-5.4-high, gpt-5.4-ultra-high")
-                    model = input("  Coach model [gpt-5.4-medium]: ").strip() or "gpt-5.4-medium"
+                    print("  Модели: default, gpt-5.4, o3, o4-mini")
+                    model = input("  Coach model [default]: ").strip()
+                    if model.lower() == "default":
+                        model = ""
                     config = Config(**{**config.__dict__, "coach_model": model})
                 else:
                     config = Config(**{**config.__dict__, "coach_model": ""})

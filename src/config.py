@@ -221,12 +221,13 @@ class Config:
     # Context Management
     context_limit: int = 110_000
     compact_threshold: float = 0.85
+    max_continuation_attempts: int = 2
 
     # Batch role providers + models (configurable per slot)
     batch_pre_provider: str = "ccg"
     batch_pre_model: str = ""                # GLM-5 default
-    batch_judge_provider: str = "codex"      # was hardcoded "claude"
-    batch_judge_model: str = "gpt-5.4-high"  # was hardcoded "sonnet"
+    batch_judge_provider: str = "codex"  # native Codex CLI judge by default
+    batch_judge_model: str = ""          # default model from ~/.codex/config.toml
     batch_post_provider: str = "ccg"
     batch_post_model: str = ""               # GLM-5 default
     test_writer_provider: str = "ccg"
@@ -256,7 +257,10 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("glm-5",             98_000),
     ("kimi-k2",          131_072),
     ("kimi",             128_000),
+    ("gpt-5.4",          128_000),
     ("gpt-5",            128_000),
+    ("o3",               128_000),
+    ("o4-mini",          128_000),
     ("gpt-4o",           128_000),
     ("gpt-4",            128_000),
     ("codex",            128_000),
@@ -276,12 +280,12 @@ def get_context_window(model: str) -> int:
 def short_model_name(model: str) -> str:
     """Get short display name from a model string."""
     m = model.lower()
-    if m == "gpt-5.4-medium":
-        return "GPT-5.4 MED"
-    if m == "gpt-5.4-high":
-        return "GPT-5.4 HIGH"
-    if m == "gpt-5.4-ultra-high":
-        return "GPT-5.4 ULTRA"
+    if not m or m == "default":
+        return "CODEX"
+    if m == "o3":
+        return "o3"
+    if m == "o4-mini":
+        return "o4-mini"
     if "opus" in m:
         return "OPUS"
     if "sonnet" in m:
@@ -294,8 +298,6 @@ def short_model_name(model: str) -> str:
         return "GLM-5"
     if "kimi" in m:
         return "KIMI"
-    if not model:
-        return "DEFAULT"
     return model.split("/")[-1].upper()[:10]
 
 
@@ -394,6 +396,10 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_TEST_WRITER_PROVIDER":      ("test_writer_provider", str),
         "G3_TEST_WRITER_MODEL":         ("test_writer_model", str),
         "G3_MAX_REVIEW_ITERATIONS":     ("max_review_iterations", int),
+        # Context management
+        "G3_CONTEXT_LIMIT":             ("context_limit", int),
+        "G3_COMPACT_THRESHOLD":         ("compact_threshold", float),
+        "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):

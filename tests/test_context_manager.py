@@ -36,9 +36,21 @@ def test_compact_summary_empty_messages():
     assert _build_compact_summary([]) == ""
 
 
-def test_continuation_prompt_player():
-    """Continuation prompt for player includes PHASE_COMPLETE marker."""
+def test_continuation_prompt_player_step_mode():
+    """Step-mode continuation should keep the regular completion report shape."""
     prompt = _build_continuation_prompt("Did step 1 and 2.", role="player")
+    assert "PHASE_COMPLETE" not in prompt
+    assert "Did step 1 and 2." in prompt
+    assert "You still have access to filesystem inspection" in prompt
+
+
+def test_continuation_prompt_player_batch_mode():
+    """Batch-mode continuation should preserve PHASE_COMPLETE requirements."""
+    prompt = _build_continuation_prompt(
+        "Did step 1 and 2.",
+        role="player",
+        require_phase_complete=True,
+    )
     assert "PHASE_COMPLETE" in prompt
     assert "Did step 1 and 2." in prompt
 

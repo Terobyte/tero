@@ -57,16 +57,18 @@ def create_provider(
 
     if provider_type == "codex":
         codex_cfg = CodexConfig(
-            api_url=provider_config.get("api_url", provider_config.get("base_url", "http://localhost:8765")),
-            api_key=provider_config.get("api_key", ""),
-            model=provider_config.get("model", provider_config.get("default_model", "gpt-5.4-medium")),
+            command=provider_config.get("command", "codex"),
+            default_model=provider_config.get("default_model", provider_config.get("model", "")),
             default_timeout=provider_config.get("default_timeout", 900),
-            auto_start=provider_config.get("auto_start", False),
-            proxy_repo_path=provider_config.get("proxy_repo_path", ""),
-            proxy_config_path=provider_config.get("proxy_config_path", ""),
-            proxy_log_path=provider_config.get("proxy_log_path", ""),
-            proxy_pid_path=provider_config.get("proxy_pid_path", ""),
-            startup_timeout_s=provider_config.get("startup_timeout_s", 45),
+            sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
+            approval_policy=provider_config.get("approval_policy", "never"),
+            ephemeral=provider_config.get("ephemeral", True),
+            full_auto=provider_config.get("full_auto", False),
+            bypass_approvals=provider_config.get("bypass_approvals", True),
+            config_overrides=provider_config.get("config_overrides", {}),
+            extra_args=provider_config.get("extra_args", []),
+            enabled_features=provider_config.get("enabled_features", []),
+            disabled_features=provider_config.get("disabled_features", []),
         )
         return CodexProvider(codex_cfg)
 
