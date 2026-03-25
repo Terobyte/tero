@@ -246,7 +246,7 @@ class TestRuntimeControls:
 
     def test_apply_pending_skips_if_provider_not_ready(self):
         controls = self._make_controls()
-        controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4-high")
+        controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4")
 
         session = MagicMock()
         session.config.coach_provider = "ccg"

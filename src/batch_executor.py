@@ -42,6 +42,10 @@ def build_batch_prompt(
         sections.append(
             "Before editing files, verify whether each planned step is already satisfied in the current workspace.\n"
             "If a step is already implemented, do not rewrite it; treat it as complete, cite proof, and continue with only the missing work.\n\n"
+            "Use the available tools for file inspection, commands, and edits.\n"
+            "This environment does provide filesystem inspection, command execution, and edit tools.\n"
+            "A claim that tools are unavailable in this session is incorrect and will be rejected.\n"
+            "Do not print raw shell or patch commands like `bash -lc`, `python ...`, or `apply_patch` as if they were already executed.\n\n"
             f"Execute ALL of the following steps in sequence.\n"
             f"Complete ALL steps before returning.\n\n"
             f"Phase: {phase.name}\n"
@@ -85,6 +89,21 @@ def build_batch_prompt(
 _STEP_DONE_RE = re.compile(r"step\s+(\d+)\s+done\s*:", re.IGNORECASE)
 _PHASE_COMPLETE_RE = re.compile(r"PHASE_COMPLETE\s*:", re.IGNORECASE)
 _REQUIRED_REPORT_HEADERS = ("what changed:", "evidence:", "verification:")
+_TOOLS_UNAVAILABLE_PATTERNS = (
+    "tools are not available",
+    "tools unavailable",
+    "tools are unavailable",
+    "filesystem tools are not available",
+    "command tools are not available",
+    "editing tools are not available",
+    "inspection/edit/execute",
+    "не доступны инструменты",
+    "недоступны инструменты",
+    "нет инструментов",
+    "инструменты доступа к файловой системе",
+    "инструменты запуска команд",
+    "инструменты редактирования файлов",
+)
 
 
 def parse_completed_steps(result, phase: Phase) -> list[str]:
@@ -114,6 +133,16 @@ def has_required_completion_report(text: str) -> bool:
     return all(header in lowered for header in _REQUIRED_REPORT_HEADERS)
 
 
+def player_claimed_tools_unavailable(result) -> bool:
+    """Return True when Player claimed tools are unavailable despite using none."""
+    tools_used = int(getattr(result, "tools_used", 0) or 0)
+    if tools_used > 0:
+        return False
+
+    text = str(getattr(result, "text", "") or "").lower()
+    return any(pattern in text for pattern in _TOOLS_UNAVAILABLE_PATTERNS)
+
+
 def build_incomplete_phase_feedback(phase: Phase, completed_steps: list[str]) -> str:
     """Structured retry feedback when the phase is not complete yet."""
     completed = set(completed_steps)
@@ -138,6 +167,16 @@ def build_missing_report_feedback(phase: Phase) -> str:
         "1. The completion report is missing required sections.\n"
         f"2. Re-send the phase completion response with `PHASE_COMPLETE: {phase.name}`, `What changed`, `Evidence`, and `Verification`.\n"
         "3. If no code changes were needed, say that explicitly and cite the files or checks proving the phase was already implemented."
+    )
+
+
+def build_tool_access_feedback(phase: Phase) -> str:
+    """Structured retry feedback when Player incorrectly claims tools are unavailable."""
+    return (
+        "1. Tool access is available in this environment; the previous reply incorrectly claimed otherwise.\n"
+        "2. Use the actual filesystem, command, and edit tools to inspect the workspace, run verification, and make any missing changes.\n"
+        "3. Do not say tools are unavailable unless a real tool call failed, and if it failed, cite the actual failure briefly.\n"
+        f"4. When finished, end with `PHASE_COMPLETE: {phase.name}` plus `What changed`, `Evidence`, and `Verification`."
     )
 
 
@@ -171,6 +210,10 @@ class PhaseFailedError(Exception):
         )
 
 
+class PlanResetRequested(Exception):
+    """Raised when the operator requests a full plan-progress reset."""
+
+
 # --- Executor ---
 
 class BatchExecutor:
@@ -202,8 +245,13 @@ class BatchExecutor:
 
     def _judge_label(self) -> str:
         """Display label for the batch judge slot."""
-        provider = self.session.config.batch_judge_provider
-        model = self.session.config.batch_judge_model
+        return self._provider_label(
+            self.session.config.batch_judge_provider,
+            self.session.config.batch_judge_model,
+        )
+
+    def _provider_label(self, provider: str, model: str) -> str:
+        """Display label for an arbitrary provider/model slot."""
         builder = getattr(self.session, "build_provider_display", None)
         if callable(builder):
             return builder(provider, model)
@@ -215,6 +263,22 @@ class BatchExecutor:
         """Start each batch run from the plan itself, not stale checklist state."""
         for item in getattr(self.tracker, "items", []):
             item.done = False
+
+    def _reset_plan_progress(self, phases: list[Phase]) -> None:
+        """Reset batch progress both in memory and in the persisted plan file."""
+        for item in getattr(self.tracker, "items", []):
+            item.done = False
+        for phase in phases:
+            phase.status = "pending"
+            phase.attempts = 0
+        for phase in phases:
+            for step in phase.steps:
+                step.done = False
+        if getattr(self.session, "plan_file_path", ""):
+            from src.plan_tracker import write_checklist_back
+
+            write_checklist_back(self.session.plan_file_path, self.tracker.items)
+        print("\n  ↺ Прогресс batch-плана сброшен — начинаем заново с первой фазы")
 
     def _schedule_counts(self) -> tuple[int, int, int]:
         """Return validated batch retry counts (pre, judge, post)."""
@@ -247,7 +311,7 @@ class BatchExecutor:
 
     def _review_strategy(self, attempt_num: int) -> dict[str, str]:
         """Return review strategy for a 1-based batch attempt number."""
-        pre_attempts, judge_attempts, _post_attempts = self._schedule_counts()
+        pre_attempts, judge_attempts, post_attempts = self._schedule_counts()
         judge_start = pre_attempts + 1
         judge_end = pre_attempts + judge_attempts
 
@@ -260,9 +324,24 @@ class BatchExecutor:
                 "review_role": "judge",
             }
 
+        if post_attempts > 0 and attempt_num > judge_end:
+            return {
+                "header_role": "coach",
+                "label": self._provider_label(
+                    self.session.config.batch_post_provider,
+                    self.session.config.batch_post_model,
+                ),
+                "provider_name_override": self.session.config.batch_post_provider,
+                "model_override": self.session.config.batch_post_model,
+                "review_role": "coach",
+            }
+
         return {
             "header_role": "coach",
-            "label": self._role_label("coach"),
+            "label": self._provider_label(
+                self.session.config.batch_pre_provider,
+                self.session.config.batch_pre_model,
+            ),
             "provider_name_override": self.session.config.batch_pre_provider,
             "model_override": self.session.config.batch_pre_model,
             "review_role": "coach",
@@ -293,7 +372,7 @@ class BatchExecutor:
             "(coach / judge / coach)"
         )
         print()
-        runtime = getattr(self.session, "_runtime", None)
+        runtime = vars(self.session).get("_runtime")
         if runtime is not None:
             runtime.start(
                 player_name=self._role_label("player"),
@@ -304,11 +383,14 @@ class BatchExecutor:
         self.tracker.start_dashboard()
 
         try:
-            for phase in phases:
+            phase_index = 0
+            while phase_index < len(phases):
+                phase = phases[phase_index]
                 # Resume: skip phases already fully completed in the plan file
                 if all(step.done for step in phase.steps):
                     phase.status = "done"
                     self.tracker.render_dashboard()
+                    phase_index += 1
                     continue
 
                 phase.status = "in_progress"
@@ -316,14 +398,25 @@ class BatchExecutor:
                 runtime = getattr(self.session, "_runtime", None)
                 if runtime is not None:
                     runtime.apply_pending(self.session)
+                    if runtime.reset_requested:
+                        raise PlanResetRequested()
 
-                success = await self._run_phase(phase)
+                try:
+                    success = await self._run_phase(phase)
+                except PlanResetRequested:
+                    if runtime is not None:
+                        runtime.clear_reset()
+                    self._reset_plan_progress(phases)
+                    self.tracker.render_dashboard()
+                    phase_index = 0
+                    continue
 
                 if success:
                     phase.status = "done"
                     self.tracker.phase_done(phase)
                     if getattr(self.session, "plan_file_path", ""):
                         write_checklist_back(self.session.plan_file_path, self.tracker.items)
+                    phase_index += 1
                 else:
                     phase.status = "failed"
                     self.tracker.render_dashboard()
@@ -342,7 +435,7 @@ class BatchExecutor:
         completed_steps: list[str] = []
         coach_feedback: str = ""
         max_phase_attempts = self._max_phase_attempts()
-        runtime = getattr(self.session, "_runtime", None)
+        runtime = vars(self.session).get("_runtime")
 
         for attempt in range(max_phase_attempts):
             attempt_num = attempt + 1
@@ -350,6 +443,8 @@ class BatchExecutor:
             self.tracker.render_dashboard()
             if runtime is not None:
                 runtime.apply_pending(self.session)
+                if runtime.reset_requested:
+                    raise PlanResetRequested()
 
             prompt = build_batch_prompt(phase, completed_steps, coach_feedback)
             snapshot_pids = getattr(self.session, "_snapshot_pids", None)
@@ -364,7 +459,7 @@ class BatchExecutor:
                 model_name=self._role_label("player"),
             )
             try:
-                result = await self.session._run_turn(
+                result = await self.session._run_with_continuation(
                     role="player",
                     prompt=prompt,
                     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
@@ -381,6 +476,11 @@ class BatchExecutor:
 
             if callable(cleanup_processes):
                 cleanup_processes(pids_before)
+
+            if player_claimed_tools_unavailable(result):
+                coach_feedback = build_tool_access_feedback(phase)
+                streaming_ui.print_step_rejected(coach_feedback)
+                continue
 
             completed_steps = parse_completed_steps(result, phase)
             if len(completed_steps) < len(phase.steps):
@@ -414,6 +514,10 @@ class BatchExecutor:
 
             if isinstance(verdict, Approved):
                 return True
+            if getattr(type(verdict), "__name__", "") == "NoVerdict":
+                coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
+                streaming_ui.print_step_rejected(coach_feedback)
+                continue
             coach_feedback = verdict.text if isinstance(verdict, Feedback) else str(verdict)
             streaming_ui.print_step_rejected(coach_feedback)
 

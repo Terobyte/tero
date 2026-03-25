@@ -130,7 +130,7 @@ class CcgProvider:
             compact_threshold: Fraction to trigger compaction (default: 0.85)
 
         Yields:
-            SDK messages from the agent
+            AdaptedMessage objects adapted from SDK messages
         """
         async for msg in run_agent(
             prompt=prompt,

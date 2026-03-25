@@ -127,6 +127,11 @@ def mark_all_done(items: list[PlanItem]) -> list[PlanItem]:
     return [PlanItem(text=item.text, done=True) for item in items]
 
 
+def reset_all_progress(items: list[PlanItem]) -> list[PlanItem]:
+    """Return a fresh copy of items with all steps marked pending."""
+    return [PlanItem(text=item.text, done=False) for item in items]
+
+
 def get_current_step_index(items: list[PlanItem]) -> int | None:
     """Return index of first undone item, or None if all done."""
     for i, item in enumerate(items):

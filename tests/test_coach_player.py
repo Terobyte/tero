@@ -288,3 +288,88 @@ def test_run_turn_passes_context_config_to_ccg_like_provider(tmp_path, monkeypat
     assert captured["working_dir"] == str(tmp_path)
     assert captured["context_limit"] == 123_000
     assert captured["compact_threshold"] == 0.72
+
+
+def test_init_review_provider_auto_detects_codex_when_available(tmp_path, monkeypatch):
+    """Empty review_provider should prefer native Codex when it is ready."""
+    codex_provider = _make_mock_provider()
+    coach_provider = _make_mock_provider()
+
+    def fake_create_provider(name, env=None, cfg=None):
+        if name == "codex":
+            return codex_provider
+        return coach_provider
+
+    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        plan_file="requirements.md",
+        code_review=True,
+        review_provider="",
+        coach_provider="ccg",
+    )
+    session = CoachPlayerSession(cfg, "1. Ship feature")
+
+    assert session.review_provider is codex_provider
+    assert session.review_provider_name == "codex"
+
+
+def test_run_turn_uses_native_codex_usage_for_tokens(tmp_path, monkeypatch):
+    """Codex AdaptedMessages should still populate TurnResult.tokens_used."""
+    from src.providers.message_adapter import AdaptedMessage, TextBlock
+
+    class FakeCodexProvider:
+        def __init__(self):
+            self._last_input_tokens = 0
+            self._last_output_tokens = 0
+
+        async def run(self, prompt, system_prompt, working_dir, max_turns=30, model=""):
+            yield AdaptedMessage(
+                role="assistant",
+                content=[TextBlock(text="Implemented")],
+                type="text",
+            )
+            self._last_input_tokens = 321
+            self._last_output_tokens = 45
+            yield AdaptedMessage(
+                role="assistant",
+                content=[],
+                stop_reason="end_turn",
+                type="result",
+            )
+
+    provider = FakeCodexProvider()
+    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.streaming.print_turn_timing", lambda *args, **kwargs: None)
+
+    cfg = Config(working_dir=str(tmp_path))
+    session = object.__new__(CoachPlayerSession)
+    session.config = cfg
+    session._interrupted = False
+    session._provider_for_role = lambda role: provider
+    session._provider_model = lambda prov: "gpt-5.4"
+    session._runtime = None
+
+    result = asyncio.run(
+        session._run_turn(
+            role="player",
+            prompt="do the thing",
+            system_prompt="system",
+            max_turns=7,
+            timeout_s=30,
+        )
+    )
+
+    assert result.text == "Implemented"
+    assert result.tokens_used == 366
+
+
+def test_step_continuation_does_not_require_phase_complete():
+    """Single-step continuation prompts should accept the normal player report."""
+    from src.context_manager import _build_continuation_prompt
+
+    prompt = _build_continuation_prompt("Implemented the requested step.", role="player")
+    text = _player_report("Implemented on retry")
+
+    assert CoachPlayerSession._player_output_complete(text, prompt) is True

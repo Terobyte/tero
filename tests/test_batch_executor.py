@@ -111,7 +111,7 @@ class TestAutoGroupPhases:
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         phases = auto_group_phases(items)
         assert "create" in phases[0].name.lower()
-        assert "2" in phases[0].name
+        assert "a.py" in phases[0].name
 
 
 class TestPlanTracker:
@@ -193,6 +193,61 @@ class TestBuildBatchPrompt:
         prompt = build_batch_prompt(phase, [], "")
         assert "verify whether each planned step is already satisfied" in prompt
         assert "do not rewrite it; treat it as complete" in prompt
+
+    def test_prompt_forbids_pasted_shell_transcripts(self):
+        from src.batch_executor import build_batch_prompt
+        phase = self._phase(["create a.py"])
+        prompt = build_batch_prompt(phase, [], "")
+        assert "Use the available tools" in prompt
+        assert "Do not print raw shell or patch commands" in prompt
+        assert "tools are unavailable in this session is incorrect" in prompt
+
+
+class TestReviewStrategy:
+    def test_uses_post_provider_after_judge_window(self):
+        from src.batch_executor import BatchExecutor
+
+        session = MagicMock()
+        session.config.batch_pre_judge_attempts = 1
+        session.config.batch_judge_attempts = 1
+        session.config.batch_post_judge_attempts = 1
+        session.config.batch_pre_provider = "claude"
+        session.config.batch_pre_model = "sonnet"
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
+        session.config.batch_post_provider = "ccg2"
+        session.config.batch_post_model = "glm-5"
+        session.build_provider_display = MagicMock(
+            side_effect=lambda provider, model="": f"{provider}:{model or 'default'}"
+        )
+
+        executor = BatchExecutor(session, MagicMock())
+
+        strategy = executor._review_strategy(3)
+
+        assert strategy["provider_name_override"] == "ccg2"
+        assert strategy["model_override"] == "glm-5"
+        assert strategy["label"] == "ccg2:glm-5"
+
+
+class TestPlayerToolAvailabilityDetection:
+    def _phase(self, texts):
+        items = [PlanItem(text=t) for t in texts]
+        return Phase(name="Test Phase", type="create", steps=items)
+
+    def test_detects_tool_unavailable_excuse_without_tool_use(self):
+        from src.batch_executor import player_claimed_tools_unavailable
+        result = MagicMock()
+        result.tools_used = 0
+        result.text = "Не удалось проверить: в этой сессии не доступны инструменты доступа к файловой системе."
+        assert player_claimed_tools_unavailable(result) is True
+
+    def test_ignores_tool_unavailable_text_when_tools_were_used(self):
+        from src.batch_executor import player_claimed_tools_unavailable
+        result = MagicMock()
+        result.tools_used = 2
+        result.text = "tools are unavailable"
+        assert player_claimed_tools_unavailable(result) is False
 
     def test_phase_complete_marker_present(self):
         from src.batch_executor import build_batch_prompt
@@ -335,14 +390,21 @@ class TestRunPhase:
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
+        session.config.batch_pre_provider = ""
+        session.config.batch_pre_model = ""
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.batch_post_provider = ""
+        session.config.batch_post_model = ""
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
+        session._runtime = None
         session.player_model = "ccg | model=glm-5 | account=blackbox-a"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
-            return_value=f"{BatchExecutor.JUDGE_PROVIDER} | model={BatchExecutor.JUDGE_MODEL}"
+            return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
         )
 
         results = []
@@ -380,7 +442,7 @@ class TestRunPhase:
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
-            ["Step 1 done: created a.py", "PHASE_COMPLETE: Create"]
+            ["Step 1 done: created a.py", "PHASE_COMPLETE: Create", "PHASE_COMPLETE: Create"]
         )
         # First coach call rejects (incomplete), second approves
         session._run_coach_turn_for_phase = AsyncMock(
@@ -389,7 +451,7 @@ class TestRunPhase:
         executor = self._make_executor(session)
         result = await executor._run_phase(phase)
         assert result is True
-        assert phase.attempts == 2
+        assert phase.attempts == 3
         assert session._run_coach_turn_for_phase.await_count == 2
 
     @pytest.mark.asyncio
@@ -407,14 +469,21 @@ class TestRunPhase:
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
+        session.config.batch_pre_provider = ""
+        session.config.batch_pre_model = ""
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.batch_post_provider = ""
+        session.config.batch_post_model = ""
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
+        session._runtime = None
         session.player_model = "ccg | model=glm-5 | account=blackbox-a"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
-            return_value=f"{BatchExecutor.JUDGE_PROVIDER} | model={BatchExecutor.JUDGE_MODEL}"
+            return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
         )
         result_one = MagicMock()
         result_one.text = "PHASE_COMPLETE: Create"
@@ -430,7 +499,10 @@ class TestRunPhase:
             "- pytest"
         )
         result_two.messages = []
-        session._run_with_continuation = AsyncMock(side_effect=[result_one, result_two])
+        result_three = MagicMock()
+        result_three.text = result_two.text
+        result_three.messages = []
+        session._run_with_continuation = AsyncMock(side_effect=[result_one, result_two, result_three])
         # First coach call rejects (missing report), second approves
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[Feedback(text="Missing report"), Approved()]
@@ -440,7 +512,7 @@ class TestRunPhase:
         result = await executor._run_phase(phase)
 
         assert result is True
-        assert phase.attempts == 2
+        assert phase.attempts == 3
         assert session._run_coach_turn_for_phase.await_count == 2
 
     @pytest.mark.asyncio
@@ -479,7 +551,7 @@ class TestRunPhase:
         assert phase.attempts == total_attempts
 
     @pytest.mark.asyncio
-    async def test_attempt_four_uses_judge_sonnet_once(self):
+    async def test_attempt_four_uses_codex_judge_once(self):
         from src.feedback import Approved, Feedback
 
         items = [PlanItem(text="create a.py")]
@@ -500,8 +572,8 @@ class TestRunPhase:
         assert result is True
         assert phase.attempts == 4
         fourth_call = session._run_coach_turn_for_phase.await_args_list[3].kwargs
-        assert fourth_call["provider_name_override"] == "claude"
-        assert fourth_call["model_override"] == "sonnet"
+        assert fourth_call["provider_name_override"] == "codex"
+        assert fourth_call["model_override"] == "gpt-5.4"
         assert fourth_call["review_role"] == "judge"
 
     @pytest.mark.asyncio
@@ -579,7 +651,7 @@ class TestRunPhase:
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
-            ["did work but no markers", "PHASE_COMPLETE: Create"]
+            ["did work but no markers", "PHASE_COMPLETE: Create", "PHASE_COMPLETE: Create"]
         )
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[Feedback(text="Missing implementation details"), Approved()]
@@ -589,8 +661,8 @@ class TestRunPhase:
         result = await executor._run_phase(phase)
 
         assert result is True
-        second_prompt = session._run_with_continuation.await_args_list[1].kwargs["prompt"]
-        assert "Missing implementation details" in second_prompt
+        third_prompt = session._run_with_continuation.await_args_list[2].kwargs["prompt"]
+        assert "Missing implementation details" in third_prompt
 
     @pytest.mark.asyncio
     async def test_player_timeout_retries_instead_of_crashing(self):
@@ -629,13 +701,20 @@ class TestBatchExecutorRun:
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
+        session.config.batch_pre_provider = ""
+        session.config.batch_pre_model = ""
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.batch_post_provider = ""
+        session.config.batch_post_model = ""
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
         session.player_model = "ccg | model=glm-5 | account=blackbox-a"
         session.coach_model = "claude | model=sonnet"
+        session._runtime = None
         session.build_provider_display = MagicMock(
-            return_value=f"{BatchExecutor.JUDGE_PROVIDER} | model={BatchExecutor.JUDGE_MODEL}"
+            return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
         )
         if "PHASE_COMPLETE:" in player_text and "What changed:" not in player_text:
             player_text = (
@@ -690,7 +769,7 @@ class TestBatchExecutorRun:
         out = capsys.readouterr().out
         assert "Player: ccg | model=glm-5 | account=blackbox-a" in out
         assert "Coach: claude | model=sonnet" in out
-        assert "Judge: claude | model=sonnet" in out
+        assert "Judge: codex | model=gpt-5.4" in out
         assert "Batch review: 3 / 1 / 1 (coach / judge / coach)" in out
 
     @pytest.mark.asyncio
@@ -707,6 +786,7 @@ class TestBatchExecutorRun:
         session.config.player_timeout_s = 600
         session.config.player_model = ""
         session.config.player_turns_per_session = 30
+        session._runtime = None
         session._run_with_continuation = AsyncMock(return_value=r)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
         executor = BatchExecutor(session=session, tracker=tracker)
@@ -720,6 +800,7 @@ class TestBatchExecutorRun:
         tracker = MagicMock()
         tracker.items = []
         session = MagicMock()
+        session._runtime = None
         executor = BatchExecutor(session=session, tracker=tracker)
         await executor.run()  # should not raise
         tracker.start_dashboard.assert_not_called()
@@ -883,6 +964,112 @@ class TestRunCoachTurnForPhase:
         assert isinstance(result, Feedback)
         assert "Complete the missing planned step: create b.py" in result.text
 
+    @pytest.mark.asyncio
+    async def test_retries_when_reviewer_returns_no_verdict(self):
+        from src.coach_player import CoachPlayerSession, TurnResult
+        from src.feedback import Approved
+        from src.providers.message_adapter import AdaptedMessage, TextBlock
+
+        items = [PlanItem(text="create a.py")]
+        phase = Phase(name="Create", type="create", steps=items)
+
+        session = MagicMock(spec=CoachPlayerSession)
+        session.config = MagicMock()
+        session.config.max_turns = 10
+        session.config.coach_timeout_s = 300
+        session.config.coach_model = ""
+        session.config.coach_retry_max = 2
+        session.config.coach_fallback_provider = ""
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+
+        empty_result = TurnResult(
+            role="coach",
+            duration_s=1.0,
+            tools_used=1,
+            messages=[],
+            text="",
+        )
+        approved_msg = AdaptedMessage(
+            role="assistant",
+            content=[TextBlock(text="IMPLEMENTATION_APPROVED")],
+        )
+        approved_result = TurnResult(
+            role="coach",
+            duration_s=1.0,
+            tools_used=0,
+            messages=[approved_msg],
+            text="IMPLEMENTATION_APPROVED",
+        )
+        session._run_turn = AsyncMock(side_effect=[empty_result, approved_result])
+
+        result = await CoachPlayerSession._run_coach_turn_for_phase(
+            session,
+            phase,
+            MagicMock(text="PHASE_COMPLETE: Create"),
+            completed_steps=["create a.py"],
+        )
+
+        assert isinstance(result, Approved)
+        assert session._run_turn.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fallback_provider_used_when_reviewer_stays_silent(self):
+        from src.coach_player import CoachPlayerSession, TurnResult
+        from src.feedback import Approved
+        from src.providers.message_adapter import AdaptedMessage, TextBlock
+
+        items = [PlanItem(text="create a.py")]
+        phase = Phase(name="Create", type="create", steps=items)
+
+        session = MagicMock(spec=CoachPlayerSession)
+        session.config = MagicMock()
+        session.config.max_turns = 10
+        session.config.coach_timeout_s = 300
+        session.config.coach_model = ""
+        session.config.coach_retry_max = 1
+        session.config.coach_fallback_provider = "claude"
+        session.config.coach_fallback_model = ""
+        session.config.coach_provider = "ccg"
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+
+        fallback_provider = MagicMock()
+        fallback_provider.check_ready = MagicMock(return_value=(True, ""))
+        fallback_provider.display_name = "Claude"
+        session._get_or_create_provider = MagicMock(return_value=fallback_provider)
+
+        empty_result = TurnResult(
+            role="coach",
+            duration_s=1.0,
+            tools_used=1,
+            messages=[],
+            text="",
+        )
+        approved_msg = AdaptedMessage(
+            role="assistant",
+            content=[TextBlock(text="IMPLEMENTATION_APPROVED")],
+        )
+        fallback_result = TurnResult(
+            role="coach_fallback",
+            duration_s=1.0,
+            tools_used=0,
+            messages=[approved_msg],
+            text="IMPLEMENTATION_APPROVED",
+        )
+        session._run_turn = AsyncMock(side_effect=[empty_result, fallback_result])
+
+        result = await CoachPlayerSession._run_coach_turn_for_phase(
+            session,
+            phase,
+            MagicMock(text="PHASE_COMPLETE: Create"),
+            completed_steps=["create a.py"],
+        )
+
+        assert isinstance(result, Approved)
+        assert session._get_or_create_provider.called
+        assert session._run_turn.await_count == 2
+
 
 class TestBuildPhaseCoachPrompt:
     def test_contains_phase_name(self):
@@ -937,8 +1124,8 @@ class TestCoachAlwaysCalled:
         return Phase(name=name, type="update", steps=[PlanItem(text=s) for s in steps])
 
     @pytest.mark.asyncio
-    async def test_coach_called_when_phase_complete_missing(self):
-        """Coach must be called even when player output has no PHASE_COMPLETE marker."""
+    async def test_missing_phase_complete_retries_player_without_calling_coach(self):
+        """Batch mode should reject incomplete player output before coach review."""
         from src.batch_executor import BatchExecutor
         from src.feedback import Approved
 
@@ -958,15 +1145,17 @@ class TestCoachAlwaysCalled:
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
+        session._runtime = None
 
         session._run_with_continuation = AsyncMock(return_value=player_result)
 
-        # Coach returns Approved on first call
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
-        session.build_provider_display = MagicMock(return_value="claude | model=sonnet")
+        session.build_provider_display = MagicMock(return_value="codex | model=gpt-5.4")
 
         tracker = MagicMock()
         tracker.items = []
@@ -976,13 +1165,12 @@ class TestCoachAlwaysCalled:
         executor = BatchExecutor(session, tracker)
         result = await executor._run_phase(phase)
 
-        assert result is True
-        # Coach must have been called despite missing PHASE_COMPLETE
-        session._run_coach_turn_for_phase.assert_called_once()
+        assert result is False
+        session._run_coach_turn_for_phase.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_coach_called_when_report_headers_missing(self):
-        """Coach must be called even when player output has PHASE_COMPLETE but no report headers."""
+    async def test_missing_report_headers_retries_player_without_calling_coach(self):
+        """Batch mode should require the completion report before coach review."""
         from src.batch_executor import BatchExecutor
         from src.feedback import Approved
 
@@ -1002,14 +1190,17 @@ class TestCoachAlwaysCalled:
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
         session.config.batch_post_judge_attempts = 1
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
+        session._runtime = None
 
         session._run_with_continuation = AsyncMock(return_value=player_result)
 
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
-        session.build_provider_display = MagicMock(return_value="claude | model=sonnet")
+        session.build_provider_display = MagicMock(return_value="codex | model=gpt-5.4")
 
         tracker = MagicMock()
         tracker.items = []
@@ -1019,5 +1210,5 @@ class TestCoachAlwaysCalled:
         executor = BatchExecutor(session, tracker)
         result = await executor._run_phase(phase)
 
-        assert result is True
-        session._run_coach_turn_for_phase.assert_called_once()
+        assert result is False
+        session._run_coach_turn_for_phase.assert_not_called()

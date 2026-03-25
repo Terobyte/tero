@@ -56,10 +56,9 @@ def stream_messages(msg, verbose: bool = False, role: str = "") -> int:
 
     # ToolResultMessage
     if msg_type == "ToolResultMessage" or hasattr(msg, "tool_use_id"):
-        if verbose:
-            result = getattr(msg, "content", "")
-            if result:
-                _print_result(result)
+        for result, is_error in _extract_tool_results(msg):
+            if verbose or is_error:
+                _print_result(result, is_error=is_error)
         return tools_used
 
     return tools_used
@@ -79,32 +78,58 @@ def _print_text(text: str, verbose: bool = False):
         lines = lines[:5]
 
     for line in lines:
-        print(f"  {DIM}[text]{RESET} {line}")
+        print(f"  {DIM}[text]{RESET} {line}", flush=True)
 
 
 def _print_tool(name: str, args: dict):
     """Print tool usage."""
     summary = _summarize_tool_args(name, args)
-    print(f"  {CYAN}[tool]{RESET} {BOLD}{name}{RESET}: {DIM}{summary}{RESET}")
+    print(f"  {CYAN}[tool]{RESET} {BOLD}{name}{RESET}: {DIM}{summary}{RESET}", flush=True)
 
 
-def _print_result(result: str):
-    """Print tool result (only in verbose mode)."""
+def _extract_tool_results(msg) -> list[tuple[str, bool]]:
+    """Normalize tool result payloads from SDK and AdaptedMessage objects."""
+    content = getattr(msg, "content", "")
+
+    if isinstance(content, list):
+        results = []
+        for block in content:
+            if hasattr(block, "content"):
+                results.append((
+                    getattr(block, "content", ""),
+                    bool(getattr(block, "is_error", False)),
+                ))
+            elif hasattr(block, "text"):
+                results.append((getattr(block, "text", ""), False))
+        return results
+
+    return [(content, bool(getattr(msg, "is_error", False)))]
+
+
+def _print_result(result: str, is_error: bool = False):
+    """Print tool result payloads for verbose or error cases."""
     if not result.strip():
         return
-    display = result.strip()[:100]
-    print(f"  {DIM}[result] {display}...{RESET}")
+    display = result.strip()
+    if len(display) > 100:
+        display = display[:100] + "..."
+
+    color = RED if is_error else DIM
+    print(f"  {color}[result]{RESET} {display}", flush=True)
 
 
 def _summarize_tool_args(name: str, args: dict) -> str:
     """Create a brief summary of tool arguments."""
-    if name == "Read":
-        return args.get("file_path", "?").split("/")[-1]
-    elif name == "Write":
-        return args.get("file_path", "?").split("/")[-1]
-    elif name == "Edit":
-        return f"{args.get('file_path', '?').split('/')[-1]} ({args.get('old_string', '')[:20]}...)"
-    elif name == "Bash":
+    file_path = args.get("file_path") or args.get("path") or args.get("file") or "?"
+
+    if name in ("Read", "file_read"):
+        return file_path.split("/")[-1]
+    elif name in ("Write", "file_write"):
+        return file_path.split("/")[-1]
+    elif name in ("Edit", "file_edit"):
+        snippet = args.get("old_string", "")[:20]
+        return f"{file_path.split('/')[-1]} ({snippet}...)" if snippet else file_path.split("/")[-1]
+    elif name in ("Bash", "shell"):
         cmd = args.get("command", "?")
         return cmd[:50] + "..." if len(cmd) > 50 else cmd
     elif name == "Glob":
@@ -277,3 +302,21 @@ def print_coach_no_verdict_retry(attempt: int, max_attempts: int):
 def print_coach_fallback_escalation(fallback_name: str):
     """Print fallback coach escalation message."""
     print(f"\n  {BOLD}{YELLOW}⚠ Coach молчит — передаю {fallback_name} для вердикта...{RESET}")
+
+
+def print_compact_triggered(tokens_used: int, context_limit: int) -> None:
+    """Print a compact notification with rough token usage context."""
+    before_k = max(1, round(tokens_used / 1000))
+    limit_k = max(1, round(context_limit / 1000))
+    print(
+        f"\n  {BOLD}{CYAN}⚡ Context compacted{RESET} "
+        f"{DIM}({before_k}k / {limit_k}k tokens){RESET}"
+    )
+
+
+def print_continuation_started(role: str, attempt: int, max_attempts: int) -> None:
+    """Print continuation retry status."""
+    print(
+        f"\n  {BOLD}{CYAN}↻ Continuation{RESET} "
+        f"{DIM}{role} {attempt}/{max_attempts}{RESET}"
+    )

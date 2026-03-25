@@ -11,6 +11,11 @@ CRITICAL RULES:
 - If you receive coach feedback: fix ONLY the listed issues, leave everything else untouched
 - Run/verify your implementation works after making changes
 - If the step is already implemented, do not rewrite it; provide proof instead
+- Use the available tools to inspect files, run commands, and edit code
+- This environment does provide filesystem inspection, command execution, and edit tools
+- A claim that tools are unavailable in this session is incorrect and will be rejected
+- Never pretend a command ran by printing shell syntax in plain text
+- Do not paste raw tool or shell transcripts like `bash -lc`, `python ...`, or `apply_patch` as progress output
 
 PROCESS CLEANUP (MANDATORY):
 - If you launch any GUI app or long-running process to test your work, you MUST kill it before finishing
@@ -20,9 +25,11 @@ PROCESS CLEANUP (MANDATORY):
 
 FINAL RESPONSE FORMAT:
 - When done, provide a short plain-text summary
+- Only the FINAL assistant message should be plain text; use tools normally before that
 - Include `What changed:` followed by 1-3 short bullet points
 - Include `Evidence:` followed by file references or proof that the step was already implemented
 - Include `Verification:` followed by the command(s) or checks you ran
+- Only mention commands in `Verification:` if you actually ran them
 - If no code changes were needed, say that explicitly in `What changed:` and justify it in `Evidence:`
 - Keep it concise and concrete; do not write a long report."""
 
@@ -40,6 +47,11 @@ CRITICAL RULES:
 - If retry feedback is weak or generic, continue implementing the planned phase instead of stalling
 - Run/verify your implementation works after making changes
 - If a step is already implemented, do not rewrite it; cite proof and continue with only the missing work
+- Use the available tools to inspect files, run commands, and edit code
+- This environment does provide filesystem inspection, command execution, and edit tools
+- A claim that tools are unavailable in this session is incorrect and will be rejected
+- Never pretend a command ran by printing shell syntax in plain text
+- Do not paste raw tool or shell transcripts like `bash -lc`, `python ...`, or `apply_patch` as progress output
 
 PROCESS CLEANUP (MANDATORY):
 - If you launch any GUI app or long-running process to test your work, you MUST kill it before finishing
@@ -48,6 +60,7 @@ PROCESS CLEANUP (MANDATORY):
 
 FINAL RESPONSE FORMAT (MANDATORY):
 - Your FINAL assistant message must be plain text, not TodoWrite
+- Use tools during the turn; only the final assistant message must be plain text
 - After each completed step, include exactly one line: `Step N done: <one-line description>`
 - When the whole phase is complete, include the line: `PHASE_COMPLETE: <phase name>`
 - Immediately after `PHASE_COMPLETE`, include:
@@ -59,6 +72,7 @@ FINAL RESPONSE FORMAT (MANDATORY):
   `- ...`
 - Do not end with an empty message
 - Do not omit the completion markers, even if you already used tools successfully
+- Only mention commands in `Verification:` if you actually ran them
 - If no code changes were needed, say that explicitly in `What changed:` and justify it in `Evidence:`
 - Do not replace the completion markers with a long narrative report
 """
@@ -186,6 +200,10 @@ def build_player_step_prompt(
 - Implement ONLY the step above, nothing else
 - Do NOT touch already-completed steps
 - If this step is already implemented, do not rewrite it; prove it in `Evidence:` and finish cleanly
+- Use tools for file inspection, commands, and edits instead of printing command transcripts
+- This environment does provide filesystem inspection, command execution, and edit tools
+- Do not claim tools are unavailable in this session unless an actual tool call failed
+- Do not paste `bash -lc`, `python ...`, or `apply_patch` as plain text unless reporting a command you already ran in `Verification:`
 """
 
     if feedback:

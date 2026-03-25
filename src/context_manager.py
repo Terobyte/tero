@@ -24,17 +24,28 @@ def _build_compact_summary(messages: list) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _build_continuation_prompt(summary: str, role: str) -> str:
+def _build_continuation_prompt(
+    summary: str,
+    role: str,
+    require_phase_complete: bool = False,
+) -> str:
     """Build continuation prompt for a given role."""
     if role == "player":
+        completion_lines = [
+            "  What changed:\n  - ...",
+            "  Evidence:\n  - ...",
+            "  Verification:\n  - ...",
+        ]
+        if require_phase_complete:
+            completion_lines.insert(0, "  PHASE_COMPLETE: <phase name>")
         return (
             f"You are continuing previous work. Here is what was already done:\n\n"
             f"{summary}\n\n"
+            "You still have access to filesystem inspection, command execution, and edit tools.\n"
+            "Do not claim tools are unavailable in this session unless an actual tool call failed.\n"
+            "Continue using tools if more verification or edits are needed, then send the required completion report.\n"
             "Now output the required completion report:\n"
-            "  PHASE_COMPLETE: <phase name>\n"
-            "  What changed:\n  - ...\n"
-            "  Evidence:\n  - ...\n"
-            "  Verification:\n  - ..."
+            f"{chr(10).join(completion_lines)}"
         )
     # coach / reviewer
     return (
