@@ -1,5 +1,6 @@
 """Batch execution: groups PlanItems into phases, executes one Player turn per phase."""
 
+import inspect
 import re
 from dataclasses import dataclass
 
@@ -227,6 +228,25 @@ class BatchExecutor:
         self.session = session
         self.tracker = tracker
 
+    def _config_str(self, attr_name: str, default: str = "") -> str:
+        """Read a string config value without letting MagicMock placeholders leak through."""
+        value = getattr(self.session.config, attr_name, default)
+        return value if isinstance(value, str) else default
+
+    async def _run_player_turn(self, **kwargs):
+        """Use continuation support when available, otherwise fall back gracefully."""
+        run_with_continuation = getattr(self.session, "_run_with_continuation", None)
+        if inspect.iscoroutinefunction(run_with_continuation):
+            return await run_with_continuation(**kwargs)
+
+        run_turn = getattr(self.session, "_run_turn", None)
+        if inspect.iscoroutinefunction(run_turn):
+            return await run_turn(**kwargs)
+
+        raise AttributeError(
+            "Session must provide `_run_with_continuation()` or `_run_turn()` for batch execution."
+        )
+
     def _role_label(self, role: str) -> str:
         """Best-effort role label for batch UI."""
         label = getattr(self.session, f"{role}_model", "")
@@ -246,9 +266,22 @@ class BatchExecutor:
     def _judge_label(self) -> str:
         """Display label for the batch judge slot."""
         return self._provider_label(
-            self.session.config.batch_judge_provider,
-            self.session.config.batch_judge_model,
+            self._config_str("batch_judge_provider", "codex"),
+            self._config_str("batch_judge_model", ""),
         )
+
+    def _review_slot_label(self, provider_attr: str, model_attr: str) -> str:
+        """Display label for a batch pre/post coach slot, including coach fallbacks."""
+        provider = self._config_str(provider_attr, "")
+        model = self._config_str(model_attr, "")
+        if provider:
+            return self._provider_label(provider, model)
+        if model:
+            return self._provider_label(
+                self._config_str("coach_provider", "black"),
+                model,
+            )
+        return self._role_label("coach")
 
     def _provider_label(self, provider: str, model: str) -> str:
         """Display label for an arbitrary provider/model slot."""
@@ -319,31 +352,35 @@ class BatchExecutor:
             return {
                 "header_role": "judge",
                 "label": self._judge_label(),
-                "provider_name_override": self.session.config.batch_judge_provider,
-                "model_override": self.session.config.batch_judge_model,
+                "provider_name_override": self._config_str("batch_judge_provider", "codex"),
+                "model_override": self._config_str("batch_judge_model", ""),
                 "review_role": "judge",
             }
 
         if post_attempts > 0 and attempt_num > judge_end:
+            post_provider = self._config_str(
+                "batch_post_provider",
+                self._config_str("coach_provider", "black"),
+            )
+            post_model = self._config_str("batch_post_model", "")
             return {
                 "header_role": "coach",
-                "label": self._provider_label(
-                    self.session.config.batch_post_provider,
-                    self.session.config.batch_post_model,
-                ),
-                "provider_name_override": self.session.config.batch_post_provider,
-                "model_override": self.session.config.batch_post_model,
+                "label": self._provider_label(post_provider, post_model),
+                "provider_name_override": post_provider,
+                "model_override": post_model,
                 "review_role": "coach",
             }
 
+        pre_provider = self._config_str(
+            "batch_pre_provider",
+            self._config_str("coach_provider", "black"),
+        )
+        pre_model = self._config_str("batch_pre_model", "")
         return {
             "header_role": "coach",
-            "label": self._provider_label(
-                self.session.config.batch_pre_provider,
-                self.session.config.batch_pre_model,
-            ),
-            "provider_name_override": self.session.config.batch_pre_provider,
-            "model_override": self.session.config.batch_pre_model,
+            "label": self._provider_label(pre_provider, pre_model),
+            "provider_name_override": pre_provider,
+            "model_override": pre_model,
             "review_role": "coach",
         }
 
@@ -366,7 +403,13 @@ class BatchExecutor:
         print(f"  Фаз: {len(phases)}  |  Выполнено: {done_count}  |  Макс. попыток на фазу: {max_phase_attempts}")
         print(f"  Player: {self._role_label('player')}")
         print(f"  Coach: {self._role_label('coach')}")
+        print(
+            f"  Pre-Coach: {self._review_slot_label('batch_pre_provider', 'batch_pre_model')}"
+        )
         print(f"  Judge: {self._judge_label()}")
+        print(
+            f"  Post-Coach: {self._review_slot_label('batch_post_provider', 'batch_post_model')}"
+        )
         print(
             f"  Batch review: {pre_attempts} / {judge_attempts} / {post_attempts} "
             "(coach / judge / coach)"
@@ -395,7 +438,7 @@ class BatchExecutor:
 
                 phase.status = "in_progress"
                 self.tracker.render_dashboard()
-                runtime = getattr(self.session, "_runtime", None)
+                runtime = vars(self.session).get("_runtime")
                 if runtime is not None:
                     runtime.apply_pending(self.session)
                     if runtime.reset_requested:
@@ -459,7 +502,7 @@ class BatchExecutor:
                 model_name=self._role_label("player"),
             )
             try:
-                result = await self.session._run_with_continuation(
+                result = await self._run_player_turn(
                     role="player",
                     prompt=prompt,
                     system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,

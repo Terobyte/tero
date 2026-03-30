@@ -204,7 +204,12 @@ class CodexProvider:
             return None
 
         stderr_data = await stderr.read()
-        stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        if isinstance(stderr_data, bytes):
+            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        elif isinstance(stderr_data, str):
+            stderr_text = stderr_data.strip()
+        else:
+            return None
         if not stderr_text:
             return None
 

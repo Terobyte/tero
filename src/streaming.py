@@ -56,6 +56,16 @@ def stream_messages(msg, verbose: bool = False, role: str = "") -> int:
 
     # ToolResultMessage
     if msg_type == "ToolResultMessage" or hasattr(msg, "tool_use_id"):
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                if type(block).__name__ == "ToolUseBlock" or (
+                    hasattr(block, "name") and hasattr(block, "input")
+                ):
+                    tools_used += 1
+                    tool_name = getattr(block, "name", "unknown")
+                    tool_input = getattr(block, "input", {})
+                    _print_tool(tool_name, tool_input)
         for result, is_error in _extract_tool_results(msg):
             if verbose or is_error:
                 _print_result(result, is_error=is_error)

@@ -1,4 +1,4 @@
-"""CCG provider — wraps Claude Agent SDK with Blackbox.ai env vars."""
+"""Black provider — wraps Claude Agent SDK with Blackbox.ai env vars."""
 
 import json
 
@@ -51,7 +51,7 @@ async def run_agent(
     context_limit: int = 110_000,
     compact_threshold: float = 0.85,
 ):
-    """Run a Claude Code agent via SDK with ccg env vars.
+    """Run a Claude Code agent via SDK with Blackbox env vars.
 
     Yields SDK messages as they stream in.
     model: if non-empty, overrides ANTHROPIC_MODEL for this call.
@@ -65,12 +65,14 @@ async def run_agent(
 
     if not ccg_env.auth_token:
         raise ValueError(
-            "No auth token. Set ANTHROPIC_AUTH_TOKEN or BLACKBOX_ACCOUNT_A_TOKEN"
+            "No auth token. Set BLACKBOX_API_KEY or ANTHROPIC_AUTH_TOKEN"
         )
 
     env = ccg_env.as_dict()
     if model:
         env["ANTHROPIC_MODEL"] = model
+        env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
+        env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
 
     # Tell Claude Code to compact at the right point for the actual model.
     # Claude Code assumes ~200k for unrecognized models (GLM-5, Kimi, etc.)
@@ -95,13 +97,13 @@ async def run_agent(
 
 
 class CcgProvider:
-    """Blackbox CCG provider (GLM-5, Kimi, etc.).
+    """Blackbox provider (GLM-5, Kimi, etc.).
 
     Wraps the Claude Agent SDK with Blackbox environment variables.
     """
 
     def __init__(self, ccg_env: CcgEnv):
-        """Initialize with CCG environment configuration.
+        """Initialize with Blackbox environment configuration.
 
         Args:
             ccg_env: Environment with auth token, base URL, model, etc.
@@ -118,7 +120,7 @@ class CcgProvider:
         context_limit: int = 110_000,
         compact_threshold: float = 0.85,
     ):
-        """Run a turn using the CCG API.
+        """Run a turn using the Blackbox API.
 
         Args:
             prompt: User prompt
@@ -154,11 +156,14 @@ class CcgProvider:
             return False, "claude-agent-sdk not installed. Run: pip install claude-agent-sdk"
 
         if not self.env.auth_token:
-            # Account-aware error message
             account = self.env.account_label or "blackbox"
-            if account == "blackbox-b" or account.endswith("-b"):
-                return False, f"No auth token for {account}. Set BLACKBOX_ACCOUNT_B_TOKEN"
-            return False, f"No auth token for {account}. Set ANTHROPIC_AUTH_TOKEN or BLACKBOX_ACCOUNT_A_TOKEN"
+            if "api.z.ai" in (self.env.base_url or ""):
+                return False, (
+                    f"No auth token for {account}. Set ZAI_API_KEY or ANTHROPIC_AUTH_TOKEN"
+                )
+            return False, (
+                f"No auth token for {account}. Set BLACKBOX_API_KEY or ANTHROPIC_AUTH_TOKEN"
+            )
 
         return True, ""
 
@@ -166,27 +171,32 @@ class CcgProvider:
     def display_name(self) -> str:
         """Human-readable name for UI.
 
-        Shows model and account for multi-account differentiation.
-        Examples: "CCG (GLM-5/A)", "CCG (KIMI/B)"
+        Shows model and account label for quick differentiation.
         """
         model = self.env.model or "default"
         account = self.env.account_label or "blackbox"
+        base_url = self.env.base_url or ""
+        brand = "ZAI" if "api.z.ai" in base_url else "BLACK"
+
         # Shorten model name
-        if "glm" in model.lower():
+        lower_model = model.lower()
+        if "glm-5.1" in lower_model:
+            model_name = "GLM-5.1"
+        elif "glm-5-turbo" in lower_model:
+            model_name = "GLM-5-T"
+        elif "glm-4.7" in lower_model:
+            model_name = "GLM-4.7"
+        elif "glm" in lower_model:
             model_name = "GLM-5"
-        elif "kimi" in model.lower():
+        elif "kimi" in lower_model:
             model_name = "KIMI"
-        elif "sonnet" in model.lower():
+        elif "sonnet" in lower_model:
             model_name = "SONNET"
         else:
-            model_name = model.split('/')[-1][:8]
-        # Shorten account label: blackbox-a -> A, blackbox-b -> B
-        if account.startswith("blackbox-"):
-            account_short = account.split("-")[-1].upper()
-        elif account.endswith("-a"):
-            account_short = "A"
-        elif account.endswith("-b"):
-            account_short = "B"
-        else:
-            account_short = account[:3].upper()
-        return f"CCG ({model_name}/{account_short})"
+            model_name = model.split("/")[-1][:8]
+
+        if brand == "ZAI" and account in {"zai", "turbo"}:
+            return f"{brand} ({model_name})"
+        if brand == "BLACK" and account == "blackbox":
+            return f"{brand} ({model_name})"
+        return f"{brand} ({model_name}/{account[:3].upper()})"

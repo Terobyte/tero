@@ -5,22 +5,26 @@ defaults:
   run_tests: true
   run_bug_detection: true
   ask_feedback: true
-  player_provider: ccg
-  coach_provider: ccg
+  player_provider: zai
+  player_model: glm-5.1
+  coach_provider: zai
+  coach_model: glm-5.1
   verbose: false
 
 providers:
-  ccg:
+  zai:
+    type: claude_glm
+    base_url: https://api.z.ai/api/anthropic
+    model: glm-5.1
+    small_model: glm-4.5-air
+    claude_home: "~/.claude-zai"
+    account_label: "zai"
+
+  black:
     type: claude_glm
     command: ccg
-    claude_home: "~/.claude-glm-a"
-    account_label: "blackbox-a"
-
-  ccg2:
-    type: claude_glm
-    command: ccg2
-    claude_home: "~/.claude-glm-b"
-    account_label: "blackbox-b"
+    claude_home: "~/.claude-black"
+    account_label: "blackbox"
 
   claude:
     type: claude_native
@@ -38,22 +42,33 @@ providers:
     auto_start: true
     proxy_repo_path: ~/Desktop/Projects/Active/tero/ai-cli-proxy-api
 
+  opencode:
+    type: opencode_native
+    command: opencode
+    default_model: opencode/mimo-v2-pro-free
+    default_timeout: 900
+
 presets:
   default:
-    player_provider: ccg
-    coach_provider: ccg
+    player_provider: zai
+    player_model: glm-5.1
+    coach_provider: zai
+    coach_model: glm-5.1
     max_rounds: 3
     run_tests: true
 
   fast:
-    player_provider: ccg
-    coach_provider: ccg
+    player_provider: zai
+    player_model: glm-5.1
+    coach_provider: zai
+    coach_model: glm-5.1
     max_rounds: 1
     run_tests: false
     run_bug_detection: false
 
   pro:
-    player_provider: ccg
+    player_provider: zai
+    player_model: glm-5.1
     coach_provider: claude
     coach_model: sonnet
     max_rounds: 3
@@ -64,3 +79,17 @@ presets:
     player_model: sonnet
     coach_model: opus
     max_rounds: 5
+
+  mimo_free:
+    player_provider: opencode
+    player_model: opencode/mimo-v2-pro-free
+    coach_provider: zai
+    coach_model: glm-5.1
+    max_rounds: 3
+
+  kimi_free:
+    player_provider: opencode
+    player_model: openrouter/moonshotai/kimi-k2:free
+    coach_provider: zai
+    coach_model: glm-5.1
+    max_rounds: 3

@@ -311,7 +311,7 @@ class TestRoundResult:
             workspace_b_name="g1",
         )
 
-        asyncio.run(runner.run_round("do the task", "ccg", "ccg2"))
+        asyncio.run(runner.run_round("do the task", "black", "claude"))
 
         # Check that create was called with "g" and "g1", not "agent_a"/"agent_b"
         calls = [c.args[0] for c in mock_worktree.create.call_args_list]

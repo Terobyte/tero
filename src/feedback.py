@@ -7,12 +7,14 @@ from dataclasses import dataclass
 @dataclass
 class Approved:
     """Coach approved the implementation."""
+
     pass
 
 
 @dataclass
 class Feedback:
     """Coach found issues to fix."""
+
     text: str
 
 
@@ -22,18 +24,21 @@ class NoVerdict:
 
     This is NOT feedback for Player. This is a signal to retry coach.
     """
+
     pass
 
 
 @dataclass
 class ReviewPassed:
     """Code review passed with no critical issues."""
+
     pass
 
 
 @dataclass
 class ReviewIssues:
     """Code review found issues."""
+
     text: str
 
 
@@ -45,8 +50,12 @@ _NUMBERED_ISSUE_RE = re.compile(r"^\s*\d+\.\s+(.+?)\s*$")
 _DECLINED_MARKER_RE = re.compile(r"IMPLEMENTATION_DECLINED\b[:\-\s]*", re.IGNORECASE)
 _APPROVED_MARKER_RE = re.compile(r"IMPLEMENTATION_APPROVED\b", re.IGNORECASE)
 _NO_OUTPUT_FEEDBACK_START = "1. Coach produced no output"
-_INVALID_VERDICT_FEEDBACK_START = "1. Reviewer did not return a valid structured verdict."
-_DECLINED_WITHOUT_ISSUES_FEEDBACK_START = "1. Reviewer returned IMPLEMENTATION_DECLINED without concrete numbered issues."
+_INVALID_VERDICT_FEEDBACK_START = (
+    "1. Reviewer did not return a valid structured verdict."
+)
+_DECLINED_WITHOUT_ISSUES_FEEDBACK_START = (
+    "1. Reviewer returned IMPLEMENTATION_DECLINED without concrete numbered issues."
+)
 
 
 def parse_coach_output(messages: list) -> Verdict:
@@ -187,7 +196,23 @@ def is_invalid_feedback(feedback: Feedback) -> bool:
     )
 
 
-_CODE_REVIEW_PASSED_RE = re.compile(r"CODE_REVIEW_PASSED\b", re.IGNORECASE)
+_CODE_REVIEW_PASSED_RE = re.compile(
+    r"CODE_REVIEW_PASSED\b"
+    r"|no\s+critical\s+issues?"
+    r"|no\s+issues?\s+found"
+    r"|looks?\s+good"
+    r"|\bLGTM\b"
+    r"|no\s+bugs?\s+found"
+    r"|code\s+is\s+correct"
+    r"|implementation\s+is\s+correct"
+    r"|all\s+components\s+properly\s+implemented(?:\s+and\s+tested)?"
+    r"|all\s+components\s+(?:are\s+)?properly\s+implemented(?:\s+and\s+tested)?"
+    r"|all\s+components?\s+(?:are\s+)?implemented\s+correctly"
+    r"|implementation\s+looks?\s+correct"
+    r"|verdict:\s*all\s+components\s+properly\s+implemented(?:\s+and\s+tested)?"
+    r"|everything\s+looks?\s+(good|correct|fine)",
+    re.IGNORECASE,
+)
 
 
 def parse_review_output(messages: list) -> ReviewVerdict:
@@ -213,4 +238,6 @@ def parse_review_output(messages: list) -> ReviewVerdict:
         return ReviewIssues("\n".join(issues))
 
     # No issues found but no CODE_REVIEW_PASSED either
-    return ReviewIssues("1. Code reviewer did not return a clear verdict.\n" + text[:500])
+    return ReviewIssues(
+        "1. Code reviewer did not return a clear verdict.\n" + text[:500]
+    )

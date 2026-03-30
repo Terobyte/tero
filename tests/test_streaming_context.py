@@ -83,3 +83,25 @@ def test_stream_messages_prints_codex_tool_error_without_verbose():
     assert tools_used == 0
     assert "[result]" in out
     assert "permission denied" in out
+
+
+def test_stream_messages_counts_combined_tool_messages():
+    """Combined OpenCode tool/result messages should still count tool usage."""
+    msg = AdaptedMessage(
+        role="tool",
+        content=[
+            ToolUseBlock(name="bash", input={"command": "pwd"}),
+            ToolResultBlock(
+                tool_use_id="cmd-789",
+                content="/tmp/project",
+            ),
+        ],
+        type="tool_result",
+    )
+
+    tools_used, out = capture(s.stream_messages, msg, verbose=True)
+
+    assert tools_used == 1
+    assert "[tool]" in out
+    assert "bash" in out
+    assert "pwd" in out

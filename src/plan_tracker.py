@@ -47,6 +47,99 @@ class Phase:
     attempts: int = 0
 
 
+@dataclass(frozen=True)
+class PlanLineMatch:
+    """A top-level checklist/list item found in the plan source."""
+
+    line_index: int
+    text: str
+    done: bool
+    indent: str
+
+
+def _parse_fence_marker(line: str) -> tuple[str, int] | None:
+    """Return fence marker character/length for Markdown fences."""
+    stripped = line.lstrip(" \t")
+    if stripped.startswith("```"):
+        return "`", len(stripped) - len(stripped.lstrip("`"))
+    if stripped.startswith("~~~"):
+        return "~", len(stripped) - len(stripped.lstrip("~"))
+    return None
+
+
+def _iter_plan_line_matches(lines: list[str]) -> list[PlanLineMatch]:
+    """Return top-level plan items, skipping fenced code blocks and nested lists."""
+    matches: list[PlanLineMatch] = []
+    fence_char: str | None = None
+    fence_len = 0
+
+    for line_index, line in enumerate(lines):
+        fence = _parse_fence_marker(line)
+        if fence:
+            char, count = fence
+            if fence_char is None:
+                fence_char = char
+                fence_len = count
+            elif char == fence_char and count >= fence_len:
+                fence_char = None
+                fence_len = 0
+            continue
+
+        if fence_char is not None:
+            continue
+
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        left_trimmed = line.lstrip(" \t")
+        indent = line[: len(line) - len(left_trimmed)]
+
+        # Only treat top-level list items as executable plan steps.
+        if indent:
+            continue
+
+        if stripped.startswith("#"):
+            continue
+
+        checkbox = re.match(r"^-\s+\[([ xX])\]\s+(.+)$", stripped)
+        if checkbox:
+            matches.append(
+                PlanLineMatch(
+                    line_index=line_index,
+                    text=checkbox.group(2),
+                    done=checkbox.group(1).lower() == "x",
+                    indent=indent,
+                )
+            )
+            continue
+
+        numbered = re.match(r"^(\d+)\.\s+(.+)$", stripped)
+        if numbered:
+            matches.append(
+                PlanLineMatch(
+                    line_index=line_index,
+                    text=numbered.group(2),
+                    done=False,
+                    indent=indent,
+                )
+            )
+            continue
+
+        dash = re.match(r"^-\s+(.+)$", stripped)
+        if dash and not stripped.startswith("- ["):
+            matches.append(
+                PlanLineMatch(
+                    line_index=line_index,
+                    text=dash.group(1),
+                    done=False,
+                    indent=indent,
+                )
+            )
+
+    return matches
+
+
 def parse_requirements(content: str) -> list[PlanItem]:
     """Parse numbered items, checkbox items, or headers from requirements.
 
@@ -56,39 +149,11 @@ def parse_requirements(content: str) -> list[PlanItem]:
     - Dash lists: - Item text
     - Headers: ## Section (treated as separators, not items)
     """
-    items = []
     lines = content.split("\n")
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Skip empty lines
-        if not stripped:
-            continue
-
-        # Skip headers (## or #)
-        if stripped.startswith("#"):
-            continue
-
-        # Numbered list: 1. Item text
-        numbered = re.match(r"^(\d+)\.\s+(.+)$", stripped)
-        if numbered:
-            items.append(PlanItem(text=numbered.group(2), done=False))
-            continue
-
-        # Checkbox: - [ ] or - [x]
-        checkbox = re.match(r"^-\s+\[([ xX])\]\s+(.+)$", stripped)
-        if checkbox:
-            is_done = checkbox.group(1).lower() == "x"
-            items.append(PlanItem(text=checkbox.group(2), done=is_done))
-            continue
-
-        # Dash list: - Item text (not a checkbox)
-        dash = re.match(r"^-\s+(.+)$", stripped)
-        if dash and not stripped.startswith("- ["):
-            items.append(PlanItem(text=dash.group(1), done=False))
-
-    return items
+    return [
+        PlanItem(text=match.text, done=match.done)
+        for match in _iter_plan_line_matches(lines)
+    ]
 
 
 def format_checklist(items: list[PlanItem], title: str = "Plan Progress") -> str:
@@ -173,7 +238,9 @@ def _make_phase(ptype: str, items: list["PlanItem"]) -> "Phase":
     snippet = items[0].text if items else ""
     if len(snippet) > 45:
         snippet = snippet[:45].rstrip() + "…"
-    name = f"{ptype.capitalize()} · {snippet}" if snippet else ptype.capitalize()
+    count = len(items)
+    prefix = f"{ptype.capitalize()} ({count})"
+    name = f"{prefix} · {snippet}" if snippet else prefix
     return Phase(name=name, type=ptype, steps=items)
 
 
@@ -269,42 +336,13 @@ def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
 
     content = path.read_text()
     lines = content.split("\n")
-    item_index = 0
-    new_lines = []
+    new_lines = list(lines)
+    matches = _iter_plan_line_matches(lines)
 
-    for line in lines:
-        stripped = line.strip()
-        indent_len = len(line) - len(line.lstrip())
-        indent = " " * indent_len
-
+    for item_index, match in enumerate(matches):
         if item_index >= len(items):
-            new_lines.append(line)
-            continue
-
-        # Checkbox: - [ ] or - [x]
-        checkbox = re.match(r"^-\s+\[([ xX])\]\s+(.+)$", stripped)
-        if checkbox:
-            mark = "x" if items[item_index].done else " "
-            new_lines.append(indent + f"- [{mark}] {items[item_index].text}")
-            item_index += 1
-            continue
-
-        # Numbered list: 1. Item text → convert to checkbox
-        numbered = re.match(r"^(\d+)\.\s+(.+)$", stripped)
-        if numbered:
-            mark = "x" if items[item_index].done else " "
-            new_lines.append(indent + f"- [{mark}] {items[item_index].text}")
-            item_index += 1
-            continue
-
-        # Dash list: - Item text → convert to checkbox
-        dash = re.match(r"^-\s+(.+)$", stripped)
-        if dash and not stripped.startswith("- ["):
-            mark = "x" if items[item_index].done else " "
-            new_lines.append(indent + f"- [{mark}] {items[item_index].text}")
-            item_index += 1
-            continue
-
-        new_lines.append(line)
+            break
+        mark = "x" if items[item_index].done else " "
+        new_lines[match.line_index] = f"{match.indent}- [{mark}] {items[item_index].text}"
 
     path.write_text("\n".join(new_lines))

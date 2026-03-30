@@ -8,21 +8,59 @@ from pathlib import Path
 import yaml
 
 
+FIXED_PROVIDER_MODELS: dict[str, str] = {
+    "black": "blackboxai/z-ai/glm-5",
+    "turbo": "glm-5-turbo",
+    "zai": "glm-5.1",
+}
+
+
+def _read_export_from_zshrc(env_name: str) -> str:
+    """Best-effort fallback for keys exported only in ~/.zshrc."""
+    zshrc_path = Path.home() / ".zshrc"
+    if not zshrc_path.exists():
+        return ""
+
+    prefix = f"export {env_name}="
+    try:
+        for raw_line in reversed(zshrc_path.read_text().splitlines()):
+            line = raw_line.strip()
+            if not line.startswith(prefix):
+                continue
+
+            value = line[len(prefix) :].strip()
+            if not value:
+                return ""
+
+            if "#" in value:
+                value = value.split("#", 1)[0].rstrip()
+
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            return value
+    except OSError:
+        return ""
+
+    return ""
+
+
 @dataclass
 class CcgEnv:
-    """Environment variables for ccg (Blackbox.ai via Claude CLI)."""
+    """Environment variables for the Blackbox Claude bridge."""
+
     base_url: str
     auth_token: str
     model: str
     small_model: str
     claude_home: str
-    account_label: str = "blackbox-a"  # For display/logging
+    account_label: str = "blackbox"
 
     @classmethod
-    def from_env(cls, claude_home: str = "~/.claude-glm-a") -> "CcgEnv":
-        """Create CcgEnv from environment for the default Account A."""
+    def from_env(cls, claude_home: str = "~/.claude-black") -> "CcgEnv":
+        """Create CcgEnv from environment for the default Blackbox setup."""
         token = (
-            os.environ.get("ANTHROPIC_AUTH_TOKEN")
+            os.environ.get("BLACKBOX_API_KEY")
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
             or os.environ.get("BLACKBOX_ACCOUNT_A_TOKEN")
             or ""
         )
@@ -35,20 +73,25 @@ class CcgEnv:
         )
 
     @classmethod
-    def from_env_b(cls, claude_home: str = "~/.claude-glm-b") -> "CcgEnv":
-        """Create CcgEnv for the second Blackbox account."""
+    def from_env_b(cls, claude_home: str = "~/.claude-black") -> "CcgEnv":
+        """Backward-compatible alias for a legacy second Blackbox account."""
         return cls(
             base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
-            auth_token=os.environ.get("BLACKBOX_ACCOUNT_B_TOKEN", ""),
+            auth_token=(
+                os.environ.get("BLACKBOX_API_KEY")
+                or os.environ.get("BLACKBOX_ACCOUNT_B_TOKEN", "")
+            ),
             model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
             small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "minimax-2.5"),
             claude_home=os.path.expanduser(claude_home),
-            account_label="blackbox-b",
+            account_label="blackbox",
         )
 
     @classmethod
-    def from_claude_home(cls, claude_home: str, account_label: str = "blackbox-a") -> "CcgEnv":
-        """Load CCG settings from a Claude home directory, falling back to env."""
+    def from_claude_home(
+        cls, claude_home: str, account_label: str = "blackbox"
+    ) -> "CcgEnv":
+        """Load Blackbox settings from a Claude home directory, falling back to env."""
         expanded_home = os.path.expanduser(claude_home)
         settings_path = Path(expanded_home) / "settings.json"
 
@@ -63,8 +106,10 @@ class CcgEnv:
                 env_values = {}
 
         token = (
-            env_values.get("ANTHROPIC_AUTH_TOKEN")
+            env_values.get("BLACKBOX_API_KEY")
+            or env_values.get("ANTHROPIC_AUTH_TOKEN")
             or env_values.get("BLACKBOX_ACCOUNT_A_TOKEN")
+            or os.environ.get("BLACKBOX_API_KEY")
             or os.environ.get("ANTHROPIC_AUTH_TOKEN")
             or os.environ.get("BLACKBOX_ACCOUNT_A_TOKEN")
             or ""
@@ -100,10 +145,10 @@ class CcgEnv:
         account_name: str,
         provider_config: dict | None = None,
     ) -> "CcgEnv":
-        """Create CcgEnv for a specific account (ccg or ccg2).
+        """Create CcgEnv for a specific provider name.
 
         Args:
-            account_name: Provider name ("ccg" or "ccg2")
+            account_name: Provider name ("black" or legacy aliases)
             provider_config: Optional config from .g3/config.yaml providers section
                 Supports: auth_token, base_url, model, small_model, claude_home, account_label
 
@@ -112,21 +157,55 @@ class CcgEnv:
         """
         provider_config = provider_config or {}
 
-        # Map provider name to token env var and defaults
-        if account_name == "ccg2":
-            token_env_names = ("BLACKBOX_ACCOUNT_B_TOKEN",)
-            default_home = "~/.claude-glm-b"
-            default_label = "blackbox-b"
-        else:  # ccg (default)
-            token_env_names = ("ANTHROPIC_AUTH_TOKEN", "BLACKBOX_ACCOUNT_A_TOKEN")
-            default_home = "~/.claude-glm-a"
-            default_label = "blackbox-a"
+        normalized_name = _normalize_provider_name(account_name)
+        if normalized_name == "black":
+            token_env_names = (
+                "BLACKBOX_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "BLACKBOX_ACCOUNT_A_TOKEN",
+                "BLACKBOX_ACCOUNT_B_TOKEN",
+            )
+            default_home = "~/.claude-black"
+            default_label = "blackbox"
+            default_base_url = "https://api.blackbox.ai"
+            default_model = FIXED_PROVIDER_MODELS["black"]
+            default_small_model = "minimax-2.5"
+        elif normalized_name == "turbo":
+            token_env_names = ("ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+            default_home = "~/.claude-turbo"
+            default_label = "turbo"
+            default_base_url = "https://api.z.ai/api/anthropic"
+            default_model = FIXED_PROVIDER_MODELS["turbo"]
+            default_small_model = "glm-4.5-air"
+        elif normalized_name == "zai":
+            token_env_names = ("ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+            default_home = "~/.claude-zai"
+            default_label = "zai"
+            default_base_url = "https://api.z.ai/api/anthropic"
+            default_model = FIXED_PROVIDER_MODELS["zai"]
+            default_small_model = "glm-4.5-air"
+        else:
+            token_env_names = ("ANTHROPIC_AUTH_TOKEN",)
+            default_home = "~/.claude"
+            default_label = normalized_name
+            default_base_url = "https://api.blackbox.ai"
+            default_model = FIXED_PROVIDER_MODELS["black"]
+            default_small_model = "minimax-2.5"
 
-        # Token priority: config > account-specific env var only
-        # Do NOT fall back to other account tokens - each account must have its own token
         token = (
             provider_config.get("auth_token")
-            or next((os.environ.get(env_name, "") for env_name in token_env_names if os.environ.get(env_name)), "")
+            or next(
+                (
+                    os.environ.get(env_name, "")
+                    for env_name in token_env_names
+                    if os.environ.get(env_name)
+                ),
+                "",
+            )
+            or next(
+                (value for env_name in token_env_names if (value := _read_export_from_zshrc(env_name))),
+                "",
+            )
             or ""
         )
 
@@ -138,17 +217,17 @@ class CcgEnv:
         base_url = (
             provider_config.get("base_url")
             or os.environ.get("ANTHROPIC_BASE_URL")
-            or "https://api.blackbox.ai"
+            or default_base_url
         )
         model = (
             provider_config.get("model")
             or os.environ.get("ANTHROPIC_MODEL")
-            or "blackboxai/z-ai/glm-5"
+            or default_model
         )
         small_model = (
             provider_config.get("small_model")
             or os.environ.get("ANTHROPIC_SMALL_FAST_MODEL")
-            or "minimax-2.5"
+            or default_small_model
         )
 
         return cls(
@@ -166,6 +245,11 @@ class CcgEnv:
             "ANTHROPIC_AUTH_TOKEN": self.auth_token,
             "ANTHROPIC_MODEL": self.model,
             "ANTHROPIC_SMALL_FAST_MODEL": self.small_model,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": self.model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": self.model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": self.small_model,
+            "BLACKBOX_API_KEY": self.auth_token,
+            "ZAI_API_KEY": self.auth_token,
             "CLAUDE_HOME": self.claude_home,
         }
 
@@ -173,6 +257,7 @@ class CcgEnv:
 @dataclass
 class Config:
     """Resolved configuration."""
+
     max_turns: int = 10
     autonomous: bool = False
     verbose: bool = False
@@ -180,14 +265,14 @@ class Config:
     working_dir: str = "."
     player_timeout_s: int = 600
     coach_timeout_s: int = 300
-    claude_home: str = "~/.claude-glm"
+    claude_home: str = "~/.claude-black"
     coach_model: str = ""  # empty = use default model from env
 
     # Provider selection (NEW)
-    player_provider: str = "ccg"  # "ccg" | "ccg2" | "claude" | "codex"
-    coach_provider: str = "ccg"   # "ccg" | "ccg2" | "claude" | "codex"
-    player_model: str = ""        # model for player (empty = provider default)
-    batch_mode: bool = False      # --batch / G3_BATCH_MODE
+    player_provider: str = "black"  # "black" | "turbo" | "zai" | "claude" | "codex" | "opencode"
+    coach_provider: str = "black"  # "black" | "turbo" | "zai" | "claude" | "codex" | "opencode"
+    player_model: str = ""  # model for player (empty = provider default)
+    batch_mode: bool = False  # --batch / G3_BATCH_MODE
     batch_pre_judge_attempts: int = 3
     batch_judge_attempts: int = 1
     batch_post_judge_attempts: int = 1
@@ -199,8 +284,8 @@ class Config:
     run_tests: bool = True
     run_bug_detection: bool = True
     judge: str = "claude"
-    agent_a: str = "ccg"
-    agent_b: str = "ccg2"
+    agent_a: str = "black"
+    agent_b: str = "black"
     ask_feedback: bool = False
 
     # TDD Mode (Phase 2)
@@ -224,13 +309,13 @@ class Config:
     max_continuation_attempts: int = 2
 
     # Batch role providers + models (configurable per slot)
-    batch_pre_provider: str = "ccg"
-    batch_pre_model: str = ""                # GLM-5 default
+    batch_pre_provider: str = "black"
+    batch_pre_model: str = ""  # fixed provider default
     batch_judge_provider: str = "codex"  # native Codex CLI judge by default
-    batch_judge_model: str = ""          # default model from ~/.codex/config.toml
-    batch_post_provider: str = "ccg"
-    batch_post_model: str = ""               # GLM-5 default
-    test_writer_provider: str = "ccg"
+    batch_judge_model: str = ""  # default model from ~/.codex/config.toml
+    batch_post_provider: str = "black"
+    batch_post_model: str = ""  # fixed provider default
+    test_writer_provider: str = "black"
     test_writer_model: str = ""
     # Code review loop
     max_review_iterations: int = 3
@@ -239,6 +324,7 @@ class Config:
 @dataclass
 class ProviderConfig:
     """Compatibility shim for orchestrator/provider configuration."""
+
     type: str = ""
     config: dict | None = None
 
@@ -249,22 +335,29 @@ ResolvedConfig = Config
 # Known context window sizes (tokens) by model name pattern.
 # Matched in order — first substring hit wins.
 _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
-    ("claude-opus-4",    200_000),
-    ("claude-sonnet-4",  200_000),
-    ("claude-haiku-4",   200_000),
-    ("claude-3-5",       200_000),
-    ("claude-3",         200_000),
-    ("glm-5",             98_000),
-    ("kimi-k2",          131_072),
-    ("kimi",             128_000),
-    ("gpt-5.4",          128_000),
-    ("gpt-5",            128_000),
-    ("o3",               128_000),
-    ("o4-mini",          128_000),
-    ("gpt-4o",           128_000),
-    ("gpt-4",            128_000),
-    ("codex",            128_000),
-    ("minimax",           40_960),
+    ("claude-opus-4", 200_000),
+    ("claude-sonnet-4", 200_000),
+    ("claude-haiku-4", 200_000),
+    ("claude-3-5", 200_000),
+    ("claude-3", 200_000),
+    ("glm-5.1", 204_800),
+    ("glm-4.7", 204_800),
+    ("glm-5", 98_000),
+    ("kimi-k2", 131_072),
+    ("kimi", 128_000),
+    ("gpt-5.4", 128_000),
+    ("gpt-5", 128_000),
+    ("o3", 128_000),
+    ("o4-mini", 128_000),
+    ("gpt-4o", 128_000),
+    ("gpt-4", 128_000),
+    ("codex", 128_000),
+    ("mimo", 131_072),
+    ("minimax-m2", 1_000_000),
+    ("nemotron", 131_072),
+    ("minimax/minimax-m2.5:free", 262_144),
+    ("xiaomi/mimo-v2-pro:free", 1_048_576),
+    ("minimax", 40_960),
 ]
 
 
@@ -275,6 +368,32 @@ def get_context_window(model: str) -> int:
         if pattern in lower:
             return size
     return 0
+
+
+def _normalize_provider_name(value: str) -> str:
+    """Map legacy provider aliases onto the canonical names."""
+    aliases = {
+        "ccg": "black",
+        "ccg1": "black",
+        "ccg2": "black",
+        "black1": "black",
+        "black2": "black",
+        "z.ai": "zai",
+        "glm51": "zai",
+        "glm-51": "zai",
+        "glm-5.1": "zai",
+        "glm-5.1-zai": "zai",
+        "glm47": "zai",
+        "glm-47": "zai",
+        "glm-4.7": "zai",
+        "glm47lite": "zai",
+        "glm-4.7-lite": "zai",
+        "lite": "zai",
+        "glm5turbo": "turbo",
+        "glm-5turbo": "turbo",
+        "glm-5-turbo": "turbo",
+    }
+    return aliases.get(value, value)
 
 
 def short_model_name(model: str) -> str:
@@ -294,6 +413,16 @@ def short_model_name(model: str) -> str:
         return "HAIKU"
     if "gpt-5.4" in m:
         return "GPT-5.4"
+    if "glm-5.1" in m:
+        return "GLM-5.1"
+    if "glm-4.7" in m:
+        return "GLM-4.7"
+    if "glm-5-turbo" in m:
+        return "GLM-5-T"
+    if "mimo" in m:
+        return "MIMO"
+    if "minimax" in m:
+        return "MINIMAX"
     if "glm" in m:
         return "GLM-5"
     if "kimi" in m:
@@ -308,16 +437,21 @@ def _load_yaml(path: Path) -> dict:
     return {}
 
 
-def _config_search_paths(working_dir: str | Path = ".") -> list[Path]:
-    """Return config.yaml candidates from bundled -> global -> working dir."""
+def _config_search_paths(
+    working_dir: str | Path = ".",
+    *,
+    include_global: bool = True,
+) -> list[Path]:
+    """Return config.yaml candidates from bundled -> optional global -> working dir."""
     working_path = Path(working_dir).expanduser().resolve()
     bundled_root = Path(__file__).resolve().parent.parent
 
     candidates = [
         bundled_root / ".g3" / "config.yaml",
-        Path("~/.g3/config.yaml").expanduser(),
         working_path / ".g3" / "config.yaml",
     ]
+    if include_global:
+        candidates.insert(1, Path("~/.g3/config.yaml").expanduser())
 
     deduped: list[Path] = []
     seen: set[Path] = set()
@@ -330,18 +464,26 @@ def _config_search_paths(working_dir: str | Path = ".") -> list[Path]:
     return deduped
 
 
-def load_merged_settings(working_dir: str | Path = ".") -> dict:
-    """Merge config files from global -> bundled -> working dir."""
+def load_merged_settings(
+    working_dir: str | Path = ".",
+    *,
+    include_global: bool = False,
+) -> dict:
+    """Merge config defaults from bundled -> optional global -> working dir."""
     merged: dict = {}
-    for path in _config_search_paths(working_dir):
+    for path in _config_search_paths(working_dir, include_global=include_global):
         merged.update(_load_yaml(path))
     return merged
 
 
-def load_provider_configs(working_dir: str | Path = ".") -> dict:
-    """Merge provider configs from global -> bundled -> working dir."""
+def load_provider_configs(
+    working_dir: str | Path = ".",
+    *,
+    include_global: bool = True,
+) -> dict:
+    """Merge provider configs from bundled -> optional global -> working dir."""
     providers: dict = {}
-    for path in _config_search_paths(working_dir):
+    for path in _config_search_paths(working_dir, include_global=include_global):
         data = _load_yaml(path)
         raw_providers = data.get("providers", {})
         if isinstance(raw_providers, dict):
@@ -358,8 +500,8 @@ def resolve_config(cli_args: dict) -> Config:
     working_dir = cli_args.get("working_dir") or "."
     working_dir = str(Path(working_dir).expanduser().resolve())
 
-    # Load merged config: global -> bundled -> working dir
-    project = load_merged_settings(working_dir)
+    # Load bundled + global + project defaults so "save as default" persists across runs.
+    project = load_merged_settings(working_dir, include_global=True)
     defaults.update(project.get("defaults", {}))
 
     # Env overrides
@@ -387,18 +529,18 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_COACH_FALLBACK_PROVIDER": ("coach_fallback_provider", str),
         "G3_COACH_FALLBACK_MODEL": ("coach_fallback_model", str),
         # Batch roles
-        "G3_BATCH_PRE_PROVIDER":        ("batch_pre_provider", str),
-        "G3_BATCH_PRE_MODEL":           ("batch_pre_model", str),
-        "G3_BATCH_JUDGE_PROVIDER":      ("batch_judge_provider", str),
-        "G3_BATCH_JUDGE_MODEL":         ("batch_judge_model", str),
-        "G3_BATCH_POST_PROVIDER":       ("batch_post_provider", str),
-        "G3_BATCH_POST_MODEL":          ("batch_post_model", str),
-        "G3_TEST_WRITER_PROVIDER":      ("test_writer_provider", str),
-        "G3_TEST_WRITER_MODEL":         ("test_writer_model", str),
-        "G3_MAX_REVIEW_ITERATIONS":     ("max_review_iterations", int),
+        "G3_BATCH_PRE_PROVIDER": ("batch_pre_provider", str),
+        "G3_BATCH_PRE_MODEL": ("batch_pre_model", str),
+        "G3_BATCH_JUDGE_PROVIDER": ("batch_judge_provider", str),
+        "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
+        "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
+        "G3_BATCH_POST_MODEL": ("batch_post_model", str),
+        "G3_TEST_WRITER_PROVIDER": ("test_writer_provider", str),
+        "G3_TEST_WRITER_MODEL": ("test_writer_model", str),
+        "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
         # Context management
-        "G3_CONTEXT_LIMIT":             ("context_limit", int),
-        "G3_COMPACT_THRESHOLD":         ("compact_threshold", float),
+        "G3_CONTEXT_LIMIT": ("context_limit", int),
+        "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
         "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
@@ -408,6 +550,21 @@ def resolve_config(cli_args: dict) -> Config:
     # CLI overrides (highest priority, skip None values)
     defaults.update({k: v for k, v in cli_args.items() if v is not None})
     defaults["working_dir"] = working_dir
+
+    for key in (
+        "player_provider",
+        "coach_provider",
+        "agent_a",
+        "agent_b",
+        "batch_pre_provider",
+        "batch_judge_provider",
+        "batch_post_provider",
+        "test_writer_provider",
+        "coach_fallback_provider",
+        "review_provider",
+    ):
+        if key in defaults and defaults[key]:
+            defaults[key] = _normalize_provider_name(str(defaults[key]))
 
     # Provider config
     provider = project.get("provider", {})

@@ -215,7 +215,7 @@ class TestReviewStrategy:
         session.config.batch_pre_model = "sonnet"
         session.config.batch_judge_provider = "codex"
         session.config.batch_judge_model = "gpt-5.4"
-        session.config.batch_post_provider = "ccg2"
+        session.config.batch_post_provider = "black"
         session.config.batch_post_model = "glm-5"
         session.build_provider_display = MagicMock(
             side_effect=lambda provider, model="": f"{provider}:{model or 'default'}"
@@ -225,9 +225,9 @@ class TestReviewStrategy:
 
         strategy = executor._review_strategy(3)
 
-        assert strategy["provider_name_override"] == "ccg2"
+        assert strategy["provider_name_override"] == "black"
         assert strategy["model_override"] == "glm-5"
-        assert strategy["label"] == "ccg2:glm-5"
+        assert strategy["label"] == "black:glm-5"
 
 
 class TestPlayerToolAvailabilityDetection:
@@ -386,7 +386,7 @@ class TestRunPhase:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "ccg"
+        session.config.player_provider = "black"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -401,7 +401,7 @@ class TestRunPhase:
         session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
         session._runtime = None
-        session.player_model = "ccg | model=glm-5 | account=blackbox-a"
+        session.player_model = "black | model=glm-5 | account=blackbox"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
             return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
@@ -465,7 +465,7 @@ class TestRunPhase:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "ccg"
+        session.config.player_provider = "black"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -480,7 +480,7 @@ class TestRunPhase:
         session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
         session._runtime = None
-        session.player_model = "ccg | model=glm-5 | account=blackbox-a"
+        session.player_model = "black | model=glm-5 | account=blackbox"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
             return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
@@ -697,7 +697,7 @@ class TestBatchExecutorRun:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "ccg"
+        session.config.player_provider = "black"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -710,7 +710,7 @@ class TestBatchExecutorRun:
         session.config.batch_post_model = ""
         session.config.batch_judge_provider = "codex"
         session.config.batch_judge_model = "gpt-5.4"
-        session.player_model = "ccg | model=glm-5 | account=blackbox-a"
+        session.player_model = "black | model=glm-5 | account=blackbox"
         session.coach_model = "claude | model=sonnet"
         session._runtime = None
         session.build_provider_display = MagicMock(
@@ -767,9 +767,11 @@ class TestBatchExecutorRun:
         await executor.run()
 
         out = capsys.readouterr().out
-        assert "Player: ccg | model=glm-5 | account=blackbox-a" in out
+        assert "Player: black | model=glm-5 | account=blackbox" in out
         assert "Coach: claude | model=sonnet" in out
+        assert "Pre-Coach: claude | model=sonnet" in out
         assert "Judge: codex | model=gpt-5.4" in out
+        assert "Post-Coach: claude | model=sonnet" in out
         assert "Batch review: 3 / 1 / 1 (coach / judge / coach)" in out
 
     @pytest.mark.asyncio
@@ -864,6 +866,55 @@ class TestBatchExecutorRun:
         await executor.run()
 
         assert "- [x] create a.py" in plan_path.read_text()
+
+
+class TestBatchPlayerRunnerSelection:
+    @pytest.mark.asyncio
+    async def test_falls_back_to_run_turn_when_continuation_not_available(self):
+        from src.batch_executor import BatchExecutor
+        from src.feedback import Approved
+
+        phase = Phase(name="Create", type="create", steps=[PlanItem(text="create a.py")])
+        player_result = MagicMock()
+        player_result.text = (
+            "PHASE_COMPLETE: Create\n"
+            "What changed:\n"
+            "- Added create a.py\n"
+            "Evidence:\n"
+            "- create a.py exists\n"
+            "Verification:\n"
+            "- pytest\n"
+        )
+        player_result.messages = []
+
+        session = MagicMock()
+        session.config.max_turns = 3
+        session.config.player_timeout_s = 60
+        session.config.player_model = ""
+        session.config.player_provider = "black"
+        session.config.coach_provider = "claude"
+        session.config.batch_pre_judge_attempts = 3
+        session.config.batch_judge_attempts = 1
+        session.config.batch_post_judge_attempts = 1
+        session.config.batch_judge_provider = "codex"
+        session.config.batch_judge_model = "gpt-5.4"
+        session.config.player_turns_per_session = 30
+        session._runtime = None
+        session._run_turn = AsyncMock(return_value=player_result)
+        session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+        session.build_provider_display = MagicMock(return_value="codex | model=gpt-5.4")
+
+        tracker = MagicMock()
+        tracker.items = []
+        tracker.render_dashboard = MagicMock()
+
+        executor = BatchExecutor(session, tracker)
+        result = await executor._run_phase(phase)
+
+        assert result is True
+        session._run_turn.assert_awaited_once()
 
 
 class TestRunCoachTurnForPhase:
@@ -1030,7 +1081,7 @@ class TestRunCoachTurnForPhase:
         session.config.coach_retry_max = 1
         session.config.coach_fallback_provider = "claude"
         session.config.coach_fallback_model = ""
-        session.config.coach_provider = "ccg"
+        session.config.coach_provider = "black"
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
 
@@ -1069,6 +1120,45 @@ class TestRunCoachTurnForPhase:
         assert isinstance(result, Approved)
         assert session._get_or_create_provider.called
         assert session._run_turn.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_silent_reviewer_returns_feedback_instead_of_approval(self):
+        from src.coach_player import CoachPlayerSession, TurnResult
+        from src.feedback import Feedback
+
+        items = [PlanItem(text="create a.py")]
+        phase = Phase(name="Create", type="create", steps=items)
+
+        session = MagicMock(spec=CoachPlayerSession)
+        session.config = MagicMock()
+        session.config.max_turns = 10
+        session.config.coach_timeout_s = 300
+        session.config.coach_model = ""
+        session.config.coach_retry_max = 1
+        session.config.coach_fallback_provider = ""
+        session._snapshot_pids = MagicMock(return_value=set())
+        session._kill_new_processes = MagicMock()
+        session.BATCH_REVIEW_MAX_TURNS = CoachPlayerSession.BATCH_REVIEW_MAX_TURNS
+        session._build_phase_fallback_feedback = CoachPlayerSession._build_phase_fallback_feedback
+
+        empty_result = TurnResult(
+            role="coach",
+            duration_s=1.0,
+            tools_used=0,
+            messages=[],
+            text="",
+        )
+        session._run_turn = AsyncMock(return_value=empty_result)
+
+        result = await CoachPlayerSession._run_coach_turn_for_phase(
+            session,
+            phase,
+            MagicMock(text="PHASE_COMPLETE: Create"),
+            completed_steps=["create a.py"],
+        )
+
+        assert isinstance(result, Feedback)
+        assert "Reviewer produced no verdict" in result.text
 
 
 class TestBuildPhaseCoachPrompt:
@@ -1140,7 +1230,7 @@ class TestCoachAlwaysCalled:
         session.config.player_model = ""
         session.config.coach_model = ""
         session.config.player_timeout_s = 60
-        session.config.player_provider = "ccg"
+        session.config.player_provider = "black"
         session.config.coach_provider = "claude"
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
@@ -1185,7 +1275,7 @@ class TestCoachAlwaysCalled:
         session.config.player_model = ""
         session.config.coach_model = ""
         session.config.player_timeout_s = 60
-        session.config.player_provider = "ccg"
+        session.config.player_provider = "black"
         session.config.coach_provider = "claude"
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
