@@ -1,4 +1,5 @@
 """Runtime controls: keyboard-driven coach/player switching and context status bar."""
+
 from __future__ import annotations
 
 import io
@@ -13,6 +14,7 @@ from typing import Optional
 
 
 # --- Helpers (module-level, testable without class instantiation) ---
+
 
 def _parse_escape_sequence(follow_byte: Optional[bytes]) -> str:
     """Convert the byte after ESC+[ to an action, or None follow -> 'compact'."""
@@ -38,6 +40,14 @@ def _char_to_action(ch: str) -> str:
     return ""
 
 
+def _batch_role_follows_coach(session, provider_attr: str, model_attr: str) -> bool:
+    """Return True when a batch coach role is still mirroring the current coach."""
+    return (
+        getattr(session.config, provider_attr, "") == session.config.coach_provider
+        and getattr(session.config, model_attr, "") == session.config.coach_model
+    )
+
+
 class KeyboardListener(threading.Thread):
     """Daemon thread that reads keypresses from stdin in cbreak mode.
 
@@ -60,9 +70,31 @@ class KeyboardListener(threading.Thread):
         except queue.Empty:
             return None
 
-    def run(self) -> None:
+    def _open_input_fd(self) -> tuple[int | None, int | None]:
+        """Return (fd, owned_fd) for keyboard input.
+
+        Prefer the controlling terminal when stdin is redirected or wrapped,
+        because hotkeys should still work in that case.
+        """
         try:
-            fd = sys.stdin.fileno()
+            stdin_fd = sys.stdin.fileno()
+            if os.isatty(stdin_fd):
+                return stdin_fd, None
+        except (io.UnsupportedOperation, OSError):
+            pass
+
+        try:
+            tty_fd = os.open("/dev/tty", os.O_RDONLY | os.O_NONBLOCK)
+            return tty_fd, tty_fd
+        except OSError:
+            return None, None
+
+    def run(self) -> None:
+        owned_fd: int | None = None
+        try:
+            fd, owned_fd = self._open_input_fd()
+            if fd is None:
+                return
             old_settings = termios.tcgetattr(fd)
         except (io.UnsupportedOperation, OSError, termios.error):
             return
@@ -70,26 +102,29 @@ class KeyboardListener(threading.Thread):
             tty.setcbreak(fd)
             while not self._stop_event.is_set():
                 # Non-blocking check: wait up to 0.1s for input
-                ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                ready, _, _ = select.select([fd], [], [], 0.1)
                 if not ready:
                     continue
 
-                ch = sys.stdin.read(1)
+                ch_raw = os.read(fd, 1)
+                ch = ch_raw.decode(errors="ignore")
                 if not ch:
                     break
 
                 if ch == "\x1b":
                     # ESC: check for follow bytes within 100ms
-                    follow_ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    follow_ready, _, _ = select.select([fd], [], [], 0.1)
                     if not follow_ready:
                         # Standalone ESC
                         action = _parse_escape_sequence(None)
                     else:
-                        bracket = sys.stdin.read(1)
+                        bracket = os.read(fd, 1).decode(errors="ignore")
                         if bracket == "[":
-                            follow_ready2, _, _ = select.select([sys.stdin], [], [], 0.05)
+                            follow_ready2, _, _ = select.select(
+                                [fd], [], [], 0.05
+                            )
                             if follow_ready2:
-                                final = sys.stdin.read(1).encode()
+                                final = os.read(fd, 1)
                                 action = _parse_escape_sequence(final)
                             else:
                                 action = ""
@@ -101,7 +136,15 @@ class KeyboardListener(threading.Thread):
                 if action:
                     self._action_queue.put(action)
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            try:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            except (OSError, termios.error):
+                pass
+            if owned_fd is not None:
+                try:
+                    os.close(owned_fd)
+                except OSError:
+                    pass
 
 
 class StatusBar:
@@ -199,13 +242,21 @@ class StatusBar:
 
 # Model presets available at runtime
 MODEL_PRESETS: list[tuple[str, str, str]] = [
-    ("GLM-1",         "ccg",    "blackboxai/z-ai/glm-5"),
-    ("GLM-2",         "ccg2",   "blackboxai/z-ai/glm-5"),
-    ("Sonnet",        "claude",  "claude-sonnet-4-6"),
-    ("Opus",          "claude",  "claude-opus-4-6"),
-    ("GPT-5.4",       "codex",   ""),
-    ("o3",            "codex",   "o3"),
-    ("o4-mini",       "codex",   "o4-mini"),
+    ("GLM-5", "black", "blackboxai/z-ai/glm-5"),
+    ("Turbo", "turbo", "glm-5-turbo"),
+    ("ZAI", "zai", "glm-5.1"),
+    ("Sonnet", "claude", "claude-sonnet-4-6"),
+    ("Opus", "claude", "claude-opus-4-6"),
+    ("GPT-5.4", "codex", ""),
+    ("o3", "codex", "o3"),
+    ("o4-mini", "codex", "o4-mini"),
+    ("MIMO-Pro", "opencode", "opencode/mimo-v2-pro-free"),
+    ("MIMO-Omni", "opencode", "opencode/mimo-v2-omni-free"),
+    ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free"),
+    ("Kimi-K2", "opencode", "openrouter/moonshotai/kimi-k2:free"),
+    ("Nemotron-3", "opencode", "opencode/nemotron-3-super-free"),
+    ("Kilo MIMO-Pro", "kilo", "kilo/xiaomi/mimo-v2-pro:free"),
+    ("Kilo MiniMax", "kilo", "kilo/minimax/minimax-m2.5:free"),
 ]
 
 
@@ -222,7 +273,7 @@ class Picker:
     ) -> None:
         self._presets = presets
         self._status_bar = status_bar or StatusBar()
-        self._role: Optional[str] = None   # None = idle, "coach"/"player" = selecting
+        self._role: Optional[str] = None  # None = idle, "coach"/"player" = selecting
         self._idx: int = 0
         self._pending_change: Optional[tuple[str, str, str]] = None
         self._cancel_timer: Optional[threading.Timer] = None
@@ -277,7 +328,9 @@ class Picker:
         with self._lock:
             return self._handle_locked(action, current_coach_idx, current_player_idx)
 
-    def _handle_locked(self, action: str, coach_idx: int, player_idx: int) -> Optional[str]:
+    def _handle_locked(
+        self, action: str, coach_idx: int, player_idx: int
+    ) -> Optional[str]:
         n = len(self._presets)
         is_coach = action in ("coach_right", "coach_left")
         is_player = action in ("player_right", "player_left")
@@ -334,7 +387,9 @@ class Picker:
         elif action == "confirm":
             name, provider, model = self._presets[self._idx]
             self._pending_change = (self._role, provider, model)
-            self._status_bar.show_warning(f"✓ {self._role.capitalize()}: {name}", duration_s=2.0)
+            self._status_bar.show_warning(
+                f"✓ {self._role.capitalize()}: {name}", duration_s=2.0
+            )
             self._role = None
         elif action == "compact":
             # ESC cancels selection; immediately clear the preview
@@ -398,6 +453,31 @@ class RuntimeControls:
         self._coach_name: str = ""
         self._running = False
 
+    @staticmethod
+    def _preset_index_for(provider_name: str, model: str, fallback: int = 0) -> int:
+        """Return the preset index matching the active provider/model."""
+        return next(
+            (
+                i
+                for i, (_, preset_provider, preset_model) in enumerate(MODEL_PRESETS)
+                if preset_provider == provider_name and preset_model == model
+            ),
+            fallback,
+        )
+
+    def _sync_selection_indices(self, session) -> None:
+        """Align picker indices with the session's current live config."""
+        self._current_coach_idx = self._preset_index_for(
+            getattr(session.config, "coach_provider", ""),
+            getattr(session.config, "coach_model", ""),
+            self._current_coach_idx,
+        )
+        self._current_player_idx = self._preset_index_for(
+            getattr(session.config, "player_provider", ""),
+            getattr(session.config, "player_model", ""),
+            self._current_player_idx,
+        )
+
     def start(self, player_name: str = "", coach_name: str = "") -> None:
         """Start listener thread and render initial status bar."""
         if self._running:
@@ -453,6 +533,8 @@ class RuntimeControls:
 
     def apply_pending(self, session) -> None:
         """Process queued keypresses and apply any confirmed coach/player changes."""
+        self._sync_selection_indices(session)
+
         # Drain the keyboard action queue
         while True:
             action = self._listener.pop_action()
@@ -483,29 +565,54 @@ class RuntimeControls:
             ok, reason = False, str(e)
 
         if not ok:
-            self._status_bar.show_warning(f"{role.capitalize()} {provider_name} not ready: {reason}")
+            self._status_bar.show_warning(
+                f"{role.capitalize()} {provider_name} not ready: {reason}"
+            )
+            return
+
+        try:
+            runtime_switch = getattr(type(session), "switch_runtime_role", None)
+            if runtime_switch is not None:
+                display = session.switch_runtime_role(role, provider_name, model)
+            elif role == "coach":
+                sync_batch_pre = _batch_role_follows_coach(
+                    session, "batch_pre_provider", "batch_pre_model"
+                )
+                sync_batch_post = _batch_role_follows_coach(
+                    session, "batch_post_provider", "batch_post_model"
+                )
+                session.config.coach_provider = provider_name
+                session.config.coach_model = model
+                if sync_batch_pre:
+                    session.config.batch_pre_provider = provider_name
+                    session.config.batch_pre_model = model
+                if sync_batch_post:
+                    session.config.batch_post_provider = provider_name
+                    session.config.batch_post_model = model
+                session.coach_provider = session._get_or_create_provider(provider_name)
+                session.coach_model = session._build_role_display("coach")
+                display = session.coach_model
+            else:
+                session.config.player_provider = provider_name
+                session.config.player_model = model
+                session.player_provider = session._get_or_create_provider(provider_name)
+                session.player_model = session._build_role_display("player")
+                display = session.player_model
+        except Exception as e:
+            self._status_bar.show_warning(
+                f"{role.capitalize()} switch failed: {e}"
+            )
             return
 
         if role == "coach":
-            session.config.coach_provider = provider_name
-            session.config.coach_model = model
-            session.coach_provider = session._get_or_create_provider(provider_name)
-            session.coach_model = session._build_role_display("coach")
-            self._coach_name = session.coach_model
-            # Find and store new index
-            self._current_coach_idx = next(
-                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
-                self._current_coach_idx,
+            self._coach_name = display
+            self._current_coach_idx = self._preset_index_for(
+                provider_name, model, self._current_coach_idx
             )
         elif role == "player":
-            session.config.player_provider = provider_name
-            session.config.player_model = model
-            session.player_provider = session._get_or_create_provider(provider_name)
-            session.player_model = session._build_role_display("player")
-            self._player_name = session.player_model
-            self._current_player_idx = next(
-                (i for i, (_, p, m) in enumerate(MODEL_PRESETS) if p == provider_name and m == model),
-                self._current_player_idx,
+            self._player_name = display
+            self._current_player_idx = self._preset_index_for(
+                provider_name, model, self._current_player_idx
             )
 
         self._status_bar.update(self._player_name, self._coach_name, self._ctx_pct)

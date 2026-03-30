@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.coach_player import CoachPlayerSession
 from src.config import Config
+from src.feedback import ReviewIssues
+from src.menu import _sync_batch_roles_with_coach
 from src.prompts import COACH_STRICT_SYSTEM_PROMPT, PLAYER_SYSTEM_PROMPT
 
 
@@ -63,7 +65,7 @@ def test_session_passes_role_specific_system_prompts(tmp_path, monkeypatch):
     mock_coach = _make_mock_provider()
     mock_coach.run = fake_run
 
-    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name == "player_provider" or name == "ccg" else mock_coach)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name == "player_provider" or name == "black" else mock_coach)
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
 
     cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=1)
@@ -307,12 +309,137 @@ def test_init_review_provider_auto_detects_codex_when_available(tmp_path, monkey
         plan_file="requirements.md",
         code_review=True,
         review_provider="",
-        coach_provider="ccg",
+        coach_provider="black",
     )
     session = CoachPlayerSession(cfg, "1. Ship feature")
 
     assert session.review_provider is codex_provider
     assert session.review_provider_name == "codex"
+
+
+def test_init_review_provider_probe_does_not_cache_unready_codex(tmp_path, monkeypatch):
+    """Auto-detect should not retain a failed Codex probe in the provider cache."""
+    codex_provider = _make_mock_provider()
+    codex_provider.check_ready.return_value = (False, "missing auth")
+    coach_provider = _make_mock_provider()
+
+    def fake_create_provider(name, env=None, cfg=None):
+        if name == "codex":
+            return codex_provider
+        return coach_provider
+
+    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        plan_file="requirements.md",
+        code_review=True,
+        review_provider="",
+        coach_provider="black",
+    )
+    session = CoachPlayerSession(cfg, "1. Ship feature")
+
+    assert session.review_provider is coach_provider
+    assert session.review_provider_name == "black"
+    assert "codex" not in session._provider_cache
+
+
+def test_auto_review_follows_live_coach_switch_and_model(tmp_path, monkeypatch):
+    """When review auto-falls back to coach, runtime coach switches should carry review with them."""
+    codex_provider = _make_mock_provider()
+    codex_provider.check_ready.return_value = (False, "missing auth")
+    ccg_provider = _make_mock_provider()
+    opencode_provider = _make_mock_provider()
+
+    def fake_create_provider(name, env=None, cfg=None):
+        if name == "codex":
+            return codex_provider
+        if name == "opencode":
+            return opencode_provider
+        return ccg_provider
+
+    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        plan_file="requirements.md",
+        code_review=True,
+        review_provider="",
+        review_model="",
+        coach_provider="black",
+        coach_model="blackboxai/z-ai/glm-5",
+    )
+    session = CoachPlayerSession(cfg, "1. Ship feature")
+
+    assert session._resolve_review_provider_name() == "black"
+    assert session._resolve_review_provider() is ccg_provider
+    assert session._resolve_review_model() == "blackboxai/z-ai/glm-5"
+
+    session.switch_runtime_role(
+        "coach", "opencode", "opencode/minimax-m2.5-free"
+    )
+
+    assert session._resolve_review_provider_name() == "opencode"
+    assert session._resolve_review_provider() is opencode_provider
+    assert session._resolve_review_model() == "opencode/minimax-m2.5-free"
+
+
+def test_init_fails_when_test_writer_provider_not_ready(tmp_path, monkeypatch):
+    """TDD mode should validate the dedicated test_writer provider during startup."""
+    ready_provider = _make_mock_provider()
+    broken_test_writer = _make_mock_provider()
+    broken_test_writer.check_ready.return_value = (False, "missing binary")
+
+    def fake_create_provider(name, env=None, cfg=None):
+        if name == "tw":
+            return broken_test_writer
+        return ready_provider
+
+    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        tdd_mode=True,
+        coach_provider="black",
+        player_provider="black",
+        test_writer_provider="tw",
+    )
+
+    try:
+        CoachPlayerSession(cfg, "1. Ship feature")
+    except RuntimeError as exc:
+        assert "test_writer provider (tw) not ready: missing binary" == str(exc)
+    else:
+        raise AssertionError("Expected startup to fail for an unready test_writer provider")
+
+
+def test_init_fails_when_review_provider_not_ready(tmp_path, monkeypatch):
+    """Code review mode should validate the resolved review provider during startup."""
+    ready_provider = _make_mock_provider()
+    broken_review = _make_mock_provider()
+    broken_review.check_ready.return_value = (False, "missing auth")
+
+    def fake_create_provider(name, env=None, cfg=None):
+        if name == "codex":
+            return broken_review
+        return ready_provider
+
+    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        code_review=True,
+        review_provider="codex",
+        coach_provider="black",
+        player_provider="black",
+    )
+
+    try:
+        CoachPlayerSession(cfg, "1. Ship feature")
+    except RuntimeError as exc:
+        assert "review provider (codex) not ready: missing auth" == str(exc)
+    else:
+        raise AssertionError("Expected startup to fail for an unready review provider")
 
 
 def test_run_turn_uses_native_codex_usage_for_tokens(tmp_path, monkeypatch):
@@ -373,3 +500,126 @@ def test_step_continuation_does_not_require_phase_complete():
     text = _player_report("Implemented on retry")
 
     assert CoachPlayerSession._player_output_complete(text, prompt) is True
+
+
+def test_code_review_rejects_step_when_issues_remain(tmp_path, monkeypatch):
+    """A step must not be approved when code review still reports bugs."""
+
+    async def player_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
+        yield MockAssistantMessage([MockTextBlock(_player_report("Implemented"))])
+        yield MockResultMessage()
+
+    async def coach_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
+        yield MockAssistantMessage([MockTextBlock("IMPLEMENTATION_APPROVED")])
+        yield MockResultMessage()
+
+    mock_player = _make_mock_provider()
+    mock_player.run = player_run
+    mock_coach = _make_mock_provider()
+    mock_coach.run = coach_run
+    mock_review = _make_mock_provider()
+    mock_review.run = coach_run
+
+    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.coach_player.parse_review_output", lambda messages: ReviewIssues("1. Found a bug in the implementation."))
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        plan_file="requirements.md",
+        max_turns=1,
+        code_review=True,
+        max_review_iterations=1,
+    )
+    session = CoachPlayerSession(cfg, "1. Ship feature")
+    session.player_provider = mock_player
+    session.coach_provider = mock_coach
+    session.review_provider = mock_review
+    session.review_provider_name = "codex"
+    session.review_model = ""
+
+    result = asyncio.run(session.run())
+
+    assert result.approved is False
+    assert result.steps_completed == 0
+    assert result.status == "max_turns_reached"
+
+
+def test_code_review_fix_uses_raw_player_model_id(tmp_path, monkeypatch):
+    """Fix-up turns after review should pass the configured model id, not the display label."""
+    from src.feedback import Approved, ReviewPassed
+
+    captured_model_overrides = []
+
+    async def fake_run_turn(
+        role,
+        prompt,
+        system_prompt,
+        max_turns,
+        timeout_s,
+        model_override="",
+        provider_override=None,
+    ):
+        captured_model_overrides.append((role, model_override))
+        if role == "player":
+            return MagicMock(
+                messages=[],
+                text=_player_report("Implemented"),
+                duration_s=0.1,
+                tools_used=0,
+            )
+        if role == "coach":
+            return MagicMock(
+                messages=[],
+                text="IMPLEMENTATION_APPROVED",
+                duration_s=0.1,
+                tools_used=0,
+            )
+        return MagicMock(messages=[], text="review", duration_s=0.1, tools_used=0)
+
+    review_verdicts = iter([ReviewIssues("1. Fix this bug."), ReviewPassed()])
+
+    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.coach_player.parse_coach_output", lambda messages: Approved())
+    monkeypatch.setattr("src.coach_player.parse_review_output", lambda messages: next(review_verdicts))
+
+    cfg = Config(
+        working_dir=str(tmp_path),
+        plan_file="requirements.md",
+        max_turns=1,
+        code_review=True,
+        max_review_iterations=2,
+        player_model="opencode/mimo-v2-pro-free",
+    )
+    session = CoachPlayerSession(cfg, "1. Ship feature")
+    session.player_model = "opencode | model=opencode/mimo-v2-pro-free"
+    session.review_provider = _make_mock_provider()
+    session.review_provider_name = "codex"
+    session.review_model = ""
+    session._run_turn = AsyncMock(side_effect=fake_run_turn)
+
+    result = asyncio.run(session.run())
+
+    assert result.approved is True
+    assert ("player", "opencode/mimo-v2-pro-free") in captured_model_overrides
+    assert ("player", "opencode | model=opencode/mimo-v2-pro-free") not in captured_model_overrides
+
+
+def test_sync_batch_roles_with_coach_preserves_custom_overrides():
+    """Changing coach should not overwrite explicitly customized batch roles."""
+    config = Config(
+        coach_provider="opencode",
+        coach_model="opencode/mimo-v2-pro-free",
+        batch_pre_provider="claude",
+        batch_pre_model="sonnet",
+        batch_post_provider="codex",
+        batch_post_model="o3",
+    )
+
+    synced = _sync_batch_roles_with_coach(
+        config, previous_provider="black", previous_model=""
+    )
+
+    assert synced.batch_pre_provider == "claude"
+    assert synced.batch_pre_model == "sonnet"
+    assert synced.batch_post_provider == "codex"
+    assert synced.batch_post_model == "o3"

@@ -3,17 +3,20 @@
 from pathlib import Path
 import yaml
 
-from src.config import Config, short_model_name
+from src.config import Config, FIXED_PROVIDER_MODELS, short_model_name
 
 try:
     import questionary
+
     QUESTIONARY_AVAILABLE = True
 except ImportError:
     QUESTIONARY_AVAILABLE = False
 
-# CCG model IDs
+# Blackbox model IDs
 CCG_MODEL_PRESETS = {
     "GLM-5    (blackboxai/z-ai/glm-5)": "blackboxai/z-ai/glm-5",
+    "Turbo    (glm-5-turbo via Z.AI)": "glm-5-turbo",
+    "ZAI      (glm-5.1 via Z.AI)": "glm-5.1",
     "Sonnet   (claude-sonnet-4-6)": "claude-sonnet-4-6",
     "Opus     (claude-opus-4-6)": "claude-opus-4-6",
     "Kimi     (kimi-k2.5)": "kimi-k2.5",
@@ -29,12 +32,31 @@ CODEX_MODEL_PRESETS = {
     "Ввести вручную...": "__custom__",
 }
 
+# OpenCode model IDs (MIMO, Kimi, MiniMax, Nemotron — all free)
+OPENCODE_MODEL_PRESETS = {
+    "MIMO Pro  (free)": "opencode/mimo-v2-pro-free",
+    "MIMO Omni (free)": "opencode/mimo-v2-omni-free",
+    "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
+    "Kimi K2   (free)": "openrouter/moonshotai/kimi-k2:free",
+    "Kimi K2.5": "openrouter/moonshotai/kimi-k2.5",
+    "Nemotron 3 Super (free)": "opencode/nemotron-3-super-free",
+    "Ввести вручную...": "__custom__",
+}
+
+KILO_MODEL_PRESETS = {
+    "MIMO Pro  (free)": "kilo/xiaomi/mimo-v2-pro:free",
+    "MiniMax M2.5 (free)": "kilo/minimax/minimax-m2.5:free",
+}
+
 # Provider choices
 PROVIDER_PRESETS = {
-    "CCG (Blackbox/GLM-5)": "ccg",
-    "CCG2 (Blackbox B)": "ccg2",
+    "BLACK (Blackbox/GLM-5)": "black",
+    "TURBO (Z.AI / GLM-5 Turbo)": "turbo",
+    "ZAI (Z.AI / GLM-5.1)": "zai",
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
+    "OpenCode (MIMO/Kimi/free)": "opencode",
+    "Kilo (MIMO/MiniMax)": "kilo",
 }
 
 # Claude model choices (for native provider)
@@ -43,6 +65,215 @@ CLAUDE_MODEL_PRESETS = {
     "Opus   (most capable)": "opus",
     "Haiku  (fast)": "haiku",
 }
+
+FALLBACK_PROVIDER_PRESETS = {
+    "Отключить escalation": "",
+    **PROVIDER_PRESETS,
+}
+
+
+def _provider_model_label(provider: str, model: str, default_text: str = "по умолчанию") -> str:
+    """Render provider/model pair for compact menu display."""
+    if not provider:
+        return "выкл"
+    return f"{provider} ({short_model_name(model) if model else default_text})"
+
+
+def _fixed_model_for_provider(provider: str) -> str:
+    """Return the model locked to a provider, or empty string if selectable."""
+    if provider == "lite":
+        provider = "zai"
+    return FIXED_PROVIDER_MODELS.get(provider, "")
+
+
+def _model_presets_for_provider(provider: str) -> dict[str, str]:
+    """Return menu presets for a selectable provider."""
+    if provider == "claude":
+        return CLAUDE_MODEL_PRESETS
+    if provider == "codex":
+        return CODEX_MODEL_PRESETS
+    if provider == "opencode":
+        return OPENCODE_MODEL_PRESETS
+    if provider == "kilo":
+        return KILO_MODEL_PRESETS
+    return CCG_MODEL_PRESETS
+
+
+def _custom_model_allowed(provider: str) -> bool:
+    """Return True when the provider picker supports manual model entry."""
+    return provider in {"codex", "opencode"}
+
+
+def _resolve_model_choice(
+    config: Config,
+    provider: str,
+    model_field: str,
+    model_choice: str | None,
+) -> Config:
+    """Resolve a selected model label into the stored model ID."""
+    if not model_choice:
+        return config
+
+    presets = _model_presets_for_provider(provider)
+    model_id = presets[model_choice]
+    if model_id == "__custom__" and _custom_model_allowed(provider):
+        model_id = questionary.text("Введи model ID:").ask() or getattr(
+            config, model_field
+        )
+    return Config(**{**config.__dict__, model_field: model_id})
+
+
+def _sync_batch_roles_with_coach(
+    config: Config,
+    previous_provider: str,
+    previous_model: str,
+) -> Config:
+    """Keep batch pre/post reviewers aligned with coach after an explicit coach change."""
+    updates = dict(config.__dict__)
+
+    if (
+        config.batch_pre_provider == previous_provider
+        and config.batch_pre_model == previous_model
+    ):
+        updates["batch_pre_provider"] = config.coach_provider
+        updates["batch_pre_model"] = config.coach_model
+
+    if (
+        config.batch_post_provider == previous_provider
+        and config.batch_post_model == previous_model
+    ):
+        updates["batch_post_provider"] = config.coach_provider
+        updates["batch_post_model"] = config.coach_model
+
+    return Config(**updates)
+
+
+def _questionary_select_provider_model(
+    config: Config,
+    provider_field: str,
+    model_field: str,
+    prompt_label: str,
+    provider_choices: dict[str, str] | None = None,
+) -> Config:
+    """Shared questionary provider/model picker."""
+    choices = list((provider_choices or PROVIDER_PRESETS).keys())
+    current = getattr(config, provider_field)
+    choice = questionary.select(
+        f"Провайдер для {prompt_label} (текущий: {current or 'выкл'}):",
+        choices=choices,
+    ).ask()
+    if not choice:
+        return config
+
+    provider = (provider_choices or PROVIDER_PRESETS)[choice]
+    config = Config(
+        **{
+            **config.__dict__,
+            provider_field: provider,
+            model_field: "" if not provider else getattr(config, model_field),
+        }
+    )
+
+    if not provider:
+        return Config(**{**config.__dict__, model_field: ""})
+
+    fixed_model = _fixed_model_for_provider(provider)
+    if fixed_model:
+        return Config(**{**config.__dict__, model_field: fixed_model})
+
+    model_choice = questionary.select(
+        f"Модель для {prompt_label}:",
+        choices=list(_model_presets_for_provider(provider).keys()),
+    ).ask()
+    return _resolve_model_choice(config, provider, model_field, model_choice)
+
+
+def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
+    """Prompt for a provider-specific model in the plain-text fallback menu."""
+    fixed_model = _fixed_model_for_provider(provider)
+    if fixed_model:
+        return fixed_model
+
+    if provider == "claude":
+        print("  Модели: sonnet, opus, haiku")
+        return input(f"  {prompt_label} model [sonnet]: ").strip() or "sonnet"
+
+    if provider == "codex":
+        print("  Модели: default, gpt-5.4, o3, o4-mini")
+        model = input(f"  {prompt_label} model [default]: ").strip()
+        return "" if model.lower() == "default" else model
+
+    if provider == "opencode":
+        print(
+            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2, kimi-k2.5, nemotron-3-super"
+        )
+        model = input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        model_map = {
+            "mimo-pro": "opencode/mimo-v2-pro-free",
+            "mimo-omni": "opencode/mimo-v2-omni-free",
+            "minimax-m2.5": "opencode/minimax-m2.5-free",
+            "kimi-k2": "openrouter/moonshotai/kimi-k2:free",
+            "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
+            "nemotron-3-super": "opencode/nemotron-3-super-free",
+        }
+        return model_map.get(model, model)
+
+    if provider == "kilo":
+        print("  Модели: mimo-pro, minimax-m2.5")
+        model = input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        model_map = {
+            "mimo-pro": "kilo/xiaomi/mimo-v2-pro:free",
+            "minimax-m2.5": "kilo/minimax/minimax-m2.5:free",
+        }
+        return model_map.get(model, model)
+
+    return ""
+
+
+def _fallback_select_provider_model(
+    config: Config,
+    provider_field: str,
+    model_field: str,
+    prompt_label: str,
+    provider_choices: dict[str, str] | None = None,
+) -> Config:
+    """Shared provider/model picker for the plain-text fallback menu."""
+    choice_map = provider_choices or PROVIDER_PRESETS
+    allowed_values = list(dict.fromkeys(choice_map.values()))
+    rendered_values = [value or "off" for value in allowed_values]
+    current = getattr(config, provider_field) or ("off" if "" in allowed_values else "")
+
+    print(f"  Провайдеры: {', '.join(rendered_values)}")
+    raw_value = input(f"  {prompt_label} provider [{current}]: ").strip().lower()
+    if not raw_value:
+        return config
+
+    if raw_value == "off" and "" in allowed_values:
+        provider = ""
+    elif raw_value in allowed_values:
+        provider = raw_value
+    else:
+        return config
+
+    config = Config(**{**config.__dict__, provider_field: provider})
+    if not provider:
+        return Config(**{**config.__dict__, model_field: ""})
+
+    model = _fallback_prompt_model(provider, prompt_label)
+    return Config(**{**config.__dict__, model_field: model})
+
+
+def _fallback_effective_slot_label(
+    config: Config,
+    provider_field: str,
+    model_field: str,
+) -> str:
+    """Render the effective provider/model label for a batch-adjacent slot."""
+    raw_provider = getattr(config, provider_field)
+    raw_model = getattr(config, model_field)
+    provider = raw_provider or config.coach_provider
+    model = raw_model or (config.coach_model if not raw_provider else "")
+    return _provider_model_label(provider, model)
 
 
 def _format_batch_retry_counts(config: Config) -> str:
@@ -83,8 +314,20 @@ def _questionary_menu(config: Config) -> Config | None:
     import questionary
 
     while True:
-        coach_display = short_model_name(config.coach_model) if config.coach_model else "по умолчанию"
-        player_display = short_model_name(config.player_model) if config.player_model else "по умолчанию"
+        coach_display = (
+            short_model_name(config.coach_model)
+            if config.coach_model
+            else "по умолчанию"
+        )
+        player_display = (
+            short_model_name(config.player_model)
+            if config.player_model
+            else "по умолчанию"
+        )
+        fallback_display = _provider_model_label(
+            config.coach_fallback_provider,
+            config.coach_fallback_model,
+        )
         verbose_display = "вкл" if config.verbose else "выкл"
         autonomous_display = "вкл" if config.autonomous else "выкл"
         batch_display = "вкл" if config.batch_mode else "выкл"
@@ -96,11 +339,21 @@ def _questionary_menu(config: Config) -> Config | None:
         choices = [
             questionary.Choice(f"▶   Запустить", value="start"),
             questionary.Separator("─── провайдеры ──────────────────────────"),
-            questionary.Choice(f"    Player:         {config.player_provider} ({player_display})", value="player_provider"),
-            questionary.Choice(f"    Coach:          {config.coach_provider} ({coach_display})", value="coach_provider"),
+            questionary.Choice(
+                f"    Player:         {config.player_provider} ({player_display})",
+                value="player_provider",
+            ),
+            questionary.Choice(
+                f"    Coach:          {config.coach_provider} ({coach_display})",
+                value="coach_provider",
+            ),
+            questionary.Choice(
+                f"    Escalation:     {fallback_display}",
+                value="coach_fallback",
+            ),
             questionary.Separator("─── batch роли ──────────────────────────"),
             questionary.Choice(
-                f"    Pre-Coach:  {config.batch_pre_provider} ({short_model_name(config.batch_pre_model) if config.batch_pre_model else 'GLM-5'}) [{config.batch_pre_judge_attempts}x]",
+                f"    Pre-Coach:  {config.batch_pre_provider} ({short_model_name(config.batch_pre_model) if config.batch_pre_model else 'по умолчанию'}) [{config.batch_pre_judge_attempts}x]",
                 value="batch_pre",
             ),
             questionary.Choice(
@@ -108,24 +361,41 @@ def _questionary_menu(config: Config) -> Config | None:
                 value="batch_judge",
             ),
             questionary.Choice(
-                f"    Post-Coach: {config.batch_post_provider} ({short_model_name(config.batch_post_model) if config.batch_post_model else 'GLM-5'}) [{config.batch_post_judge_attempts}x]",
+                f"    Post-Coach: {config.batch_post_provider} ({short_model_name(config.batch_post_model) if config.batch_post_model else 'по умолчанию'}) [{config.batch_post_judge_attempts}x]",
                 value="batch_post",
             ),
             questionary.Choice(
-                f"    TestWriter: {config.test_writer_provider} ({short_model_name(config.test_writer_model) if config.test_writer_model else 'GLM-5'})",
+                f"    TestWriter: {config.test_writer_provider} ({short_model_name(config.test_writer_model) if config.test_writer_model else 'по умолчанию'})",
                 value="test_writer",
             ),
             questionary.Separator("─── режимы ──────────────────────────────"),
             questionary.Choice(f"    TDD Mode:       {tdd_display}", value="tdd_mode"),
-            questionary.Choice(f"    Code Review:    {review_display}", value="code_review"),
+            questionary.Choice(
+                f"    Code Review:    {review_display}", value="code_review"
+            ),
             questionary.Separator("─── настройки ───────────────────────────"),
-            questionary.Choice(f"    Рабочая папка:  {wd_display}", value="working_dir"),
-            questionary.Choice(f"    Файл плана:     {config.plan_file}", value="plan_file"),
-            questionary.Choice(f"    Макс. попыток:  {config.max_turns} (на шаг)", value="max_turns"),
-            questionary.Choice(f"    Verbose:        {verbose_display}", value="verbose"),
-            questionary.Choice(f"    Автономный:     {autonomous_display}", value="autonomous"),
-            questionary.Choice(f"    Batch Mode:     {batch_display}", value="batch_mode"),
-            questionary.Choice(f"    Batch Review:   {batch_retry_display}", value="batch_review_schedule"),
+            questionary.Choice(
+                f"    Рабочая папка:  {wd_display}", value="working_dir"
+            ),
+            questionary.Choice(
+                f"    Файл плана:     {config.plan_file}", value="plan_file"
+            ),
+            questionary.Choice(
+                f"    Макс. попыток:  {config.max_turns} (на шаг)", value="max_turns"
+            ),
+            questionary.Choice(
+                f"    Verbose:        {verbose_display}", value="verbose"
+            ),
+            questionary.Choice(
+                f"    Автономный:     {autonomous_display}", value="autonomous"
+            ),
+            questionary.Choice(
+                f"    Batch Mode:     {batch_display}", value="batch_mode"
+            ),
+            questionary.Choice(
+                f"    Batch Review:   {batch_retry_display}",
+                value="batch_review_schedule",
+            ),
             questionary.Separator("─────────────────────────────────────────"),
             questionary.Choice("💾  Сохранить как default", value="save_default"),
             questionary.Choice("✗   Выход", value="quit"),
@@ -150,76 +420,29 @@ def _questionary_menu(config: Config) -> Config | None:
 
 def _edit_setting_questionary(config: Config, setting: str) -> Config:
     """Edit a single setting using questionary prompts."""
-    import questionary
-
     if setting == "player_provider":
-        current = config.player_provider
-        choices = list(PROVIDER_PRESETS.keys())
-        choice = questionary.select(
-            f"Провайдер для player (текущий: {current}):",
-            choices=choices,
-        ).ask()
-        if choice:
-            provider = PROVIDER_PRESETS[choice]
-            config = Config(**{**config.__dict__, "player_provider": provider})
-            if provider == "claude":
-                model_choice = questionary.select(
-                    "Модель для player:",
-                    choices=list(CLAUDE_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    config = Config(**{**config.__dict__, "player_model": CLAUDE_MODEL_PRESETS[model_choice]})
-            elif provider == "codex":
-                model_choice = questionary.select(
-                    "Модель для player:",
-                    choices=list(CODEX_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    model_id = CODEX_MODEL_PRESETS[model_choice]
-                    if model_id == "__custom__":
-                        model_id = questionary.text("Введи model ID:").ask() or config.player_model
-                    config = Config(**{**config.__dict__, "player_model": model_id})
-            else:
-                config = Config(**{**config.__dict__, "player_model": ""})
+        config = _questionary_select_provider_model(
+            config, "player_provider", "player_model", "player"
+        )
 
     elif setting == "coach_provider":
-        current = config.coach_provider
-        choices = list(PROVIDER_PRESETS.keys())
-        choice = questionary.select(
-            f"Провайдер для coach (текущий: {current}):",
-            choices=choices,
-        ).ask()
-        if choice:
-            provider = PROVIDER_PRESETS[choice]
-            config = Config(**{**config.__dict__, "coach_provider": provider})
-            if provider == "claude":
-                model_choice = questionary.select(
-                    "Модель для coach:",
-                    choices=list(CLAUDE_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    config = Config(**{**config.__dict__, "coach_model": CLAUDE_MODEL_PRESETS[model_choice]})
-            elif provider == "codex":
-                model_choice = questionary.select(
-                    "Модель для coach:",
-                    choices=list(CODEX_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    model_id = CODEX_MODEL_PRESETS[model_choice]
-                    if model_id == "__custom__":
-                        model_id = questionary.text("Введи model ID:").ask() or config.coach_model
-                    config = Config(**{**config.__dict__, "coach_model": model_id})
-            else:
-                model_choices = list(CCG_MODEL_PRESETS.keys())
-                model_choice = questionary.select(
-                    "Модель для coach:",
-                    choices=model_choices,
-                ).ask()
-                if model_choice:
-                    model_id = CCG_MODEL_PRESETS[model_choice]
-                    if model_id == "__custom__":
-                        model_id = questionary.text("Введи model ID:").ask() or config.coach_model
-                    config = Config(**{**config.__dict__, "coach_model": model_id})
+        previous_provider = config.coach_provider
+        previous_model = config.coach_model
+        config = _questionary_select_provider_model(
+            config, "coach_provider", "coach_model", "coach"
+        )
+        config = _sync_batch_roles_with_coach(
+            config, previous_provider, previous_model
+        )
+
+    elif setting == "coach_fallback":
+        config = _questionary_select_provider_model(
+            config,
+            "coach_fallback_provider",
+            "coach_fallback_model",
+            "fallback coach",
+            provider_choices=FALLBACK_PROVIDER_PRESETS,
+        )
 
     elif setting == "working_dir":
         wd_display = config.working_dir.replace(str(Path.home()), "~")
@@ -240,9 +463,7 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             model_id = CODEX_MODEL_PRESETS[choice]
             if model_id == "__custom__":
                 model_id = questionary.text("Введи model ID:").ask() or current
-            config = Config(
-                **{**config.__dict__, "coach_model": model_id}
-            )
+            config = Config(**{**config.__dict__, "coach_model": model_id})
 
     elif setting == "max_turns":
         val = questionary.text(
@@ -252,9 +473,7 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             config = Config(**{**config.__dict__, "max_turns": int(val)})
 
     elif setting == "plan_file":
-        val = questionary.text(
-            f"Файл плана (текущий: {config.plan_file}):"
-        ).ask()
+        val = questionary.text(f"Файл плана (текущий: {config.plan_file}):").ask()
         if val:
             config = Config(**{**config.__dict__, "plan_file": val})
 
@@ -293,10 +512,10 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
 
     elif setting in ("batch_pre", "batch_judge", "batch_post", "test_writer"):
         prefix_map = {
-            "batch_pre":    ("batch_pre_provider",   "batch_pre_model"),
-            "batch_judge":  ("batch_judge_provider",  "batch_judge_model"),
-            "batch_post":   ("batch_post_provider",   "batch_post_model"),
-            "test_writer":  ("test_writer_provider",  "test_writer_model"),
+            "batch_pre": ("batch_pre_provider", "batch_pre_model"),
+            "batch_judge": ("batch_judge_provider", "batch_judge_model"),
+            "batch_post": ("batch_post_provider", "batch_post_model"),
+            "test_writer": ("test_writer_provider", "test_writer_model"),
         }
         prov_field, model_field = prefix_map[setting]
         current_prov = getattr(config, prov_field)
@@ -307,33 +526,15 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
         if choice:
             provider = PROVIDER_PRESETS[choice]
             config = Config(**{**config.__dict__, prov_field: provider})
-            if provider == "claude":
-                model_choice = questionary.select(
-                    f"Модель для {setting}:",
-                    choices=list(CLAUDE_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    config = Config(**{**config.__dict__, model_field: CLAUDE_MODEL_PRESETS[model_choice]})
-            elif provider == "codex":
-                model_choice = questionary.select(
-                    f"Модель для {setting}:",
-                    choices=list(CODEX_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    model_id = CODEX_MODEL_PRESETS[model_choice]
-                    if model_id == "__custom__":
-                        model_id = questionary.text("Введи model ID:").ask() or getattr(config, model_field)
-                    config = Config(**{**config.__dict__, model_field: model_id})
-            else:
-                model_choice = questionary.select(
-                    f"Модель для {setting}:",
-                    choices=list(CCG_MODEL_PRESETS.keys()),
-                ).ask()
-                if model_choice:
-                    model_id = CCG_MODEL_PRESETS[model_choice]
-                    if model_id == "__custom__":
-                        model_id = questionary.text("Введи model ID:").ask() or getattr(config, model_field)
-                    config = Config(**{**config.__dict__, model_field: model_id})
+            fixed_model = _fixed_model_for_provider(provider)
+            if fixed_model:
+                config = Config(**{**config.__dict__, model_field: fixed_model})
+                return config
+            model_choice = questionary.select(
+                f"Модель для {setting}:",
+                choices=list(_model_presets_for_provider(provider).keys()),
+            ).ask()
+            config = _resolve_model_choice(config, provider, model_field, model_choice)
 
     return config
 
@@ -363,15 +564,17 @@ def _save_global_default(config: Config) -> None:
             "code_review": config.code_review,
             "review_provider": config.review_provider,
             "review_model": config.review_model,
-            "batch_pre_provider":      config.batch_pre_provider,
-            "batch_pre_model":         config.batch_pre_model,
-            "batch_judge_provider":    config.batch_judge_provider,
-            "batch_judge_model":       config.batch_judge_model,
-            "batch_post_provider":     config.batch_post_provider,
-            "batch_post_model":        config.batch_post_model,
-            "test_writer_provider":    config.test_writer_provider,
-            "test_writer_model":       config.test_writer_model,
-            "max_review_iterations":   config.max_review_iterations,
+            "coach_fallback_provider": config.coach_fallback_provider,
+            "coach_fallback_model": config.coach_fallback_model,
+            "batch_pre_provider": config.batch_pre_provider,
+            "batch_pre_model": config.batch_pre_model,
+            "batch_judge_provider": config.batch_judge_provider,
+            "batch_judge_model": config.batch_judge_model,
+            "batch_post_provider": config.batch_post_provider,
+            "batch_post_model": config.batch_post_model,
+            "test_writer_provider": config.test_writer_provider,
+            "test_writer_model": config.test_writer_model,
+            "max_review_iterations": config.max_review_iterations,
         }
     }
     global_config_path.write_text(yaml.dump(data, allow_unicode=True))
@@ -385,12 +588,38 @@ def _fallback_menu(config: Config) -> Config | None:
     print("  (установи questionary для красивого меню: pip install questionary)\n")
 
     while True:
-        coach_display = short_model_name(config.coach_model) if config.coach_model else "по умолчанию"
-        player_display = short_model_name(config.player_model) if config.player_model else "по умолчанию"
+        coach_display = (
+            short_model_name(config.coach_model)
+            if config.coach_model
+            else "по умолчанию"
+        )
+        player_display = (
+            short_model_name(config.player_model)
+            if config.player_model
+            else "по умолчанию"
+        )
         wd_display = config.working_dir.replace(str(Path.home()), "~")
         batch_retry_display = _format_batch_retry_counts(config)
+        fallback_display = _provider_model_label(
+            config.coach_fallback_provider,
+            config.coach_fallback_model,
+        )
+        batch_pre_display = _fallback_effective_slot_label(
+            config, "batch_pre_provider", "batch_pre_model"
+        )
+        batch_post_display = _fallback_effective_slot_label(
+            config, "batch_post_provider", "batch_post_model"
+        )
+        judge_display = _provider_model_label(
+            config.batch_judge_provider,
+            config.batch_judge_model,
+        )
+        test_writer_display = _fallback_effective_slot_label(
+            config, "test_writer_provider", "test_writer_model"
+        )
         print(f"  [p] Player:        {config.player_provider} ({player_display})")
         print(f"  [c] Coach:         {config.coach_provider} ({coach_display})")
+        print(f"  [f] Escalation:    {fallback_display}")
         print(f"  [t] TDD Mode:      {'вкл' if config.tdd_mode else 'выкл'}")
         print(f"  [r] Code Review:   {'вкл' if config.code_review else 'выкл'}")
         print(f"  [1] Рабочая папка: {wd_display}")
@@ -400,6 +629,10 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [5] Автономный:    {'вкл' if config.autonomous else 'выкл'}")
         print(f"  [6] Batch Mode:    {'вкл' if config.batch_mode else 'выкл'}")
         print(f"  [7] Batch Review:  {batch_retry_display}")
+        print(f"  [8] Pre-Coach:     {batch_pre_display}")
+        print(f"  [9] Judge:         {judge_display}")
+        print(f"  [0] Post-Coach:    {batch_post_display}")
+        print(f"  [w] TestWriter:    {test_writer_display}")
         print(f"  [s] Сохранить как default")
         print(f"  [Enter] Запустить")
         print(f"  [q] Выход\n")
@@ -413,39 +646,26 @@ def _fallback_menu(config: Config) -> Config | None:
         if answer == "s":
             _save_global_default(config)
         elif answer == "p":
-            print("  Провайдеры: ccg, ccg2, claude, codex")
-            val = input(f"  Player provider [{config.player_provider}]: ").strip()
-            if val in ("ccg", "ccg2", "claude", "codex"):
-                config = Config(**{**config.__dict__, "player_provider": val})
-                if val == "claude":
-                    print("  Модели: sonnet, opus, haiku")
-                    model = input("  Player model [sonnet]: ").strip() or "sonnet"
-                    config = Config(**{**config.__dict__, "player_model": model})
-                elif val == "codex":
-                    print("  Модели: default, gpt-5.4, o3, o4-mini")
-                    model = input("  Player model [default]: ").strip()
-                    if model.lower() == "default":
-                        model = ""
-                    config = Config(**{**config.__dict__, "player_model": model})
-                else:
-                    config = Config(**{**config.__dict__, "player_model": ""})
+            config = _fallback_select_provider_model(
+                config, "player_provider", "player_model", "Player"
+            )
         elif answer == "c":
-            print("  Провайдеры: ccg, ccg2, claude, codex")
-            val = input(f"  Coach provider [{config.coach_provider}]: ").strip()
-            if val in ("ccg", "ccg2", "claude", "codex"):
-                config = Config(**{**config.__dict__, "coach_provider": val})
-                if val == "claude":
-                    print("  Модели: sonnet, opus, haiku")
-                    model = input("  Coach model [sonnet]: ").strip() or "sonnet"
-                    config = Config(**{**config.__dict__, "coach_model": model})
-                elif val == "codex":
-                    print("  Модели: default, gpt-5.4, o3, o4-mini")
-                    model = input("  Coach model [default]: ").strip()
-                    if model.lower() == "default":
-                        model = ""
-                    config = Config(**{**config.__dict__, "coach_model": model})
-                else:
-                    config = Config(**{**config.__dict__, "coach_model": ""})
+            previous_provider = config.coach_provider
+            previous_model = config.coach_model
+            config = _fallback_select_provider_model(
+                config, "coach_provider", "coach_model", "Coach"
+            )
+            config = _sync_batch_roles_with_coach(
+                config, previous_provider, previous_model
+            )
+        elif answer == "f":
+            config = _fallback_select_provider_model(
+                config,
+                "coach_fallback_provider",
+                "coach_fallback_model",
+                "Fallback",
+                provider_choices=FALLBACK_PROVIDER_PRESETS,
+            )
         elif answer == "1":
             val = input(f"  Рабочая папка [{wd_display}]: ").strip()
             if val:
@@ -466,13 +686,14 @@ def _fallback_menu(config: Config) -> Config | None:
         elif answer == "t":
             config = Config(**{**config.__dict__, "tdd_mode": not config.tdd_mode})
         elif answer == "r":
-            config = Config(**{**config.__dict__, "code_review": not config.code_review})
+            config = Config(
+                **{**config.__dict__, "code_review": not config.code_review}
+            )
         elif answer == "6":
             config = Config(**{**config.__dict__, "batch_mode": not config.batch_mode})
         elif answer == "7":
             val = input(
-                f"  Batch review retries [{batch_retry_display}] "
-                "(до / судья / после): "
+                f"  Batch review retries [{batch_retry_display}] (до / судья / после): "
             ).strip()
             if val:
                 counts = _parse_batch_retry_counts(val)
@@ -485,5 +706,21 @@ def _fallback_menu(config: Config) -> Config | None:
                             "batch_post_judge_attempts": counts[2],
                         }
                     )
+        elif answer == "8":
+            config = _fallback_select_provider_model(
+                config, "batch_pre_provider", "batch_pre_model", "Pre-Coach"
+            )
+        elif answer == "9":
+            config = _fallback_select_provider_model(
+                config, "batch_judge_provider", "batch_judge_model", "Judge"
+            )
+        elif answer == "0":
+            config = _fallback_select_provider_model(
+                config, "batch_post_provider", "batch_post_model", "Post-Coach"
+            )
+        elif answer == "w":
+            config = _fallback_select_provider_model(
+                config, "test_writer_provider", "test_writer_model", "TestWriter"
+            )
 
         print()

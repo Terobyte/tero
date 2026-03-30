@@ -1,7 +1,7 @@
-# TDD Fix + Code Review Fix + OpenCode Provider (MIMO/MiniMax)
+# OpenCode Provider (MIMO + Kimi) + TDD Fix + Code Review Fix
 
 **Дата:** 2026-03-24
-**Статус:** Готов к реализации
+**Статус:** Phase 1 complete ✅
 
 ---
 
@@ -29,104 +29,108 @@ Config-поля `test_writer_provider`/`test_writer_model` отображают�
 
 ## Шаги реализации
 
-### Phase 1 — Фиксы TDD и Code Review
+### Phase 1 — OpenCode провайдер + MIMO + Kimi (ПРИОРИТЕТ)
 
-- [ ] 1. Исправить `_provider_name_for_role` и `_provider_for_role` в `src/coach_player.py`: добавить отдельную ветку для `"test_writer"`, которая читает `config.test_writer_provider` и создаёт провайдер через `_get_or_create_provider`
-- [ ] 2. Исправить `_run_turn` для роли `test_writer`: передавать `model_override=self.config.test_writer_model` вместо `self.config.coach_model`
-- [ ] 3. Исправить `_detect_test_command` в `src/coach_player.py`: заменить fallback `["pytest", "-q"]` на `["python3", "-m", "pytest", "-q"]`; то же для ветки с `pyproject.toml`
-- [ ] 4. Расширить `parse_review_output` в `src/feedback.py`: кроме `CODE_REVIEW_PASSED`, распознавать фразы нативного Codex review — "no issues", "no critical issues", "looks good", "LGTM", "no bugs", "code is correct" (case-insensitive, отдельный regex `_CODE_REVIEW_OK_RE`)
-- [ ] 5. Написать тесты: `tests/test_tdd_provider_routing.py` — проверить что test_writer использует `test_writer_provider`, а не coach; `tests/test_review_parse.py` — проверить новые паттерны `parse_review_output`
-
-### Phase 2 — OpenCode провайдер (базовый)
-
-OpenCode JSON формат (из `opencode run --format json`):
+OpenCode JSON формат (`opencode run --format json`):
 ```
 {"type":"step_start", "part": {"type":"step-start"}}
 {"type":"text",       "part": {"type":"text", "text":"..."}}
-{"type":"tool_use",   "part": {"type":"tool", "tool":"bash", "state":{"status":"completed","input":{"command":"...","description":"..."},"output":"...","metadata":{"exit":0}}}}
+{"type":"tool_use",   "part": {"type":"tool", "tool":"bash", "callID":"...", "state":{"status":"completed","input":{"command":"...","description":"..."},"output":"...","metadata":{"exit":0}}}}
 {"type":"step_finish","part": {"type":"step-finish","reason":"stop|tool-calls","tokens":{"total":N,"input":N,"output":N}}}
 {"type":"error",      "error":{"name":"...", "data":{"message":"..."}}}
 ```
 
-System prompt: нет env var-аналога `CODEX_INSTRUCTIONS`. Вставляем в начало сообщения:
-`<SYSTEM INSTRUCTIONS>\n{system_prompt}\n</SYSTEM INSTRUCTIONS>\n\n{user_prompt}`
+CLI: `opencode run --format json --dir <working_dir> -m <model> -`
+System prompt: нет `CODEX_INSTRUCTIONS`. Вставляем в начало: `<SYSTEM INSTRUCTIONS>\n{system_prompt}\n</SYSTEM INSTRUCTIONS>\n\n{user_prompt}`
 
-CLI команда: `opencode run --format json --dir <working_dir> -m <model> -`
-Рабочая директория: `--dir` флаг (не `-C` как у codex).
+Подтверждённые модели (`opencode models`):
+- `opencode/mimo-v2-pro-free` — MIMO v2 Pro (бесплатный, 128k ctx)
+- `opencode/mimo-v2-omni-free` — MIMO v2 Omni (бесплатный, быстрее)
+- `opencode/minimax-m2.5-free` — MiniMax M2.5 (бесплатный, **1M ctx!**)
+- `opencode/nemotron-3-super-free` — Nemotron 3 Super (бесплатный)
+- `openrouter/moonshotai/kimi-k2:free` — Kimi K2 (бесплатный, 128k ctx)
+- `openrouter/moonshotai/kimi-k2.5` — Kimi K2.5 (платный, 128k ctx)
 
-- [ ] 6. Создать `src/providers/opencode.py` с `OpenCodeConfig` и `OpenCodeProvider`:
+- [x] 1. Создать `src/providers/opencode.py` с `OpenCodeConfig` и `OpenCodeProvider`:
   - `OpenCodeConfig`: `command="opencode"`, `default_model="opencode/mimo-v2-pro-free"`, `default_timeout=900`
-  - `OpenCodeProvider.run(prompt, system_prompt, working_dir, max_turns, model)` — запускает `opencode run --format json --dir <dir> -m <model> -`, читает JSONL, конвертирует в `AdaptedMessage`
-  - `_adapt_opencode_event(event)` — конвертер событий: `text` → `AdaptedMessage(role="assistant")`, `tool_use` → `ToolUseBlock + ToolResultBlock`, `error` → AdaptedMessage с ошибкой
+  - `OpenCodeProvider.run(prompt, system_prompt, working_dir, max_turns, model)` — запускает subprocess, читает JSONL, конвертирует в `AdaptedMessage`
+  - `_adapt_opencode_event(event)` — конвертер: `text` → assistant message, `tool_use` → `ToolUseBlock + ToolResultBlock`, `step_finish` → обновить токены, `error` → error message
   - Токены из `step_finish.part.tokens.input` / `.output` → `self._last_input_tokens` / `self._last_output_tokens`
   - `check_ready()` — проверяет `shutil.which("opencode")`
-  - `display_name` property
-- [ ] 7. Зарегистрировать `OpenCodeProvider` в `src/providers/__init__.py` и `src/providers/registry.py` (ветка `"opencode"` в `create_provider`)
-- [ ] 8. Написать тест `tests/test_opencode_provider.py`: проверить `_adapt_opencode_event` для каждого типа события, `check_ready` с mock
-
-### Phase 3 — Модели MIMO и MiniMax в меню и runtime_controls
-
-Подтверждённые free модели из `opencode models`:
-- `opencode/mimo-v2-pro-free` — MIMO v2 Pro (бесплатный)
-- `opencode/mimo-v2-omni-free` — MIMO v2 Omni (бесплатный, быстрее)
-- `opencode/minimax-m2.5-free` — MiniMax M2.5 (бесплатный)
-- `opencode/nemotron-3-super-free` — Nemotron 3 Super (бесплатный)
-
-- [ ] 9. Добавить `OPENCODE_MODEL_PRESETS` в `src/menu.py`:
+  - `display_name` property — показывает имя модели
+- [x] 2. Зарегистрировать `OpenCodeProvider` в `src/providers/__init__.py` и `src/providers/registry.py` (ветка `"opencode"` в `create_provider`)
+- [x] 3. Добавить `OPENCODE_MODEL_PRESETS` в `src/menu.py`:
   ```python
   OPENCODE_MODEL_PRESETS = {
       "MIMO Pro  (free)":         "opencode/mimo-v2-pro-free",
       "MIMO Omni (free)":         "opencode/mimo-v2-omni-free",
       "MiniMax M2.5 (free)":      "opencode/minimax-m2.5-free",
+      "Kimi K2   (free)":         "openrouter/moonshotai/kimi-k2:free",
+      "Kimi K2.5":                "openrouter/moonshotai/kimi-k2.5",
       "Nemotron 3 Super (free)":  "opencode/nemotron-3-super-free",
       "Ввести вручную...":        "__custom__",
   }
   ```
-- [ ] 10. Добавить `"OpenCode (MIMO/free)": "opencode"` в `PROVIDER_PRESETS` в `src/menu.py`
-- [ ] 11. Добавить обработку провайдера `"opencode"` в `_edit_setting_questionary` и `_fallback_menu` — выбор модели из `OPENCODE_MODEL_PRESETS` (аналогично codex)
-- [ ] 12. Добавить в `MODEL_PRESETS` в `src/runtime_controls.py`:
+- [x] 4. Добавить `"OpenCode (MIMO/Kimi/free)": "opencode"` в `PROVIDER_PRESETS` в `src/menu.py`; добавить обработку провайдера `"opencode"` в `_edit_setting_questionary` и `_fallback_menu` (аналогично ветке codex, но с `OPENCODE_MODEL_PRESETS`)
+- [x] 5. Добавить в `MODEL_PRESETS` в `src/runtime_controls.py`:
   ```python
   ("MIMO-Pro",    "opencode", "opencode/mimo-v2-pro-free"),
   ("MIMO-Omni",   "opencode", "opencode/mimo-v2-omni-free"),
   ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free"),
+  ("Kimi-K2",     "opencode", "openrouter/moonshotai/kimi-k2:free"),
   ```
-- [ ] 13. Добавить в `_MODEL_CONTEXT_WINDOWS` в `src/config.py`:
+- [x] 6. Добавить в `_MODEL_CONTEXT_WINDOWS` в `src/config.py`:
   ```python
-  ("mimo",        131_072),  # MIMO v2 (128k context)
-  ("minimax-m2",  1_000_000),  # MiniMax M2.5 (1M context!)
-  ("nemotron",    131_072),
+  ("mimo",             131_072),   # MIMO v2
+  ("minimax-m2",     1_000_000),   # MiniMax M2.5 — 1M!
+  ("nemotron",         131_072),
+  ("kimi-k2",          131_072),   # Kimi K2 / K2.5
   ```
-
-### Phase 4 — Config и defaults
-
-- [ ] 14. Добавить `opencode` провайдер в `.g3/config.yaml`:
+- [x] 7. Добавить `opencode` провайдер в `.g3/config.yaml` и preset `mimo_free`:
   ```yaml
-  opencode:
-    type: opencode_native
-    command: opencode
-    default_model: opencode/mimo-v2-pro-free
-    default_timeout: 900
+  providers:
+    opencode:
+      type: opencode_native
+      command: opencode
+      default_model: opencode/mimo-v2-pro-free
+      default_timeout: 900
+  presets:
+    mimo_free:
+      player_provider: opencode
+      player_model: opencode/mimo-v2-pro-free
+      coach_provider: ccg
+      max_rounds: 3
+    kimi_free:
+      player_provider: opencode
+      player_model: openrouter/moonshotai/kimi-k2:free
+      coach_provider: ccg
+      max_rounds: 3
   ```
-- [ ] 15. Добавить preset в `.g3/config.yaml`:
-  ```yaml
-  mimo_free:
-    player_provider: opencode
-    player_model: opencode/mimo-v2-pro-free
-    coach_provider: ccg
-    max_rounds: 3
-  ```
-- [ ] 16. Обновить `_save_global_default` в `src/menu.py` — убедиться что `opencode`-специфичные поля сохраняются корректно
+- [x] 8. Написать тест `tests/test_opencode_provider.py`: `_adapt_opencode_event` для каждого типа события, `check_ready` mock, токены из `step_finish`
 
-### Phase 5 — Финальная проверка
+### Phase 2 — Фиксы TDD
 
-- [ ] 17. Прогнать полный тест-сьют: `python3 -m pytest tests/ -q` — убедиться что все 190+ тестов проходят
-- [ ] 18. Ручная проверка TDD mode: включить в меню → запустить g3 на тестовом проекте → убедиться что test_writer фаза выполняется на правильном провайдере
-- [ ] 19. Ручная проверка Code Review: включить → запустить → убедиться что при отсутствии проблем `parse_review_output` возвращает `ReviewPassed`
-- [ ] 20. Ручная проверка OpenCode: `opencode` как player_provider с MIMO free → запустить один шаг → проверить что инструменты работают и токены считаются
+- [ ] 9. Исправить `_provider_name_for_role` и `_provider_for_role` в `src/coach_player.py`: добавить отдельную ветку для `"test_writer"` → `config.test_writer_provider` + `_get_or_create_provider(config.test_writer_provider)`
+- [ ] 10. Исправить `_run_turn` для роли `test_writer`: передавать `model_override=self.config.test_writer_model` вместо `self.config.coach_model`
+- [ ] 11. Исправить `_detect_test_command`: заменить fallback `["pytest", "-q"]` на `["python3", "-m", "pytest", "-q"]`; то же для ветки с `pyproject.toml`
+- [ ] 12. Написать тест `tests/test_tdd_provider_routing.py`: проверить что test_writer использует `test_writer_provider`, а не coach
+
+### Phase 3 — Фикс Code Review
+
+- [ ] 13. Расширить `parse_review_output` в `src/feedback.py`: кроме `CODE_REVIEW_PASSED`, распознавать фразы нативного Codex review через `_CODE_REVIEW_OK_RE` (см. справку ниже)
+- [ ] 14. Написать тест `tests/test_review_parse.py`: проверить все паттерны нового regex
+
+### Phase 4 — Финальная проверка
+
+- [ ] 15. Прогнать полный тест-сьют: `python3 -m pytest tests/ -q` — убедиться 190+ тестов проходят
+- [ ] 16. Ручная проверка OpenCode: player=opencode/mimo-v2-pro-free → запустить один шаг → инструменты работают, токены считаются
+- [ ] 17. Ручная проверка Kimi K2 free как player
+- [ ] 18. Ручная проверка TDD mode с test_writer_provider=opencode
+- [ ] 19. Ручная проверка Code Review: убедиться что при отсутствии проблем возвращает `ReviewPassed`
 
 ---
 
-## Справка: OpenCode event adapter (набросок)
+## Справка: OpenCode event adapter
 
 ```python
 def _adapt_opencode_event(self, event: dict):
@@ -140,15 +144,13 @@ def _adapt_opencode_event(self, event: dict):
 
     elif t == "tool_use":
         state = part.get("state", {})
-        tool = part.get("tool", "")
         call_id = part.get("callID", "")
         inp = state.get("input", {})
         cmd = inp.get("command") or inp.get("description") or str(inp)
         output = state.get("output", "")
-        meta = state.get("metadata", {})
-        exit_code = meta.get("exit", 0)
+        exit_code = state.get("metadata", {}).get("exit", 0)
 
-        tool_use = ToolUseBlock(id=call_id, name=tool, input={"command": cmd})
+        tool_use = ToolUseBlock(id=call_id, name=part.get("tool", "bash"), input={"command": cmd})
         tool_result = ToolResultBlock(
             tool_use_id=call_id,
             content=output[:MAX_TOOL_OUTPUT],
@@ -171,7 +173,7 @@ def _adapt_opencode_event(self, event: dict):
 
 ---
 
-## Справка: расширенный `_CODE_REVIEW_OK_RE` для parse_review_output
+## Справка: расширенный regex для parse_review_output
 
 ```python
 _CODE_REVIEW_OK_RE = re.compile(

@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tero = "g3:main"
+tero = "src.cli_entry:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

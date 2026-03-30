@@ -12,6 +12,7 @@ from src.config import CcgEnv
 @dataclass
 class ProviderConfig:
     """Configuration for a single provider."""
+
     name: str
     type: str
     config: dict[str, Any]
@@ -21,8 +22,7 @@ class ProviderRegistry:
     """Registry for managing multiple providers with different accounts.
 
     Supports:
-    - Multiple provider types (ccg, claude, codex)
-    - Multiple accounts of the same type (ccg, ccg2)
+    - Multiple provider types (black, turbo, zai, claude, codex, opencode, kilo)
     - Parallel execution of providers
     """
 
@@ -40,13 +40,13 @@ class ProviderRegistry:
         """Get or create a provider instance by name.
 
         Args:
-            provider_name: Provider name ("ccg", "ccg2", "claude", "codex")
+            provider_name: Provider name ("black", "turbo", "zai", "claude", "codex", "opencode", "kilo")
 
         Returns:
             Provider instance
 
         Raises:
-            ValueError: If provider unknown or no token for CCG
+            ValueError: If provider unknown or no token for Blackbox
         """
         if provider_name in self._instances:
             return self._instances[provider_name]
@@ -65,8 +65,7 @@ class ProviderRegistry:
         provider_config: dict,
     ) -> AgentProvider:
         """Create a provider instance."""
-        if provider_type in ("claude_glm", "ccg", "ccg2"):
-            # CCG providers use CcgEnv for multi-account support
+        if provider_type in ("claude_glm", "black", "turbo", "zai", "lite", "ccg", "ccg1", "ccg2"):
             ccg_env = CcgEnv.for_account(provider_name, provider_config)
             return CcgProvider(ccg_env)
 
@@ -81,9 +80,12 @@ class ProviderRegistry:
         if provider_type == "codex":
             # Import here to avoid circular dependency
             from .codex import CodexProvider, CodexConfig
+
             codex_cfg = CodexConfig(
                 command=provider_config.get("command", "codex"),
-                default_model=provider_config.get("default_model", provider_config.get("model", "")),
+                default_model=provider_config.get(
+                    "default_model", provider_config.get("model", "")
+                ),
                 default_timeout=provider_config.get("default_timeout", 900),
                 sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
                 approval_policy=provider_config.get("approval_policy", "never"),
@@ -97,13 +99,39 @@ class ProviderRegistry:
             )
             return CodexProvider(codex_cfg)
 
-        raise ValueError(f"Unknown provider type: {provider_type} (name: {provider_name})")
+        if provider_type in ("opencode_native", "opencode", "kilo_native", "kilo"):
+            from .opencode import OpenCodeProvider, OpenCodeConfig
+
+            opencode_cfg = OpenCodeConfig(
+                command=provider_config.get(
+                    "command",
+                    "kilo" if provider_type in ("kilo_native", "kilo") else "opencode",
+                ),
+                default_model=provider_config.get(
+                    "default_model",
+                    (
+                        "kilo/xiaomi/mimo-v2-pro:free"
+                        if provider_type in ("kilo_native", "kilo")
+                        else "opencode/mimo-v2-pro-free"
+                    ),
+                ),
+                default_timeout=provider_config.get("default_timeout", 900),
+                display_name=provider_config.get(
+                    "display_name",
+                    "Kilo" if provider_type in ("kilo_native", "kilo") else "OpenCode",
+                ),
+            )
+            return OpenCodeProvider(opencode_cfg)
+
+        raise ValueError(
+            f"Unknown provider type: {provider_type} (name: {provider_name})"
+        )
 
     def get_parallel_providers(self, names: list[str]) -> list[AgentProvider]:
         """Get multiple provider instances for parallel execution.
 
         Args:
-            names: List of provider names (e.g., ["ccg", "ccg2"])
+            names: List of provider names (e.g., ["black", "claude"])
 
         Returns:
             List of provider instances

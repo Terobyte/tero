@@ -53,6 +53,31 @@ class TestKeyboardListener:
         listener._action_queue.put("coach_right")
         assert listener.pop_action() == "coach_right"
 
+    def test_open_input_fd_uses_stdin_when_tty(self):
+        from src.runtime_controls import KeyboardListener
+
+        listener = KeyboardListener()
+        with patch("sys.stdin.fileno", return_value=7), patch(
+            "os.isatty", return_value=True
+        ):
+            fd, owned_fd = listener._open_input_fd()
+
+        assert fd == 7
+        assert owned_fd is None
+
+    def test_open_input_fd_falls_back_to_dev_tty_when_stdin_not_tty(self):
+        from src.runtime_controls import KeyboardListener
+
+        listener = KeyboardListener()
+        with patch("sys.stdin.fileno", return_value=7), patch(
+            "os.isatty", return_value=False
+        ), patch("os.open", return_value=11) as mock_open:
+            fd, owned_fd = listener._open_input_fd()
+
+        assert fd == 11
+        assert owned_fd == 11
+        mock_open.assert_called_once()
+
 
 class TestStatusBar:
     def test_render_writes_ansi_to_stdout(self, capsys):
@@ -112,7 +137,7 @@ class TestStatusBar:
 
 
 MODEL_PRESETS_TEST = [
-    ("GLM-1", "ccg", "blackboxai/z-ai/glm-5"),
+    ("GLM-5", "black", "blackboxai/z-ai/glm-5"),
     ("Sonnet", "claude", "claude-sonnet-4-6"),
     ("Opus", "claude", "claude-opus-4-6"),
 ]
@@ -229,27 +254,66 @@ class TestRuntimeControls:
         controls._picker.pop_pending_change.return_value = ("coach", "claude", "claude-sonnet-4-6")
 
         session = MagicMock()
-        session.config.coach_provider = "ccg"
+        session.config.coach_provider = "black"
         session.config.coach_model = ""
+        session.config.batch_pre_provider = "black"
+        session.config.batch_pre_model = ""
+        session.config.batch_post_provider = "black"
+        session.config.batch_post_model = ""
         mock_provider = MagicMock()
         mock_provider.check_ready.return_value = (True, "")
         session._get_or_create_provider.return_value = mock_provider
         session._build_role_display.return_value = "claude | model=claude-sonnet-4-6"
-        session.player_model = "GLM-1"
-        session.coach_model = "GLM-1"
+        session.player_model = "GLM-5"
+        session.coach_model = "GLM-5"
 
         controls.apply_pending(session)
 
         assert session.config.coach_provider == "claude"
         assert session.config.coach_model == "claude-sonnet-4-6"
+        assert session.config.batch_pre_provider == "claude"
+        assert session.config.batch_pre_model == "claude-sonnet-4-6"
+        assert session.config.batch_post_provider == "claude"
+        assert session.config.batch_post_model == "claude-sonnet-4-6"
         session._get_or_create_provider.assert_called_with("claude")
+
+    def test_apply_pending_keeps_custom_batch_roles_when_switching_coach(self):
+        controls = self._make_controls()
+        controls._picker.pop_pending_change.return_value = (
+            "coach",
+            "opencode",
+            "opencode/minimax-m2.5-free",
+        )
+
+        session = MagicMock()
+        session.config.coach_provider = "black"
+        session.config.coach_model = ""
+        session.config.batch_pre_provider = "claude"
+        session.config.batch_pre_model = "claude-sonnet-4-6"
+        session.config.batch_post_provider = "codex"
+        session.config.batch_post_model = "o3"
+        mock_provider = MagicMock()
+        mock_provider.check_ready.return_value = (True, "")
+        session._get_or_create_provider.return_value = mock_provider
+        session._build_role_display.return_value = (
+            "opencode | model=opencode/minimax-m2.5-free"
+        )
+
+        controls.apply_pending(session)
+
+        assert session.config.coach_provider == "opencode"
+        assert session.config.coach_model == "opencode/minimax-m2.5-free"
+        assert session.config.batch_pre_provider == "claude"
+        assert session.config.batch_pre_model == "claude-sonnet-4-6"
+        assert session.config.batch_post_provider == "codex"
+        assert session.config.batch_post_model == "o3"
 
     def test_apply_pending_skips_if_provider_not_ready(self):
         controls = self._make_controls()
         controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4")
 
         session = MagicMock()
-        session.config.coach_provider = "ccg"
+        session.config.coach_provider = "black"
         mock_provider = MagicMock()
         mock_provider.check_ready.return_value = (False, "Proxy not reachable")
         session._get_or_create_provider.return_value = mock_provider
@@ -257,5 +321,68 @@ class TestRuntimeControls:
         controls.apply_pending(session)
 
         # coach_provider should NOT have changed
-        assert session.config.coach_provider == "ccg"
+        assert session.config.coach_provider == "black"
+        controls._status_bar.show_warning.assert_called_once()
+
+    def test_apply_pending_uses_session_runtime_switch_when_available(self):
+        controls = self._make_controls()
+        controls._picker.pop_pending_change.return_value = (
+            "coach",
+            "kilo",
+            "kilo/minimax/minimax-m2.5:free",
+        )
+
+        class Session:
+            def __init__(self):
+                self.config = MagicMock()
+                self.config.coach_provider = "black"
+                self.config.coach_model = "blackboxai/z-ai/glm-5"
+                self._provider = MagicMock()
+                self._provider.check_ready.return_value = (True, "")
+                self._get_or_create_provider = MagicMock(return_value=self._provider)
+                self._switch_mock = MagicMock(
+                    return_value="kilo | model=kilo/minimax/minimax-m2.5:free"
+                )
+
+            def switch_runtime_role(self, role, provider_name, model):
+                return self._switch_mock(role, provider_name, model)
+
+        session = Session()
+
+        controls.apply_pending(session)
+
+        session._switch_mock.assert_called_once_with(
+            "coach", "kilo", "kilo/minimax/minimax-m2.5:free"
+        )
+        assert (
+            controls._coach_name
+            == "kilo | model=kilo/minimax/minimax-m2.5:free"
+        )
+
+    def test_apply_pending_shows_warning_if_runtime_switch_fails(self):
+        controls = self._make_controls()
+        controls._picker.pop_pending_change.return_value = (
+            "player",
+            "opencode",
+            "opencode/mimo-v2-pro-free",
+        )
+
+        class Session:
+            def __init__(self):
+                self.config = MagicMock()
+                self.config.player_provider = "black"
+                self.config.player_model = "blackboxai/z-ai/glm-5"
+                self._provider = MagicMock()
+                self._provider.check_ready.return_value = (True, "")
+                self._get_or_create_provider = MagicMock(return_value=self._provider)
+                self._switch_mock = MagicMock(side_effect=RuntimeError("boom"))
+
+            def switch_runtime_role(self, role, provider_name, model):
+                return self._switch_mock(role, provider_name, model)
+
+        session = Session()
+
+        controls.apply_pending(session)
+
+        assert controls._player_name == ""
         controls._status_bar.show_warning.assert_called_once()

@@ -1,269 +1,45 @@
 #!/usr/bin/env python3
-"""tero CLI — coach-player feedback loop via Claude Agent SDK."""
-
-import argparse
 import asyncio
 import sys
-from pathlib import Path
-
-from src.config import resolve_config
 from src.coach_player import CoachPlayerSession
-from src.learning.recorder import RunRecorder
+from src.cli_entry import (
+    build_parser,
+    prepare_go_config as _shared_prepare_go_config,
+    resolve_go_config as _shared_resolve_go_config,
+    run_go as _shared_run_go,
+    run_history as _shared_run_history,
+)
 
 
 def _resolve_go_config(args):
-    """Resolve config for `tero go` from CLI-like args."""
-    return resolve_config({
-        "working_dir": args.working_dir,
-        "max_turns": args.max_turns,
-        "plan_file": args.plan,
-        "verbose": args.verbose,
-        "autonomous": args.autonomous,
-        "coach_model": getattr(args, "coach_model", None),
-        "player_provider": getattr(args, "player_provider", None),
-        "coach_provider": getattr(args, "coach_provider", None),
-        "player_model": getattr(args, "player_model", None),
-        "tdd_mode": getattr(args, "tdd_mode", None),
-        "test_command": getattr(args, "test_command", None),
-        "test_timeout_s": getattr(args, "test_timeout_s", None),
-        "code_review": getattr(args, "code_review", None),
-        "review_provider": getattr(args, "review_provider", None),
-        "review_model": getattr(args, "review_model", None),
-        "coach_retry_max": getattr(args, "coach_retry_max", None),
-        "coach_fallback_provider": getattr(args, "coach_fallback_provider", None),
-        "coach_fallback_model": getattr(args, "coach_fallback_model", None),
-        "context_limit": getattr(args, "context_limit", None),
-        "compact_threshold": getattr(args, "compact_threshold", None),
-        "max_continuation_attempts": getattr(args, "max_continuation_attempts", None),
-    })
+    return _shared_resolve_go_config(args)
 
 
 def _prepare_go_config(args):
-    """Resolve config and, when requested, prompt for interactive settings."""
-    config = _resolve_go_config(args)
-    no_menu = getattr(args, "no_menu", False)
-
-    if no_menu or config.autonomous:
-        return config
-
-    from src.menu import run_settings_menu
-
-    config = run_settings_menu(config)
-    if config is None:
-        print("Выход.")
-        sys.exit(0)
-    return config
+    return _shared_prepare_go_config(args)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog="tero",
-        description="Coach-player feedback loop for implementation",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # `go` subcommand
-    go_parser = subparsers.add_parser("go", help="Run coach-player loop")
-    go_parser.add_argument(
-        "--max-turns", "-n",
-        type=int,
-        default=None,
-        help="Max retries per step (default: 10)",
-    )
-    go_parser.add_argument(
-        "--plan", "-p",
-        type=str,
-        default=None,
-        help="Requirements file (default: requirements.md)",
-    )
-    go_parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        default=None,
-        help="Show full agent output including tool results",
-    )
-    go_parser.add_argument(
-        "--autonomous",
-        action="store_true",
-        default=None,
-        help="Skip all confirmations",
-    )
-    go_parser.add_argument(
-        "--no-menu",
-        action="store_true",
-        default=False,
-        help="Skip interactive settings menu and start immediately",
-    )
-    go_parser.add_argument(
-        "--working-dir", "-w",
-        type=str,
-        default=".",
-        help="Working directory (default: current)",
-    )
-
-    # Provider selection (NEW)
-    go_parser.add_argument(
-        "--player-provider", "-pp",
-        type=str,
-        default=None,
-        choices=["ccg", "ccg2", "claude", "codex"],
-        help="Provider for player: ccg, ccg2, claude, or codex",
-    )
-    go_parser.add_argument(
-        "--coach-provider", "-cp",
-        type=str,
-        default=None,
-        choices=["ccg", "ccg2", "claude", "codex"],
-        help="Provider for coach: ccg, ccg2, claude, or codex",
-    )
-    go_parser.add_argument(
-        "--player-model", "-pm",
-        type=str,
-        default=None,
-        help="Model for player (e.g., sonnet, opus, haiku for Claude)",
-    )
-    go_parser.add_argument(
-        "--coach-model", "-cm",
-        type=str,
-        default=None,
-        dest="coach_model",
-        help="Model for coach (e.g., sonnet, opus, haiku for Claude)",
-    )
-    go_parser.add_argument(
-        "--tdd",
-        dest="tdd_mode",
-        action="store_true",
-        default=None,
-        help="Enable TDD mode",
-    )
-    go_parser.add_argument(
-        "--test-command",
-        type=str,
-        default=None,
-        help="Override auto-detected test command",
-    )
-    go_parser.add_argument(
-        "--test-timeout-s",
-        type=int,
-        default=None,
-        dest="test_timeout_s",
-        help="Timeout for enforced test runs in seconds",
-    )
-    go_parser.add_argument(
-        "--code-review",
-        action="store_true",
-        default=None,
-        help="Enable final code review after coach approval",
-    )
-    go_parser.add_argument(
-        "--review-provider",
-        type=str,
-        default=None,
-        choices=["ccg", "ccg2", "claude", "codex"],
-        help="Provider for final code review",
-    )
-    go_parser.add_argument(
-        "--review-model",
-        type=str,
-        default=None,
-        help="Model override for the review provider",
-    )
-    go_parser.add_argument(
-        "--coach-retry-max",
-        type=int,
-        default=None,
-        help="How many times to retry the main coach on missing verdicts",
-    )
-    go_parser.add_argument(
-        "--coach-fallback-provider",
-        type=str,
-        default=None,
-        choices=["ccg", "ccg2", "claude", "codex"],
-        help="Provider to use when the main coach stays silent",
-    )
-    go_parser.add_argument(
-        "--coach-fallback-model",
-        type=str,
-        default=None,
-        help="Model override for the fallback coach",
-    )
-
-    # Context management
-    go_parser.add_argument(
-        "--context-limit",
-        type=int,
-        default=None,
-        help="Max context tokens (default: 110000)",
-    )
-    go_parser.add_argument(
-        "--compact-threshold",
-        type=float,
-        default=None,
-        help="Compact at this fraction of limit (default: 0.85)",
-    )
-    go_parser.add_argument(
-        "--max-continuation",
-        type=int,
-        default=None,
-        dest="max_continuation_attempts",
-        help="Continuation agent retries (default: 2)",
-    )
-
-    # `history` subcommand
-    history_parser = subparsers.add_parser("history", help="Show run history")
-    history_parser.add_argument("--limit", "-l", type=int, default=10)
-    history_parser.add_argument("--working-dir", "-w", type=str, default=".")
-
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "go":
         config = _prepare_go_config(args)
-        asyncio.run(run_go(args, config=config))
+        try:
+            asyncio.run(run_go(args, config=config))
+        except KeyboardInterrupt:
+            print("\nПрервано.")
+            sys.exit(130)
     elif args.command == "history":
         run_history(args)
 
 
 async def run_go(args, config=None):
-    """Run the coach-player session."""
-    if config is None:
-        config = _resolve_go_config(args)
-
-    # Read requirements
-    plan_path = Path(config.working_dir) / config.plan_file
-    if not plan_path.exists():
-        print(f"Ошибка: файл плана не найден: {plan_path}")
-        sys.exit(1)
-
-    requirements = plan_path.read_text()
-    print(f"\nПлан: {plan_path} ({len(requirements)} байт)")
-
-    try:
-        session = CoachPlayerSession(config, requirements, str(plan_path))
-        result = await session.run()
-        sys.exit(0 if result.approved else 1)
-    except RuntimeError as e:
-        print(f"\nОшибка: {e}")
-        sys.exit(1)
+    return await _shared_run_go(args, config=config, session_cls=CoachPlayerSession)
 
 
 def run_history(args):
-    """Show run history."""
-    working_dir = Path(args.working_dir).resolve()
-    recorder = RunRecorder(f"{working_dir}/.g3/knowledge")
-    records = recorder.history(limit=args.limit)
-
-    if not records:
-        print("История пуста.")
-        return
-
-    print(f"\n--- История ({len(records)} запусков) ---\n")
-    for record in records:
-        icon = "✓" if record.status == "approved" else "✗"
-        print(f"  {icon} {record.timestamp}")
-        print(f"      Ходов: {record.turns_used}/{record.max_turns}")
-        print(f"      Время: {record.total_duration_s:.0f}s")
-        print(f"      Статус: {record.status}")
-        print()
+    return _shared_run_history(args)
 
 
 if __name__ == "__main__":
