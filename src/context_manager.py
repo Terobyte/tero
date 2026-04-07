@@ -16,9 +16,15 @@ def _build_compact_summary(messages: list) -> str:
     for msg in messages:
         if not (hasattr(msg, "role") and msg.role == "assistant"):
             continue
-        content = getattr(msg, "content", None) or []
+        content = getattr(msg, "content", None)
+        if isinstance(content, str):
+            text = content.strip()
+            if text:
+                parts.append(text)
+            continue
+        content = content or []
         for block in content:
-            text = getattr(block, "text", None)
+            text = block.strip() if isinstance(block, str) else getattr(block, "text", None)
             if text:
                 parts.append(text.strip())
     return "\n".join(p for p in parts if p)
@@ -67,16 +73,20 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
         f"{summary}"
     )
     result_parts = []
-    async for chunk in provider.run(
-        prompt=compact_prompt,
-        system_prompt="You are a concise summarizer.",
-        working_dir=config.working_dir,
-        max_turns=3,
-        model=getattr(config, "player_model", "") or getattr(config, "coach_model", "") or "",
-    ):
-        text = getattr(chunk, "text", None) or ""
-        if text:
-            result_parts.append(text)
+    try:
+        async for chunk in provider.run(
+            prompt=compact_prompt,
+            system_prompt="You are a concise summarizer.",
+            working_dir=config.working_dir,
+            max_turns=3,
+            model=getattr(config, "player_model", "") or getattr(config, "coach_model", "") or "",
+        ):
+            text = getattr(chunk, "text", None) or ""
+            if text:
+                result_parts.append(text)
+    except Exception:
+        # Return empty string on provider failure; caller already handles empty summaries
+        return ""
     return "\n".join(result_parts)
 
 
@@ -96,7 +106,7 @@ def _log_review_result(
     date_str = datetime.date.today().isoformat()
     path = bugs_dir / f"step-{step_num}-{date_str}.md"
 
-    ts = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     if not path.exists():
         path.write_text(f"# Code Review — Step {step_num} — {ts}\n\n"

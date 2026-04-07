@@ -36,6 +36,12 @@ def test_compact_summary_empty_messages():
     assert _build_compact_summary([]) == ""
 
 
+def test_compact_summary_accepts_plain_string_content():
+    """Compact summary should preserve assistant messages whose content is already a string."""
+    msg = SimpleNamespace(role="assistant", content="Implemented the authentication middleware")
+    assert _build_compact_summary([msg]) == "Implemented the authentication middleware"
+
+
 def test_continuation_prompt_player_step_mode():
     """Step-mode continuation should keep the regular completion report shape."""
     prompt = _build_continuation_prompt("Did step 1 and 2.", role="player")
@@ -94,3 +100,26 @@ async def test_compact_codex_context_uses_config_working_dir_and_player_model():
     assert summary == "condensed summary"
     assert captured["working_dir"] == "/tmp/project"
     assert captured["model"] == "gpt-5.4-high"
+
+
+@pytest.mark.asyncio
+async def test_compact_codex_context_handles_provider_exception():
+    """Codex compaction should return empty string if provider raises exception."""
+    from src.context_manager import _compact_codex_context
+
+    class FailingProvider:
+        async def run(self, prompt, system_prompt, working_dir, max_turns=30, model=""):
+            raise RuntimeError("Provider subprocess failed")
+            # This yield is unreachable but needed for generator syntax
+            yield  # pragma: no cover
+
+    messages = [_make_assistant_msg("Step 1 done: updated config")]
+    config = SimpleNamespace(
+        working_dir="/tmp/project",
+        player_model="gpt-5.4-high",
+        coach_model="",
+    )
+
+    summary = await _compact_codex_context(FailingProvider(), messages, config)
+
+    assert summary == ""
