@@ -53,20 +53,21 @@ class ClaudeNativeProvider:
         cmd = self._build_command(model, max_turns, system_prompt)
         env = self._clean_env()
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=working_dir,
-            env=env,
-        )
-
-        proc.stdin.write(prompt.encode())
-        await proc.stdin.drain()
-        proc.stdin.close()
-
+        proc = None
         try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=working_dir,
+                env=env,
+            )
+
+            proc.stdin.write(prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+
             async for line in proc.stdout:
                 line = line.decode().strip()
                 if not line:
@@ -86,7 +87,7 @@ class ClaudeNativeProvider:
                     f"{stderr.decode()}"
                 )
         finally:
-            if proc.returncode is None:
+            if proc and proc.returncode is None:
                 proc.kill()
                 await proc.wait()
 
