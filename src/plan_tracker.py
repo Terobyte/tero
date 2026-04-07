@@ -162,6 +162,7 @@ def _iter_plan_line_matches(lines: list[str]) -> list[PlanLineMatch]:
                     indent=indent,
                 )
             )
+            continue
 
     return matches
 
