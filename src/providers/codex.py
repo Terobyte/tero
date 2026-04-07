@@ -19,6 +19,7 @@ from .message_adapter import (
 
 # Maximum output length for tool results to prevent memory issues
 MAX_TOOL_OUTPUT = 8000
+TEXT_ONLY_DISABLED_FEATURES = ("shell_tool", "multi_agent", "apps")
 
 
 @dataclass
@@ -69,6 +70,7 @@ class CodexProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        disable_tools: bool = False,
     ) -> AsyncIterator:
         """Run Codex agent via CLI and yield adapted messages.
 
@@ -86,7 +88,11 @@ class CodexProvider:
             AdaptedMessage objects for each relevant event
         """
         self._reset_usage()
-        cmd = self._build_command(model, working_dir)
+        cmd = self._build_command(
+            model=model,
+            working_dir=working_dir,
+            disable_tools=disable_tools,
+        )
         env = self._build_env(system_prompt)
 
         proc = None
@@ -103,18 +109,22 @@ class CodexProvider:
             # Send prompt via stdin ("-" argument means read from stdin)
             await self._write_stdin(proc.stdin, prompt)
 
-            async for line in proc.stdout:
-                decoded = line.decode("utf-8").strip()
-                if not decoded:
-                    continue
-                try:
-                    event = json.loads(decoded)
-                except json.JSONDecodeError:
-                    continue
+            line_iter = self._iter_stdout_lines(proc.stdout)
+            try:
+                async for line in line_iter:
+                    decoded = line.decode("utf-8").strip()
+                    if not decoded:
+                        continue
+                    try:
+                        event = json.loads(decoded)
+                    except json.JSONDecodeError:
+                        continue
 
-                adapted = self._adapt_codex_event(event)
-                if adapted is not None:
-                    yield adapted
+                    adapted = self._adapt_codex_event(event)
+                    if adapted is not None:
+                        yield adapted
+            finally:
+                await line_iter.aclose()
 
             await proc.wait()
 
@@ -127,7 +137,12 @@ class CodexProvider:
                 proc.kill()
                 await proc.wait()
 
-    def _build_command(self, model: str = "", working_dir: str = "") -> list[str]:
+    def _build_command(
+        self,
+        model: str = "",
+        working_dir: str = "",
+        disable_tools: bool = False,
+    ) -> list[str]:
         """Build codex exec CLI command."""
         resolved_model = model or self.config.default_model
 
@@ -143,8 +158,11 @@ class CodexProvider:
         if working_dir:
             cmd.extend(["-C", working_dir])
 
-        # Sandbox mode
-        if self.config.bypass_approvals:
+        # Sandbox mode. Text-only runs should never need command execution.
+        if disable_tools:
+            cmd.extend(["-s", "read-only"])
+            cmd.extend(["-a", "never"])
+        elif self.config.bypass_approvals:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         elif self.config.full_auto:
             cmd.append("--full-auto")
@@ -158,7 +176,12 @@ class CodexProvider:
         # Feature flags (--enable / --disable)
         for feature in self.config.enabled_features:
             cmd.extend(["--enable", feature])
-        for feature in self.config.disabled_features:
+        disabled_features = list(self.config.disabled_features)
+        if disable_tools:
+            for feature in TEXT_ONLY_DISABLED_FEATURES:
+                if feature not in disabled_features:
+                    disabled_features.append(feature)
+        for feature in disabled_features:
             cmd.extend(["--disable", feature])
 
         # Config overrides (-c key=value)
@@ -183,20 +206,52 @@ class CodexProvider:
             env["CODEX_INSTRUCTIONS"] = system_prompt
         return env
 
+    async def _iter_stdout_lines(self, stdout) -> AsyncIterator[bytes]:
+        """Yield stdout lines without relying on StreamReader.readline limits."""
+        if stdout is None:
+            return
+
+        if hasattr(stdout, "read"):
+            buffer = b""
+            while True:
+                chunk = await stdout.read(65_536)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    yield line
+            if buffer:
+                yield buffer
+            return
+
+        async for line in stdout:
+            yield line
+
     async def _write_stdin(self, stdin, text: str) -> None:
         """Write stdin payload, tolerating sync and async test doubles."""
         if stdin is None:
             return
 
-        write_result = stdin.write(text.encode("utf-8"))
-        if inspect.isawaitable(write_result):
-            await write_result
+        try:
+            write_result = stdin.write(text.encode("utf-8"))
+            if inspect.isawaitable(write_result):
+                await write_result
 
-        await stdin.drain()
-
-        close_result = stdin.close()
-        if inspect.isawaitable(close_result):
-            await close_result
+            drain = getattr(stdin, "drain", None)
+            if drain is not None:
+                drain_result = drain()
+                if inspect.isawaitable(drain_result):
+                    await drain_result
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            try:
+                close_result = stdin.close()
+                if inspect.isawaitable(close_result):
+                    await close_result
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     async def _stderr_message(self, stderr) -> AdaptedMessage | None:
         """Convert stderr output into a non-fatal assistant message."""
@@ -438,18 +493,22 @@ class CodexProvider:
             if review_prompt:
                 await self._write_stdin(proc.stdin, review_prompt)
 
-            async for line in proc.stdout:
-                decoded = line.decode("utf-8").strip()
-                if not decoded:
-                    continue
-                try:
-                    event = json.loads(decoded)
-                except json.JSONDecodeError:
-                    continue
+            line_iter = self._iter_stdout_lines(proc.stdout)
+            try:
+                async for line in line_iter:
+                    decoded = line.decode("utf-8").strip()
+                    if not decoded:
+                        continue
+                    try:
+                        event = json.loads(decoded)
+                    except json.JSONDecodeError:
+                        continue
 
-                adapted = self._adapt_codex_event(event)
-                if adapted is not None:
-                    yield adapted
+                    adapted = self._adapt_codex_event(event)
+                    if adapted is not None:
+                        yield adapted
+            finally:
+                await line_iter.aclose()
 
             await proc.wait()
 

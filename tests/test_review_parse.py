@@ -313,6 +313,17 @@ class TestParseReviewAllPatterns:
         assert isinstance(verdict, ReviewIssues)
         assert expect_substring in verdict.text
 
+    def test_numbered_issues_win_over_soft_pass_language(self):
+        """A reviewer mentioning concrete numbered issues must not be parsed as passed."""
+        verdict = parse_review_output(
+            _msg(
+                "Looks good overall, but I found one blocker.\n"
+                "1. SQL injection remains in the login query."
+            )
+        )
+        assert isinstance(verdict, ReviewIssues)
+        assert "SQL injection" in verdict.text
+
     def test_empty_output(self):
         verdict = parse_review_output([MockAssistantMessage(content=[])])
         assert isinstance(verdict, ReviewIssues)
@@ -334,6 +345,16 @@ class TestParseReviewAllPatterns:
                 "The implementation looks solid overall.\n"
                 "No security issues detected.\n"
                 "CODE_REVIEW_PASSED"
+            )
+        )
+        assert isinstance(verdict, ReviewPassed)
+
+    def test_explicit_pass_marker_wins_over_numbered_non_blocker(self):
+        """The explicit sentinel should beat incidental numbered notes."""
+        verdict = parse_review_output(
+            _msg(
+                "CODE_REVIEW_PASSED\n"
+                "1. Consider adding type hints in future (non-blocking)."
             )
         )
         assert isinstance(verdict, ReviewPassed)

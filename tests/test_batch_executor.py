@@ -1,7 +1,9 @@
 """Tests for batch execution components."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from dataclasses import replace
 
 from src.plan_tracker import (
     DEFAULT_STEP_TYPE,
@@ -137,6 +139,29 @@ class TestPlanTracker:
         tracker = PlanTracker(items)
         phase = Phase(name="Create", type="create", steps=items)
         tracker.phase_done(phase)  # should not raise
+
+    def test_phase_done_duplicate_text_only_marks_phase_items(self):
+        """Regression: completing a phase must not alias same-text items
+        that belong to a different phase (issue: text-only lookup)."""
+        from src.plan_tracker import PlanTracker
+
+        # Two items with identical text; only the first is in the phase.
+        first = PlanItem(text="repeat")
+        second = PlanItem(text="repeat", roles=["reviewer"])
+        items = [first, second]
+        tracker = PlanTracker(items)
+
+        phase = Phase(name="Create", type="create", steps=[first])
+        tracker.phases = [phase]
+        tracker.phase_done(phase)
+
+        # Only the first item (in the phase) should be done.
+        assert tracker.items[0].done is True
+        assert tracker.items[1].done is False
+        # The second item must keep its original roles.
+        assert tracker.items[1].roles == ["reviewer"]
+        # The items must be distinct objects (no aliasing).
+        assert tracker.items[0] is not tracker.items[1]
 
     def test_render_dashboard_noop_when_not_started(self):
         from src.plan_tracker import PlanTracker
@@ -644,6 +669,29 @@ class TestRunPhase:
         assert session._run_with_continuation.await_args.kwargs["system_prompt"] == PLAYER_BATCH_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
+    async def test_batch_persona_overlay_appended_to_player_prompt(self):
+        """Batch player prompt should include the combined phase persona overlay."""
+        items = [
+            PlanItem(text="create a.py", roles=["security"]),
+            PlanItem(text="create b.py", roles=["architect"]),
+        ]
+        phase = Phase(name="Create", type="create", steps=items)
+        session = self._make_session(["PHASE_COMPLETE: Create"])
+        session._persona_registry = MagicMock()
+        session._persona_registry.build_overlay.return_value = (
+            "## Specialist Context: Security\nFocus on vulns."
+        )
+        executor = self._make_executor(session)
+
+        await executor._run_phase(phase)
+
+        system_prompt = session._run_with_continuation.await_args.kwargs["system_prompt"]
+        assert "## Specialist Context: Security" in system_prompt
+        session._persona_registry.build_overlay.assert_called_once_with(
+            ["security", "architect"]
+        )
+
+    @pytest.mark.asyncio
     async def test_coach_feedback_included_in_retry_prompt(self):
         from src.feedback import Feedback, Approved
         from src.batch_executor import BatchExecutor
@@ -743,6 +791,37 @@ class TestBatchExecutorRun:
         assert len(tracker.phases) == 1
 
     @pytest.mark.asyncio
+    async def test_run_uses_preplanner_phases_when_set(self):
+        """Pre-populated tracker phases must win over auto grouping."""
+        from src.batch_executor import BatchExecutor
+
+        items = [PlanItem(text="Step 1", roles=["devops"])]
+        preplanned_phases = [
+            Phase(
+                name="Create (1) · Step 1",
+                type="create",
+                steps=items,
+                display_name="Setup",
+            )
+        ]
+        tracker = MagicMock()
+        tracker.items = items
+        tracker.phases = preplanned_phases
+        tracker.render_dashboard = MagicMock()
+        tracker.start_dashboard = MagicMock()
+        tracker.stop_dashboard = MagicMock()
+        tracker.phase_done = MagicMock()
+        session = self._make_full_session()
+        executor = BatchExecutor(session=session, tracker=tracker)
+        executor._run_phase = AsyncMock(return_value=True)
+
+        with patch("src.plan_tracker.auto_group_phases") as mock_group:
+            await executor.run()
+
+        mock_group.assert_not_called()
+        assert tracker.phases == preplanned_phases
+
+    @pytest.mark.asyncio
     async def test_run_calls_start_and_stop_dashboard(self):
         from src.batch_executor import BatchExecutor
         items = [PlanItem(text="create a.py")]
@@ -822,8 +901,9 @@ class TestBatchExecutorRun:
         tracker.stop_dashboard = MagicMock()
 
         def mark_phase_done(phase):
-            for item in phase.steps:
-                item.done = True
+            phase.steps = [replace(item, done=True) for item in phase.steps]
+            # Mirror the real PlanTracker.phase_done which updates tracker.items
+            tracker.items[:] = [replace(item, done=True) for item in tracker.items]
 
         tracker.phase_done = MagicMock(side_effect=mark_phase_done)
         session = self._make_full_session("PHASE_COMPLETE: Create (2 steps)")
@@ -854,8 +934,9 @@ class TestBatchExecutorRun:
         tracker.stop_dashboard = MagicMock()
 
         def mark_phase_done(phase):
-            for item in phase.steps:
-                item.done = True
+            phase.steps = [replace(item, done=True) for item in phase.steps]
+            # Mirror the real PlanTracker.phase_done which updates tracker.items
+            tracker.items[:] = [replace(item, done=True) for item in tracker.items]
 
         tracker.phase_done = MagicMock(side_effect=mark_phase_done)
 

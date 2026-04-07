@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -91,7 +92,10 @@ class PersonaRegistry:
         return [{"name": p.name, "description": p.description} for p in self._cache.values()]
 
     def build_overlay(self, roles: list[str]) -> str:
-        """Combine overlay text for the given *roles*.
+        """Combine overlay text for the given *roles* (capped at 2).
+
+        If more than 2 roles are supplied a warning is printed to *stderr*
+        and only the first 2 are used.
 
         Args:
             roles: Persona names to include.
@@ -100,8 +104,14 @@ class PersonaRegistry:
             Joined overlay strings separated by blank lines, or ``""`` if
             none of the roles are found.
         """
+        if len(roles) > 2:
+            print(
+                f"  [PersonaRegistry] Warning: {len(roles)} roles assigned, "
+                f"using first 2: {roles[:2]}",
+                file=sys.stderr,
+            )
         parts: list[str] = []
-        for role in roles:
+        for role in roles[:2]:
             persona = self._cache.get(role)
             if persona is not None:
                 parts.append(persona.overlay)

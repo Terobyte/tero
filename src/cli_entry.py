@@ -50,6 +50,15 @@ def resolve_go_config(args):
             "batch_post_provider": getattr(args, "batch_post_provider", None),
             "batch_post_model": getattr(args, "batch_post_model", None),
             "max_review_iterations": getattr(args, "max_review_iterations", None),
+            # Pre-Planner (Phase 0)
+            "preplan_provider": getattr(args, "preplan_provider", None) or None,
+            "preplan_model": getattr(args, "preplan_model", None) or None,
+            "preplan_mode": getattr(args, "preplan_mode", None),
+            # Provider fallback chain
+            "player_fallback_chain": getattr(args, "player_fallback_chain", None),
+            "coach_fallback_chain": getattr(args, "coach_fallback_chain", None),
+            "chain_retry_wait_s": getattr(args, "chain_retry_wait_s", None),
+            "chain_max_retries": getattr(args, "chain_max_retries", None),
         }
     )
 
@@ -183,6 +192,61 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_review_iterations",
     )
 
+    # Pre-Planner (Phase 0)
+    go_parser.add_argument(
+        "--preplan-provider",
+        type=str,
+        default="",
+        help="Provider for Phase 0 Pre-Planner (default: same as player)",
+    )
+    go_parser.add_argument(
+        "--preplan-model",
+        type=str,
+        default="",
+        help="Model override for Phase 0 Pre-Planner",
+    )
+    preplan_group = go_parser.add_mutually_exclusive_group()
+    preplan_group.add_argument(
+        "--preplan",
+        dest="preplan_mode",
+        action="store_true",
+        default=None,
+        help="Enable Phase 0 plan enrichment",
+    )
+    preplan_group.add_argument(
+        "--no-preplan",
+        dest="preplan_mode",
+        action="store_false",
+        default=None,
+        help="Disable Phase 0 plan enrichment",
+    )
+
+    # Provider fallback chain
+    go_parser.add_argument(
+        "--player-fallback-chain",
+        type=str,
+        default=None,
+        dest="player_fallback_chain",
+    )
+    go_parser.add_argument(
+        "--coach-fallback-chain",
+        type=str,
+        default=None,
+        dest="coach_fallback_chain",
+    )
+    go_parser.add_argument(
+        "--chain-retry-wait",
+        type=float,
+        default=None,
+        dest="chain_retry_wait_s",
+    )
+    go_parser.add_argument(
+        "--chain-max-retries",
+        type=int,
+        default=None,
+        dest="chain_max_retries",
+    )
+
     history_parser = subparsers.add_parser("history", help="Show run history")
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
@@ -207,7 +271,14 @@ async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
         session = session_cls(config, requirements, str(plan_path))
         if config.batch_mode:
             items = parse_requirements(requirements)
+            phases = []
+            if config.preplan_mode and hasattr(session, "_run_phase_zero"):
+                enriched_items, phases = await session._run_phase_zero(requirements)
+                if enriched_items:
+                    items = enriched_items
             tracker = PlanTracker(items)
+            if phases:
+                tracker.phases = phases
             executor = BatchExecutor(session, tracker)
             try:
                 await executor.run()

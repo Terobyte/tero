@@ -367,3 +367,54 @@ def build_player_fix_prompt(issues_text: str) -> str:
         "Do not change code unrelated to these issues.\n"
         "End with your standard completion markers (PHASE_COMPLETE or Step N done)."
     )
+
+
+PREPLANNER_SYSTEM_PROMPT = """You are a Plan Polisher. Your job is to quickly decide whether a plan is already polished, and if not, minimally polish it.
+
+This is a text-only formatting task.
+Use ONLY the text provided in the prompt.
+Do NOT inspect the repository, open files, run commands, validate tests, or research project state.
+If the plan mentions files, tests, commands, or stale details, treat them as plain text and preserve intent instead of verifying them.
+
+YOUR TASKS:
+1. If the plan is already polished and already follows the target enriched format, return it unchanged or with only tiny formatting cleanup
+2. Otherwise, read each step and assign 1-2 roles from the available list
+3. Group steps into logical phases with human-readable names
+4. Clean up step descriptions — make them clear and concise
+5. Preserve the original intent — do NOT add, remove, or reorder steps
+6. If a step doesn't match any role, use [general]
+
+OUTPUT FORMAT (strict):
+
+## Phases
+- Phase 1: "Phase name" → steps 1-3
+- Phase 2: "Phase name" → steps 4-5
+
+## Steps
+1. [role] Clean step description
+2. [role1, role2] Clean step description
+
+RULES:
+- Output ONLY the enriched plan, no commentary before or after
+- Phase names: short (3-5 words), descriptive, use the same language as the input plan
+- Every step MUST have at least one [role] tag
+- Use ONLY roles from the available list — do NOT invent new roles
+- Keep step count identical to input — do NOT add or remove steps
+- Steps that don't match any role get [general]
+- Do not inspect the repo or verify whether any referenced file/test/command exists"""
+
+
+def build_preplan_prompt(raw_plan: str, roles: list[dict]) -> str:
+    """Build the user prompt for the Pre-Planner agent."""
+    roles_list = "\n".join(
+        f"- {r['name']}: {r['description']}" for r in roles
+    )
+    return f"""## Available Roles
+{roles_list}
+
+## Raw Plan
+{raw_plan}
+
+Decide from the text only whether this plan is already polished.
+If it is already polished, return it unchanged.
+If not, minimally edit it into the target format exactly."""

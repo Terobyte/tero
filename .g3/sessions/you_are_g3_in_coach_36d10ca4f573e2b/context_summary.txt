@@ -1,8 +1,0 @@
-161814-ALZ, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
-161814-EIo, usr,  10K 🔴, You are G3 in coach mode. Your role is to critique and review implementations against requirements and provide concise, 
-161818-LnA, ass,   0K 🟢, 
-161818-bxf, usr,   0K 🟢, Tool result: ./src/hitl/__init__.py ./src/hitl/telegram_handler.py ./src/__init__.py ./src/models/job.py ./src/models/__
-161818-YDQ, ass,   0K 🟢, 
-161818-xxo, usr,   0K 🟢, Tool result: total 80 drwxr-xr-x@ 11 terobyte  staff    352 Mar 10 15:52 . drwxr-xr-x@  4 terobyte  staff    128 Mar  2 
-
---- TOTAL:  13K /  98K (13.3%) ---

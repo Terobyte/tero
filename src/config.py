@@ -307,6 +307,9 @@ class Config:
     timeout_s: int = 600
     run_tests: bool = True
     run_bug_detection: bool = True
+    run_lint: bool = True
+    run_types: bool = True
+    run_compile: bool = True
     judge: str = "claude"
     agent_a: str = "black"
     agent_b: str = "black"
@@ -388,11 +391,11 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("gpt-4o", 128_000),
     ("gpt-4", 128_000),
     ("codex", 128_000),
+    ("xiaomi/mimo-v2-pro:free", 1_048_576),
     ("mimo", 131_072),
+    ("minimax/minimax-m2.5:free", 262_144),
     ("minimax-m2", 1_000_000),
     ("nemotron", 131_072),
-    ("minimax/minimax-m2.5:free", 262_144),
-    ("xiaomi/mimo-v2-pro:free", 1_048_576),
     ("minimax", 40_960),
 ]
 
@@ -641,5 +644,21 @@ def resolve_config(cli_args: dict) -> Config:
     if claude_home := provider.get("claude_home"):
         defaults["claude_home"] = claude_home
 
+    # Any top-level key in the project config that is NOT a known section header
+    # is a candidate for a user typo (e.g. "runn_tests" instead of "run_tests").
+    # Collect them into defaults so the unknown-key warning can catch them.
+    _KNOWN_SECTIONS = {"defaults", "provider"}
+    for key, val in project.items():
+        if key not in _KNOWN_SECTIONS and key not in defaults:
+            defaults[key] = val
+
     valid_fields = Config.__dataclass_fields__
+    unknown = set(defaults) - set(valid_fields)
+    if unknown:
+        import warnings
+        warnings.warn(
+            f"Unknown config keys (possible typos): {sorted(unknown)}",
+            UserWarning,
+            stacklevel=2,
+        )
     return Config(**{k: v for k, v in defaults.items() if k in valid_fields})

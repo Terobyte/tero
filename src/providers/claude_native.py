@@ -66,24 +66,29 @@ class ClaudeNativeProvider:
         await proc.stdin.drain()
         proc.stdin.close()
 
-        async for line in proc.stdout:
-            line = line.decode().strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-                yield event
-            except json.JSONDecodeError:
-                yield {"type": "text", "text": line}
+        try:
+            async for line in proc.stdout:
+                line = line.decode().strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    yield event
+                except json.JSONDecodeError:
+                    yield {"type": "text", "text": line}
 
-        await proc.wait()
+            await proc.wait()
 
-        if proc.returncode and proc.returncode != 0:
-            stderr = await proc.stderr.read()
-            raise RuntimeError(
-                f"claude CLI exited with code {proc.returncode}: "
-                f"{stderr.decode()}"
-            )
+            if proc.returncode and proc.returncode != 0:
+                stderr = await proc.stderr.read()
+                raise RuntimeError(
+                    f"claude CLI exited with code {proc.returncode}: "
+                    f"{stderr.decode()}"
+                )
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if native Claude CLI is available and authenticated."""

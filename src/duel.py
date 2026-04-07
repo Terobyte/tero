@@ -1,6 +1,7 @@
 """Parallel execution of two agents + Bug Detection + Judge."""
 
 import asyncio
+import time
 from dataclasses import dataclass
 
 from src.providers.registry import ProviderRegistry
@@ -8,6 +9,44 @@ from src.worktree import WorktreeManager
 from src.bug_detector import BugDetector, BugReport
 from src.judge import JudgeRunner, JudgeDecision
 from src.providers.base import AgentResult
+
+
+async def _run_agent(agent, task: str, workspace: str, timeout_s: int) -> AgentResult:
+    """Drain an async-generator agent and return a consolidated AgentResult.
+
+    asyncio.to_thread() only works for synchronous callables.  AgentProvider.run()
+    is an async generator, so it must be awaited directly inside the event loop.
+    """
+    start = time.monotonic()
+    stdout_parts: list[str] = []
+    try:
+        async for msg in agent.run(
+            prompt=task,
+            system_prompt="",
+            working_dir=workspace,
+            max_turns=max(1, timeout_s // 20),
+        ):
+            if isinstance(msg, dict):
+                text = msg.get("text", "")
+            else:
+                text = getattr(msg, "text", "") or ""
+            if text:
+                stdout_parts.append(text)
+        return AgentResult(
+            success=True,
+            exit_code=0,
+            stdout="\n".join(stdout_parts),
+            stderr="",
+            duration_s=time.monotonic() - start,
+        )
+    except Exception as exc:
+        return AgentResult(
+            success=False,
+            exit_code=1,
+            stdout="\n".join(stdout_parts),
+            stderr=str(exc),
+            duration_s=time.monotonic() - start,
+        )
 
 
 @dataclass
@@ -55,10 +94,11 @@ class DuelRunner:
         agent_a = self.registry.get(agent_a_name)
         agent_b = self.registry.get(agent_b_name)
 
-        # 2. Parallel agent launch
+        # 2. Parallel agent launch — agents are async generators, not sync functions,
+        #    so they must be awaited directly via _run_agent (not asyncio.to_thread).
         result_a, result_b = await asyncio.gather(
-            asyncio.to_thread(agent_a.run, task, ws_a, autonomous, timeout_s),
-            asyncio.to_thread(agent_b.run, task, ws_b, autonomous, timeout_s),
+            asyncio.wait_for(_run_agent(agent_a, task, ws_a, timeout_s), timeout=timeout_s),
+            asyncio.wait_for(_run_agent(agent_b, task, ws_b, timeout_s), timeout=timeout_s),
         )
 
         # 3. Parallel Bug Detection

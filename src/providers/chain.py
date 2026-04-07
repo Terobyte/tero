@@ -60,22 +60,32 @@ class ProviderChain:
         return self.providers[0].check_ready()
 
     async def run(self, **kwargs):
-        """Async generator: try providers in order, yield messages from first success."""
+        """Async generator: try providers in order, yield messages from first success.
+
+        Messages are buffered until the provider finishes successfully.  This
+        prevents partial output from a failing provider from leaking to the caller
+        mixed with output from the fallback provider.
+        """
         last_error = None
 
         for attempt in range(self.max_retries + 1):
-            for provider in self.providers:
+            for provider_index, provider in enumerate(self.providers):
+                buffer: list = []
                 try:
-                    # Stream messages from this provider
                     async for msg in provider.run(**kwargs):
+                        buffer.append(msg)
+                    # Provider completed without error — commit the buffer.
+                    for msg in buffer:
                         yield msg
                     return  # Success — done
                 except Exception as exc:
                     last_error = exc
+                    # Discard partial output; do not yield anything to the caller.
+                    buffer.clear()
                     # Notify via callback if a next provider exists
                     if self.on_fallback:
                         failed = getattr(provider, "display_name", str(provider))
-                        next_idx = self.providers.index(provider) + 1
+                        next_idx = provider_index + 1
                         if next_idx < len(self.providers):
                             next_p = self.providers[next_idx]
                             next_name = getattr(next_p, "display_name", str(next_p))

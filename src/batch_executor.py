@@ -487,12 +487,18 @@ class BatchExecutor:
         from src.prompts import PLAYER_BATCH_SYSTEM_PROMPT
         from src import streaming as streaming_ui
 
+        def _raise_if_interrupted() -> None:
+            interrupted = getattr(self.session, "_interrupted", False)
+            if isinstance(interrupted, bool) and interrupted:
+                raise KeyboardInterrupt()
+
         completed_steps: list[str] = []
         coach_feedback: str = ""
         max_phase_attempts = self._max_phase_attempts()
         runtime = vars(self.session).get("_runtime")
 
         for attempt in range(max_phase_attempts):
+            _raise_if_interrupted()
             attempt_num = attempt + 1
             phase.attempts = attempt_num
             self.tracker.render_dashboard()
@@ -500,6 +506,7 @@ class BatchExecutor:
                 runtime.apply_pending(self.session)
                 if runtime.reset_requested:
                     raise PlanResetRequested()
+            _raise_if_interrupted()
 
             prompt = build_batch_prompt(phase, completed_steps, coach_feedback)
             snapshot_pids = getattr(self.session, "_snapshot_pids", None)
@@ -544,6 +551,7 @@ class BatchExecutor:
 
             if callable(cleanup_processes):
                 cleanup_processes(pids_before)
+            _raise_if_interrupted()
 
             if player_claimed_tools_unavailable(result):
                 coach_feedback = build_tool_access_feedback(phase)
@@ -570,14 +578,17 @@ class BatchExecutor:
                 max_attempts=max_phase_attempts,
                 model_name=strategy["label"],
             )
-            verdict = await self.session._run_coach_turn_for_phase(
-                phase,
-                result,
-                completed_steps,
-                provider_name_override=strategy["provider_name_override"] or None,
-                model_override=strategy["model_override"],
-                review_role=strategy["review_role"],
-            )
+            try:
+                verdict = await self.session._run_coach_turn_for_phase(
+                    phase,
+                    result,
+                    completed_steps,
+                    provider_name_override=strategy["provider_name_override"] or None,
+                    model_override=strategy["model_override"],
+                    review_role=strategy["review_role"],
+                )
+            except PlanResetRequested:
+                raise
 
             if isinstance(verdict, Approved):
                 return True

@@ -29,15 +29,22 @@ class MockProvider:
     def health_check(self) -> bool:
         return True
 
-    def run(self, prompt: str, working_dir: str, autonomous: bool = False, timeout_s: int = 600, **kwargs):
-        import time
-        _ = timeout_s  # unused
+    async def run(self, prompt: str, system_prompt: str = "", working_dir: str = "", max_turns: int = 30, model: str = "", **kwargs):
+        import asyncio
         self.call_count += 1
         self.last_prompt = prompt
         self.last_working_dir = working_dir
         if self._delay:
-            time.sleep(self._delay)
-        return self._result
+            await asyncio.sleep(self._delay)
+        # Yield the pre-built result as a sentinel so _run_agent can collect it.
+        # _run_agent builds its own AgentResult from yielded messages; we need
+        # the test to verify success/failure, so we signal failure via an exception.
+        if not self._result.success:
+            raise RuntimeError(self._result.stderr or "agent failed")
+        if self._result.stdout:
+            yield {"type": "text", "text": self._result.stdout}
+        else:
+            yield {"type": "text", "text": "OK"}
 
 
 class TestDuelRunner:

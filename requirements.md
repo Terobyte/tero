@@ -164,22 +164,15 @@ python -m pytest tests/test_persona_registry.py -v
 ```
 Expected: all 5 tests PASS
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/personas/__init__.py src/personas/registry.py tests/test_persona_registry.py
-git commit -m "feat: add PersonaRegistry with YAML frontmatter parsing"
-```
-
 ---
 
 ### Task 2: PersonaRegistry — load_all and build_overlay
 
 **Files:**
-- [ ] Modify: `tests/test_persona_registry.py`
-- [ ] Modify: `src/personas/registry.py` (already created, adding more tests)
+- [x] Modify: `tests/test_persona_registry.py`
+- [x] Modify: `src/personas/registry.py` (already created, adding more tests)
 
-- [ ] **Step 1: Add tests for file parsing and overlay building**
+- [x] **Step 1: Add tests for file parsing and overlay building**
 
 ```python
 # append to tests/test_persona_registry.py
@@ -299,14 +292,14 @@ def test_registry_ignores_file_without_frontmatter(tmp_path):
     assert result == []
 ```
 
-- [ ] **Step 2: Run tests to see which ones fail**
+- [x] **Step 2: Run tests to see which ones fail**
 
 ```bash
 python -m pytest tests/test_persona_registry.py -v 2>&1 | tail -20
 ```
 Expected: new tests FAIL (cap warning, etc.)
 
-- [ ] **Step 3: Update `build_overlay()` to emit warning on cap**
+- [x] **Step 3: Update `build_overlay()` to emit warning on cap**
 
 ```python
 # In registry.py, replace build_overlay:
@@ -328,37 +321,30 @@ def build_overlay(self, roles: list[str]) -> str:
     return "\n\n".join(parts)
 ```
 
-- [ ] **Step 4: Run tests to verify all pass**
+- [x] **Step 4: Run tests to verify all pass**
 
 ```bash
 python -m pytest tests/test_persona_registry.py -v
 ```
 Expected: all tests PASS
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/personas/registry.py tests/test_persona_registry.py
-git commit -m "feat: PersonaRegistry load_all, get, build_overlay with cap warning"
-```
-
 ---
 
 ### Task 3: Create 10 persona .md files
 
 **Files:**
-- [ ] Create: `src/personas/prompts/python-dev.md`
-- [ ] Create: `src/personas/prompts/frontend-dev.md`
-- [ ] Create: `src/personas/prompts/designer.md`
-- [ ] Create: `src/personas/prompts/security.md`
-- [ ] Create: `src/personas/prompts/database.md`
-- [ ] Create: `src/personas/prompts/architect.md`
-- [ ] Create: `src/personas/prompts/devops.md`
-- [ ] Create: `src/personas/prompts/tdd-guide.md`
-- [ ] Create: `src/personas/prompts/performance.md`
-- [ ] Create: `src/personas/prompts/refactor.md`
+- [x] Create: `src/personas/prompts/python-dev.md`
+- [x] Create: `src/personas/prompts/frontend-dev.md`
+- [x] Create: `src/personas/prompts/designer.md`
+- [x] Create: `src/personas/prompts/security.md`
+- [x] Create: `src/personas/prompts/database.md`
+- [x] Create: `src/personas/prompts/architect.md`
+- [x] Create: `src/personas/prompts/devops.md`
+- [x] Create: `src/personas/prompts/tdd-guide.md`
+- [x] Create: `src/personas/prompts/performance.md`
+- [x] Create: `src/personas/prompts/refactor.md`
 
-- [ ] **Step 1: Write a quick smoke test for persona loading**
+- [x] **Step 1: Write a quick smoke test for persona loading**
 
 ```python
 # append to tests/test_persona_registry.py
@@ -390,14 +376,14 @@ def test_bundled_personas_load():
         assert len(p.overlay) > 50  # non-trivial content
 ```
 
-- [ ] **Step 2: Run test to verify it fails (dir doesn't exist yet)**
+- [x] **Step 2: Run test to verify it fails (dir doesn't exist yet)**
 
 ```bash
 python -m pytest tests/test_persona_registry.py::test_bundled_personas_load -v
 ```
 Expected: SKIP (dir not found)
 
-- [ ] **Step 3: Create `src/personas/prompts/security.md`**
+- [x] **Step 3: Create `src/personas/prompts/security.md`**
 
 ```markdown
 ---
@@ -427,7 +413,7 @@ VERIFY:
 Principle: defense in depth — multiple layers, least privilege, fail securely.
 ```
 
-- [ ] **Step 4: Create `src/personas/prompts/python-dev.md`**
+- [x] **Step 4: Create `src/personas/prompts/python-dev.md`**
 
 ```markdown
 ---
@@ -464,7 +450,7 @@ DEPENDENCIES:
 - Pin direct dependencies in pyproject.toml
 ```
 
-- [ ] **Step 5: Create `src/personas/prompts/database.md`**
+- [x] **Step 5: Create `src/personas/prompts/database.md`**
 
 ```markdown
 ---
@@ -503,7 +489,7 @@ RLS (Row-Level Security):
 - Test policies with both admin and regular user contexts
 ```
 
-- [ ] **Step 6: Create `src/personas/prompts/architect.md`**
+- [x] **Step 6: Create `src/personas/prompts/architect.md`**
 
 ```markdown
 ---
@@ -544,7 +530,7 @@ SCALING:
 - Design for the next 10x, not the next 100x
 ```
 
-- [ ] **Step 7: Create `src/personas/prompts/devops.md`**
+- [x] **Step 7: Create `src/personas/prompts/devops.md`**
 
 ```markdown
 ---
@@ -585,7 +571,7 @@ PACKAGING (Python):
 - Separate dev dependencies from runtime ones
 ```
 
-- [ ] **Step 8: Create remaining 5 persona files**
+- [x] **Step 8: Create remaining 5 persona files**
 
 `src/personas/prompts/frontend-dev.md`:
 ```markdown
@@ -778,19 +764,12 @@ BACKWARDS COMPATIBILITY:
 - Never silently change the contract of an existing function
 ```
 
-- [ ] **Step 9: Run smoke test to verify all 10 load**
+- [x] **Step 9: Run smoke test to verify all 10 load**
 
 ```bash
 python -m pytest tests/test_persona_registry.py::test_bundled_personas_load -v
 ```
 Expected: PASS — 10 personas loaded, all have name/description/overlay
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add src/personas/prompts/ tests/test_persona_registry.py
-git commit -m "feat: add 10 persona prompt files (security, python-dev, database, architect, devops, frontend-dev, designer, tdd-guide, performance, refactor)"
-```
 
 ---
 
@@ -799,10 +778,10 @@ git commit -m "feat: add 10 persona prompt files (security, python-dev, database
 ### Task 4: PlanItem.roles and Phase.display_name + fix reconstruction sites
 
 **Files:**
-- [ ] Modify: `src/plan_tracker.py`
-- [ ] Modify: `tests/test_plan_tracker.py`
+- [x] Modify: `src/plan_tracker.py`
+- [x] Modify: `tests/test_plan_tracker.py`
 
-- [ ] **Step 1: Write failing tests for PlanItem.roles**
+- [x] **Step 1: Write failing tests for PlanItem.roles**
 
 ```python
 # append to tests/test_plan_tracker.py
@@ -854,14 +833,14 @@ def test_phase_display_name_set():
     assert phase.display_name == "Security Layer"
 ```
 
-- [ ] **Step 2: Run tests to see which fail**
+- [x] **Step 2: Run tests to see which fail**
 
 ```bash
 python -m pytest tests/test_plan_tracker.py -v -k "roles or display_name or preserves" 2>&1 | tail -20
 ```
 Expected: multiple FAIL (fields don't exist yet)
 
-- [ ] **Step 3: Update `PlanItem` and `Phase` dataclasses in `src/plan_tracker.py`**
+- [x] **Step 3: Update `PlanItem` and `Phase` dataclasses in `src/plan_tracker.py`**
 
 At top of file, add `from dataclasses import dataclass, field` (replace existing `from dataclasses import dataclass`).
 
@@ -888,7 +867,7 @@ class Phase:
     display_name: str = ""
 ```
 
-- [ ] **Step 4: Fix `mark_step_done`, `mark_all_done`, `reset_all_progress` to use `dataclasses.replace`**
+- [x] **Step 4: Fix `mark_step_done`, `mark_all_done`, `reset_all_progress` to use `dataclasses.replace`**
 
 ```python
 from dataclasses import dataclass, field, replace
@@ -910,29 +889,22 @@ def mark_step_done(items: list[PlanItem], index: int) -> list[PlanItem]:
     return result
 ```
 
-- [ ] **Step 5: Run tests to verify all pass**
+- [x] **Step 5: Run tests to verify all pass**
 
 ```bash
 python -m pytest tests/test_plan_tracker.py -v
 ```
 Expected: all PASS (including existing tests)
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/plan_tracker.py tests/test_plan_tracker.py
-git commit -m "feat: add PlanItem.roles and Phase.display_name, fix field preservation with dataclasses.replace"
-```
-
 ---
 
 ### Task 5: `parse_enriched_plan()` and `write_enriched_plan()`
 
 **Files:**
-- [ ] Modify: `src/plan_tracker.py`
-- [ ] Modify: `tests/test_plan_tracker.py`
+- [x] Modify: `src/plan_tracker.py`
+- [x] Modify: `tests/test_plan_tracker.py`
 
-- [ ] **Step 1: Write failing tests for `parse_enriched_plan()`**
+- [x] **Step 1: Write failing tests for `parse_enriched_plan()`**
 
 ```python
 # append to tests/test_plan_tracker.py
@@ -995,14 +967,14 @@ def test_write_enriched_plan_creates_file(tmp_path):
     assert "## Phases" in enriched_path.read_text()
 ```
 
-- [ ] **Step 2: Run tests to see them fail**
+- [x] **Step 2: Run tests to see them fail**
 
 ```bash
 python -m pytest tests/test_plan_tracker.py -v -k "enriched" 2>&1 | tail -15
 ```
 Expected: FAIL (`parse_enriched_plan` not defined)
 
-- [ ] **Step 3: Implement `parse_enriched_plan()` in `src/plan_tracker.py`**
+- [x] **Step 3: Implement `parse_enriched_plan()` in `src/plan_tracker.py`**
 
 ```python
 import re
@@ -1100,14 +1072,14 @@ def write_enriched_plan(path: "str | Path", content: str) -> None:
     p.write_text(content, encoding="utf-8")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 python -m pytest tests/test_plan_tracker.py -v
 ```
 Expected: all PASS
 
-- [ ] **Step 5: Also verify `_build_table()` uses `display_name` when set**
+- [x] **Step 5: Also verify `_build_table()` uses `display_name` when set**
 
 Update `PlanTracker._build_table()` in `plan_tracker.py`:
 ```python
@@ -1137,19 +1109,12 @@ def _build_table(self):
     return table
 ```
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v --tb=short 2>&1 | tail -30
 ```
 Expected: all existing tests still pass
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/plan_tracker.py tests/test_plan_tracker.py
-git commit -m "feat: add parse_enriched_plan, write_enriched_plan, dashboard display_name"
-```
 
 ---
 
@@ -1158,9 +1123,9 @@ git commit -m "feat: add parse_enriched_plan, write_enriched_plan, dashboard dis
 ### Task 6: PREPLANNER_SYSTEM_PROMPT and build_preplan_prompt
 
 **Files:**
-- [ ] Modify: `src/prompts.py`
+- [x] Modify: `src/prompts.py`
 
-- [ ] **Step 1: Add constants and builder — no test needed (pure strings), just verify import**
+- [x] **Step 1: Add constants and builder — no test needed (pure strings), just verify import**
 
 Add to end of `src/prompts.py`:
 
@@ -1207,7 +1172,7 @@ def build_preplan_prompt(raw_plan: str, roles: list[dict]) -> str:
 Enrich this plan following the output format exactly."""
 ```
 
-- [ ] **Step 2: Verify import works**
+- [x] **Step 2: Verify import works**
 
 ```bash
 cd /Users/terobyte/Desktop/Projects/Active/tero
@@ -1215,22 +1180,15 @@ python -c "from src.prompts import PREPLANNER_SYSTEM_PROMPT, build_preplan_promp
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/prompts.py
-git commit -m "feat: add PREPLANNER_SYSTEM_PROMPT and build_preplan_prompt"
-```
-
 ---
 
 ### Task 7: Config fields + env_map + CLI args
 
 **Files:**
-- [ ] Modify: `src/config.py`
-- [ ] Modify: `src/cli_entry.py`
+- [x] Modify: `src/config.py`
+- [x] Modify: `src/cli_entry.py`
 
-- [ ] **Step 1: Write failing tests for new config fields**
+- [x] **Step 1: Write failing tests for new config fields**
 
 ```python
 # append to tests/test_config_defaults.py
@@ -1245,14 +1203,14 @@ def test_config_preplan_defaults():
     assert cfg.preplan_timeout_s == 120
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 python -m pytest tests/test_config_defaults.py::test_config_preplan_defaults -v
 ```
 Expected: FAIL (`Config` has no field `preplan_mode`)
 
-- [ ] **Step 3: Add fields to `Config` dataclass in `src/config.py`**
+- [x] **Step 3: Add fields to `Config` dataclass in `src/config.py`**
 
 Find the `# TDD Mode` section (around line 290) and add below it:
 
@@ -1266,7 +1224,7 @@ preplan_timeout_s: int = 120
 
 > **NOTE:** `preplan_mode` defaults to `False` (opt-in), consistent with `tdd_mode` and `code_review`. This avoids silently breaking all existing `CoachPlayerSession` tests that construct `Config()` with defaults — those would otherwise trigger the preplanner provider readiness check. Enable with `--preplan-provider` CLI arg or `G3_PREPLAN_MODE=true`.
 
-- [ ] **Step 4: Add to `env_map` in `resolve_config()` (around line 508)**
+- [x] **Step 4: Add to `env_map` in `resolve_config()` (around line 508)**
 
 ```python
 "G3_PREPLAN_MODE":      ("preplan_mode",     lambda x: x.lower() in ("true", "1", "yes")),
@@ -1275,18 +1233,18 @@ preplan_timeout_s: int = 120
 "G3_PREPLAN_TIMEOUT_S": ("preplan_timeout_s", int),
 ```
 
-- [ ] **Step 5: Add `preplan_provider` to provider normalization loop**
+- [x] **Step 5: Add `preplan_provider` to provider normalization loop**
 
 In `config.py`, find the loop that normalizes provider names (around line 554) — it iterates over a list of provider field names. Add `"preplan_provider"` to that list.
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 ```bash
 python -m pytest tests/test_config_defaults.py -v
 ```
 Expected: all PASS
 
-- [ ] **Step 7: Add CLI arguments to `src/cli_entry.py`**
+- [x] **Step 7: Add CLI arguments to `src/cli_entry.py`**
 
 In `build_parser()`, add:
 ```python
@@ -1313,19 +1271,12 @@ In `resolve_go_config()`, add three entries to the existing dict passed to `reso
 
 > **NOTE:** `resolve_go_config` passes a flat dict to `resolve_config()`, not an `overrides` variable. All new keys must be added inside that dict literal (lines 22-54 in `cli_entry.py`). Values of `None` are ignored by `resolve_config`.
 
-- [ ] **Step 8: Smoke test CLI args parse without error**
+- [x] **Step 8: Smoke test CLI args parse without error**
 
 ```bash
 python -m pytest tests/test_cli.py -v 2>&1 | tail -15
 ```
 Expected: all PASS
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add src/config.py src/cli_entry.py tests/test_config_defaults.py
-git commit -m "feat: add preplan config fields, env vars, and CLI args"
-```
 
 ---
 
@@ -1334,19 +1285,19 @@ git commit -m "feat: add preplan config fields, env vars, and CLI args"
 ### Task 8: Module-level import + provider dispatch + readiness check
 
 **Files:**
-- [ ] Modify: `src/coach_player.py`
-- [ ] Modify: `tests/test_coach_player.py`
+- [x] Modify: `src/coach_player.py`
+- [x] Modify: `tests/test_coach_player.py`
 
 > **WHY module-level import matters:** `_run_phase_zero` uses `PersonaRegistry`. If it's imported locally inside the method, `unittest.mock.patch("src.coach_player.PersonaRegistry")` won't work — `patch` can only intercept module-level names. Adding the import at the top of `coach_player.py` makes it patchable.
 
-- [ ] **Step 0: Add `PersonaRegistry` import at top of `src/coach_player.py`**
+- [x] **Step 0: Add `PersonaRegistry` import at top of `src/coach_player.py`**
 
 Add to the imports section (near other `src.*` imports):
 ```python
 from src.personas import PersonaRegistry
 ```
 
-- [ ] **Step 1: Write failing test for provider dispatch**
+- [x] **Step 1: Write failing test for provider dispatch**
 
 ```python
 # append to tests/test_coach_player.py
@@ -1368,14 +1319,14 @@ def test_provider_name_for_preplanner_role():
     assert session._provider_name_for_role("preplanner") == "turbo"
 ```
 
-- [ ] **Step 2: Run test to see it fail**
+- [x] **Step 2: Run test to see it fail**
 
 ```bash
 python -m pytest tests/test_coach_player.py::test_provider_name_for_preplanner_role -v
 ```
 Expected: FAIL (`ValueError: Unknown role: preplanner`)
 
-- [ ] **Step 3: Add `preplanner` to `_provider_name_for_role()` and `_provider_for_role()` in `coach_player.py`**
+- [x] **Step 3: Add `preplanner` to `_provider_name_for_role()` and `_provider_for_role()` in `coach_player.py`**
 
 ```python
 # In _provider_name_for_role():
@@ -1387,7 +1338,7 @@ if role == "preplanner":
     return self._get_or_create_provider(self.config.preplan_provider)
 ```
 
-- [ ] **Step 4: Add readiness check for preplanner in `_verify_providers_ready()`**
+- [x] **Step 4: Add readiness check for preplanner in `_verify_providers_ready()`**
 
 After the existing `if self.config.tdd_mode:` block:
 ```python
@@ -1401,28 +1352,21 @@ if self.config.preplan_mode:
     )
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 ```bash
 python -m pytest tests/test_coach_player.py -v 2>&1 | tail -15
 ```
 Expected: all PASS
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/coach_player.py tests/test_coach_player.py
-git commit -m "feat: add preplanner role to provider dispatch and readiness check"
-```
-
 ---
 
 ### Task 9: Streaming UI for Phase 0
 
 **Files:**
-- [ ] Modify: `src/streaming.py`
+- [x] Modify: `src/streaming.py`
 
-- [ ] **Step 1: Add two new print functions**
+- [x] **Step 1: Add two new print functions**
 
 ```python
 # In src/streaming.py, add near the other print_*_header functions:
@@ -1441,29 +1385,22 @@ def print_preplan_result(num_phases: int, num_roles: int) -> None:
     )
 ```
 
-- [ ] **Step 2: Verify import works**
+- [x] **Step 2: Verify import works**
 
 ```bash
 python -c "from src.streaming import print_preplanner_header, print_preplan_result; print('OK')"
 ```
 Expected: `OK`
 
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/streaming.py
-git commit -m "feat: add print_preplanner_header and print_preplan_result to streaming UI"
-```
-
 ---
 
 ### Task 10: Phase 0 in `CoachPlayerSession.run()`
 
 **Files:**
-- [ ] Modify: `src/coach_player.py`
-- [ ] Modify: `tests/test_coach_player.py`
+- [x] Modify: `src/coach_player.py`
+- [x] Modify: `tests/test_coach_player.py`
 
-- [ ] **Step 1: Write failing integration test for Phase 0**
+- [x] **Step 1: Write failing integration test for Phase 0**
 
 ```python
 # append to tests/test_coach_player.py
@@ -1528,14 +1465,14 @@ def test_run_phase_zero_enriches_plan(tmp_path):
     assert result_phases[0].display_name == "Setup"
 ```
 
-- [ ] **Step 2: Run test to see it fail**
+- [x] **Step 2: Run test to see it fail**
 
 ```bash
 python -m pytest tests/test_coach_player.py::test_run_phase_zero_enriches_plan -v
 ```
 Expected: FAIL (`CoachPlayerSession` has no `_run_phase_zero`)
 
-- [ ] **Step 3: Add `_run_phase_zero()` method to `CoachPlayerSession`**
+- [x] **Step 3: Add `_run_phase_zero()` method to `CoachPlayerSession`**
 
 Add after `_reset_plan_progress()` (around line 615):
 
@@ -1612,14 +1549,14 @@ async def _run_phase_zero(
     return items, phases
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 python -m pytest tests/test_coach_player.py::test_run_phase_zero_enriches_plan -v
 ```
 Expected: PASS
 
-- [ ] **Step 5: Wire Phase 0 into `CoachPlayerSession.run()` before the step loop**
+- [x] **Step 5: Wire Phase 0 into `CoachPlayerSession.run()` before the step loop**
 
 In `run()` (around line 625), replace:
 ```python
@@ -1643,29 +1580,22 @@ else:
     self._persona_registry = None
 ```
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v --tb=short 2>&1 | tail -20
 ```
 Expected: all PASS
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/coach_player.py tests/test_coach_player.py
-git commit -m "feat: add _run_phase_zero and wire Phase 0 into CoachPlayerSession.run()"
-```
-
 ---
 
 ### Task 11: Player and Coach persona overlays
 
 **Files:**
-- [ ] Modify: `src/coach_player.py`
-- [ ] Modify: `tests/test_coach_player.py`
+- [x] Modify: `src/coach_player.py`
+- [x] Modify: `tests/test_coach_player.py`
 
-- [ ] **Step 1: Write failing test for overlay injection**
+- [x] **Step 1: Write failing test for overlay injection**
 
 ```python
 # append to tests/test_coach_player.py
@@ -1693,14 +1623,14 @@ def test_persona_overlay_appended_to_player_system_prompt():
     registry.build_overlay.assert_called_once_with(["security"])
 ```
 
-- [ ] **Step 2: Run test to verify the logic is correct**
+- [x] **Step 2: Run test to verify the logic is correct**
 
 ```bash
 python -m pytest tests/test_coach_player.py::test_persona_overlay_appended_to_player_system_prompt -v
 ```
 Expected: PASS (logic tested directly, not yet in coach_player.py)
 
-- [ ] **Step 3: Apply Player overlay in `coach_player.py` (~line 769)**
+- [x] **Step 3: Apply Player overlay in `coach_player.py` (~line 769)**
 
 Find:
 ```python
@@ -1724,7 +1654,7 @@ player_result = await self._run_with_continuation(
     system_prompt=player_system,
 ```
 
-- [ ] **Step 4: Apply Coach overlay (~line 846)**
+- [x] **Step 4: Apply Coach overlay (~line 846)**
 
 Find the coach `_run_turn` call with `system_prompt=COACH_STRICT_SYSTEM_PROMPT`. Replace:
 ```python
@@ -1739,19 +1669,12 @@ if self._persona_registry and step.roles:
 
 Do the same for the fallback coach call (~line 890).
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v --tb=short 2>&1 | tail -20
 ```
 Expected: all PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/coach_player.py tests/test_coach_player.py
-git commit -m "feat: inject persona overlay into Player and Coach system prompts"
-```
 
 ---
 
@@ -1760,11 +1683,11 @@ git commit -m "feat: inject persona overlay into Player and Coach system prompts
 ### Task 12: Batch executor — phase preservation + overlay
 
 **Files:**
-- [ ] Modify: `src/batch_executor.py`
-- [ ] Modify: `src/cli_entry.py`
-- [ ] Modify: `tests/test_batch_executor.py`
+- [x] Modify: `src/batch_executor.py`
+- [x] Modify: `src/cli_entry.py`
+- [x] Modify: `tests/test_batch_executor.py`
 
-- [ ] **Step 1: Write failing test for batch phase preservation**
+- [x] **Step 1: Write failing test for batch phase preservation**
 
 ```python
 # append to tests/test_batch_executor.py
@@ -1802,13 +1725,13 @@ def test_batch_executor_uses_preplanner_phases_when_set():
     mock_group.assert_not_called()
 ```
 
-- [ ] **Step 2: Run test to verify it fails (auto_group_phases currently always called in BatchExecutor.run())**
+- [x] **Step 2: Run test to verify it fails (auto_group_phases currently always called in BatchExecutor.run())**
 
 ```bash
 python -m pytest tests/test_batch_executor.py::test_batch_executor_uses_preplanner_phases_when_set -v
 ```
 
-- [ ] **Step 3: Update `BatchExecutor.run()` to respect pre-populated phases**
+- [x] **Step 3: Update `BatchExecutor.run()` to respect pre-populated phases**
 
 In `batch_executor.py`, find the line:
 ```python
@@ -1819,7 +1742,7 @@ Replace with:
 phases = self.tracker.phases if self.tracker.phases else auto_group_phases(self.tracker.items)
 ```
 
-- [ ] **Step 4: Add batch persona overlay in `_run_phase()`**
+- [x] **Step 4: Add batch persona overlay in `_run_phase()`**
 
 In `_run_phase()`, find `system_prompt=PLAYER_BATCH_SYSTEM_PROMPT`. Replace:
 ```python
@@ -1838,7 +1761,7 @@ result = await self._run_player_turn(
     system_prompt=player_system,
 ```
 
-- [ ] **Step 5: Wire Phase 0 into batch path in `cli_entry.py`**
+- [x] **Step 5: Wire Phase 0 into batch path in `cli_entry.py`**
 
 Find the batch mode entry (where `BatchExecutor` is constructed):
 ```python
@@ -1866,28 +1789,21 @@ if config.batch_mode:
 
 > **NOTE:** `run_go()` in `cli_entry.py` is `async def`, called via `asyncio.run(run_go(...))`. Use `await` directly — calling `asyncio.get_event_loop().run_until_complete()` inside an already-running event loop raises `RuntimeError` in Python 3.10+.
 
-- [ ] **Step 6: Run full test suite**
+- [x] **Step 6: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v --tb=short 2>&1 | tail -25
 ```
 Expected: all PASS
 
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/batch_executor.py src/cli_entry.py tests/test_batch_executor.py
-git commit -m "feat: batch executor respects Pre-Planner phases, injects persona overlay"
-```
-
 ---
 
 ### Task 13: Final integration smoke test
 
 **Files:**
-- [ ] Create: `tests/test_preplan_integration.py`
+- [x] Create: `tests/test_preplan_integration.py`
 
-- [ ] **Step 1: Write end-to-end integration test**
+- [x] **Step 1: Write end-to-end integration test**
 
 ```python
 # tests/test_preplan_integration.py
@@ -1994,26 +1910,19 @@ def test_preplan_mode_false_skips_phase_zero():
         assert not hasattr(session, "_persona_registry") or session._persona_registry is None
 ```
 
-- [ ] **Step 2: Run integration tests**
+- [x] **Step 2: Run integration tests**
 
 ```bash
 python -m pytest tests/test_preplan_integration.py -v
 ```
 Expected: all PASS
 
-- [ ] **Step 3: Run complete test suite one final time**
+- [x] **Step 3: Run complete test suite one final time**
 
 ```bash
 python -m pytest tests/ -v --tb=short 2>&1 | tail -30
 ```
 Expected: all PASS — no regressions
-
-- [ ] **Step 4: Final commit**
-
-```bash
-git add tests/test_preplan_integration.py
-git commit -m "test: add Phase 0 integration tests — fallback, overlay, preplan_mode=False"
-```
 
 ---
 

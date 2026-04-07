@@ -1,5 +1,0 @@
-150207-AWL, sys,   1K 🟡, You are G3, an AI programming agent. Use tools to accomplish tasks - don't just describe what you would do.  When a task
-150207-oXu, sys,   0K 🟢, 📂 Working Directory: /Users/terobyte/tmp/workspace
-150207-PLt, usr,  10K 🔴, You are G3 in implementation mode. Read and implement the following requirements:  # Plan: Indeed Form Question-Answerin
-
---- TOTAL:  12K /  98K (12.7%) ---
