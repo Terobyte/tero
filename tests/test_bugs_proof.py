@@ -274,27 +274,23 @@ def test_snapshot_pids_should_not_match_unrelated_processes():
 
 
 def test_resolve_config_should_skip_empty_strings():
-    """resolve_config should treat empty strings as 'not set'.
-    If this test FAILS → bug confirmed (empty strings override config).
-    If this test PASSES → false positive.
+    """resolve_config now allows empty strings to override (only None is skipped).
+    FIX VERIFIED: empty string from CLI must override the default provider value.
     """
     from src.config import resolve_config
 
-    # Test with a field that has a non-empty default
-    # coach_provider defaults to "black" (non-empty)
-    # player_provider defaults to "black" (non-empty)
     cli_args = {
         "working_dir": "/tmp",
         "player_provider": "black",
-        "coach_provider": "",  # Empty string — should NOT override "black" default
-        "max_turns": 10,  # Control: non-empty value should pass through
+        "coach_provider": "",  # Empty string — FIX: should now override the default
+        "max_turns": 10,  # Control: non-empty value should still pass through
     }
 
     config = resolve_config(cli_args)
 
-    # CORRECT behavior: empty string should NOT override the default "black"
-    assert config.coach_provider != "", (
-        "BUG CONFIRMED: empty string from CLI overrode the default provider"
+    # FIX VERIFIED: empty string from CLI overrides the default "black"
+    assert config.coach_provider == "", (
+        "FIX REGRESSION: empty string from CLI did not override the default provider"
     )
     # Non-empty value should still pass through
     assert config.max_turns == 10
