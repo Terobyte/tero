@@ -1,9 +1,0 @@
-Tool result: total 216
-drwxr-xr-x@ 8 terobyte  staff    256 Mar  5 16:10 .
-drwxr-xr-x@ 4 terobyte  staff    128 Mar  2 16:12 ..
--rw-r--r--@ 1 terobyte  staff   6148 Mar  4 13:58 .DS_Store
--rw-r--r--@ 1 terobyte  staff   2780 Mar  3 13:04 .env.example
-drwxr-xr-x@ 5 terobyte  staff    160 Mar  4 14:32 .g3
-drwxr-xr-x@ 6 terobyte  staff    192 Mar  4 14:05 .pytest_cache
--rw-r--r--@ 1 terobyte  staff  45907 Mar  5 16:10 requirements.md
--rw-r--r--@ 1 terobyte  staff  45907 Mar  5 16:10 UNIVERSAL_AI_SCREENING_PLAN-1.md

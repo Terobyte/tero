@@ -6,6 +6,7 @@ Validates that screening answers meet quality thresholds before submission.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -95,15 +96,15 @@ class BatchStepValidator:
 
         # Check duplicate
         if self.check_duplicates:
-            answer_hash = hash(answer.strip().lower())
+            answer_hash = hashlib.sha256(answer.strip().lower().encode()).hexdigest()
             if question_id not in self._seen_answers:
-                self._seen_answers[question_id] = str(answer_hash)
-            elif self._seen_answers[question_id] != str(answer_hash):
+                self._seen_answers[question_id] = answer_hash
+            elif self._seen_answers[question_id] == answer_hash:
                 return ValidationResult(
                     question_id=question_id,
-                    passed=True,
+                    passed=False,
                     severity=ValidationSeverity.WARNING,
-                    message="Answer differs from previous submission",
+                    message="Duplicate answer detected",
                     details={"previous_hash": self._seen_answers[question_id]},
                 )
 

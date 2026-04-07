@@ -149,7 +149,7 @@ def test_adapt_text_event_empty_text_returns_none():
 
 
 def test_adapt_tool_use_event():
-    """OpenCode 'tool_use' event → tool role with ToolUseBlock + ToolResultBlock."""
+    """OpenCode 'tool_use' event → separate tool_use and tool_result messages."""
     provider = OpenCodeProvider(OpenCodeConfig())
     event = {
         "type": "tool_use",
@@ -165,11 +165,17 @@ def test_adapt_tool_use_event():
             },
         },
     }
-    msg = provider._adapt_opencode_event(event)
-    assert msg is not None
-    assert msg.role == "tool"
-    assert len(msg.content) == 2
-    tool_use, tool_result = msg.content
+    messages = provider._adapt_opencode_event(event)
+    assert messages is not None
+    assert isinstance(messages, list)
+    assert len(messages) == 2
+    tool_use_msg, tool_result_msg = messages
+    assert tool_use_msg.role == "assistant"
+    assert tool_result_msg.role == "tool"
+    assert len(tool_use_msg.content) == 1
+    assert len(tool_result_msg.content) == 1
+    tool_use = tool_use_msg.content[0]
+    tool_result = tool_result_msg.content[0]
     assert tool_use.type == "tool_use"
     assert tool_use.name == "bash"
     assert tool_use.input == {"command": "ls -la"}
@@ -197,9 +203,10 @@ def test_adapt_tool_use_event_nonzero_exit():
             },
         },
     }
-    msg = provider._adapt_opencode_event(event)
-    assert msg is not None
-    assert msg.content[1].is_error is True
+    messages = provider._adapt_opencode_event(event)
+    assert messages is not None
+    assert isinstance(messages, list)
+    assert messages[1].content[0].is_error is True
 
 
 def test_adapt_step_finish_stores_tokens():
@@ -266,8 +273,9 @@ def test_adapt_tool_output_truncated():
             },
         },
     }
-    msg = provider._adapt_opencode_event(event)
-    assert len(msg.content[1].content) <= MAX_TOOL_OUTPUT
+    messages = provider._adapt_opencode_event(event)
+    assert isinstance(messages, list)
+    assert len(messages[1].content[0].content) <= MAX_TOOL_OUTPUT
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +336,7 @@ async def test_run_yields_text_and_stores_tokens():
 
 @pytest.mark.asyncio
 async def test_run_tool_use_and_result():
-    """Full run: tool_use event yields tool role with both blocks."""
+    """Full run: tool_use event yields separate tool_use and tool_result messages."""
     provider = OpenCodeProvider(OpenCodeConfig())
     events = [
         {
@@ -356,10 +364,11 @@ async def test_run_tool_use_and_result():
         async for c in provider.run("do it", "", ".", 10):
             chunks.append(c)
 
-    tool_chunks = [c for c in chunks if c.role == "tool"]
-    assert len(tool_chunks) == 1
-    assert tool_chunks[0].content[0].name == "bash"
-    assert "/home/user" in tool_chunks[0].content[1].content
+    assert len(chunks) == 2
+    assert chunks[0].role == "assistant"
+    assert chunks[0].content[0].name == "bash"
+    assert chunks[1].role == "tool"
+    assert "/home/user" in chunks[1].content[0].content
 
 
 @pytest.mark.asyncio
@@ -615,6 +624,7 @@ def test_opencode_model_presets_exist():
     assert "opencode/minimax-m2.5-free" in values
     assert "openrouter/moonshotai/kimi-k2:free" in values
     assert "openrouter/moonshotai/kimi-k2.5" in values
+    assert "zai/glm-5.1" in values
     assert "__custom__" in values
 
 
@@ -624,6 +634,7 @@ def test_opencode_runtime_presets():
 
     providers = [p for _, p, _ in MODEL_PRESETS]
     assert "opencode" in providers
+    assert ("OpenCode GLM-5.1", "opencode", "zai/glm-5.1") in MODEL_PRESETS
 
 
 def test_opencode_context_windows():
@@ -633,6 +644,7 @@ def test_opencode_context_windows():
     assert get_context_window("opencode/mimo-v2-pro-free") == 131_072
     assert get_context_window("opencode/minimax-m2.5-free") == 1_000_000
     assert get_context_window("openrouter/moonshotai/kimi-k2:free") == 131_072
+    assert get_context_window("zai/glm-5.1") == 204_800
     assert get_context_window("opencode/nemotron-3-super-free") == 131_072
 
 
@@ -723,12 +735,27 @@ def test_fallback_menu_accepts_opencode_coach(monkeypatch):
     assert config.coach_model == "opencode/mimo-v2-omni-free"
 
 
+def test_fallback_menu_accepts_opencode_zai_model(monkeypatch):
+    """Plain-text fallback menu should let users choose direct Z.AI in OpenCode."""
+    from src.menu import _fallback_menu
+    from src.config import Config
+
+    answers = iter(["p", "opencode", "glm-5.1", ""])
+    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
+
+    config = _fallback_menu(Config())
+
+    assert config is not None
+    assert config.player_provider == "opencode"
+    assert config.player_model == "zai/glm-5.1"
+
+
 def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     """Questionary player provider flow should expose the same OpenCode models as coach."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/free)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -752,6 +779,37 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
 
     assert updated.player_provider == "opencode"
     assert updated.player_model == "opencode/minimax-m2.5-free"
+
+
+def test_questionary_player_opencode_can_pick_zai_model(monkeypatch):
+    """Questionary player provider flow should expose direct Z.AI for OpenCode."""
+    from src.menu import _edit_setting_questionary
+    from src.config import Config
+
+    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "Z.AI     (glm-5.1 direct)"])
+
+    class DummyPrompt:
+        def __init__(self, value):
+            self._value = value
+
+        def ask(self):
+            return self._value
+
+    class DummyQuestionary:
+        @staticmethod
+        def select(*args, **kwargs):
+            return DummyPrompt(next(prompts))
+
+        @staticmethod
+        def text(*args, **kwargs):
+            raise AssertionError("custom model prompt should not be used")
+
+    monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
+
+    updated = _edit_setting_questionary(Config(), "player_provider")
+
+    assert updated.player_provider == "opencode"
+    assert updated.player_model == "zai/glm-5.1"
 
 
 def test_questionary_player_kilo_uses_kilo_model_presets(monkeypatch):
@@ -800,6 +858,35 @@ def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
     assert config.coach_fallback_model == "openrouter/moonshotai/kimi-k2:free"
 
 
+def test_fallback_menu_can_toggle_preplan_mode(monkeypatch):
+    """Plain-text menu should expose the Phase 0 preplan toggle."""
+    from src.menu import _fallback_menu
+    from src.config import Config
+
+    answers = iter(["g", ""])
+    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
+
+    config = _fallback_menu(Config(preplan_mode=False))
+
+    assert config is not None
+    assert config.preplan_mode is True
+
+
+def test_fallback_menu_can_edit_preplan_provider(monkeypatch):
+    """Plain-text menu should let users pick the plan-polisher provider/model."""
+    from src.menu import _fallback_menu
+    from src.config import Config
+
+    answers = iter(["h", "codex", "o3", ""])
+    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
+
+    config = _fallback_menu(Config(preplan_provider="black"))
+
+    assert config is not None
+    assert config.preplan_provider == "codex"
+    assert config.preplan_model == "o3"
+
+
 def test_questionary_fallback_can_disable_escalation(monkeypatch):
     """Questionary fallback flow should support disabling escalation."""
     from src.menu import _edit_setting_questionary
@@ -837,12 +924,56 @@ def test_questionary_fallback_can_disable_escalation(monkeypatch):
     assert updated.coach_fallback_model == ""
 
 
+def test_questionary_can_toggle_preplan_mode():
+    """Questionary settings editor should toggle the preplan mode flag."""
+    from src.menu import _edit_setting_questionary
+    from src.config import Config
+
+    updated = _edit_setting_questionary(Config(preplan_mode=False), "preplan_mode")
+
+    assert updated.preplan_mode is True
+
+
+def test_questionary_preplan_provider_uses_provider_picker(monkeypatch):
+    """Questionary flow should support picking the plan-polisher provider/model."""
+    from src.menu import _edit_setting_questionary
+    from src.config import Config
+
+    prompts = iter(["Codex (native CLI)", "o3"])
+
+    class DummyPrompt:
+        def __init__(self, value):
+            self._value = value
+
+        def ask(self):
+            return self._value
+
+    class DummyQuestionary:
+        @staticmethod
+        def select(*args, **kwargs):
+            return DummyPrompt(next(prompts))
+
+        @staticmethod
+        def text(*args, **kwargs):
+            raise AssertionError("custom model prompt should not be used")
+
+    monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
+
+    updated = _edit_setting_questionary(
+        Config(preplan_provider="black", preplan_model="blackboxai/z-ai/glm-5"),
+        "preplan_provider",
+    )
+
+    assert updated.preplan_provider == "codex"
+    assert updated.preplan_model == "o3"
+
+
 def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coach(monkeypatch):
     """Changing coach should update batch pre/post when they still mirror coach."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/free)", "Kimi K2   (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "Kimi K2   (free)"])
 
     class DummyPrompt:
         def __init__(self, value):

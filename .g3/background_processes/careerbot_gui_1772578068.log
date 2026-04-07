@@ -1,7 +1,0 @@
-=== Background Process Log ===
-Name: careerbot_gui
-Command: python3 gui.py 2>&1
-Working Directory: "/Users/terobyte/tmp/workspace"
-Started: 1772578068
-================================
-

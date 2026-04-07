@@ -106,6 +106,25 @@ class BlockingStdout:
         await asyncio.Future()
 
 
+class ChunkedStdout:
+    """Mock stdout that only supports chunked reads."""
+
+    def __init__(self, payload: bytes, chunk_size: int = 32768):
+        self.payload = payload
+        self.chunk_size = chunk_size
+        self.offset = 0
+
+    async def read(self, n: int = -1):
+        if self.offset >= len(self.payload):
+            return b""
+        if n is None or n < 0:
+            n = len(self.payload) - self.offset
+        size = min(n, self.chunk_size, len(self.payload) - self.offset)
+        chunk = self.payload[self.offset:self.offset + size]
+        self.offset += size
+        return chunk
+
+
 @pytest.mark.asyncio
 async def test_last_input_tokens_stored():
     """Codex provider stores input_tokens from JSONL turn.completed.usage field."""
@@ -255,6 +274,37 @@ async def test_closing_stream_early_kills_subprocess():
     assert mock_process.killed is True
 
 
+@pytest.mark.asyncio
+async def test_run_handles_long_jsonl_lines_from_chunked_stdout():
+    """Codex provider should not rely on readline() for oversized JSONL events."""
+    provider = CodexProvider(CodexConfig())
+    huge_text = "X" * 70_000
+    payload = b"".join([
+        (json.dumps({
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": huge_text},
+        }) + "\n").encode(),
+        (json.dumps({
+            "type": "turn.completed",
+            "usage": {"input_tokens": 11, "output_tokens": 22},
+        }) + "\n").encode(),
+    ])
+    mock_process = MockProcess([])
+    mock_process.stdout = ChunkedStdout(payload, chunk_size=4096)
+
+    async def mock_create_subprocess(*args, **kwargs):
+        return mock_process
+
+    with patch("asyncio.create_subprocess_exec", mock_create_subprocess):
+        chunks = []
+        async for chunk in provider.run("hi", "", ".", 10):
+            chunks.append(chunk)
+
+    assert any(chunk.get_text_content() == huge_text for chunk in chunks)
+    assert provider._last_input_tokens == 11
+    assert provider._last_output_tokens == 22
+
+
 def test_build_command_includes_approval_policy_when_not_bypassing():
     """Native Codex exec should honor configured approval policy."""
     provider = CodexProvider(CodexConfig(
@@ -270,6 +320,31 @@ def test_build_command_includes_approval_policy_when_not_bypassing():
     assert "read-only" in cmd
     assert "-a" in cmd
     assert "on-request" in cmd
+
+
+def test_build_command_disables_tools_for_text_only_runs():
+    """Text-only Codex runs should not expose shell or multi-agent tools."""
+    provider = CodexProvider(CodexConfig(
+        bypass_approvals=True,
+        disabled_features=["undo"],
+    ))
+
+    cmd = provider._build_command(
+        model="",
+        working_dir="/tmp/work",
+        disable_tools=True,
+    )
+
+    assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+    assert "-s" in cmd
+    assert "read-only" in cmd
+    assert "-a" in cmd
+    assert "never" in cmd
+    assert cmd.count("--disable") >= 4
+    assert "undo" in cmd
+    assert "shell_tool" in cmd
+    assert "multi_agent" in cmd
+    assert "apps" in cmd
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,7 @@ OPENCODE_MODEL_PRESETS = {
     "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
     "Kimi K2   (free)": "openrouter/moonshotai/kimi-k2:free",
     "Kimi K2.5": "openrouter/moonshotai/kimi-k2.5",
+    "Z.AI     (glm-5.1 direct)": "zai/glm-5.1",
     "Nemotron 3 Super (free)": "opencode/nemotron-3-super-free",
     "Ввести вручную...": "__custom__",
 }
@@ -55,7 +56,7 @@ PROVIDER_PRESETS = {
     "ZAI (Z.AI / GLM-5.1)": "zai",
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
-    "OpenCode (MIMO/Kimi/free)": "opencode",
+    "OpenCode (MIMO/Kimi/Z.AI)": "opencode",
     "Kilo (MIMO/MiniMax)": "kilo",
 }
 
@@ -71,6 +72,18 @@ FALLBACK_PROVIDER_PRESETS = {
     **PROVIDER_PRESETS,
 }
 
+REVIEW_PROVIDER_PRESETS = {
+    "Следовать Coach": "",
+    **PROVIDER_PRESETS,
+}
+
+BATCH_ROLE_LABELS = {
+    "batch_pre": "Pre-Coach",
+    "batch_judge": "Judge",
+    "batch_post": "Post-Coach",
+    "test_writer": "TestWriter",
+}
+
 
 def _provider_model_label(provider: str, model: str, default_text: str = "по умолчанию") -> str:
     """Render provider/model pair for compact menu display."""
@@ -84,6 +97,21 @@ def _fixed_model_for_provider(provider: str) -> str:
     if provider == "lite":
         provider = "zai"
     return FIXED_PROVIDER_MODELS.get(provider, "")
+
+
+def _effective_provider_model(
+    provider: str,
+    model: str,
+    *,
+    fallback_provider: str = "",
+    fallback_model: str = "",
+) -> tuple[str, str]:
+    """Resolve the provider/model pair the runtime will actually use."""
+    effective_provider = provider or fallback_provider
+    effective_model = model or (fallback_model if not provider else "")
+    if effective_provider and not effective_model:
+        effective_model = _fixed_model_for_provider(effective_provider)
+    return effective_provider, effective_model
 
 
 def _model_presets_for_provider(provider: str) -> dict[str, str]:
@@ -116,7 +144,9 @@ def _resolve_model_choice(
 
     presets = _model_presets_for_provider(provider)
     model_id = presets[model_choice]
-    if model_id == "__custom__" and _custom_model_allowed(provider):
+    if model_id == "__custom__":
+        if not _custom_model_allowed(provider):
+            return config
         model_id = questionary.text("Введи model ID:").ask() or getattr(
             config, model_field
         )
@@ -166,11 +196,12 @@ def _questionary_select_provider_model(
         return config
 
     provider = (provider_choices or PROVIDER_PRESETS)[choice]
+    next_model = getattr(config, model_field) if provider == current else ""
     config = Config(
         **{
             **config.__dict__,
             provider_field: provider,
-            model_field: "" if not provider else getattr(config, model_field),
+            model_field: "" if not provider else next_model,
         }
     )
 
@@ -205,7 +236,7 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
 
     if provider == "opencode":
         print(
-            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2, kimi-k2.5, nemotron-3-super"
+            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2, kimi-k2.5, glm-5.1, nemotron-3-super"
         )
         model = input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
         model_map = {
@@ -214,6 +245,8 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
             "minimax-m2.5": "opencode/minimax-m2.5-free",
             "kimi-k2": "openrouter/moonshotai/kimi-k2:free",
             "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
+            "glm-5.1": "zai/glm-5.1",
+            "zai": "zai/glm-5.1",
             "nemotron-3-super": "opencode/nemotron-3-super-free",
         }
         return model_map.get(model, model)
@@ -236,19 +269,22 @@ def _fallback_select_provider_model(
     model_field: str,
     prompt_label: str,
     provider_choices: dict[str, str] | None = None,
+    empty_value_label: str = "off",
 ) -> Config:
     """Shared provider/model picker for the plain-text fallback menu."""
     choice_map = provider_choices or PROVIDER_PRESETS
     allowed_values = list(dict.fromkeys(choice_map.values()))
-    rendered_values = [value or "off" for value in allowed_values]
-    current = getattr(config, provider_field) or ("off" if "" in allowed_values else "")
+    rendered_values = [value or empty_value_label for value in allowed_values]
+    current = getattr(config, provider_field) or (
+        empty_value_label if "" in allowed_values else ""
+    )
 
     print(f"  Провайдеры: {', '.join(rendered_values)}")
     raw_value = input(f"  {prompt_label} provider [{current}]: ").strip().lower()
     if not raw_value:
         return config
 
-    if raw_value == "off" and "" in allowed_values:
+    if raw_value == empty_value_label.lower() and "" in allowed_values:
         provider = ""
     elif raw_value in allowed_values:
         provider = raw_value
@@ -269,11 +305,27 @@ def _fallback_effective_slot_label(
     model_field: str,
 ) -> str:
     """Render the effective provider/model label for a batch-adjacent slot."""
-    raw_provider = getattr(config, provider_field)
-    raw_model = getattr(config, model_field)
-    provider = raw_provider or config.coach_provider
-    model = raw_model or (config.coach_model if not raw_provider else "")
+    provider, model = _effective_provider_model(
+        getattr(config, provider_field),
+        getattr(config, model_field),
+        fallback_provider=config.coach_provider,
+        fallback_model=config.coach_model,
+    )
     return _provider_model_label(provider, model)
+
+
+def _review_effective_label(config: Config) -> str:
+    """Render the effective review provider/model, including coach fallback."""
+    provider, model = _effective_provider_model(
+        config.review_provider,
+        config.review_model,
+        fallback_provider=config.coach_provider,
+        fallback_model=config.coach_model,
+    )
+    label = _provider_model_label(provider, model)
+    if not config.review_provider:
+        return f"{label} [следует coach]"
+    return label
 
 
 def _format_batch_retry_counts(config: Config) -> str:
@@ -328,12 +380,32 @@ def _questionary_menu(config: Config) -> Config | None:
             config.coach_fallback_provider,
             config.coach_fallback_model,
         )
+        review_provider_display = _review_effective_label(config)
         verbose_display = "вкл" if config.verbose else "выкл"
         autonomous_display = "вкл" if config.autonomous else "выкл"
         batch_display = "вкл" if config.batch_mode else "выкл"
         batch_retry_display = _format_batch_retry_counts(config)
         tdd_display = "вкл" if config.tdd_mode else "выкл"
         review_display = "вкл" if config.code_review else "выкл"
+        preplan_display = "вкл" if config.preplan_mode else "выкл"
+        batch_pre_display = _fallback_effective_slot_label(
+            config, "batch_pre_provider", "batch_pre_model"
+        )
+        judge_provider, judge_model = _effective_provider_model(
+            config.batch_judge_provider,
+            config.batch_judge_model,
+        )
+        judge_display = _provider_model_label(judge_provider, judge_model)
+        batch_post_display = _fallback_effective_slot_label(
+            config, "batch_post_provider", "batch_post_model"
+        )
+        test_writer_display = _fallback_effective_slot_label(
+            config, "test_writer_provider", "test_writer_model"
+        )
+        preplanner_display = _provider_model_label(
+            config.preplan_provider,
+            config.preplan_model,
+        )
 
         wd_display = config.working_dir.replace(str(Path.home()), "~")
         choices = [
@@ -351,27 +423,37 @@ def _questionary_menu(config: Config) -> Config | None:
                 f"    Escalation:     {fallback_display}",
                 value="coach_fallback",
             ),
+            questionary.Choice(
+                f"    Review Agent:   {review_provider_display}",
+                value="review_provider",
+            ),
             questionary.Separator("─── batch роли ──────────────────────────"),
             questionary.Choice(
-                f"    Pre-Coach:  {config.batch_pre_provider} ({short_model_name(config.batch_pre_model) if config.batch_pre_model else 'по умолчанию'}) [{config.batch_pre_judge_attempts}x]",
+                f"    Pre-Coach:      {batch_pre_display} [{config.batch_pre_judge_attempts}x]",
                 value="batch_pre",
             ),
             questionary.Choice(
-                f"    Judge:      {config.batch_judge_provider} ({short_model_name(config.batch_judge_model) if config.batch_judge_model else 'DEFAULT'}) [{config.batch_judge_attempts}x]",
+                f"    Judge:          {judge_display} [{config.batch_judge_attempts}x]",
                 value="batch_judge",
             ),
             questionary.Choice(
-                f"    Post-Coach: {config.batch_post_provider} ({short_model_name(config.batch_post_model) if config.batch_post_model else 'по умолчанию'}) [{config.batch_post_judge_attempts}x]",
+                f"    Post-Coach:     {batch_post_display} [{config.batch_post_judge_attempts}x]",
                 value="batch_post",
             ),
             questionary.Choice(
-                f"    TestWriter: {config.test_writer_provider} ({short_model_name(config.test_writer_model) if config.test_writer_model else 'по умолчанию'})",
+                f"    TestWriter:     {test_writer_display}",
                 value="test_writer",
             ),
             questionary.Separator("─── режимы ──────────────────────────────"),
             questionary.Choice(f"    TDD Mode:       {tdd_display}", value="tdd_mode"),
             questionary.Choice(
                 f"    Code Review:    {review_display}", value="code_review"
+            ),
+            questionary.Choice(
+                f"    Pre-Plan:       {preplan_display}", value="preplan_mode"
+            ),
+            questionary.Choice(
+                f"    Plan Polisher:  {preplanner_display}", value="preplan_provider"
             ),
             questionary.Separator("─── настройки ───────────────────────────"),
             questionary.Choice(
@@ -444,6 +526,15 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             provider_choices=FALLBACK_PROVIDER_PRESETS,
         )
 
+    elif setting == "review_provider":
+        config = _questionary_select_provider_model(
+            config,
+            "review_provider",
+            "review_model",
+            "code review",
+            provider_choices=REVIEW_PROVIDER_PRESETS,
+        )
+
     elif setting == "working_dir":
         wd_display = config.working_dir.replace(str(Path.home()), "~")
         val = questionary.text(
@@ -455,15 +546,20 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             config = Config(**{**config.__dict__, "working_dir": resolved})
 
     elif setting == "coach_model":
-        current = config.coach_model or ""
-        label = f"Текущая модель коуча: {short_model_name(current) if current else 'по умолчанию'}"
-        choices = list(CODEX_MODEL_PRESETS.keys())
+        _, current_model = _effective_provider_model(
+            config.coach_provider,
+            config.coach_model,
+        )
+        label = (
+            "Текущая модель коуча: "
+            f"{short_model_name(current_model) if current_model else 'по умолчанию'}"
+        )
+        choices = list(_model_presets_for_provider(config.coach_provider).keys())
         choice = questionary.select(label, choices=choices).ask()
         if choice:
-            model_id = CODEX_MODEL_PRESETS[choice]
-            if model_id == "__custom__":
-                model_id = questionary.text("Введи model ID:").ask() or current
-            config = Config(**{**config.__dict__, "coach_model": model_id})
+            config = _resolve_model_choice(
+                config, config.coach_provider, "coach_model", choice
+            )
 
     elif setting == "max_turns":
         val = questionary.text(
@@ -492,6 +588,14 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
     elif setting == "code_review":
         config = Config(**{**config.__dict__, "code_review": not config.code_review})
 
+    elif setting == "preplan_mode":
+        config = Config(**{**config.__dict__, "preplan_mode": not config.preplan_mode})
+
+    elif setting == "preplan_provider":
+        config = _questionary_select_provider_model(
+            config, "preplan_provider", "preplan_model", "plan polisher"
+        )
+
     elif setting == "batch_review_schedule":
         current = _format_batch_retry_counts(config)
         val = questionary.text(
@@ -518,66 +622,23 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             "test_writer": ("test_writer_provider", "test_writer_model"),
         }
         prov_field, model_field = prefix_map[setting]
-        current_prov = getattr(config, prov_field)
-        choice = questionary.select(
-            f"Провайдер для {setting} (текущий: {current_prov}):",
-            choices=list(PROVIDER_PRESETS.keys()),
-        ).ask()
-        if choice:
-            provider = PROVIDER_PRESETS[choice]
-            config = Config(**{**config.__dict__, prov_field: provider})
-            fixed_model = _fixed_model_for_provider(provider)
-            if fixed_model:
-                config = Config(**{**config.__dict__, model_field: fixed_model})
-                return config
-            model_choice = questionary.select(
-                f"Модель для {setting}:",
-                choices=list(_model_presets_for_provider(provider).keys()),
-            ).ask()
-            config = _resolve_model_choice(config, provider, model_field, model_choice)
+        config = _questionary_select_provider_model(
+            config,
+            prov_field,
+            model_field,
+            BATCH_ROLE_LABELS[setting],
+        )
 
     return config
 
 
 def _save_global_default(config: Config) -> None:
     """Save current settings to ~/.g3/config.yaml as global defaults."""
-    global_config_path = Path("~/.g3/config.yaml").expanduser()
+    global_config_path = Path.home() / ".g3" / "config.yaml"
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = {
-        "defaults": {
-            "working_dir": config.working_dir,
-            "plan_file": config.plan_file,
-            "max_turns": config.max_turns,
-            "verbose": config.verbose,
-            "autonomous": config.autonomous,
-            "batch_mode": config.batch_mode,
-            "player_provider": config.player_provider,
-            "coach_provider": config.coach_provider,
-            "player_model": config.player_model,
-            "coach_model": config.coach_model,
-            "batch_pre_judge_attempts": config.batch_pre_judge_attempts,
-            "batch_judge_attempts": config.batch_judge_attempts,
-            "batch_post_judge_attempts": config.batch_post_judge_attempts,
-            "tdd_mode": config.tdd_mode,
-            "test_command": config.test_command,
-            "code_review": config.code_review,
-            "review_provider": config.review_provider,
-            "review_model": config.review_model,
-            "coach_fallback_provider": config.coach_fallback_provider,
-            "coach_fallback_model": config.coach_fallback_model,
-            "batch_pre_provider": config.batch_pre_provider,
-            "batch_pre_model": config.batch_pre_model,
-            "batch_judge_provider": config.batch_judge_provider,
-            "batch_judge_model": config.batch_judge_model,
-            "batch_post_provider": config.batch_post_provider,
-            "batch_post_model": config.batch_post_model,
-            "test_writer_provider": config.test_writer_provider,
-            "test_writer_model": config.test_writer_model,
-            "max_review_iterations": config.max_review_iterations,
-        }
-    }
-    global_config_path.write_text(yaml.dump(data, allow_unicode=True))
+    data = {"defaults": dict(config.__dict__)}
+    global_config_path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
     wd = config.working_dir.replace(str(Path.home()), "~")
     print(f"\n  Сохранено в ~/.g3/config.yaml (рабочая папка: {wd})\n")
 
@@ -604,6 +665,7 @@ def _fallback_menu(config: Config) -> Config | None:
             config.coach_fallback_provider,
             config.coach_fallback_model,
         )
+        review_provider_display = _review_effective_label(config)
         batch_pre_display = _fallback_effective_slot_label(
             config, "batch_pre_provider", "batch_pre_model"
         )
@@ -617,11 +679,18 @@ def _fallback_menu(config: Config) -> Config | None:
         test_writer_display = _fallback_effective_slot_label(
             config, "test_writer_provider", "test_writer_model"
         )
+        preplanner_display = _provider_model_label(
+            config.preplan_provider,
+            config.preplan_model,
+        )
         print(f"  [p] Player:        {config.player_provider} ({player_display})")
         print(f"  [c] Coach:         {config.coach_provider} ({coach_display})")
         print(f"  [f] Escalation:    {fallback_display}")
+        print(f"  [v] Review Agent:  {review_provider_display}")
         print(f"  [t] TDD Mode:      {'вкл' if config.tdd_mode else 'выкл'}")
         print(f"  [r] Code Review:   {'вкл' if config.code_review else 'выкл'}")
+        print(f"  [g] Pre-Plan:      {'вкл' if config.preplan_mode else 'выкл'}")
+        print(f"  [h] Plan Polisher: {preplanner_display}")
         print(f"  [1] Рабочая папка: {wd_display}")
         print(f"  [2] Файл плана:    {config.plan_file}")
         print(f"  [3] Макс. попыток: {config.max_turns}")
@@ -666,6 +735,15 @@ def _fallback_menu(config: Config) -> Config | None:
                 "Fallback",
                 provider_choices=FALLBACK_PROVIDER_PRESETS,
             )
+        elif answer == "v":
+            config = _fallback_select_provider_model(
+                config,
+                "review_provider",
+                "review_model",
+                "Review",
+                provider_choices=REVIEW_PROVIDER_PRESETS,
+                empty_value_label="coach",
+            )
         elif answer == "1":
             val = input(f"  Рабочая папка [{wd_display}]: ").strip()
             if val:
@@ -688,6 +766,12 @@ def _fallback_menu(config: Config) -> Config | None:
         elif answer == "r":
             config = Config(
                 **{**config.__dict__, "code_review": not config.code_review}
+            )
+        elif answer == "g":
+            config = Config(**{**config.__dict__, "preplan_mode": not config.preplan_mode})
+        elif answer == "h":
+            config = _fallback_select_provider_model(
+                config, "preplan_provider", "preplan_model", "Plan Polisher"
             )
         elif answer == "6":
             config = Config(**{**config.__dict__, "batch_mode": not config.batch_mode})

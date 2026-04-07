@@ -1,9 +1,0 @@
-Tool result: total 112
--rw-r--r--@  1 terobyte  staff    464 Mar  9 20:28 __init__.py
-drwxr-xr-x@  8 terobyte  staff    256 Mar  9 20:28 .
-drwxr-xr-x@ 30 terobyte  staff    960 Mar  9 20:29 ..
--rw-r--r--@  1 terobyte  staff   6642 Mar  9 20:28 answer_router.py
--rw-r--r--@  1 terobyte  staff   4985 Mar  9 20:28 handler.py
--rw-r--r--@  1 terobyte  staff   1085 Mar  9 20:23 models.py
--rw-r--r--@  1 terobyte  staff  17132 Mar  9 20:23 question_finder.py
--rw-r--r--@  1 terobyte  staff  10877 Mar  9 20:24 radio_filler.py

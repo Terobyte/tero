@@ -94,8 +94,11 @@ class OpenCodeProvider:
                         continue
 
                     adapted = self._adapt_opencode_event(event)
-                    if adapted is not None:
-                        yield adapted
+                    if adapted is None:
+                        continue
+                    messages = adapted if isinstance(adapted, list) else [adapted]
+                    for message in messages:
+                        yield message
             finally:
                 await line_iter.aclose()
 
@@ -197,7 +200,10 @@ class OpenCodeProvider:
             return None
 
         stderr_data = await stderr.read()
-        stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        if isinstance(stderr_data, bytes):
+            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        else:
+            stderr_text = (stderr_data or "").strip()
         if not stderr_text:
             return None
 
@@ -207,13 +213,45 @@ class OpenCodeProvider:
             type="text",
         )
 
-    def _adapt_opencode_event(self, event: dict) -> AdaptedMessage | None:
+    def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
+        """Build separate tool-use and tool-result messages for one command."""
+        state = part.get("state", {})
+        call_id = part.get("callID", "")
+        inp = state.get("input", {})
+        cmd = inp.get("command") or inp.get("description") or str(inp)
+        output = state.get("output", "")
+        exit_code = state.get("metadata", {}).get("exit", 0)
+        result_text = output[:MAX_TOOL_OUTPUT]
+
+        return [
+            AdaptedMessage(
+                role="assistant",
+                content=[ToolUseBlock(
+                    id=call_id,
+                    name=part.get("tool", "bash"),
+                    input={"command": cmd},
+                )],
+                stop_reason="tool_use",
+                type="tool_use",
+            ),
+            AdaptedMessage(
+                role="tool",
+                content=[ToolResultBlock(
+                    tool_use_id=call_id,
+                    content=result_text,
+                    is_error=(exit_code != 0),
+                )],
+                type="tool_result",
+            ),
+        ]
+
+    def _adapt_opencode_event(self, event: dict) -> AdaptedMessage | list[AdaptedMessage] | None:
         """Convert OpenCode JSONL event to AdaptedMessage.
 
         Event types:
           - step_start → ignored (metadata)
           - text       → assistant TextBlock
-          - tool_use   → tool role with ToolUseBlock + ToolResultBlock
+          - tool_use   → separate tool_use and tool_result messages
           - step_finish → store tokens (no message yielded)
           - error      → assistant TextBlock with error
         """
@@ -226,27 +264,7 @@ class OpenCodeProvider:
                 return AdaptedMessage(role="assistant", content=[TextBlock(text=text)])
 
         elif t == "tool_use":
-            state = part.get("state", {})
-            call_id = part.get("callID", "")
-            inp = state.get("input", {})
-            cmd = inp.get("command") or inp.get("description") or str(inp)
-            output = state.get("output", "")
-            exit_code = state.get("metadata", {}).get("exit", 0)
-
-            tool_use = ToolUseBlock(
-                id=call_id,
-                name=part.get("tool", "bash"),
-                input={"command": cmd},
-            )
-
-            result_text = output[:MAX_TOOL_OUTPUT]
-
-            tool_result = ToolResultBlock(
-                tool_use_id=call_id,
-                content=result_text,
-                is_error=(exit_code != 0),
-            )
-            return AdaptedMessage(role="tool", content=[tool_use, tool_result])
+            return self._build_command_messages(part)
 
         elif t == "step_finish":
             tokens = part.get("tokens", {})

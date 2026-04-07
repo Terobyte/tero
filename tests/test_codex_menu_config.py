@@ -1,8 +1,16 @@
 """Tests for menu/config presets and provider defaults."""
 
+from pathlib import Path
+
 from src.cli_entry import PROVIDER_CHOICES
 from src.config import Config, FIXED_PROVIDER_MODELS, get_context_window, short_model_name
-from src.menu import CODEX_MODEL_PRESETS, KILO_MODEL_PRESETS, PROVIDER_PRESETS
+from src.menu import (
+    CODEX_MODEL_PRESETS,
+    KILO_MODEL_PRESETS,
+    OPENCODE_MODEL_PRESETS,
+    PROVIDER_PRESETS,
+    _save_global_default,
+)
 from src.runtime_controls import MODEL_PRESETS
 
 
@@ -30,7 +38,7 @@ def test_codex_config_defaults_and_names_use_native_models():
 
     assert cfg.batch_judge_provider == "codex"
     assert cfg.batch_judge_model == ""
-    assert short_model_name("") == "CODEX"
+    assert short_model_name("") == "DEFAULT"
     assert short_model_name("gpt-5.4") == "GPT-5.4"
     assert short_model_name("o3") == "o3"
     assert short_model_name("o4-mini") == "o4-mini"
@@ -62,3 +70,26 @@ def test_kilo_provider_and_model_presets_are_listed():
         "MiniMax M2.5 (free)": "kilo/minimax/minimax-m2.5:free",
     }
     assert "kilo" in PROVIDER_CHOICES
+
+
+def test_opencode_presets_include_direct_zai_choice():
+    assert PROVIDER_PRESETS["OpenCode (MIMO/Kimi/Z.AI)"] == "opencode"
+    assert OPENCODE_MODEL_PRESETS["Z.AI     (glm-5.1 direct)"] == "zai/glm-5.1"
+
+
+def test_save_global_default_persists_preplan_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cfg = Config(
+        working_dir=str(tmp_path / "workspace"),
+        preplan_mode=True,
+        preplan_provider="codex",
+        preplan_model="o3",
+    )
+
+    _save_global_default(cfg)
+
+    saved = (Path(tmp_path) / ".g3" / "config.yaml").read_text()
+    assert "preplan_mode: true" in saved
+    assert "preplan_provider: codex" in saved
+    assert "preplan_model: o3" in saved

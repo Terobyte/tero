@@ -34,6 +34,41 @@ class BugDetector:
         self.run_lint = run_lint
         self.run_compile = run_compile
 
+    @staticmethod
+    def _pytest_ignores(working_dir: str) -> list[str]:
+        """Common directories that should never be traversed by bug detection."""
+        base = Path(working_dir)
+        ignore_names = BugDetector._ignored_names()
+        args: list[str] = []
+        for name in ignore_names:
+            args.extend(["--ignore", str(base / name)])
+        return args
+
+    @staticmethod
+    def _ignored_names() -> tuple[str, ...]:
+        """Directory names to skip during workspace-wide checks."""
+        return (
+            ".venv",
+            "venv",
+            "node_modules",
+            ".git",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "__pycache__",
+        )
+
+    @staticmethod
+    def _python_files(working_dir: str) -> list[str]:
+        """Enumerate Python files while excluding dependency/cache directories."""
+        base = Path(working_dir)
+        ignored = set(BugDetector._ignored_names())
+        return [
+            str(py_file)
+            for py_file in base.rglob("*.py")
+            if ignored.isdisjoint(py_file.relative_to(base).parts)
+        ]
+
     def run(self, working_dir: str) -> BugReport:
         """Run all enabled checks and return aggregated bug report."""
         report = BugReport()
@@ -63,7 +98,8 @@ class BugDetector:
     def _check_compile(working_dir: str) -> int:
         """Count syntax errors in Python files."""
         errors = 0
-        for py_file in Path(working_dir).rglob("*.py"):
+        for py_file in BugDetector._python_files(working_dir):
+            py_file = Path(py_file)
             try:
                 result = subprocess.run(
                     ["/usr/bin/env", "python3", "-c", f"import py_compile; py_compile.compile({str(py_file)!r}, doraise=True)"],
@@ -80,10 +116,26 @@ class BugDetector:
     @staticmethod
     def _check_lint(working_dir: str) -> int:
         """Run flake8 or fallback to pyflakes, return error count."""
-        for cmd in (["python3", "-m", "flake8", "--count", "--quiet"],):
+        exclude_csv = ",".join(BugDetector._ignored_names())
+        python_files = BugDetector._python_files(working_dir)
+        for cmd in (
+            [
+                "python3",
+                "-m",
+                "flake8",
+                "--count",
+                "--quiet",
+                "--exclude",
+                exclude_csv,
+                working_dir,
+            ],
+            ["python3", "-m", "pyflakes", *python_files] if python_files else [],
+        ):
+            if not cmd:
+                continue
             try:
                 result = subprocess.run(
-                    cmd + [working_dir],
+                    cmd,
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -95,8 +147,12 @@ class BugDetector:
                         line = line.strip()
                         if line.isdigit():
                             return int(line)
-                    # Fallback: count non-empty stderr lines
-                    return max(1, len([l for l in result.stderr.splitlines() if l.strip()]))
+                    output_lines = [
+                        line
+                        for line in (result.stdout + "\n" + result.stderr).splitlines()
+                        if line.strip()
+                    ]
+                    return max(1, len(output_lines))
             except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
                 continue
         return 0
@@ -121,9 +177,18 @@ class BugDetector:
     @staticmethod
     def _check_tests(working_dir: str) -> int:
         """Run pytest if available, return failure count."""
+        # Exclude dependency folders like .venv, venv, and node_modules.
         try:
             result = subprocess.run(
-                ["python3", "-m", "pytest", "--tb=no", "-q", working_dir],
+                [
+                    "python3",
+                    "-m",
+                    "pytest",
+                    "--tb=no",
+                    "-q",
+                    *BugDetector._pytest_ignores(working_dir),
+                    working_dir,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=60,

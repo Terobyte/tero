@@ -50,4 +50,18 @@ class JudgeRunner:
         if len_b > len_a:
             return JudgeDecision(action="winner_b", confidence="medium", reason="More substantial changes")
 
-        return JudgeDecision(action="retry", confidence="low", reason="No clear winner")
+        # Same length — compare content quality (line count, uniqueness)
+        lines_a = diff_a.count("\n") + 1 if diff_a else 0
+        lines_b = diff_b.count("\n") + 1 if diff_b else 0
+        if lines_a > lines_b:
+            return JudgeDecision(action="winner_a", confidence="low", reason="More lines changed")
+        if lines_b > lines_a:
+            return JudgeDecision(action="winner_b", confidence="low", reason="More lines changed")
+
+        # Deterministic tiebreaker: pick whichever diff has more unique chars
+        uniq_a = len(set(diff_a)) if diff_a else 0
+        uniq_b = len(set(diff_b)) if diff_b else 0
+        if uniq_a >= uniq_b:
+            return JudgeDecision(action="winner_a", confidence="low", reason="Tiebreaker: A")
+
+        return JudgeDecision(action="winner_b", confidence="low", reason="Tiebreaker: B")

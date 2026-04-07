@@ -46,7 +46,7 @@ Verdict = Approved | Feedback | NoVerdict
 ReviewVerdict = ReviewPassed | ReviewIssues
 
 
-_NUMBERED_ISSUE_RE = re.compile(r"^\s*\d+\.\s+(.+?)\s*$")
+_NUMBERED_ISSUE_RE = re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$")
 _DECLINED_MARKER_RE = re.compile(r"IMPLEMENTATION_DECLINED\b[:\-\s]*", re.IGNORECASE)
 _APPROVED_MARKER_RE = re.compile(r"IMPLEMENTATION_APPROVED\b", re.IGNORECASE)
 _NO_OUTPUT_FEEDBACK_START = "1. Coach produced no output"
@@ -164,7 +164,7 @@ def _extract_numbered_issues(text: str) -> list[str]:
         if match:
             if current_issue:
                 issues.append(current_issue)
-            current_issue = f"{len(issues) + 1}. {match.group(1).strip()}"
+            current_issue = f"{match.group(1)}. {match.group(2).strip()}"
             continue
 
         if current_issue:
@@ -194,6 +194,40 @@ def is_invalid_feedback(feedback: Feedback) -> bool:
             _DECLINED_WITHOUT_ISSUES_FEEDBACK_START,
         )
     )
+
+
+_FREE_TEXT_CONCERN_RE = re.compile(
+    r"\b(?:XSS|CSRF|SQL\s+injection|injection\s+risk|buffer\s+overflow"
+    r"|vulnerabilit(?:y|ies)|exploit|security\s+(?:issue|risk|flaw)"
+    r"|memory\s+leak|race\s+condition|deadlock|null\s+(?:pointer|dereference)"
+    r"|uninitialized\s+(?:var|variable)|use\s+after\s+free"
+    r"|command\s+injection|path\s+traversal|open\s+redirect"
+    r"|hardcoded\s+(?:secret|password|credential|api\s+key)"
+    r"|information\s+(?:leak|disclosure)|denial\s+of\s+service"
+    r"|(?:potential|possible)\s+(?:bug|issue|problem|crash|error))\b",
+    re.IGNORECASE,
+)
+
+# Words that negate a security keyword when they appear immediately before it.
+_NEGATIVE_PREFIX_RE = re.compile(r"\b(?:no|not|without|zero|any)\b", re.IGNORECASE)
+
+_EXPLICIT_CODE_REVIEW_PASSED_RE = re.compile(r"CODE_REVIEW_PASSED\b", re.IGNORECASE)
+
+
+def _has_real_security_concern(text: str) -> bool:
+    """Return True only when _FREE_TEXT_CONCERN_RE matches outside a denial context.
+
+    Phrases like "No XSS vulnerabilities detected" or "no potential issue" contain
+    security keywords but express the *absence* of a problem.  We suppress those
+    false positives by checking whether a negative word ("no", "not", "without",
+    "zero", "any") appears within 40 characters before each match.
+    """
+    for match in _FREE_TEXT_CONCERN_RE.finditer(text):
+        start = max(0, match.start() - 40)
+        prefix = text[start : match.start()]
+        if not _NEGATIVE_PREFIX_RE.search(prefix):
+            return True
+    return False
 
 
 _CODE_REVIEW_PASSED_RE = re.compile(
@@ -229,15 +263,27 @@ def parse_review_output(messages: list) -> ReviewVerdict:
     if not text:
         return ReviewIssues("1. Code reviewer produced no output.")
 
-    if _CODE_REVIEW_PASSED_RE.search(text):
+    # The explicit sentinel wins — unless the reviewer also mentions a real
+    # security concern in the same message (e.g. "CODE_REVIEW_PASSED. However,
+    # XSS vulnerability at line 42.").  Security concerns take priority.
+    if _EXPLICIT_CODE_REVIEW_PASSED_RE.search(text):
+        if _has_real_security_concern(text):
+            return ReviewIssues(text)
         return ReviewPassed()
 
-    # Extract issues from the text
     issues = _extract_numbered_issues(text)
     if issues:
         return ReviewIssues("\n".join(issues))
 
-    # No issues found but no CODE_REVIEW_PASSED either
-    return ReviewIssues(
-        "1. Code reviewer did not return a clear verdict.\n" + text[:500]
-    )
+    if _CODE_REVIEW_PASSED_RE.search(text):
+        return ReviewPassed()
+
+    # No explicit pass marker and no numbered issues. Check if the reviewer
+    # described concrete concerns in free text (e.g. "potential XSS in render()").
+    # Use the negative-context-aware helper to avoid false positives.
+    if _has_real_security_concern(text):
+        return ReviewIssues(text)
+
+    # Ambiguous or neutral text with no clear problems — treat as passed.
+    # If the reviewer had concerns, they should have used numbered issues.
+    return ReviewPassed()

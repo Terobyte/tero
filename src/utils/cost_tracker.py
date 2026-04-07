@@ -79,23 +79,28 @@ class CostTracker:
         """Load cost history from storage."""
         if not self.storage_path.exists():
             return
-        try:
-            with open(self.storage_path) as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        self._entries.append(CostEntry(
-                            timestamp=datetime.fromisoformat(data["timestamp"]),
-                            provider=Provider(data["provider"]),
-                            model=data["model"],
-                            input_tokens=data["input_tokens"],
-                            output_tokens=data["output_tokens"],
-                            cost_usd=data["cost_usd"],
-                            operation=data.get("operation", "unknown"),
-                            metadata=data.get("metadata", {}),
-                        ))
-        except (json.JSONDecodeError, KeyError):
-            pass
+        with open(self.storage_path) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    ts = datetime.fromisoformat(data["timestamp"])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    self._entries.append(CostEntry(
+                        timestamp=ts,
+                        provider=Provider(data["provider"]),
+                        model=data["model"],
+                        input_tokens=data["input_tokens"],
+                        output_tokens=data["output_tokens"],
+                        cost_usd=data["cost_usd"],
+                        operation=data.get("operation", "unknown"),
+                        metadata=data.get("metadata", {}),
+                    ))
+                except (json.JSONDecodeError, KeyError):
+                    import warnings
+                    warnings.warn(f"Skipping corrupted history line: {line[:80]!r}")
 
     def _save_entry(self, entry: CostEntry) -> None:
         """Save entry to storage."""
@@ -159,7 +164,7 @@ class CostTracker:
         """Get total cost for a specific day."""
         date = date or datetime.now(timezone.utc)
         day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start.replace(hour=23, minute=59, second=59)
+        day_end = day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
         return sum(
             e.cost_usd for e in self._entries

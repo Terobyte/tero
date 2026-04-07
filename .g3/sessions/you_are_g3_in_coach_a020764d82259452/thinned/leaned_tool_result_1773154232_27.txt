@@ -1,7 +1,0 @@
-Tool result: -rw-r--r--@ 1 terobyte  staff    186 Mar  9 21:54 src/applier/indeed/__init__.py
--rw-r--r--@ 1 terobyte  staff  18528 Mar  9 22:05 src/applier/indeed/applier.py
--rw-r--r--@ 1 terobyte  staff  12229 Mar  9 21:59 src/applier/indeed/captcha.py
--rw-r--r--@ 1 terobyte  staff   3294 Mar  9 21:55 src/applier/indeed/config.py
--rw-r--r--@ 1 terobyte  staff   9002 Mar  9 22:04 src/applier/indeed/form_filler.py
--rw-r--r--@ 1 terobyte  staff   3747 Mar  9 21:59 src/applier/indeed/locators.py
--rw-r--r--@ 1 terobyte  staff   8371 Mar  9 22:03 src/applier/indeed/navigation.py

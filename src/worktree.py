@@ -66,11 +66,16 @@ class WorktreeManager:
             )
             return r.stdout
         # Fallback: diff against source
-        r = subprocess.run(
-            ["diff", "-ruN", "--exclude=.git", self.source_dir, ws],
-            capture_output=True, text=True
-        )
-        return r.stdout
+        try:
+            r = subprocess.run(
+                ["diff", "-ruN", "--exclude=.git", self.source_dir, ws],
+                capture_output=True, text=True
+            )
+            if r.returncode == 2:  # diff error (not just "files differ")
+                return f"diff error: {r.stderr.strip()}"
+            return r.stdout
+        except FileNotFoundError:
+            return "diff command not available"
 
     def cleanup(self, agent_name: str):
         base = self.workspace_base if self.workspace_base is not None else self.session_dir
@@ -122,7 +127,7 @@ class WorktreeManager:
         session_id = os.path.basename(self.session_dir)
         branch = f"g3/{session_id}/{agent_name}"
         subprocess.run(
-            ["git", "branch", branch, "HEAD"],
+            ["git", "branch", "-f", branch, "HEAD"],
             cwd=self.source_dir, check=True, capture_output=True
         )
         subprocess.run(

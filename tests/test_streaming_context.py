@@ -32,6 +32,32 @@ def test_print_continuation_started():
     assert "player" in out.lower() or "continuation" in out.lower()
 
 
+def test_print_step_header_includes_roles_when_present():
+    """Step header should surface active persona roles for visibility."""
+    _, out = capture(s.print_step_header, 1, 3, "Add auth", ["security", "architect"])
+
+    assert "Add auth" in out
+    assert "security" in out
+    assert "architect" in out
+
+
+def test_print_batch_turn_header_includes_roles_when_present():
+    """Batch header should surface the phase persona roles."""
+    _, out = capture(
+        s.print_batch_turn_header,
+        "player",
+        "Setup",
+        1,
+        2,
+        "GPT-5.4",
+        ["security", "security", "devops"],
+    )
+
+    assert "Setup" in out
+    assert "security" in out
+    assert "devops" in out
+
+
 def test_stream_messages_prints_codex_tool_use():
     """Codex tool-use blocks should render as tool lines and count tool usage."""
     msg = AdaptedMessage(
