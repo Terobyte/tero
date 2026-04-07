@@ -99,7 +99,10 @@ class WorktreeManager:
             shutil.rmtree(ws, ignore_errors=True)
 
     def cleanup_all(self):
-        for name in list(self._used) + ["synthesis"]:
+        names = list(self._used)
+        if "synthesis" not in self._used:
+            names.append("synthesis")
+        for name in names:
             self.cleanup(name)
 
     def _is_git(self) -> bool:
