@@ -1,6 +1,7 @@
 """Main coach-player loop: step-by-step plan execution with per-step review."""
 
 import asyncio
+import datetime
 import inspect
 import os
 import shlex
@@ -227,7 +228,9 @@ class CoachPlayerSession:
         if role == "reviewer":
             return self._resolve_review_provider()
         if role == "coach_fallback":
-            return self._get_or_create_provider(self.config.coach_fallback_provider)
+            return self._get_or_create_provider(
+                self.config.coach_fallback_provider or self.config.coach_provider
+            )
         raise ValueError(f"Unknown role: {role}")
 
     def _resolve_review_provider_name(self) -> str:
@@ -1254,7 +1257,7 @@ class CoachPlayerSession:
 
         record = RunRecord(
             run_id=generate_run_id(),
-            timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
             requirements_file=self.config.plan_file,
             turns_used=turns_used,
             max_turns=self.config.max_turns,
