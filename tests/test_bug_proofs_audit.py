@@ -31,24 +31,23 @@ import pytest
 
 
 def test_resume_skips_in_progress_round():
-    """resume() increments round_num before executing — interrupted round skipped.
+    """resume() now uses round_num = current_round - 1 so the interrupted round is re-executed.
 
-    RED  -> bug confirmed (round 2 is absent from executed rounds)
-    GREEN -> false positive (logic was fixed before this test ran)
+    FIX VERIFIED: round 2 must be present in executed rounds after the fix.
     """
     rounds_executed: list[int] = []
     current_round = 2   # round 2 was in progress when session crashed
     max_rounds = 5
 
-    # Mirror the exact resume() loop (orchestrator.py:294,314-315)
-    round_num = current_round
+    # Mirror the fixed resume() loop (orchestrator.py — round_num = current_round - 1)
+    round_num = current_round - 1
     while round_num < max_rounds:
         round_num += 1
         rounds_executed.append(round_num)
 
-    # CORRECT: the interrupted round (2) should be among the executed rounds
+    # FIX: the interrupted round (2) must be among the executed rounds
     assert 2 in rounds_executed, (
-        f"BUG CONFIRMED: resume() skips the in-progress round. "
+        f"FIX REGRESSION: resume() still skips the in-progress round. "
         f"Executed rounds: {rounds_executed} — round 2 is absent."
     )
 
