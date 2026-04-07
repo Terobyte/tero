@@ -52,12 +52,14 @@ class ProviderChain:
 
     def check_ready(self) -> tuple[bool, str]:
         """Return True if at least one provider is ready."""
-        for p in self.providers:
+        first_reason = ""
+        for i, p in enumerate(self.providers):
             ok, reason = p.check_ready()
             if ok:
                 return True, ""
-        # All failed — return first reason
-        return self.providers[0].check_ready()
+            if i == 0:
+                first_reason = reason
+        return False, first_reason
 
     async def run(self, **kwargs):
         """Async generator: try providers in order, yield messages from first success.
