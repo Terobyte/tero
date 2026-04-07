@@ -213,6 +213,8 @@ class PhaseFailedError(Exception):
         super().__init__(str(self))
 
     def __str__(self) -> str:
+        if self.phase is None:
+            return f"Phase failed after {self.attempts} attempts"
         completed = [s.text for s in self.phase.steps if s.done]
         return (
             f"Phase '{self.phase.name}' failed after {self.attempts} attempts. "
