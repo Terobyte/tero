@@ -95,7 +95,24 @@ class DuelRunner:
         autonomous: bool = False,
         timeout_s: int = 600,
     ) -> RoundResult:
-        """Synchronous wrapper for run_round."""
+        """Synchronous wrapper for run_round.
+
+        Works correctly both from sync and async contexts.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            # Already inside an event loop — create a new loop in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    asyncio.run,
+                    self.run_round(task, agent_a_name, agent_b_name, autonomous, timeout_s),
+                )
+                return future.result()
         return asyncio.run(self.run_round(
             task, agent_a_name, agent_b_name, autonomous, timeout_s
         ))

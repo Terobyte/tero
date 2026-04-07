@@ -91,6 +91,7 @@ class KeyboardListener(threading.Thread):
 
     def run(self) -> None:
         owned_fd: int | None = None
+        old_settings = None
         try:
             fd, owned_fd = self._open_input_fd()
             if fd is None:
@@ -254,6 +255,7 @@ MODEL_PRESETS: list[tuple[str, str, str]] = [
     ("MIMO-Omni", "opencode", "opencode/mimo-v2-omni-free"),
     ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free"),
     ("Kimi-K2", "opencode", "openrouter/moonshotai/kimi-k2:free"),
+    ("OpenCode GLM-5.1", "opencode", "zai/glm-5.1"),
     ("Nemotron-3", "opencode", "opencode/nemotron-3-super-free"),
     ("Kilo MIMO-Pro", "kilo", "kilo/xiaomi/mimo-v2-pro:free"),
     ("Kilo MiniMax", "kilo", "kilo/minimax/minimax-m2.5:free"),
@@ -490,7 +492,7 @@ class RuntimeControls:
         # Handle terminal resize
         try:
             signal.signal(signal.SIGWINCH, lambda *_: self._status_bar._render())
-        except (OSError, ValueError):
+        except (OSError, ValueError, RuntimeError):
             pass  # SIGWINCH not available on all platforms
 
     def stop(self) -> None:

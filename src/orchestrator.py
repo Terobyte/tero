@@ -12,9 +12,18 @@ from src.judge import JudgeRunner
 from src.duel import DuelRunner
 from src.state import SessionManager, SessionState
 from src.learning.recorder import RunRecorder
-from src.learning.analyzer import InsightsAnalyzer
-from src.learning.classifier import classify_task
-from src.learning.recommender import ConfigRecommender
+
+# Learning modules are optional — pipeline works without them
+try:
+    from src.learning.analyzer import InsightsAnalyzer
+    from src.learning.classifier import classify_task
+    from src.learning.recommender import ConfigRecommender
+    _LEARNING_AVAILABLE = True
+except ImportError:
+    InsightsAnalyzer = None  # type: ignore[assignment,misc]
+    classify_task = None  # type: ignore[assignment]
+    ConfigRecommender = None  # type: ignore[assignment,misc]
+    _LEARNING_AVAILABLE = False
 
 
 @dataclass
@@ -56,10 +65,10 @@ class Orchestrator:
             exclude_names=_ws_names,
         )
 
-        # Learning components
+        # Learning components (optional — degrade gracefully if missing)
         self.recorder = RunRecorder()
-        self.analyzer = InsightsAnalyzer()
-        self.recommender = ConfigRecommender()
+        self.analyzer = InsightsAnalyzer() if _LEARNING_AVAILABLE else None
+        self.recommender = ConfigRecommender() if _LEARNING_AVAILABLE else None
 
     def run(self) -> OrchestratorResult:
         """Execute the full duel pipeline."""
@@ -70,19 +79,20 @@ class Orchestrator:
             self.session.create(self.session_id, vars(self.config))
             self.session.transition(SessionState.PREPARING_WORKSPACES)
 
-            # Classify task
-            classification = classify_task(self.config.plan_file)
+            # Classify task (optional — skip if learning modules unavailable)
+            classification = classify_task(self.config.plan_file) if _LEARNING_AVAILABLE else None
 
             # Show recommendation
-            rec = self.recommender.recommend(classification.type, classification.complexity)
-            if rec.confidence != "none":
-                print(f"\n📊 Recommendation (confidence: {rec.confidence}):")
-                if rec.agent_a and rec.agent_b:
-                    print(f"   {rec.agent_a} + {rec.agent_b}")
-                for data in rec.supporting_data:
-                    print(f"   {data}")
-                for warn in rec.warnings:
-                    print(f"   {warn}")
+            if classification and self.recommender:
+                rec = self.recommender.recommend(classification.type, classification.complexity)
+                if rec.confidence != "none":
+                    print(f"\n📊 Recommendation (confidence: {rec.confidence}):")
+                    if rec.agent_a and rec.agent_b:
+                        print(f"   {rec.agent_a} + {rec.agent_b}")
+                    for data in rec.supporting_data:
+                        print(f"   {data}")
+                    for warn in rec.warnings:
+                        print(f"   {warn}")
 
             # Read task
             task = Path(self.config.plan_file).read_text()
@@ -150,8 +160,8 @@ class Orchestrator:
                     run_id = self.recorder.record(
                         session_id=self.session_id,
                         task_file=self.config.plan_file,
-                        task_type=classification.type,
-                        task_complexity=classification.complexity,
+                        task_type=classification.type if classification else "unknown",
+                        task_complexity=classification.complexity if classification else "unknown",
                         config=vars(self.config),
                         result_a=result.result_a,
                         result_b=result.result_b,
@@ -163,8 +173,9 @@ class Orchestrator:
                         weights={"bug_score": 0.5, "duration": 0.1, "retry": 0.1},
                     )
 
-                    # Rebuild insights
-                    self.analyzer.rebuild(self.recorder.load_all())
+                    # Rebuild insights (optional)
+                    if self.analyzer:
+                        self.analyzer.rebuild(self.recorder.load_all())
 
                     # Feedback
                     if self.config.ask_feedback:
@@ -411,6 +422,14 @@ class Orchestrator:
         _skip = {".git", "__pycache__", ".g3",
                  self.config.agent_a_workspace, self.config.agent_b_workspace}
 
+        # Protected files: never delete these even if absent from winner
+        _protected = {
+            ".env", ".env.local", ".env.production",
+            ".gitignore", ".git/config", ".gitattributes",
+            "config.yaml", "config.json", "config.toml",
+            "user_config.json",
+        }
+
         # Bug fix #7: Track all files in winner workspace
         winner_files: set[Path] = set()
         for item in ws.rglob("*"):
@@ -425,6 +444,8 @@ class Orchestrator:
             if item.is_file():
                 rel = item.relative_to(target)
                 if any(p in _skip for p in rel.parts):
+                    continue
+                if str(rel) in _protected or rel.name in _protected:
                     continue
                 if rel not in winner_files:
                     item.unlink()
@@ -465,5 +486,6 @@ class Orchestrator:
             pass
 
     def _generate_session_id(self) -> str:
-        from datetime import datetime
-        return f"sess_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        from datetime import datetime, timezone
+
+        return f"sess_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"

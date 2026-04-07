@@ -14,6 +14,13 @@ FIXED_PROVIDER_MODELS: dict[str, str] = {
     "zai": "glm-5.1",
 }
 
+_UNSAFE_GLOBAL_DEFAULT_KEYS = {
+    "batch_mode",
+    "tdd_mode",
+    "code_review",
+    "preplan_mode",
+}
+
 
 def _read_export_from_zshrc(env_name: str) -> str:
     """Best-effort fallback for keys exported only in ~/.zshrc."""
@@ -32,11 +39,12 @@ def _read_export_from_zshrc(env_name: str) -> str:
             if not value:
                 return ""
 
-            if "#" in value:
-                value = value.split("#", 1)[0].rstrip()
-
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                # Strip quotes — # inside quotes is preserved
                 value = value[1:-1]
+            elif "#" in value:
+                # Only strip comment if value is not fully quoted
+                value = value.split("#", 1)[0].rstrip()
             return value
     except OSError:
         return ""
@@ -157,8 +165,24 @@ class CcgEnv:
         """
         provider_config = provider_config or {}
 
-        normalized_name = _normalize_provider_name(account_name)
-        if normalized_name == "black":
+        raw_name = str(account_name).strip().lower()
+        normalized_name = _normalize_provider_name(raw_name)
+
+        if raw_name in {"ccg", "ccg1", "black1"}:
+            token_env_names = ("BLACKBOX_ACCOUNT_A_TOKEN",)
+            default_home = "~/.claude-black"
+            default_label = "blackbox-a"
+            default_base_url = "https://api.blackbox.ai"
+            default_model = FIXED_PROVIDER_MODELS["black"]
+            default_small_model = "minimax-2.5"
+        elif raw_name in {"ccg2", "black2"}:
+            token_env_names = ("BLACKBOX_ACCOUNT_B_TOKEN",)
+            default_home = "~/.claude-black"
+            default_label = "blackbox-b"
+            default_base_url = "https://api.blackbox.ai"
+            default_model = FIXED_PROVIDER_MODELS["black"]
+            default_small_model = "minimax-2.5"
+        elif normalized_name == "black":
             token_env_names = (
                 "BLACKBOX_API_KEY",
                 "ANTHROPIC_AUTH_TOKEN",
@@ -295,7 +319,7 @@ class Config:
 
     # Code Review (Phase 3)
     code_review: bool = False
-    review_provider: str = ""  # empty = auto-detect (codex if available, else coach)
+    review_provider: str = ""  # empty = follow coach_provider
     review_model: str = ""
 
     # Coach fallback (Phase 7)
@@ -317,8 +341,20 @@ class Config:
     batch_post_model: str = ""  # fixed provider default
     test_writer_provider: str = "black"
     test_writer_model: str = ""
+    # Pre-plan provider
+    preplan_mode: bool = False
+    preplan_provider: str = "black"
+    preplan_model: str = ""  # empty = provider default
+    preplan_timeout_s: int = 120
+
     # Code review loop
     max_review_iterations: int = 3
+
+    # Provider fallback chain
+    player_fallback_chain: str = ""   # comma-separated: "turbo,zai"
+    coach_fallback_chain: str = ""    # comma-separated: "black,turbo"
+    chain_retry_wait_s: float = 60.0
+    chain_max_retries: int = 2
 
 
 @dataclass
@@ -400,7 +436,7 @@ def short_model_name(model: str) -> str:
     """Get short display name from a model string."""
     m = model.lower()
     if not m or m == "default":
-        return "CODEX"
+        return "DEFAULT"
     if m == "o3":
         return "o3"
     if m == "o4-mini":
@@ -476,6 +512,22 @@ def load_merged_settings(
     return merged
 
 
+def _load_defaults_section(path: Path) -> dict:
+    """Load just the defaults section from one config file."""
+    data = _load_yaml(path)
+    defaults = data.get("defaults", {})
+    return defaults if isinstance(defaults, dict) else {}
+
+
+def _filter_global_defaults(defaults: dict) -> dict:
+    """Drop global defaults that should not silently change per-project runtime mode."""
+    return {
+        key: value
+        for key, value in defaults.items()
+        if key not in _UNSAFE_GLOBAL_DEFAULT_KEYS
+    }
+
+
 def load_provider_configs(
     working_dir: str | Path = ".",
     *,
@@ -500,9 +552,16 @@ def resolve_config(cli_args: dict) -> Config:
     working_dir = cli_args.get("working_dir") or "."
     working_dir = str(Path(working_dir).expanduser().resolve())
 
-    # Load bundled + global + project defaults so "save as default" persists across runs.
-    project = load_merged_settings(working_dir, include_global=True)
-    defaults.update(project.get("defaults", {}))
+    bundled_root = Path(__file__).resolve().parent.parent
+    bundled_config = bundled_root / ".g3" / "config.yaml"
+    global_config = Path("~/.g3/config.yaml").expanduser()
+    project_config = Path(working_dir) / ".g3" / "config.yaml"
+
+    # Merge defaults in source order so projects can still override global user
+    # preferences, but global execution-mode toggles do not silently alter runs.
+    defaults.update(_load_defaults_section(bundled_config))
+    defaults.update(_filter_global_defaults(_load_defaults_section(global_config)))
+    defaults.update(_load_defaults_section(project_config))
 
     # Env overrides
     env_map = {
@@ -538,17 +597,26 @@ def resolve_config(cli_args: dict) -> Config:
         "G3_TEST_WRITER_PROVIDER": ("test_writer_provider", str),
         "G3_TEST_WRITER_MODEL": ("test_writer_model", str),
         "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
+        # Pre-plan
+        "G3_PREPLAN_MODE": ("preplan_mode", lambda x: x.lower() in ("true", "1", "yes")),
+        "G3_PREPLAN_PROVIDER": ("preplan_provider", str),
+        "G3_PREPLAN_MODEL": ("preplan_model", str),
         # Context management
         "G3_CONTEXT_LIMIT": ("context_limit", int),
         "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
         "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
+        # Provider fallback chain
+        "G3_PLAYER_FALLBACK_CHAIN": ("player_fallback_chain", str),
+        "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
+        "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
+        "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
     }
     for env_key, (cfg_key, conv) in env_map.items():
         if val := os.environ.get(env_key):
             defaults[cfg_key] = conv(val)
 
-    # CLI overrides (highest priority, skip None values)
-    defaults.update({k: v for k, v in cli_args.items() if v is not None})
+    # CLI overrides (highest priority, skip None and empty strings)
+    defaults.update({k: v for k, v in cli_args.items() if v is not None and v != ""})
     defaults["working_dir"] = working_dir
 
     for key in (
@@ -562,11 +630,13 @@ def resolve_config(cli_args: dict) -> Config:
         "test_writer_provider",
         "coach_fallback_provider",
         "review_provider",
+        "preplan_provider",
     ):
         if key in defaults and defaults[key]:
             defaults[key] = _normalize_provider_name(str(defaults[key]))
 
     # Provider config
+    project = load_merged_settings(working_dir, include_global=True)
     provider = project.get("provider", {})
     if claude_home := provider.get("claude_home"):
         defaults["claude_home"] = claude_home

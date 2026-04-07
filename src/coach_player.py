@@ -6,8 +6,9 @@ import os
 import shlex
 import signal
 import subprocess
+import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from src.config import Config, load_provider_configs
@@ -22,6 +23,7 @@ from src.feedback import (
     is_invalid_feedback,
 )
 from src.learning.recorder import RunRecord, RunRecorder, TurnDetail, generate_run_id
+from src.personas import PersonaRegistry
 from src.plan_tracker import (
     get_current_step_index,
     mark_step_done,
@@ -89,6 +91,7 @@ class CoachPlayerSession:
         self.plan_file_path = plan_file_path
         self.recorder = RunRecorder(f"{config.working_dir}/.g3/knowledge")
         self._interrupted = False
+        self._persona_registry: PersonaRegistry | None = None
 
         # Load provider configs and create providers (supports multi-account)
         self.provider_configs = self._load_provider_configs()
@@ -133,6 +136,15 @@ class CoachPlayerSession:
                 )
             )
 
+        if self.config.preplan_mode:
+            providers_to_check.append(
+                (
+                    "preplanner",
+                    self.config.preplan_provider,
+                    self._provider_for_role("preplanner"),
+                )
+            )
+
         if self.config.code_review and self.review_provider is not None:
             providers_to_check.append(
                 (
@@ -151,13 +163,9 @@ class CoachPlayerSession:
 
     def _init_review_provider(self) -> None:
         """Initialize review provider for code review phase."""
-        review_provider_name = self.config.review_provider
+        review_provider_name = (self.config.review_provider or "").strip()
         if not review_provider_name:
-            # Preserve the documented auto-detect behavior: prefer Codex review
-            # when available, otherwise fall back to the coach provider.
-            ok = self._check_provider_ready_without_cache("codex")
-
-            review_provider_name = "codex" if ok else self.config.coach_provider
+            review_provider_name = self.config.coach_provider
 
         self.review_provider = self._get_or_create_provider(review_provider_name)
         self.review_provider_name = review_provider_name
@@ -196,6 +204,8 @@ class CoachPlayerSession:
             return self.config.coach_provider
         if role == "test_writer":
             return self.config.test_writer_provider or self.config.coach_provider
+        if role == "preplanner":
+            return self.config.preplan_provider
         if role == "reviewer":
             return self._resolve_review_provider_name()
         if role == "coach_fallback":
@@ -212,6 +222,8 @@ class CoachPlayerSession:
             return self._get_or_create_provider(
                 self.config.test_writer_provider or self.config.coach_provider
             )
+        if role == "preplanner":
+            return self._get_or_create_provider(self.config.preplan_provider)
         if role == "reviewer":
             return self._resolve_review_provider()
         if role == "coach_fallback":
@@ -221,15 +233,12 @@ class CoachPlayerSession:
     def _resolve_review_provider_name(self) -> str:
         """Return the current provider name for code review.
 
-        When `review_provider` is not explicitly configured, review should
-        continue to follow the live coach provider unless auto-detect selected
-        Codex at startup.
+        When `review_provider` is not explicitly configured, review follows the
+        live coach provider so runtime coach switches stay consistent.
         """
         explicit_review = (self.config.review_provider or "").strip()
         if explicit_review:
             return explicit_review
-        if self.review_provider_name == "codex":
-            return "codex"
         return self.config.coach_provider
 
     def _resolve_review_provider(self):
@@ -324,6 +333,12 @@ class CoachPlayerSession:
             "batch_pre_model": self.config.batch_pre_model,
             "batch_post_provider": self.config.batch_post_provider,
             "batch_post_model": self.config.batch_post_model,
+            "coach_fallback_provider": getattr(self.config, "coach_fallback_provider", ""),
+            "coach_fallback_model": getattr(self.config, "coach_fallback_model", ""),
+            "review_provider": getattr(self.config, "review_provider", ""),
+            "review_model": getattr(self.config, "review_model", ""),
+            "test_writer_provider": getattr(self.config, "test_writer_provider", ""),
+            "test_writer_model": getattr(self.config, "test_writer_model", ""),
             "coach_provider_obj": self.coach_provider,
             "player_provider_obj": self.player_provider,
             "coach_display": self.coach_model,
@@ -369,6 +384,18 @@ class CoachPlayerSession:
             self.config.batch_pre_model = snapshot["batch_pre_model"]
             self.config.batch_post_provider = snapshot["batch_post_provider"]
             self.config.batch_post_model = snapshot["batch_post_model"]
+            if hasattr(self.config, "coach_fallback_provider"):
+                self.config.coach_fallback_provider = snapshot["coach_fallback_provider"]
+            if hasattr(self.config, "coach_fallback_model"):
+                self.config.coach_fallback_model = snapshot["coach_fallback_model"]
+            if hasattr(self.config, "review_provider"):
+                self.config.review_provider = snapshot["review_provider"]
+            if hasattr(self.config, "review_model"):
+                self.config.review_model = snapshot["review_model"]
+            if hasattr(self.config, "test_writer_provider"):
+                self.config.test_writer_provider = snapshot["test_writer_provider"]
+            if hasattr(self.config, "test_writer_model"):
+                self.config.test_writer_model = snapshot["test_writer_model"]
             self.coach_provider = snapshot["coach_provider_obj"]
             self.player_provider = snapshot["player_provider_obj"]
             self.coach_model = snapshot["coach_display"]
@@ -383,10 +410,35 @@ class CoachPlayerSession:
         signal.signal(signal.SIGINT, handler)
 
     def _snapshot_pids(self) -> set[int]:
-        """Snapshot current PIDs in the working directory."""
+        """Snapshot current PIDs with cwd inside the working directory."""
+        working_dir = os.path.abspath(self.config.working_dir)
+        pids: set[int] = set()
+        try:
+            # Use /proc or lsof to find processes whose cwd is in working_dir.
+            # Fall back to pgrep only for processes that have working_dir as
+            # a command argument — but filter to direct child processes to
+            # avoid matching unrelated processes that merely reference the path.
+            result = subprocess.run(
+                ["lsof", "+c", "0", "-Fn", working_dir],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    # lsof -Fn outputs "p<pid>" lines
+                    if line.startswith("p"):
+                        pid_str = line[1:].strip()
+                        if pid_str.isdigit():
+                            pids.add(int(pid_str))
+                return pids
+        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError):
+            pass
+
+        # Fallback: pgrep with stricter matching (child processes only)
         try:
             result = subprocess.run(
-                ["pgrep", "-f", os.path.abspath(self.config.working_dir)],
+                ["pgrep", "-P", str(os.getpid()), "-f", working_dir],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -399,7 +451,7 @@ class CoachPlayerSession:
                 }
         except (subprocess.TimeoutExpired, ValueError, OSError):
             pass
-        return set()
+        return pids
 
     def _kill_new_processes(self, before: set[int]) -> None:
         """Kill processes that appeared since the snapshot."""
@@ -614,6 +666,142 @@ class CoachPlayerSession:
         )
         return reset_items
 
+    @staticmethod
+    def _ordered_unique_roles(roles: list[str] | None) -> list[str]:
+        """Deduplicate role names while preserving order."""
+        result: list[str] = []
+        for role in roles or []:
+            if role and role not in result:
+                result.append(role)
+        return result
+
+    def _system_prompt_with_overlay(
+        self,
+        base_prompt: str,
+        roles: list[str] | None,
+        *,
+        review_focus: bool = False,
+    ) -> str:
+        """Append persona overlay text when a matching specialist role exists."""
+        registry = self._persona_registry
+        ordered_roles = self._ordered_unique_roles(roles)
+        if registry is None or not ordered_roles:
+            return base_prompt
+
+        overlay = registry.build_overlay(ordered_roles)
+        if not overlay:
+            return base_prompt
+
+        if review_focus:
+            return f"{base_prompt}\n\n## Review Focus\n{overlay}"
+        return f"{base_prompt}\n\n{overlay}"
+
+    async def _run_phase_zero(self, raw_plan: str) -> tuple[list, list]:
+        """Run the pre-planner once and return enriched items/phases.
+
+        On any failure, returns ``([], [])`` so callers can fall back to the
+        original parsed checklist.
+        """
+        from src.plan_tracker import (
+            auto_group_phases,
+            parse_enriched_plan,
+            write_enriched_plan,
+        )
+        from src.prompts import PREPLANNER_SYSTEM_PROMPT, build_preplan_prompt
+
+        personas_dir = Path(self.config.working_dir) / "src" / "personas" / "prompts"
+        if not personas_dir.is_dir():
+            personas_dir = Path(__file__).resolve().parent / "personas" / "prompts"
+
+        registry = PersonaRegistry(personas_dir)
+        registry.load_all()
+        self._persona_registry = registry
+
+        available_roles = registry.available_roles()
+        if not any(role["name"] == "general" for role in available_roles):
+            available_roles = available_roles + [
+                {
+                    "name": "general",
+                    "description": "General implementation work without a specialist overlay",
+                }
+            ]
+
+        preplanner_provider = self._provider_for_role("preplanner")
+        preplanner_label = self._format_provider_display(
+            self.config.preplan_provider,
+            preplanner_provider,
+            self.config.preplan_model,
+        )
+        streaming_ui.print_preplanner_header(preplanner_label)
+
+        def _finalize_enriched_plan(items: list, phases: list, raw_text: str) -> tuple[list, list]:
+            if not phases:
+                phases = auto_group_phases(items)
+
+            enriched_path = Path(self.config.working_dir) / ".g3" / "enriched-plan.md"
+            write_enriched_plan(enriched_path, raw_text)
+
+            roles_assigned = sum(len(item.roles) for item in items)
+            streaming_ui.print_preplan_result(
+                len(phases),
+                roles_assigned,
+                str(enriched_path),
+            )
+            return items, phases
+
+        # Fast path: if the input is already an enriched plan, trust it and move on.
+        existing_items, existing_phases = parse_enriched_plan(raw_plan)
+        if existing_items and all(item.roles for item in existing_items):
+            return _finalize_enriched_plan(existing_items, existing_phases, raw_plan)
+
+        original_items = parse_requirements(raw_plan)
+        if not original_items:
+            return [], []
+
+        normalized_plan = "\n".join(
+            f"- [{'x' if item.done else ' '}] {item.text}" for item in original_items
+        )
+        preplan_prompt = build_preplan_prompt(normalized_plan, available_roles)
+
+        try:
+            result = await self._run_turn(
+                role="preplanner",
+                prompt=preplan_prompt,
+                system_prompt=PREPLANNER_SYSTEM_PROMPT,
+                max_turns=1,
+                timeout_s=self.config.preplan_timeout_s,
+                model_override=self.config.preplan_model,
+                disable_tools=True,
+            )
+        except Exception as exc:
+            print(
+                f"  [Preplanner] Warning: failed ({exc}), using original plan",
+                file=sys.stderr,
+            )
+            return [], []
+
+        items, phases = parse_enriched_plan(result.text)
+        if len(items) != len(original_items):
+            print(
+                "  [Preplanner] Warning: step count mismatch "
+                f"({len(items)} vs {len(original_items)}), using original plan",
+                file=sys.stderr,
+            )
+            return [], []
+
+        preserved_items = [
+            replace(item, done=original.done)
+            for item, original in zip(items, original_items)
+        ]
+        index_by_old_id = {id(item): idx for idx, item in enumerate(items)}
+        for phase in phases:
+            phase.steps = [
+                preserved_items[index_by_old_id[id(step)]]
+                for step in phase.steps
+                if id(step) in index_by_old_id
+            ]
+        return _finalize_enriched_plan(preserved_items, phases, result.text)
+
     async def run(self) -> SessionResult:
         """Run the step-by-step coach-player loop."""
         self._setup_interrupt_handler()
@@ -623,6 +811,12 @@ class CoachPlayerSession:
         error = None
 
         plan_items = parse_requirements(self.requirements)
+        if self.config.preplan_mode:
+            enriched_items, _phases = await self._run_phase_zero(self.requirements)
+            if enriched_items:
+                plan_items = enriched_items
+        else:
+            self._persona_registry = None
         total_steps = len(plan_items)
 
         print(f"\n{BOLD}--- tero coach-player ---{RESET}")
@@ -677,7 +871,12 @@ class CoachPlayerSession:
                 completed_steps = [p.text for p in plan_items[:step_index] if p.done]
                 self._last_turn_result = None
 
-                streaming_ui.print_step_header(step_num, total_steps, step.text)
+                streaming_ui.print_step_header(
+                    step_num,
+                    total_steps,
+                    step.text,
+                    step.roles,
+                )
 
                 feedback = None
                 step_approved = False
@@ -761,12 +960,16 @@ class CoachPlayerSession:
                         completed_steps=completed_steps,
                         feedback=feedback.text if feedback else None,
                     )
+                    player_system = self._system_prompt_with_overlay(
+                        PLAYER_SYSTEM_PROMPT,
+                        step.roles,
+                    )
 
                     try:
                         player_result = await self._run_with_continuation(
                             role="player",
                             prompt=player_prompt,
-                            system_prompt=PLAYER_SYSTEM_PROMPT,
+                            system_prompt=player_system,
                             max_turns=30,
                             timeout_s=self.config.player_timeout_s,
                             model_override=self.config.player_model,
@@ -834,6 +1037,11 @@ class CoachPlayerSession:
                         total_steps=total_steps,
                         completed_steps=completed_steps,
                     )
+                    coach_system = self._system_prompt_with_overlay(
+                        COACH_STRICT_SYSTEM_PROMPT,
+                        step.roles,
+                        review_focus=True,
+                    )
 
                     # Coach retry loop for NoVerdict
                     verdict = None
@@ -843,7 +1051,7 @@ class CoachPlayerSession:
                             coach_result = await self._run_turn(
                                 role="coach",
                                 prompt=coach_prompt,
-                                system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                                system_prompt=coach_system,
                                 max_turns=8,
                                 timeout_s=self.config.coach_timeout_s,
                                 model_override=self.config.coach_model,
@@ -890,7 +1098,7 @@ class CoachPlayerSession:
                                 fallback_result = await self._run_turn(
                                     role="coach_fallback",
                                     prompt=coach_prompt,
-                                    system_prompt=COACH_STRICT_SYSTEM_PROMPT,
+                                    system_prompt=coach_system,
                                     max_turns=8,
                                     timeout_s=self.config.coach_timeout_s,
                                     model_override=self.config.coach_fallback_model,
@@ -1077,6 +1285,7 @@ class CoachPlayerSession:
         timeout_s: int,
         model_override: str = "",
         provider_override=None,
+        disable_tools: bool = False,
     ) -> TurnResult:
         """Run a single agent turn using the appropriate provider."""
         start = time.time()
@@ -1089,6 +1298,8 @@ class CoachPlayerSession:
 
         def _update_native_usage() -> None:
             nonlocal tokens_used
+            if tokens_used > 0:
+                return
             input_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
             output_tokens = int(getattr(provider, "_last_output_tokens", 0) or 0)
             native_total = input_tokens + output_tokens
@@ -1142,6 +1353,8 @@ class CoachPlayerSession:
                 run_kwargs["context_limit"] = self.config.context_limit
             if "compact_threshold" in params or accepts_kwargs:
                 run_kwargs["compact_threshold"] = self.config.compact_threshold
+            if "disable_tools" in params or accepts_kwargs:
+                run_kwargs["disable_tools"] = disable_tools
 
             async for msg in provider.run(**run_kwargs):
                 if self._interrupted:
@@ -1365,10 +1578,10 @@ class CoachPlayerSession:
                 timeout=self.config.test_timeout_s,
             )
             output = result.stdout + result.stderr
-            # Exit code 5 = no tests collected — treat as pass (test_writer may not have
-            # created tests yet, or they're in an undetected location; don't block the player).
+            # Exit code 5 = no tests collected. In TDD mode this must fail closed,
+            # otherwise the run silently skips the entire testing gate.
             if result.returncode == 5:
-                return True, "No tests collected — skipping test validation"
+                return False, "No tests collected — TDD requires at least one runnable test"
             return result.returncode == 0, output
         except subprocess.TimeoutExpired:
             return False, f"Test command timed out after {self.config.test_timeout_s}s"
