@@ -2,8 +2,9 @@
 
 import inspect
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from src.feedback import Approved, Feedback
 from src.plan_tracker import PlanItem, Phase
 
 
@@ -88,7 +89,13 @@ def build_batch_prompt(
 
 
 _STEP_DONE_RE = re.compile(r"step\s+(\d+)\s+done\s*:", re.IGNORECASE)
-_PHASE_COMPLETE_RE = re.compile(r"PHASE_COMPLETE\s*:", re.IGNORECASE)
+_PHASE_COMPLETE_RE = re.compile(
+    r"^\s*PHASE_COMPLETE\s*:.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+# Sentence continuation: period followed by space and word — indicates the
+# PHASE_COMPLETE marker is embedded in discussion text, not a standalone report.
+_SENTENCE_CONTINUATION_RE = re.compile(r"\.\s+\S")
 _REQUIRED_REPORT_HEADERS = ("what changed:", "evidence:", "verification:")
 _TOOLS_UNAVAILABLE_PATTERNS = (
     "tools are not available",
@@ -110,13 +117,15 @@ _TOOLS_UNAVAILABLE_PATTERNS = (
 def parse_completed_steps(result, phase: Phase) -> list[str]:
     """Extract confirmed-done step texts from Player output (result.text).
 
-    PHASE_COMPLETE anywhere → return all step texts (unconditional).
+    PHASE_COMPLETE on its own line → return all step texts.
+    Rejects PHASE_COMPLETE embedded in discussion (sentence continuations).
     Otherwise scan for 'Step X done:' (1-based, case-insensitive).
     Out-of-range indices are ignored.
     """
     text = result.text
 
-    if _PHASE_COMPLETE_RE.search(text):
+    match = _PHASE_COMPLETE_RE.search(text)
+    if match and not _SENTENCE_CONTINUATION_RE.search(match.group(0)):
         return [s.text for s in phase.steps]
 
     confirmed: set[int] = set()
@@ -266,9 +275,13 @@ class BatchExecutor:
     def _judge_label(self) -> str:
         """Display label for the batch judge slot."""
         return self._provider_label(
-            self._config_str("batch_judge_provider", "codex"),
+            self._judge_provider(),
             self._config_str("batch_judge_model", ""),
         )
+
+    def _judge_provider(self) -> str:
+        """Return the configured judge provider, falling back to the default."""
+        return self._config_str("batch_judge_provider", "").strip() or "codex"
 
     def _review_slot_label(self, provider_attr: str, model_attr: str) -> str:
         """Display label for a batch pre/post coach slot, including coach fallbacks."""
@@ -294,19 +307,17 @@ class BatchExecutor:
 
     def _reset_tracker_progress_for_batch_run(self) -> None:
         """Start each batch run from the plan itself, not stale checklist state."""
-        for item in getattr(self.tracker, "items", []):
-            item.done = False
+        items_list = getattr(self.tracker, "items", [])
+        items_list[:] = [replace(item, done=False) for item in items_list]
 
     def _reset_plan_progress(self, phases: list[Phase]) -> None:
         """Reset batch progress both in memory and in the persisted plan file."""
-        for item in getattr(self.tracker, "items", []):
-            item.done = False
+        items_list = getattr(self.tracker, "items", [])
+        items_list[:] = [replace(item, done=False) for item in items_list]
         for phase in phases:
             phase.status = "pending"
             phase.attempts = 0
-        for phase in phases:
-            for step in phase.steps:
-                step.done = False
+            phase.steps = [replace(step, done=False) for step in phase.steps]
         if getattr(self.session, "plan_file_path", ""):
             from src.plan_tracker import write_checklist_back
 
@@ -352,7 +363,7 @@ class BatchExecutor:
             return {
                 "header_role": "judge",
                 "label": self._judge_label(),
-                "provider_name_override": self._config_str("batch_judge_provider", "codex"),
+                "provider_name_override": self._judge_provider(),
                 "model_override": self._config_str("batch_judge_model", ""),
                 "review_role": "judge",
             }
@@ -390,7 +401,8 @@ class BatchExecutor:
         from src.plan_tracker import auto_group_phases, write_checklist_back
         from src.streaming import BOLD, RESET
 
-        phases = auto_group_phases(self.tracker.items)
+        existing_phases = vars(self.tracker).get("phases")
+        phases = existing_phases if existing_phases else auto_group_phases(self.tracker.items)
         if not phases:
             logging.warning("BatchExecutor.run(): no phases generated, nothing to do")
             return
@@ -493,6 +505,11 @@ class BatchExecutor:
             snapshot_pids = getattr(self.session, "_snapshot_pids", None)
             cleanup_processes = getattr(self.session, "_kill_new_processes", None)
             pids_before = snapshot_pids() if callable(snapshot_pids) else set()
+            phase_roles: list[str] = []
+            for step in phase.steps:
+                for role in step.roles:
+                    if role and role not in phase_roles:
+                        phase_roles.append(role)
 
             streaming_ui.print_batch_turn_header(
                 role="player",
@@ -500,12 +517,20 @@ class BatchExecutor:
                 attempt=attempt_num,
                 max_attempts=max_phase_attempts,
                 model_name=self._role_label("player"),
+                active_roles=phase_roles,
             )
+            player_system = PLAYER_BATCH_SYSTEM_PROMPT
+            persona_registry = vars(self.session).get("_persona_registry")
+            if persona_registry is not None:
+                if phase_roles:
+                    overlay = persona_registry.build_overlay(phase_roles)
+                    if overlay:
+                        player_system = f"{PLAYER_BATCH_SYSTEM_PROMPT}\n\n{overlay}"
             try:
                 result = await self._run_player_turn(
                     role="player",
                     prompt=prompt,
-                    system_prompt=PLAYER_BATCH_SYSTEM_PROMPT,
+                    system_prompt=player_system,
                     max_turns=self.session.config.max_turns,
                     timeout_s=self.session.config.player_timeout_s,
                     model_override=self.session.config.player_model,
@@ -553,7 +578,6 @@ class BatchExecutor:
                 model_override=strategy["model_override"],
                 review_role=strategy["review_role"],
             )
-            from src.feedback import Approved, Feedback
 
             if isinstance(verdict, Approved):
                 return True

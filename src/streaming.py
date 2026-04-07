@@ -172,7 +172,23 @@ def print_coach_header(step_num: int, total_steps: int, attempt: int, model_name
     print(f"\n{BOLD}{YELLOW}═══ COACH [{model_name}] — шаг {step_num}/{total_steps} попытка {attempt} {RESET}")
 
 
-def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attempts: int, model_name: str = ""):
+def _format_roles(roles: list[str] | None) -> str:
+    """Render active persona roles for terminal output."""
+    ordered: list[str] = []
+    for role in roles or []:
+        if role and role not in ordered:
+            ordered.append(role)
+    return ", ".join(ordered)
+
+
+def print_batch_turn_header(
+    role: str,
+    phase_name: str,
+    attempt: int,
+    max_attempts: int,
+    model_name: str = "",
+    active_roles: list[str] | None = None,
+):
     """Print a batch phase turn header with explicit role/model labeling."""
     role_upper = role.upper()
     colors = {
@@ -186,13 +202,43 @@ def print_batch_turn_header(role: str, phase_name: str, attempt: int, max_attemp
         f"\n{BOLD}{color}═══ {role_upper}{model_info} — фаза {phase_name} "
         f"попытка {attempt}/{max_attempts} {RESET}"
     )
+    roles_text = _format_roles(active_roles)
+    if roles_text:
+        print(f"{DIM}  Роли: {roles_text}{RESET}")
 
 
-def print_step_header(step_num: int, total_steps: int, step_text: str):
+def print_preplanner_header(model_name: str = "") -> None:
+    """Print the Phase 0 pre-planner start header."""
+    model_info = f" [{model_name}]" if model_name else ""
+    print(f"\n{BOLD}{CYAN}═══ PHASE 0{model_info} — polishing plan {RESET}")
+
+
+def print_preplan_result(
+    num_phases: int,
+    num_roles: int,
+    enriched_plan_path: str = "",
+) -> None:
+    """Print the Phase 0 pre-planner completion summary."""
+    print(
+        f"  {GREEN}Plan polished: {num_phases} phases, {num_roles} role assignments{RESET}\n"
+    )
+    if enriched_plan_path:
+        print(f"  {DIM}Enriched plan: {enriched_plan_path}{RESET}\n")
+
+
+def print_step_header(
+    step_num: int,
+    total_steps: int,
+    step_text: str,
+    roles: list[str] | None = None,
+):
     """Print step start header."""
     bar = _progress_bar(step_num - 1, total_steps)
     print(f"\n{BOLD}{CYAN}{'─' * 50}{RESET}")
     print(f"{BOLD}{CYAN}  Шаг {step_num}/{total_steps}: {step_text}{RESET}")
+    roles_text = _format_roles(roles)
+    if roles_text:
+        print(f"{DIM}  Роли: {roles_text}{RESET}")
     print(f"{CYAN}  {bar}{RESET}")
     print(f"{BOLD}{CYAN}{'─' * 50}{RESET}")
 
@@ -249,6 +295,7 @@ def _progress_bar(done: int, total: int, width: int = 20) -> str:
     """Render a simple progress bar."""
     if total == 0:
         return "[]"
+    done = max(0, min(done, total))
     filled = int(width * done / total)
     bar = "■" * filled + "□" * (width - filled)
     pct = int(100 * done / total)

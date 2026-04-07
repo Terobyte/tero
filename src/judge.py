@@ -28,7 +28,9 @@ class JudgeRunner:
         diff_a: str,
         diff_b: str,
     ) -> JudgeDecision:
-        _ = (task, diff_a, diff_b, self.provider)
+        # Use diffs to pick winner when both succeed with same bug count
+        len_a = len(diff_a) if diff_a else 0
+        len_b = len(diff_b) if diff_b else 0
 
         if getattr(result_a, "success", False) and not getattr(result_b, "success", False):
             return JudgeDecision(action="winner_a", confidence="high", reason="Agent B failed")
@@ -41,5 +43,11 @@ class JudgeRunner:
             return JudgeDecision(action="winner_a", confidence="medium", reason="Fewer bugs")
         if bugs_total_b < bugs_total_a:
             return JudgeDecision(action="winner_b", confidence="medium", reason="Fewer bugs")
+
+        # Both succeed with same bugs — pick based on diff quality
+        if len_a > len_b:
+            return JudgeDecision(action="winner_a", confidence="medium", reason="More substantial changes")
+        if len_b > len_a:
+            return JudgeDecision(action="winner_b", confidence="medium", reason="More substantial changes")
 
         return JudgeDecision(action="retry", confidence="low", reason="No clear winner")

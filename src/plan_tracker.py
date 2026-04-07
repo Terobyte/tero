@@ -1,7 +1,7 @@
 """Parse requirements into checklist, track progress."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 
 # Constants
@@ -10,11 +10,12 @@ DEFAULT_TITLE = "Plan Progress"
 CHECKBOX_DONE = "x"
 CHECKBOX_PENDING = " "
 
-@dataclass
+@dataclass(frozen=True)
 class PlanItem:
     """A single plan item."""
     text: str
     done: bool = False
+    roles: list[str] = field(default_factory=list)
 
 
 # --- Batch execution types ---
@@ -45,6 +46,7 @@ class Phase:
     steps: list["PlanItem"]
     status: str = "pending"
     attempts: int = 0
+    display_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -189,12 +191,12 @@ def format_issues(issues_text: str) -> str:
 
 def mark_all_done(items: list[PlanItem]) -> list[PlanItem]:
     """Mark all items as done (for approved implementation)."""
-    return [PlanItem(text=item.text, done=True) for item in items]
+    return [replace(item, done=True) for item in items]
 
 
 def reset_all_progress(items: list[PlanItem]) -> list[PlanItem]:
     """Return a fresh copy of items with all steps marked pending."""
-    return [PlanItem(text=item.text, done=False) for item in items]
+    return [replace(item, done=False) for item in items]
 
 
 def get_current_step_index(items: list[PlanItem]) -> int | None:
@@ -208,7 +210,7 @@ def get_current_step_index(items: list[PlanItem]) -> int | None:
 def mark_step_done(items: list[PlanItem], index: int) -> list[PlanItem]:
     """Return new list with item at index marked done."""
     result = list(items)
-    result[index] = PlanItem(text=result[index].text, done=True)
+    result[index] = replace(result[index], done=True)
     return result
 
 
@@ -278,8 +280,42 @@ class PlanTracker:
 
     def phase_done(self, phase: Phase) -> None:
         """Mark all PlanItems in phase as done and re-render dashboard."""
-        for item in phase.steps:
-            item.done = True
+        original_steps = list(phase.steps)
+        updated_items = list(self.items)
+        matched_item_indexes: set[int] = set()
+        resolved_steps: list[PlanItem] = []
+
+        for original_step in original_steps:
+            updated_step = replace(original_step, done=True)
+            matched_index = None
+
+            for item_index, item in enumerate(updated_items):
+                if item_index in matched_item_indexes:
+                    continue
+                if item is original_step:
+                    matched_index = item_index
+                    break
+
+            if matched_index is None:
+                for item_index, item in enumerate(updated_items):
+                    if item_index in matched_item_indexes:
+                        continue
+                    if item.text == original_step.text and item.roles == original_step.roles:
+                        matched_index = item_index
+                        break
+
+            if matched_index is None:
+                updated_items.append(updated_step)
+                resolved_steps.append(updated_step)
+                continue
+
+            updated_item = replace(updated_items[matched_index], done=True)
+            updated_items[matched_index] = updated_item
+            matched_item_indexes.add(matched_index)
+            resolved_steps.append(updated_item)
+
+        self.items = updated_items
+        phase.steps = resolved_steps
         self.render_dashboard()
 
     def start_dashboard(self) -> None:
@@ -313,14 +349,109 @@ class PlanTracker:
                 "done": "✅", "failed": "❌",
             }.get(phase.status, "❓")
             attempts_str = f" (attempt {phase.attempts})" if phase.attempts > 1 else ""
+            label = phase.display_name or phase.name
             table.add_row(
-                f"{icon} Phase {i + 1}: {phase.name}{attempts_str}",
+                f"{icon} Phase {i + 1}: {label}{attempts_str}",
                 f"{bar} {pct}%",
             )
         total_steps = sum(len(p.steps) for p in self.phases)
         done_steps = sum(s.done for p in self.phases for s in p.steps)
         table.add_row("", f"Steps: {done_steps}/{total_steps}")
         return table
+
+
+# --- Enriched plan parsing ---
+
+ROLE_TAG_RE = re.compile(r"^\[([^\]]+)\]\s*(.+)$")
+
+
+def parse_enriched_plan(content: str) -> tuple[list[PlanItem], list[Phase]]:
+    """Parse Pre-Planner enriched plan into (items, phases).
+
+    Handles two sections::
+
+        ## Phases
+        - Phase 1: "Setup" → steps 1-3
+
+        ## Steps
+        1. [security, architect] Add authentication middleware
+
+    Returns ``(items, phases)``.  When no ``## Phases`` section is present
+    *phases* is an empty list — the caller should fall back to
+    :func:`auto_group_phases`.
+    """
+    items: list[PlanItem] = []
+    phases_raw: list[tuple[str, list[int]]] = []  # (display_name, step_indices) 0-based
+
+    sections = content.split("## ")
+    for section in sections:
+        lines = section.split("\n")
+        header = lines[0].strip() if lines else ""
+
+        if header == "Steps":
+            for line in lines[1:]:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                match = re.match(r"^(\d+)\.\s+(.+)$", stripped)
+                if not match:
+                    continue
+                text = match.group(2)
+                roles: list[str] = []
+                role_match = ROLE_TAG_RE.match(text)
+                if role_match:
+                    roles = [r.strip() for r in role_match.group(1).split(",")]
+                    text = role_match.group(2)
+                items.append(PlanItem(text=text, done=False, roles=roles))
+
+        elif header == "Phases":
+            for line in lines[1:]:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                match = re.match(
+                    r'^-\s+Phase\s+\d+:\s+"([^"]+)"\s+→\s+steps?\s+([\d,\s-]+)$',
+                    stripped,
+                )
+                if match:
+                    display_name = match.group(1)
+                    # Parse step references: "1-3" or "1, 3, 5" or "1-2, 4"
+                    step_indices: list[int] = []
+                    for part in match.group(2).split(","):
+                        part = part.strip()
+                        if "-" in part:
+                            s, e = part.split("-", 1)
+                            step_indices.extend(range(int(s) - 1, int(e)))
+                        else:
+                            step_indices.append(int(part) - 1)
+                    phases_raw.append((display_name, step_indices))
+
+    # Build Phase objects referencing the same PlanItem instances.
+    phases: list[Phase] = []
+    for display_name, step_indices in phases_raw:
+        phase_steps = [items[i] for i in step_indices if 0 <= i < len(items)]
+        if not phase_steps:
+            continue
+        ptype = detect_step_type(phase_steps[0])
+        phases.append(
+            Phase(
+                name=f"{ptype.capitalize()} ({len(phase_steps)}) · {display_name[:45]}",
+                type=ptype,
+                steps=phase_steps,
+                display_name=display_name,
+            )
+        )
+
+    return items, phases
+
+
+def write_enriched_plan(file_path, content: str) -> None:
+    """Save enriched plan content to *file_path*, creating parent directories."""
+    from pathlib import Path
+
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
 
 
 def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
@@ -344,5 +475,13 @@ def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
             break
         mark = "x" if items[item_index].done else " "
         new_lines[match.line_index] = f"{match.indent}- [{mark}] {items[item_index].text}"
+
+    if len(items) > len(matches):
+        extra_lines = [
+            f"- [{'x' if item.done else ' '}] {item.text}"
+            for item in items[len(matches):]
+        ]
+        insert_at = len(new_lines) - 1 if new_lines and new_lines[-1] == "" else len(new_lines)
+        new_lines[insert_at:insert_at] = extra_lines
 
     path.write_text("\n".join(new_lines))
