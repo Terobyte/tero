@@ -618,8 +618,8 @@ def resolve_config(cli_args: dict) -> Config:
         if val := os.environ.get(env_key):
             defaults[cfg_key] = conv(val)
 
-    # CLI overrides (highest priority, skip None and empty strings)
-    defaults.update({k: v for k, v in cli_args.items() if v is not None and v != ""})
+    # CLI overrides (highest priority, skip None)
+    defaults.update({k: v for k, v in cli_args.items() if v is not None})
     defaults["working_dir"] = working_dir
 
     for key in (
