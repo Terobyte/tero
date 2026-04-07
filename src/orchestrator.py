@@ -1,5 +1,6 @@
 """Main orchestration loop — coordinates all G3 components."""
 
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,7 +67,7 @@ class Orchestrator:
         )
 
         # Learning components (optional — degrade gracefully if missing)
-        self.recorder = RunRecorder()
+        self.recorder = RunRecorder(f"{config.working_dir}/.g3/knowledge")
         self.analyzer = InsightsAnalyzer() if _LEARNING_AVAILABLE else None
         self.recommender = ConfigRecommender() if _LEARNING_AVAILABLE else None
 
@@ -100,9 +101,9 @@ class Orchestrator:
             # Bug fix #9: Use config values instead of hardcoded
             bug_detector = BugDetector(
                 run_tests=self.config.run_tests,
-                run_types=self.config.run_bug_detection,
-                run_lint=self.config.run_bug_detection,
-                run_compile=self.config.run_bug_detection,
+                run_types=self.config.run_types,
+                run_lint=self.config.run_lint,
+                run_compile=self.config.run_compile,
             )
             judge = JudgeRunner(self.registry.get(self.config.judge))
             duel = DuelRunner(
@@ -223,7 +224,11 @@ class Orchestrator:
 
         except Exception as e:
             # Bug fix #4: Safe transition to FAILED - go through ROUND_FAILED if needed
-            current_state = SessionState(self.session._state.get("state", "created"))
+            # Bug fix #7: Wrap SessionState construction to avoid ValueError masking original exception
+            try:
+                current_state = SessionState(self.session._state.get("state", "created"))
+            except ValueError:
+                current_state = None
             if current_state == SessionState.AGENTS_RUNNING:
                 try:
                     self.session.transition(SessionState.ROUND_FAILED)
@@ -290,7 +295,8 @@ class Orchestrator:
 
         try:
             # Restore round counter
-            round_num = current_round
+            # Bug fix #3: Subtract 1 so the first round_num += 1 brings us back to the interrupted round
+            round_num = current_round - 1
 
             # Read task
             task = Path(self.config.plan_file).read_text()
@@ -298,9 +304,9 @@ class Orchestrator:
             # Bug fix #9: Use config values
             bug_detector = BugDetector(
                 run_tests=self.config.run_tests,
-                run_types=self.config.run_bug_detection,
-                run_lint=self.config.run_bug_detection,
-                run_compile=self.config.run_bug_detection,
+                run_types=self.config.run_types,
+                run_lint=self.config.run_lint,
+                run_compile=self.config.run_compile,
             )
             judge = JudgeRunner(self.registry.get(self.config.judge))
             duel = DuelRunner(
@@ -385,7 +391,11 @@ class Orchestrator:
             )
 
         except Exception as e:
-            current = SessionState(self.session._state.get("state", "created"))
+            # Bug fix #7: Wrap SessionState construction to avoid ValueError masking original exception
+            try:
+                current = SessionState(self.session._state.get("state", "created"))
+            except ValueError:
+                current = None
             if current == SessionState.AGENTS_RUNNING:
                 try:
                     self.session.transition(SessionState.ROUND_FAILED)
@@ -420,7 +430,8 @@ class Orchestrator:
         ws = Path(winner_workspace)
         target = Path(self.config.working_dir)
         _skip = {".git", "__pycache__", ".g3",
-                 self.config.agent_a_workspace, self.config.agent_b_workspace}
+                 self.config.agent_a_workspace, self.config.agent_b_workspace,
+                 "node_modules", ".venv", "venv"}
 
         # Protected files: never delete these even if absent from winner
         _protected = {
@@ -448,8 +459,11 @@ class Orchestrator:
                 if str(rel) in _protected or rel.name in _protected:
                     continue
                 if rel not in winner_files:
-                    item.unlink()
-                    print(f"  Removed: {rel}")
+                    try:
+                        item.unlink()
+                        print(f"  Removed: {rel}")
+                    except (PermissionError, OSError) as exc:
+                        print(f"  Warning: failed to remove {rel}: {exc}")
 
         # Copy/update files from winner
         for rel in winner_files:
