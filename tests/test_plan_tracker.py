@@ -96,48 +96,52 @@ def test_write_checklist_back_updates_only_top_level_items(tmp_path):
 # --- PlanItem.roles tests ---
 
 
-def test_plan_item_roles_default_is_empty_list():
-    """PlanItem with no roles argument should default to an empty list."""
+def test_plan_item_roles_default_is_empty_tuple():
+    """PlanItem with no roles argument should default to an empty tuple."""
     item = PlanItem(text="Do something")
-    assert item.roles == []
+    assert item.roles == ()
 
 
 def test_plan_item_roles_can_be_set():
-    """PlanItem accepts an explicit list of roles."""
-    item = PlanItem(text="Write tests", roles=["implementer", "reviewer"])
-    assert item.roles == ["implementer", "reviewer"]
+    """PlanItem accepts an explicit tuple of roles."""
+    item = PlanItem(text="Write tests", roles=("implementer", "reviewer"))
+    assert item.roles == ("implementer", "reviewer")
 
 
 def test_plan_item_roles_are_independent():
-    """Each PlanItem instance gets its own roles list (no shared mutable default)."""
+    """Each PlanItem instance gets its own roles (no shared mutable default)."""
     item_a = PlanItem(text="Step A")
     item_b = PlanItem(text="Step B")
-    item_a.roles.append("dev")
-    assert item_b.roles == []
+    assert item_a.roles == ()
+    assert item_b.roles == ()
+    # Verify that creating a new item with roles doesn't affect others
+    item_c = PlanItem(text="Step C", roles=("dev",))
+    assert item_c.roles == ("dev",)
+    assert item_b.roles == ()
 
 
 def test_mark_step_done_preserves_roles():
     items = [
-        PlanItem(text="Step 1", done=False, roles=["security"]),
-        PlanItem(text="Step 2", done=False, roles=["database"]),
+        PlanItem(text="Step 1", done=False, roles=("security",)),
+        PlanItem(text="Step 2", done=False, roles=("database",)),
     ]
     updated = mark_step_done(items, 0)
     assert updated[0].done is True
-    assert updated[0].roles == ["security"]
+    assert updated[0].roles == ("security",)
 
 
 def test_mark_all_done_preserves_roles():
-    items = [PlanItem(text="Step 1", done=False, roles=["security"])]
+    items = [PlanItem(text="Step 1", done=False, roles=("security",))]
     updated = mark_all_done(items)
     assert updated[0].done is True
-    assert updated[0].roles == ["security"]
+    assert updated[0].roles == ("security",)
 
 
 def test_reset_all_progress_preserves_roles():
-    items = [PlanItem(text="Step 1", done=True, roles=["database"])]
+    items = [PlanItem(text="Step 1", done=True, roles=("database",))]
     updated = reset_all_progress(items)
     assert updated[0].done is False
-    assert updated[0].roles == ["database"]
+    assert updated[0].roles == ("database",)
 
 
 def test_phase_has_display_name_defaulting_to_empty():
@@ -178,9 +182,9 @@ def test_parse_enriched_plan_returns_items_with_roles():
     items, phases = parse_enriched_plan(ENRICHED_PLAN)
     assert len(items) == 4
     assert items[0].text == "Create pyproject.toml"
-    assert items[0].roles == ["devops"]
+    assert items[0].roles == ("devops",)
     assert items[2].text == "Add JWT auth middleware"
-    assert items[2].roles == ["security", "architect"]
+    assert items[2].roles == ("security", "architect")
 
 
 def test_parse_enriched_plan_returns_phases():

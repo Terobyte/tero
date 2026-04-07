@@ -147,7 +147,7 @@ class TestPlanTracker:
 
         # Two items with identical text; only the first is in the phase.
         first = PlanItem(text="repeat")
-        second = PlanItem(text="repeat", roles=["reviewer"])
+        second = PlanItem(text="repeat", roles=("reviewer",))
         items = [first, second]
         tracker = PlanTracker(items)
 
@@ -159,7 +159,7 @@ class TestPlanTracker:
         assert tracker.items[0].done is True
         assert tracker.items[1].done is False
         # The second item must keep its original roles.
-        assert tracker.items[1].roles == ["reviewer"]
+        assert tracker.items[1].roles == ("reviewer",)
         # The items must be distinct objects (no aliasing).
         assert tracker.items[0] is not tracker.items[1]
 

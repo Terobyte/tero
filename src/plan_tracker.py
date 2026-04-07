@@ -15,7 +15,7 @@ class PlanItem:
     """A single plan item."""
     text: str
     done: bool = False
-    roles: list[str] = field(default_factory=list)
+    roles: tuple[str, ...] = field(default_factory=tuple)
 
 
 # --- Batch execution types ---
@@ -134,6 +134,30 @@ def _iter_plan_line_matches(lines: list[str]) -> list[PlanLineMatch]:
                 PlanLineMatch(
                     line_index=line_index,
                     text=dash.group(1),
+                    done=False,
+                    indent=indent,
+                )
+            )
+            continue
+
+        star = re.match(r"^\*\s+(.+)$", stripped)
+        if star and not stripped.startswith("* ["):
+            matches.append(
+                PlanLineMatch(
+                    line_index=line_index,
+                    text=star.group(1),
+                    done=False,
+                    indent=indent,
+                )
+            )
+            continue
+
+        plus = re.match(r"^\+\s+(.+)$", stripped)
+        if plus and not stripped.startswith("+ ["):
+            matches.append(
+                PlanLineMatch(
+                    line_index=line_index,
+                    text=plus.group(1),
                     done=False,
                     indent=indent,
                 )
@@ -397,10 +421,10 @@ def parse_enriched_plan(content: str) -> tuple[list[PlanItem], list[Phase]]:
                 if not match:
                     continue
                 text = match.group(2)
-                roles: list[str] = []
+                roles: tuple[str, ...] = ()
                 role_match = ROLE_TAG_RE.match(text)
                 if role_match:
-                    roles = [r.strip() for r in role_match.group(1).split(",")]
+                    roles = tuple(r.strip() for r in role_match.group(1).split(","))
                     text = role_match.group(2)
                 items.append(PlanItem(text=text, done=False, roles=roles))
 

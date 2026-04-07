@@ -147,7 +147,7 @@ def test_phase_zero_skips_llm_when_plan_is_already_polished(tmp_path):
         session._run_turn = fail_run_turn
         items, phases = asyncio.run(session._run_phase_zero(polished_plan))
 
-    assert [item.roles for item in items] == [["devops"], ["security"]]
+    assert [item.roles for item in items] == [("devops",), ("security",)]
     assert phases[0].display_name == "Setup"
     enriched_path = tmp_path / ".g3" / "enriched-plan.md"
     assert enriched_path.exists()

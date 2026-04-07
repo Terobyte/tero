@@ -697,8 +697,8 @@ def test_run_phase_zero_enriches_plan(tmp_path):
         )
 
     assert len(result_items) == 2
-    assert result_items[0].roles == ["devops"]
-    assert result_items[1].roles == ["security"]
+    assert result_items[0].roles == ("devops",)
+    assert result_items[1].roles == ("security",)
     assert len(result_phases) == 1
     assert result_phases[0].display_name == "Setup"
 

@@ -242,18 +242,17 @@ def test_duplicate_shutil_import_is_harmless_false_positive():
 # ===========================================================================
 
 
-def test_frozen_plan_item_allows_list_mutation():
-    """PlanItem.roles can be mutated even though the dataclass is frozen=True.
+def test_frozen_plan_item_prevents_tuple_mutation():
+    """PlanItem.roles are immutable tuples, preventing any list mutations.
 
-    RED  -> bug confirmed (append succeeds, no FrozenInstanceError)
-    GREEN -> false positive (mutation is somehow prevented)
+    This test confirms that the frozen dataclass with tuple roles prevents
+    in-place mutations that would bypass the frozen guard.
     """
     from src.plan_tracker import PlanItem
 
-    item = PlanItem(text="implement feature", roles=["dev"])
+    item = PlanItem(text="implement feature", roles=("dev",))
 
-    # CORRECT: modifying a frozen instance should raise FrozenInstanceError
-    with pytest.raises(FrozenInstanceError):
-        # frozen=True prevents 'item.roles = [...]' but NOT 'item.roles.append(...)'
-        # This append silently succeeds — the frozen guard is bypassed
+    # CORRECT: tuples don't have append() method — mutation is prevented at type level
+    with pytest.raises(AttributeError):
+        # tuples are immutable, so append() doesn't exist
         item.roles.append("unauthorized_role")
