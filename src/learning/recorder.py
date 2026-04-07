@@ -186,6 +186,6 @@ class RunRecorder:
 
 
 def generate_run_id() -> str:
-    """Generate a unique run ID based on timestamp and random suffix."""
-    import random
-    return f"run-{int(time.time() * 1000)}-{random.randint(0, 9999):04d}"
+    """Generate a unique run ID."""
+    import secrets
+    return f"run-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
