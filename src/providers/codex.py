@@ -126,9 +126,17 @@ class CodexProvider:
             finally:
                 await line_iter.aclose()
 
+            # Critical: start reading stderr in background before waiting for process.
+            # If subprocess writes >64KB to stderr, the OS pipe fills and blocks.
+            # Calling proc.wait() first = deadlock: proc.wait() blocks waiting for
+            # process exit, but process is blocked trying to write stderr.
+            # Solution: drain stderr concurrently. The _stderr_message protocol
+            # requires reading the stream before proc.wait() returns.
+            stderr_task = asyncio.create_task(self._stderr_message_read_task(proc.stderr))
             await proc.wait()
+            stderr_bytes = await stderr_task
 
-            stderr_message = await self._stderr_message(proc.stderr)
+            stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
             if stderr_message is not None:
                 yield stderr_message
 
@@ -253,12 +261,18 @@ class CodexProvider:
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-    async def _stderr_message(self, stderr) -> AdaptedMessage | None:
-        """Convert stderr output into a non-fatal assistant message."""
-        if stderr is None:
-            return None
+    async def _stderr_message_read_task(self, stderr) -> bytes:
+        """Read stderr stream and return bytes (or empty bytes if None).
 
-        stderr_data = await stderr.read()
+        Used as a background task to avoid deadlock: starts reading stderr
+        BEFORE proc.wait(), so that large stderr writes don't block the process.
+        """
+        if stderr is None:
+            return b""
+        return await stderr.read()
+
+    async def _stderr_message_from_bytes(self, stderr_data: bytes) -> AdaptedMessage | None:
+        """Convert stderr bytes into a non-fatal assistant message."""
         if isinstance(stderr_data, bytes):
             stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
         elif isinstance(stderr_data, str):
@@ -273,6 +287,14 @@ class CodexProvider:
             content=[TextBlock(text=f"[codex stderr] {stderr_text}")],
             type="text",
         )
+
+    async def _stderr_message(self, stderr) -> AdaptedMessage | None:
+        """Convert stderr output into a non-fatal assistant message."""
+        if stderr is None:
+            return None
+
+        stderr_data = await stderr.read()
+        return await self._stderr_message_from_bytes(stderr_data)
 
     def _adapt_codex_event(self, event: dict) -> AdaptedMessage | None:
         """Convert Codex JSONL event to AdaptedMessage.
@@ -510,9 +532,17 @@ class CodexProvider:
             finally:
                 await line_iter.aclose()
 
+            # Critical: start reading stderr in background before waiting for process.
+            # If subprocess writes >64KB to stderr, the OS pipe fills and blocks.
+            # Calling proc.wait() first = deadlock: proc.wait() blocks waiting for
+            # process exit, but process is blocked trying to write stderr.
+            # Solution: drain stderr concurrently. The _stderr_message protocol
+            # requires reading the stream before proc.wait() returns.
+            stderr_task = asyncio.create_task(self._stderr_message_read_task(proc.stderr))
             await proc.wait()
+            stderr_bytes = await stderr_task
 
-            stderr_message = await self._stderr_message(proc.stderr)
+            stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
             if stderr_message is not None:
                 yield stderr_message
 
