@@ -147,9 +147,9 @@ def _resolve_model_choice(
     if model_id == "__custom__":
         if not _custom_model_allowed(provider):
             return config
-        model_id = questionary.text("Введи model ID:").ask() or getattr(
-            config, model_field
-        )
+        model_id = questionary.text("Введи model ID:").ask()
+        if not model_id:
+            return config
     return Config(**{**config.__dict__, model_field: model_id})
 
 

@@ -457,13 +457,25 @@ class CoachPlayerSession:
         return pids
 
     def _kill_new_processes(self, before: set[int]) -> None:
-        """Kill processes that appeared since the snapshot."""
+        """Kill processes that appeared since the snapshot, including children."""
+        try:
+            import psutil
+        except ImportError:
+            return
+
         after = self._snapshot_pids()
         new_pids = after - before - {os.getpid()}
         for pid in new_pids:
             try:
+                proc = psutil.Process(pid)
+                children = proc.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
                 os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
                 pass
         if new_pids and self.config.verbose:
             print(f"  [cleanup] убито процессов: {len(new_pids)}")
@@ -1603,10 +1615,7 @@ class CoachPlayerSession:
                 pyproject_text = pyproject_path.read_text()
             except OSError:
                 pyproject_text = ""
-            if (
-                "[tool.pytest" in pyproject_text
-                or "[tool.pytest.ini_options]" in pyproject_text
-            ):
+            if "[tool.pytest" in pyproject_text:
                 return ["python3", "-m", "pytest", "-q"]
         if (working_dir / "package.json").exists():
             return ["npm", "test"]

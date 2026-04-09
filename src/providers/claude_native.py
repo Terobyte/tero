@@ -16,6 +16,10 @@ _BLACKBOX_VARS = [
     "BLACKBOX_ACCOUNT_B_TOKEN",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
+    "ZAI_API_KEY",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
 ]
 
 # Mapping of short aliases to full IDs (so versions aren't hardcoded)
@@ -63,8 +67,12 @@ class ClaudeNativeProvider:
                 cwd=working_dir,
                 env=env,
             )
+            # Default StreamReader limit is 64 KB — large researcher prompts
+            # produce JSON lines that exceed this. Raise to 16 MB.
+            proc.stdout._limit = 16 * 1024 * 1024
 
             proc.stdin.write(prompt.encode())
+
             await proc.stdin.drain()
             proc.stdin.close()
 
