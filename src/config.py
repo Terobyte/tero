@@ -264,7 +264,7 @@ class CcgEnv:
         )
 
     def as_dict(self) -> dict[str, str]:
-        return {
+        env: dict[str, str] = {
             "ANTHROPIC_BASE_URL": self.base_url,
             "ANTHROPIC_AUTH_TOKEN": self.auth_token,
             "ANTHROPIC_MODEL": self.model,
@@ -272,10 +272,13 @@ class CcgEnv:
             "ANTHROPIC_DEFAULT_OPUS_MODEL": self.model,
             "ANTHROPIC_DEFAULT_SONNET_MODEL": self.model,
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": self.small_model,
-            "BLACKBOX_API_KEY": self.auth_token,
-            "ZAI_API_KEY": self.auth_token,
             "CLAUDE_HOME": self.claude_home,
         }
+        if "blackbox.ai" in self.base_url:
+            env["BLACKBOX_API_KEY"] = self.auth_token
+        else:
+            env["ZAI_API_KEY"] = self.auth_token
+        return env
 
 
 @dataclass

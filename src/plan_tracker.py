@@ -1,6 +1,8 @@
 """Parse requirements into checklist, track progress."""
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field, replace
 
 
@@ -21,10 +23,14 @@ class PlanItem:
 # --- Batch execution types ---
 
 STEP_TYPE_MAP: dict[str, list[str]] = {
-    "create": ["create", "add", "write", "generate", "implement"],
-    "update": ["update", "modify", "change", "extend", "refactor"],
-    "test": ["test", "tests", "verify", "validate", "check"],
-    "review": ["review", "analyze", "audit", "fix issue"],
+    "create": ["create", "add", "write", "generate", "implement",
+               "создать", "добавить", "написать", "реализовать", "сгенерировать"],
+    "update": ["update", "modify", "change", "extend", "refactor",
+               "обновить", "изменить", "переписать", "заменить", "интегрировать"],
+    "test": ["test", "tests", "verify", "validate", "check",
+             "тест", "тесты", "проверить", "валидировать"],
+    "review": ["review", "analyze", "audit", "fix issue",
+               "ревью", "анализировать", "аудит"],
 }
 
 PHASE_SIZE: dict[str, int] = {
@@ -130,10 +136,14 @@ def _iter_plan_line_matches(lines: list[str]) -> list[PlanLineMatch]:
 
         dash = re.match(r"^-\s+(.+)$", stripped)
         if dash and not stripped.startswith("- ["):
+            text = dash.group(1)
+            # Skip description bullets like "- **Term**: explanation" — not actionable steps.
+            if re.match(r"^\*\*[^*]+\*\*:", text):
+                continue
             matches.append(
                 PlanLineMatch(
                     line_index=line_index,
-                    text=dash.group(1),
+                    text=text,
                     done=False,
                     indent=indent,
                 )
@@ -509,4 +519,10 @@ def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
         insert_at = len(new_lines) - 1 if new_lines and new_lines[-1] == "" else len(new_lines)
         new_lines[insert_at:insert_at] = extra_lines
 
-    path.write_text("\n".join(new_lines))
+    content_to_write = "\n".join(new_lines)
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=path.parent, delete=False, suffix=".tmp"
+    ) as tmp:
+        tmp.write(content_to_write)
+        tmp_path = tmp.name
+    os.replace(tmp_path, path)

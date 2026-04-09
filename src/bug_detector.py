@@ -168,8 +168,9 @@ class BugDetector:
                 timeout=60,
             )
             if result.returncode != 0:
-                # Count error lines
-                return len([l for l in result.stdout.splitlines() if "error:" in l])
+                # Count error lines matching mypy's file:line: error: pattern
+                import re as _re
+                return len([l for l in result.stdout.splitlines() if _re.match(r"^.*:\d+:\s+error:", l)])
         except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             pass
         return 0
@@ -199,7 +200,7 @@ class BugDetector:
                     if "failed" in line:
                         parts = line.split()
                         for i, p in enumerate(parts):
-                            if p == "failed" and i > 0:
+                            if p.rstrip(",") == "failed" and i > 0:
                                 try:
                                     return int(parts[i - 1])
                                 except ValueError:

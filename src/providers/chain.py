@@ -12,6 +12,8 @@ The chain exposes the same duck-typed interface as individual providers:
 
 import asyncio
 
+_MAX_BUFFER_MSGS = 10_000
+
 
 class RateLimitError(Exception):
     """Raised when all providers in the chain are exhausted."""
@@ -72,15 +74,22 @@ class ProviderChain:
 
         for attempt in range(self.max_retries + 1):
             for provider_index, provider in enumerate(self.providers):
-                buffer: list = []
+                buffer = []
                 try:
                     async for msg in provider.run(**kwargs):
+                        if len(buffer) >= _MAX_BUFFER_MSGS:
+                            raise RuntimeError(
+                                f"Provider output exceeded {_MAX_BUFFER_MSGS} messages; "
+                                "possible runaway response"
+                            )
                         buffer.append(msg)
                     # Provider completed without error — commit the buffer.
                     for msg in buffer:
                         yield msg
                     return  # Success — done
                 except Exception as exc:
+                    if not _is_rate_limit_error(exc):
+                        raise  # non-rate-limit errors propagate immediately
                     last_error = exc
                     # Discard partial output; do not yield anything to the caller.
                     buffer.clear()
@@ -92,7 +101,6 @@ class ProviderChain:
                             next_p = self.providers[next_idx]
                             next_name = getattr(next_p, "display_name", str(next_p))
                             self.on_fallback(failed, next_name)
-                    # All errors trigger fallback (rate limit, transient, etc.)
                     continue
 
             # All providers failed this round

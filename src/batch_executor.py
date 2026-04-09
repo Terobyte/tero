@@ -125,8 +125,10 @@ def parse_completed_steps(result, phase: Phase) -> list[str]:
     text = result.text
 
     match = _PHASE_COMPLETE_RE.search(text)
-    if match and not _SENTENCE_CONTINUATION_RE.search(match.group(0)):
-        return [s.text for s in phase.steps]
+    if match:
+        preceding_line = text[:match.start()].split("\n")[-1]
+        if not _SENTENCE_CONTINUATION_RE.search(preceding_line):
+            return [s.text for s in phase.steps]
 
     confirmed: set[int] = set()
     for match in _STEP_DONE_RE.finditer(text):
@@ -204,7 +206,7 @@ def build_player_timeout_feedback(phase: Phase, exc: Exception) -> str:
 @dataclass
 class PhaseFailedError(Exception):
     """Raised when a phase exhausts all retry attempts."""
-    phase: Phase
+    phase: Phase | None
     attempts: int
 
     def __post_init__(self):
@@ -497,6 +499,10 @@ class BatchExecutor:
         completed_steps: list[str] = []
         coach_feedback: str = ""
         max_phase_attempts = self._max_phase_attempts()
+        if max_phase_attempts == 0:
+            raise ValueError(
+                f"max_phase_attempts is 0 for phase '{phase.name}' — check schedule configuration"
+            )
         runtime = vars(self.session).get("_runtime")
 
         for attempt in range(max_phase_attempts):
@@ -560,7 +566,9 @@ class BatchExecutor:
                 streaming_ui.print_step_rejected(coach_feedback)
                 continue
 
-            completed_steps = parse_completed_steps(result, phase)
+            for step in parse_completed_steps(result, phase):
+                if step not in completed_steps:
+                    completed_steps.append(step)
             if len(completed_steps) < len(phase.steps):
                 coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
                 streaming_ui.print_step_rejected(coach_feedback)

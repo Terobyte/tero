@@ -138,7 +138,10 @@ class SessionManager:
     def load(self) -> dict[str, Any]:
         """Load session state from disk."""
         if self._state_file.exists():
-            self._state = json.loads(self._state_file.read_text())
+            try:
+                self._state = json.loads(self._state_file.read_text())
+            except (json.JSONDecodeError, ValueError):
+                self._state = {}
         return self._state
 
     def _save(self) -> None:
