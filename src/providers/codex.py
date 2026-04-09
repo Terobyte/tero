@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -19,6 +20,7 @@ from .message_adapter import (
 
 # Maximum output length for tool results to prevent memory issues
 MAX_TOOL_OUTPUT = 8000
+_LARGE_PROMPT_THRESHOLD = 64_000  # bytes; above this, write to temp file
 TEXT_ONLY_DISABLED_FEATURES = ("shell_tool", "multi_agent", "apps")
 
 
@@ -57,6 +59,7 @@ class CodexProvider:
         self.config = config or CodexConfig()
         self._last_input_tokens = 0
         self._last_output_tokens = 0
+        self._temp_instructions_path: str | None = None
 
     def _reset_usage(self) -> None:
         """Clear usage counters before starting a new Codex subprocess."""
@@ -144,6 +147,7 @@ class CodexProvider:
             if proc and proc.returncode is None:
                 proc.kill()
                 await proc.wait()
+            self._cleanup_temp_instructions()
 
     def _build_command(
         self,
@@ -207,12 +211,42 @@ class CodexProvider:
     def _build_env(self, system_prompt: str = "") -> dict:
         """Build environment for subprocess.
 
-        Codex CLI uses CODEX_INSTRUCTIONS env var for system prompt.
+        For large system prompts (>64KB), writes to a temp file and sets
+        CODEX_INSTRUCTIONS to a short reference. This avoids env var size
+        limits that can cause silent truncation or subprocess start failures.
         """
+        self._cleanup_temp_instructions()  # Clean up any previous temp file
         env = os.environ.copy()
-        if system_prompt:
+        if not system_prompt:
+            return env
+
+        encoded = system_prompt.encode("utf-8")
+        if len(encoded) <= _LARGE_PROMPT_THRESHOLD:
             env["CODEX_INSTRUCTIONS"] = system_prompt
+            return env
+
+        # Write to temp file
+        fd, tmp_path = tempfile.mkstemp(suffix=".md", prefix="codex_instructions_")
+        os.write(fd, encoded)
+        os.close(fd)
+        self._temp_instructions_path = tmp_path
+
+        env["CODEX_INSTRUCTIONS"] = (
+            "IMPORTANT: Your complete system instructions are in the file "
+            f"{tmp_path} — you MUST read that file in full before doing "
+            "anything else. Follow every instruction in it."
+        )
         return env
+
+    def _cleanup_temp_instructions(self) -> None:
+        """Remove temp instructions file if it exists."""
+        tmp = self._temp_instructions_path
+        if tmp is not None:
+            self._temp_instructions_path = None
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     async def _iter_stdout_lines(self, stdout) -> AsyncIterator[bytes]:
         """Yield stdout lines without relying on StreamReader.readline limits."""
@@ -333,7 +367,7 @@ class CodexProvider:
             self._last_output_tokens = usage.get("output_tokens", 0)
             return AdaptedMessage(
                 role="assistant",
-                content=[],
+                content=[TextBlock(text="[codex] turn completed")],
                 stop_reason="end_turn",
                 type="result",
             )
