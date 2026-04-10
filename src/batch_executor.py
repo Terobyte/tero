@@ -139,7 +139,7 @@ def _phase_complete_matches(raw_value: str, phase_name: str) -> bool:
         return False
 
     return any(
-        _matches_variant(candidate, variant) or _matches_variant(variant, candidate)
+        _matches_variant(candidate, variant)
         for variant in variants
         if variant
     )
