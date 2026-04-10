@@ -17,21 +17,25 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 
-def json_sink(message: dict) -> None:
+def json_sink(message: Any) -> None:
     """Custom sink that outputs JSON lines."""
-    record = message["record"]
+    record = getattr(message, "record", None)
+    if record is None and isinstance(message, dict):
+        record = message.get("record")
+    if record is None:
+        raise TypeError("json_sink expected a Loguru message with a record")
+
     output = {
         "timestamp": record["time"].isoformat(),
         "level": record["level"].name,
         "message": record["message"],
-        "module": record["module"],
+        "module": record["extra"].get("module", record["module"]),
         "function": record["function"],
         "line": record["line"],
     }
@@ -62,7 +66,6 @@ def setup_logging(
         logger.add(
             json_sink,
             level=level,
-            format="{message}",
         )
     else:
         # Human-readable to stderr

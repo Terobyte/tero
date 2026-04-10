@@ -24,6 +24,20 @@ class SessionState(Enum):
     ROUND_FAILED = "round_failed"
 
 
+_RESUMABLE_TO_AGENTS_RUNNING = {
+    SessionState.CREATED,
+    SessionState.PREPARING_WORKSPACES,
+    SessionState.AGENTS_RUNNING,
+    SessionState.BUG_DETECTION,
+    SessionState.JUDGING,
+    SessionState.WINNER_SELECTED,
+    SessionState.PROMOTING,
+    SessionState.RETRY,
+    SessionState.SYNTHESIZING,
+    SessionState.ROUND_FAILED,
+}
+
+
 # Valid state transitions
 _VALID_TRANSITIONS: dict[SessionState, set[SessionState]] = {
     SessionState.CREATED: {
@@ -112,11 +126,22 @@ class SessionManager:
         Raises:
             ValueError: If transition is invalid
         """
-        current = SessionState(self._state.get("state", "created"))
+        current_value = self._state.get("state", SessionState.CREATED.value)
+        try:
+            current = SessionState(current_value)
+        except ValueError:
+            current = None
 
         # Allow transition from any state to terminal states during error handling
         if new_state in (SessionState.FAILED, SessionState.STOPPED):
             pass  # Always allowed
+        elif current is None:
+            raise ValueError(f"Invalid persisted session state: {current_value!r}")
+        elif (
+            new_state == SessionState.AGENTS_RUNNING
+            and current in _RESUMABLE_TO_AGENTS_RUNNING
+        ):
+            pass
         elif current not in _VALID_TRANSITIONS:
             raise ValueError(f"No valid transitions from {current}")
         elif new_state not in _VALID_TRANSITIONS.get(current, set()):

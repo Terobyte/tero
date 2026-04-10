@@ -8,6 +8,7 @@ Provides budget enforcement and cost reporting.
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -85,22 +86,23 @@ class CostTracker:
                     continue
                 try:
                     data = json.loads(line)
-                    ts = datetime.fromisoformat(data["timestamp"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
+                    ts = self._normalize_datetime(
+                        datetime.fromisoformat(str(data["timestamp"]))
+                    )
                     self._entries.append(CostEntry(
                         timestamp=ts,
                         provider=Provider(data["provider"]),
-                        model=data["model"],
-                        input_tokens=data["input_tokens"],
-                        output_tokens=data["output_tokens"],
-                        cost_usd=data["cost_usd"],
-                        operation=data.get("operation", "unknown"),
+                        model=str(data["model"]),
+                        input_tokens=int(data["input_tokens"]),
+                        output_tokens=int(data["output_tokens"]),
+                        cost_usd=float(data["cost_usd"]),
+                        operation=str(data.get("operation", "unknown")),
                         metadata=data.get("metadata", {}),
                     ))
-                except (json.JSONDecodeError, KeyError):
-                    import warnings
-                    warnings.warn(f"Skipping corrupted history line: {line[:80]!r}")
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                    warnings.warn(
+                        f"Skipping corrupted history line: {line[:80]!r} ({exc})"
+                    )
 
     def _save_entry(self, entry: CostEntry) -> None:
         """Save entry to storage."""
@@ -162,7 +164,7 @@ class CostTracker:
 
     def get_daily_total(self, date: Optional[datetime] = None) -> float:
         """Get total cost for a specific day."""
-        date = date or datetime.now(timezone.utc)
+        date = self._normalize_datetime(date or datetime.now(timezone.utc))
         day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -173,13 +175,26 @@ class CostTracker:
 
     def get_monthly_total(self, date: Optional[datetime] = None) -> float:
         """Get total cost for a specific month."""
-        date = date or datetime.now(timezone.utc)
+        date = self._normalize_datetime(date or datetime.now(timezone.utc))
         month_start = date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if month_start.month == 12:
+            month_end = month_start.replace(
+                year=month_start.year + 1, month=1, day=1
+            )
+        else:
+            month_end = month_start.replace(month=month_start.month + 1, day=1)
 
         return sum(
             e.cost_usd for e in self._entries
-            if e.timestamp >= month_start
+            if month_start <= e.timestamp < month_end
         )
+
+    @staticmethod
+    def _normalize_datetime(value: datetime) -> datetime:
+        """Treat naive datetimes as UTC so persisted history remains comparable."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
     def can_spend(self, estimated_cost: float) -> bool:
         """Check if we're within budget for a proposed cost."""

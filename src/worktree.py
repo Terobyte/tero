@@ -3,7 +3,6 @@
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 
 class WorktreeManager:
@@ -26,14 +25,13 @@ class WorktreeManager:
 
     def create(self, agent_name: str) -> str:
         """Создать изолированный workspace. Возвращает абсолютный путь."""
-        if agent_name in self._used:
-            raise ValueError(f"Workspace for '{agent_name}' already created in this session")
-        self._used.add(agent_name)
-
         base = self.workspace_base if self.workspace_base is not None else self.session_dir
         ws = os.path.join(base, agent_name)
+        if agent_name in self._used or agent_name in self._workspace_modes or os.path.exists(ws):
+            self.cleanup(agent_name)
+        self._used.add(agent_name)
         if os.path.exists(ws):
-            shutil.rmtree(ws)
+            shutil.rmtree(ws, ignore_errors=True)
 
         # Track which mode was actually used for proper cleanup
         use_git = self.mode == "git" or (self.mode == "auto" and self._is_git())
@@ -45,8 +43,9 @@ class WorktreeManager:
 
         if use_git:
             try:
+                workspace = self._create_git_worktree(agent_name, ws)
                 self._workspace_modes[agent_name] = "git"
-                return self._create_git_worktree(agent_name, ws)
+                return workspace
             except subprocess.CalledProcessError:
                 self._workspace_modes[agent_name] = "copy"
                 return self._create_copy(ws)
@@ -82,7 +81,7 @@ class WorktreeManager:
         ws = os.path.join(base, agent_name)
 
         # Bug fix #8: Use tracked mode instead of self._is_git()
-        ws_mode = self._workspace_modes.get(agent_name)
+        ws_mode = self._workspace_modes.pop(agent_name, None)
 
         if ws_mode == "git":
             subprocess.run(
@@ -95,13 +94,13 @@ class WorktreeManager:
                 ["git", "branch", "-D", branch],
                 cwd=self.source_dir, capture_output=True
             )
-        elif os.path.exists(ws):
+
+        if os.path.exists(ws):
             shutil.rmtree(ws, ignore_errors=True)
+        self._used.discard(agent_name)
 
     def cleanup_all(self):
-        names = list(self._used)
-        if "synthesis" not in self._used:
-            names.append("synthesis")
+        names = list(self._used | set(self._workspace_modes))
         for name in names:
             self.cleanup(name)
 
