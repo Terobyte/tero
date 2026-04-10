@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from .base import AgentProvider
-from .ccg import CcgProvider
 from .claude_native import ClaudeNativeProvider, ClaudeNativeConfig
-from src.config import CcgEnv
+from .zai import ZaiProvider, ZaiConfig
 
 
 @dataclass
@@ -22,7 +21,7 @@ class ProviderRegistry:
     """Registry for managing multiple providers with different accounts.
 
     Supports:
-    - Multiple provider types (black, turbo, zai, claude, codex, opencode, kilo)
+    - Multiple provider types (zai, claude, codex, opencode, kilo)
     - Parallel execution of providers
     """
 
@@ -40,13 +39,13 @@ class ProviderRegistry:
         """Get or create a provider instance by name.
 
         Args:
-            provider_name: Provider name ("black", "turbo", "zai", "claude", "codex", "opencode", "kilo")
+            provider_name: Provider name ("zai", "claude", "codex", "opencode", "kilo")
 
         Returns:
             Provider instance
 
         Raises:
-            ValueError: If provider unknown or no token for Blackbox
+            ValueError: If provider type is unknown
         """
         if provider_name in self._instances:
             return self._instances[provider_name]
@@ -65,9 +64,12 @@ class ProviderRegistry:
         provider_config: dict,
     ) -> AgentProvider:
         """Create a provider instance."""
-        if provider_type in ("claude_glm", "black", "turbo", "zai", "lite", "ccg", "ccg1", "ccg2"):
-            ccg_env = CcgEnv.for_account(provider_name, provider_config)
-            return CcgProvider(ccg_env)
+        if provider_type == "zai":
+            zai_cfg = ZaiConfig(
+                claude_home=provider_config.get("claude_home", "~/.claude-zai"),
+                default_model=provider_config.get("default_model", "glm-5.1"),
+            )
+            return ZaiProvider(zai_cfg)
 
         if provider_type in ("claude_native", "claude"):
             native_cfg = ClaudeNativeConfig(
@@ -131,7 +133,7 @@ class ProviderRegistry:
         """Get multiple provider instances for parallel execution.
 
         Args:
-            names: List of provider names (e.g., ["black", "claude"])
+            names: List of provider names (e.g., ["zai", "claude"])
 
         Returns:
             List of provider instances

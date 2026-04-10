@@ -65,7 +65,7 @@ def test_session_passes_role_specific_system_prompts(tmp_path, monkeypatch):
     mock_coach = _make_mock_provider()
     mock_coach.run = fake_run
 
-    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name == "player_provider" or name == "black" else mock_coach)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name == "player_provider" or name == "zai" else mock_coach)
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
 
     cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=1)
@@ -233,7 +233,7 @@ def test_interrupt_stops_collecting_mid_turn(tmp_path, monkeypatch):
     assert streamed_messages == 1
 
 
-def test_run_turn_passes_context_config_to_ccg_like_provider(tmp_path, monkeypatch):
+def test_run_turn_passes_context_config_to_context_aware_provider(tmp_path, monkeypatch):
     """Providers that support context settings should receive resolved config values."""
     captured = {}
 
@@ -309,12 +309,12 @@ def test_init_review_provider_defaults_to_coach_when_unset(tmp_path, monkeypatch
         plan_file="requirements.md",
         code_review=True,
         review_provider="",
-        coach_provider="black",
+        coach_provider="zai",
     )
     session = CoachPlayerSession(cfg, "1. Ship feature")
 
     assert session.review_provider is coach_provider
-    assert session.review_provider_name == "black"
+    assert session.review_provider_name == "zai"
     assert "codex" not in session._provider_cache
 
 
@@ -334,13 +334,13 @@ def test_init_review_provider_does_not_probe_codex_when_unset(tmp_path, monkeypa
         plan_file="requirements.md",
         code_review=True,
         review_provider="",
-        coach_provider="black",
+        coach_provider="zai",
     )
     session = CoachPlayerSession(cfg, "1. Ship feature")
 
     assert session.review_provider is coach_provider
-    assert session.review_provider_name == "black"
-    assert created == ["black"]
+    assert session.review_provider_name == "zai"
+    assert "zai" in created
     assert "codex" not in session._provider_cache
 
 
@@ -348,7 +348,7 @@ def test_auto_review_follows_live_coach_switch_and_model(tmp_path, monkeypatch):
     """When review auto-falls back to coach, runtime coach switches should carry review with them."""
     codex_provider = _make_mock_provider()
     codex_provider.check_ready.return_value = (False, "missing auth")
-    ccg_provider = _make_mock_provider()
+    zai_provider = _make_mock_provider()
     opencode_provider = _make_mock_provider()
 
     def fake_create_provider(name, env=None, cfg=None):
@@ -356,7 +356,7 @@ def test_auto_review_follows_live_coach_switch_and_model(tmp_path, monkeypatch):
             return codex_provider
         if name == "opencode":
             return opencode_provider
-        return ccg_provider
+        return zai_provider
 
     monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
 
@@ -366,14 +366,14 @@ def test_auto_review_follows_live_coach_switch_and_model(tmp_path, monkeypatch):
         code_review=True,
         review_provider="",
         review_model="",
-        coach_provider="black",
-        coach_model="blackboxai/z-ai/glm-5",
+        coach_provider="zai",
+        coach_model="glm-5.1",
     )
     session = CoachPlayerSession(cfg, "1. Ship feature")
 
-    assert session._resolve_review_provider_name() == "black"
-    assert session._resolve_review_provider() is ccg_provider
-    assert session._resolve_review_model() == "blackboxai/z-ai/glm-5"
+    assert session._resolve_review_provider_name() == "zai"
+    assert session._resolve_review_provider() is zai_provider
+    assert session._resolve_review_model() == "glm-5.1"
 
     session.switch_runtime_role(
         "coach", "opencode", "opencode/minimax-m2.5-free"
@@ -400,8 +400,8 @@ def test_init_fails_when_test_writer_provider_not_ready(tmp_path, monkeypatch):
     cfg = Config(
         working_dir=str(tmp_path),
         tdd_mode=True,
-        coach_provider="black",
-        player_provider="black",
+        coach_provider="zai",
+        player_provider="zai",
         test_writer_provider="tw",
     )
 
@@ -430,8 +430,8 @@ def test_init_fails_when_review_provider_not_ready(tmp_path, monkeypatch):
         working_dir=str(tmp_path),
         code_review=True,
         review_provider="codex",
-        coach_provider="black",
-        player_provider="black",
+        coach_provider="zai",
+        player_provider="zai",
     )
 
     try:
@@ -638,10 +638,10 @@ def test_provider_name_for_preplanner_role(tmp_path, monkeypatch):
     mock_provider = _make_mock_provider()
     monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_provider)
 
-    cfg = Config(working_dir=str(tmp_path), preplan_provider="turbo")
+    cfg = Config(working_dir=str(tmp_path), preplan_provider="zai")
     session = CoachPlayerSession(cfg, "1. Step one", "plan.md")
 
-    assert session._provider_name_for_role("preplanner") == "turbo"
+    assert session._provider_name_for_role("preplanner") == "zai"
 
 
 def test_run_phase_zero_enriches_plan(tmp_path):
@@ -658,7 +658,7 @@ def test_run_phase_zero_enriches_plan(tmp_path):
 """
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
 
@@ -717,7 +717,7 @@ def test_run_phase_zero_preserves_done_steps(tmp_path):
 """
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
 
@@ -770,7 +770,7 @@ def test_session_appends_persona_overlay_to_step_prompts(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "src.coach_player.create_provider",
-        lambda name, env=None, cfg=None: mock_player if name in {"player_provider", "black"} else mock_coach,
+        lambda name, env=None, cfg=None: mock_player if name in {"player_provider", "zai"} else mock_coach,
     )
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
 
@@ -812,7 +812,7 @@ def test_sync_batch_roles_with_coach_preserves_custom_overrides():
     )
 
     synced = _sync_batch_roles_with_coach(
-        config, previous_provider="black", previous_model=""
+        config, previous_provider="zai", previous_model=""
     )
 
     assert synced.batch_pre_provider == "claude"

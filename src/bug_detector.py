@@ -69,6 +69,17 @@ class BugDetector:
             if ignored.isdisjoint(py_file.relative_to(base).parts)
         ]
 
+    @staticmethod
+    def _missing_module_error(result: subprocess.CompletedProcess[str], module: str) -> bool:
+        """Return True when `python -m <module>` failed because the module is missing."""
+        stderr = (result.stderr or "").lower()
+        stdout = (result.stdout or "").lower()
+        needles = (
+            f"no module named {module.lower()}",
+            f"no module named '{module.lower()}'",
+        )
+        return any(needle in stderr or needle in stdout for needle in needles)
+
     def run(self, working_dir: str) -> BugReport:
         """Run all enabled checks and return aggregated bug report."""
         report = BugReport()
@@ -118,7 +129,7 @@ class BugDetector:
         """Run flake8 or fallback to pyflakes, return error count."""
         exclude_csv = ",".join(BugDetector._ignored_names())
         python_files = BugDetector._python_files(working_dir)
-        for cmd in (
+        commands: tuple[tuple[list[str], str], ...] = (
             [
                 "python3",
                 "-m",
@@ -129,8 +140,12 @@ class BugDetector:
                 exclude_csv,
                 working_dir,
             ],
+            "flake8",
+        ), (
             ["python3", "-m", "pyflakes", *python_files] if python_files else [],
-        ):
+            "pyflakes",
+        )
+        for cmd, module_name in commands:
             if not cmd:
                 continue
             try:
@@ -140,6 +155,8 @@ class BugDetector:
                     text=True,
                     timeout=30,
                 )
+                if BugDetector._missing_module_error(result, module_name):
+                    continue
                 if result.returncode != 0:
                     # Try to parse count from last line
                     lines = result.stdout.strip().splitlines()
@@ -167,6 +184,8 @@ class BugDetector:
                 text=True,
                 timeout=60,
             )
+            if BugDetector._missing_module_error(result, "mypy"):
+                return 0
             if result.returncode != 0:
                 # Count error lines matching mypy's file:line: error: pattern
                 import re as _re
@@ -194,6 +213,8 @@ class BugDetector:
                 text=True,
                 timeout=60,
             )
+            if BugDetector._missing_module_error(result, "pytest"):
+                return 0
             if result.returncode != 0:
                 # Parse "X failed" from pytest output
                 for line in result.stdout.splitlines():

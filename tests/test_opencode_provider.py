@@ -619,13 +619,7 @@ def test_opencode_model_presets_exist():
     from src.menu import OPENCODE_MODEL_PRESETS
 
     values = list(OPENCODE_MODEL_PRESETS.values())
-    assert "opencode/mimo-v2-pro-free" in values
-    assert "opencode/mimo-v2-omni-free" in values
     assert "opencode/minimax-m2.5-free" in values
-    assert "openrouter/moonshotai/kimi-k2:free" in values
-    assert "openrouter/moonshotai/kimi-k2.5" in values
-    assert "zai/glm-5.1" in values
-    assert "__custom__" in values
 
 
 def test_opencode_runtime_presets():
@@ -644,7 +638,6 @@ def test_opencode_context_windows():
     assert get_context_window("opencode/mimo-v2-pro-free") == 131_072
     assert get_context_window("opencode/minimax-m2.5-free") == 1_000_000
     assert get_context_window("openrouter/moonshotai/kimi-k2:free") == 131_072
-    assert get_context_window("zai/glm-5.1") == 204_800
     assert get_context_window("opencode/nemotron-3-super-free") == 131_072
 
 
@@ -781,12 +774,12 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     assert updated.player_model == "opencode/minimax-m2.5-free"
 
 
-def test_questionary_player_opencode_can_pick_zai_model(monkeypatch):
-    """Questionary player provider flow should expose direct Z.AI for OpenCode."""
+def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
+    """Questionary player provider flow should expose OpenCode model presets."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "Z.AI     (glm-5.1 direct)"])
+    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -809,7 +802,7 @@ def test_questionary_player_opencode_can_pick_zai_model(monkeypatch):
     updated = _edit_setting_questionary(Config(), "player_provider")
 
     assert updated.player_provider == "opencode"
-    assert updated.player_model == "zai/glm-5.1"
+    assert updated.player_model == "opencode/minimax-m2.5-free"
 
 
 def test_questionary_player_kilo_uses_kilo_model_presets(monkeypatch):
@@ -880,7 +873,7 @@ def test_fallback_menu_can_edit_preplan_provider(monkeypatch):
     answers = iter(["h", "codex", "o3", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
-    config = _fallback_menu(Config(preplan_provider="black"))
+    config = _fallback_menu(Config(preplan_provider="zai"))
 
     assert config is not None
     assert config.preplan_provider == "codex"
@@ -939,7 +932,7 @@ def test_questionary_preplan_provider_uses_provider_picker(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["Codex (native CLI)", "o3"])
+    prompts = iter(["Codex (native CLI)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -960,12 +953,12 @@ def test_questionary_preplan_provider_uses_provider_picker(monkeypatch):
     monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
 
     updated = _edit_setting_questionary(
-        Config(preplan_provider="black", preplan_model="blackboxai/z-ai/glm-5"),
+        Config(preplan_provider="zai", preplan_model="glm-5.1"),
         "preplan_provider",
     )
 
     assert updated.preplan_provider == "codex"
-    assert updated.preplan_model == "o3"
+    assert updated.preplan_model == "gpt-5.4"
 
 
 def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coach(monkeypatch):
@@ -973,7 +966,7 @@ def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coac
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "Kimi K2   (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -995,22 +988,22 @@ def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coac
 
     updated = _edit_setting_questionary(
         Config(
-            coach_provider="black",
-            coach_model="blackboxai/z-ai/glm-5",
-            batch_pre_provider="black",
-            batch_pre_model="blackboxai/z-ai/glm-5",
-            batch_post_provider="black",
-            batch_post_model="blackboxai/z-ai/glm-5",
+            coach_provider="zai",
+            coach_model="glm-5.1",
+            batch_pre_provider="zai",
+            batch_pre_model="glm-5.1",
+            batch_post_provider="zai",
+            batch_post_model="glm-5.1",
         ),
         "coach_provider",
     )
 
     assert updated.coach_provider == "opencode"
-    assert updated.coach_model == "openrouter/moonshotai/kimi-k2:free"
+    assert updated.coach_model == "opencode/minimax-m2.5-free"
     assert updated.batch_pre_provider == "opencode"
-    assert updated.batch_pre_model == "openrouter/moonshotai/kimi-k2:free"
+    assert updated.batch_pre_model == "opencode/minimax-m2.5-free"
     assert updated.batch_post_provider == "opencode"
-    assert updated.batch_post_model == "openrouter/moonshotai/kimi-k2:free"
+    assert updated.batch_post_model == "opencode/minimax-m2.5-free"
 
 
 def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
@@ -1023,12 +1016,12 @@ def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
 
     config = _fallback_menu(
         Config(
-            coach_provider="black",
-            coach_model="blackboxai/z-ai/glm-5",
-            batch_pre_provider="black",
-            batch_pre_model="blackboxai/z-ai/glm-5",
-            batch_post_provider="black",
-            batch_post_model="blackboxai/z-ai/glm-5",
+            coach_provider="zai",
+            coach_model="glm-5.1",
+            batch_pre_provider="zai",
+            batch_pre_model="glm-5.1",
+            batch_post_provider="zai",
+            batch_post_model="glm-5.1",
         )
     )
 
@@ -1072,39 +1065,8 @@ def test_fallback_menu_can_edit_batch_judge_provider(monkeypatch):
     assert config.batch_judge_model == "opus"
 
 
-def test_questionary_turbo_provider_uses_fixed_model_without_extra_prompt(monkeypatch):
-    """Turbo provider should lock to glm-5-turbo without a model submenu."""
-    from src.menu import _edit_setting_questionary
-    from src.config import Config
-
-    prompts = iter(["TURBO (Z.AI / GLM-5 Turbo)"])
-
-    class DummyPrompt:
-        def __init__(self, value):
-            self._value = value
-
-        def ask(self):
-            return self._value
-
-    class DummyQuestionary:
-        @staticmethod
-        def select(*args, **kwargs):
-            return DummyPrompt(next(prompts))
-
-        @staticmethod
-        def text(*args, **kwargs):
-            raise AssertionError("custom model prompt should not be used")
-
-    monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
-
-    updated = _edit_setting_questionary(Config(), "player_provider")
-
-    assert updated.player_provider == "turbo"
-    assert updated.player_model == "glm-5-turbo"
-
-
-def test_questionary_zai_provider_uses_fixed_model_without_extra_prompt(monkeypatch):
-    """ZAI provider should lock to glm-5.1 without a model submenu."""
+def test_questionary_zai_provider_selects_without_model_submenu(monkeypatch):
+    """ZAI provider has no fixed model — should not crash on empty model presets."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
@@ -1120,7 +1082,7 @@ def test_questionary_zai_provider_uses_fixed_model_without_extra_prompt(monkeypa
     class DummyQuestionary:
         @staticmethod
         def select(*args, **kwargs):
-            return DummyPrompt(next(prompts))
+            return DummyPrompt(next(prompts, None))
 
         @staticmethod
         def text(*args, **kwargs):
@@ -1131,19 +1093,3 @@ def test_questionary_zai_provider_uses_fixed_model_without_extra_prompt(monkeypa
     updated = _edit_setting_questionary(Config(), "player_provider")
 
     assert updated.player_provider == "zai"
-    assert updated.player_model == "glm-5.1"
-
-
-def test_fallback_menu_black_uses_fixed_model_without_prompt(monkeypatch):
-    """Plain-text menu should assign the fixed Black model immediately."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["p", "black", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config(player_provider="claude", player_model="sonnet"))
-
-    assert config is not None
-    assert config.player_provider == "black"
-    assert config.player_model == "blackboxai/z-ai/glm-5"

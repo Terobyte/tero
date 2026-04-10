@@ -137,7 +137,7 @@ class TestStatusBar:
 
 
 MODEL_PRESETS_TEST = [
-    ("GLM-5", "black", "blackboxai/z-ai/glm-5"),
+    ("GLM-5.1", "zai", "glm-5.1"),
     ("Sonnet", "claude", "claude-sonnet-4-6"),
     ("Opus", "claude", "claude-opus-4-6"),
 ]
@@ -254,11 +254,11 @@ class TestRuntimeControls:
         controls._picker.pop_pending_change.return_value = ("coach", "claude", "claude-sonnet-4-6")
 
         session = MagicMock()
-        session.config.coach_provider = "black"
+        session.config.coach_provider = "zai"
         session.config.coach_model = ""
-        session.config.batch_pre_provider = "black"
+        session.config.batch_pre_provider = "zai"
         session.config.batch_pre_model = ""
-        session.config.batch_post_provider = "black"
+        session.config.batch_post_provider = "zai"
         session.config.batch_post_model = ""
         mock_provider = MagicMock()
         mock_provider.check_ready.return_value = (True, "")
@@ -286,7 +286,7 @@ class TestRuntimeControls:
         )
 
         session = MagicMock()
-        session.config.coach_provider = "black"
+        session.config.coach_provider = "zai"
         session.config.coach_model = ""
         session.config.batch_pre_provider = "claude"
         session.config.batch_pre_model = "claude-sonnet-4-6"
@@ -313,7 +313,7 @@ class TestRuntimeControls:
         controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4")
 
         session = MagicMock()
-        session.config.coach_provider = "black"
+        session.config.coach_provider = "zai"
         mock_provider = MagicMock()
         mock_provider.check_ready.return_value = (False, "Proxy not reachable")
         session._get_or_create_provider.return_value = mock_provider
@@ -321,7 +321,7 @@ class TestRuntimeControls:
         controls.apply_pending(session)
 
         # coach_provider should NOT have changed
-        assert session.config.coach_provider == "black"
+        assert session.config.coach_provider == "zai"
         controls._status_bar.show_warning.assert_called_once()
 
     def test_apply_pending_uses_session_runtime_switch_when_available(self):
@@ -335,8 +335,8 @@ class TestRuntimeControls:
         class Session:
             def __init__(self):
                 self.config = MagicMock()
-                self.config.coach_provider = "black"
-                self.config.coach_model = "blackboxai/z-ai/glm-5"
+                self.config.coach_provider = "zai"
+                self.config.coach_model = "glm-5.1"
                 self._provider = MagicMock()
                 self._provider.check_ready.return_value = (True, "")
                 self._get_or_create_provider = MagicMock(return_value=self._provider)
@@ -370,8 +370,8 @@ class TestRuntimeControls:
         class Session:
             def __init__(self):
                 self.config = MagicMock()
-                self.config.player_provider = "black"
-                self.config.player_model = "blackboxai/z-ai/glm-5"
+                self.config.player_provider = "zai"
+                self.config.player_model = "glm-5.1"
                 self._provider = MagicMock()
                 self._provider.check_ready.return_value = (True, "")
                 self._get_or_create_provider = MagicMock(return_value=self._provider)

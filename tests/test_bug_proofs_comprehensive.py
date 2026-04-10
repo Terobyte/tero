@@ -35,14 +35,14 @@ class TestConfigEmptyStringStripped(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             (Path(td) / ".g3").mkdir()
             (Path(td) / ".g3" / "config.yaml").write_text(
-                "defaults:\n  preplan_provider: turbo\n"
+                "defaults:\n  preplan_provider: zai\n"
             )
 
             cli_args = {"working_dir": td, "preplan_provider": ""}
             cfg = resolve_config(cli_args)
 
             # CORRECT behavior: empty string should be preserved (or handled as explicit disable)
-            # BUGGY behavior: empty string is stripped, default "turbo" is used
+            # BUGGY behavior: empty string is stripped, default "zai" is used
             self.assertEqual(
                 cfg.preplan_provider,
                 "",
@@ -65,9 +65,9 @@ class TestSwitchRuntimeRoleIncompleteRollback(unittest.TestCase):
 
         config = Config(
             working_dir="/tmp",
-            coach_provider="ccg",
-            player_provider="ccg",
-            review_provider="turbo",
+            coach_provider="zai",
+            player_provider="zai",
+            review_provider="zai",
             review_model="glm-5",
         )
 
@@ -235,8 +235,8 @@ class TestCoachFallbackProviderEmpty(unittest.TestCase):
 
         config = Config(
             working_dir="/tmp",
-            coach_provider="ccg",
-            player_provider="ccg",
+            coach_provider="zai",
+            player_provider="zai",
             coach_fallback_provider="",
         )
 
@@ -437,7 +437,7 @@ class TestOrchestratorSessionStateValueError(unittest.TestCase):
         from unittest.mock import MagicMock
 
         # Create a minimal orchestrator and session with corrupted state
-        config = Config(working_dir="/tmp", coach_provider="ccg", player_provider="ccg")
+        config = Config(working_dir="/tmp", coach_provider="zai", player_provider="zai")
         orch = object.__new__(Orchestrator)
         orch.config = config
         orch.session = MagicMock()
@@ -461,35 +461,6 @@ class TestOrchestratorSessionStateValueError(unittest.TestCase):
             current_state,
             "Corrupted state should result in None, not raise ValueError",
         )
-
-
-# ---------------------------------------------------------------------------
-# 13. MEDIUM: config.py:275 — both API keys set to same token
-# ---------------------------------------------------------------------------
-
-
-class TestCcgEnvSetsBothApiKeys(unittest.TestCase):
-    """Bug: CcgEnv.as_dict() sets both keys to the same token."""
-
-    def test_ccg_env_sets_only_relevant_api_key(self):
-        """BLACKBOX_API_KEY and ZAI_API_KEY should not both be set to the same token."""
-        from src.config import CcgEnv
-
-        env = CcgEnv(
-            base_url="https://api.blackbox.ai",
-            auth_token="blackbox_token_only",
-            model="glm-5",
-            small_model="minimax",
-            claude_home="~/.claude",
-        )
-
-        d = env.as_dict()
-        if "BLACKBOX_API_KEY" in d and "ZAI_API_KEY" in d:
-            self.assertNotEqual(
-                d["BLACKBOX_API_KEY"],
-                d["ZAI_API_KEY"],
-                "Both API keys set to same token — auth failures when switching providers",
-            )
 
 
 # ---------------------------------------------------------------------------

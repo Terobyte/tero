@@ -1,10 +1,10 @@
 """Provider implementations for Claude Agent SDK."""
 
 from .base import AgentProvider
-from .ccg import CcgProvider, run_agent
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
+from .zai import ZaiConfig, ZaiProvider
 from .message_adapter import (
     AdaptedMessage,
     TextBlock,
@@ -14,37 +14,36 @@ from .message_adapter import (
     adapt_sdk_message,
 )
 
-from src.config import CcgEnv
 
 
 def create_provider(
     provider_name: str,
-    ccg_env: CcgEnv | None = None,
     provider_config: dict | None = None,
 ):
     """Create provider by name from config.
 
     Args:
-        provider_name: "black", "turbo", "zai", "claude", "codex", "opencode", or "kilo"
-        ccg_env: CcgEnv instance (optional; if not provided, created for account)
+        provider_name: "zai", "claude", "codex", "opencode", or "kilo"
         provider_config: Optional config dict from .g3/config.yaml providers section
                         Supports "type" key to override provider type
 
     Returns:
-        Provider instance (CcgProvider, ClaudeNativeProvider, or CodexProvider)
+        Provider instance (ClaudeNativeProvider, CodexProvider, or OpenCodeProvider)
 
     Raises:
-        ValueError: If provider type is unknown or no token for Blackbox
+        ValueError: If provider type is unknown
     """
     provider_config = provider_config or {}
 
     # Use type from config if specified, otherwise fall back to provider_name
     provider_type = provider_config.get("type", provider_name)
 
-    if provider_type in ("claude_glm", "black", "turbo", "zai", "lite", "ccg", "ccg1", "ccg2"):
-        if ccg_env is None:
-            ccg_env = CcgEnv.for_account(provider_name, provider_config)
-        return CcgProvider(ccg_env)
+    if provider_type == "zai":
+        zai_cfg = ZaiConfig(
+            claude_home=provider_config.get("claude_home", "~/.claude-zai"),
+            default_model=provider_config.get("default_model", "glm-5.1"),
+        )
+        return ZaiProvider(zai_cfg)
 
     if provider_type in ("claude_native", "claude"):
         native_cfg = ClaudeNativeConfig(
@@ -101,10 +100,6 @@ def create_provider(
 __all__ = [
     # Base
     "AgentProvider",
-    # CCG
-    "CcgEnv",
-    "CcgProvider",
-    "run_agent",
     # Claude Native
     "ClaudeNativeConfig",
     "ClaudeNativeProvider",
@@ -114,6 +109,9 @@ __all__ = [
     # OpenCode
     "OpenCodeConfig",
     "OpenCodeProvider",
+    # ZAI
+    "ZaiConfig",
+    "ZaiProvider",
     # Message adapter
     "AdaptedMessage",
     "TextBlock",

@@ -93,9 +93,50 @@ class ResumeTailor:
             matched = [kw for kw in keywords if kw in line_lower]
             if matched:
                 highlighted.append(line.strip())
-            result_lines.append(line)
+                result_lines.append(f"[Relevant to role] {line}")
+            else:
+                result_lines.append(line)
 
         return "\n".join(result_lines), highlighted
+
+    @staticmethod
+    def _append_section(base_text: str, heading: str, items: list[str]) -> str:
+        """Append a simple bullet section when there is content to add."""
+        if not items:
+            return base_text
+        section = f"{heading}\n" + "\n".join(f"- {item}" for item in items)
+        if not base_text.strip():
+            return section
+        return f"{base_text.rstrip()}\n\n{section}"
+
+    def _apply_strategy(
+        self,
+        resume: str,
+        highlighted_resume: str,
+        keywords: list[str],
+        highlighted: list[str],
+        strategy: TailorStrategy,
+    ) -> str:
+        """Produce strategy-specific tailored output."""
+        if strategy == TailorStrategy.EXPERIENCE_HIGHLIGHT:
+            return self._append_section(
+                highlighted_resume,
+                "Relevant Experience Highlights",
+                highlighted[:5],
+            )
+
+        if strategy == TailorStrategy.SKILLS_ALIGNMENT:
+            return self._append_section(
+                resume,
+                "Skills Alignment",
+                keywords[: self.max_keywords],
+            )
+
+        return self._append_section(
+            highlighted_resume,
+            "Target Keywords",
+            keywords[: self.max_keywords],
+        )
 
     def tailor(
         self,
@@ -137,7 +178,14 @@ class ResumeTailor:
             keywords = self.extract_keywords(job_description)
 
             # Highlight relevant experiences
-            tailored, highlighted = self.highlight_experiences(resume, keywords)
+            highlighted_resume, highlighted = self.highlight_experiences(resume, keywords)
+            tailored = self._apply_strategy(
+                resume,
+                highlighted_resume,
+                keywords,
+                highlighted,
+                strategy,
+            )
 
             # Generate suggestions
             suggestions = []
@@ -145,6 +193,12 @@ class ResumeTailor:
                 suggestions.append("Job description has few technical keywords")
             if len(highlighted) < 3:
                 suggestions.append("Consider adding more relevant experience")
+            if strategy == TailorStrategy.SKILLS_ALIGNMENT and keywords:
+                suggestions.append("Mirror these skill keywords in your summary and skills sections")
+            elif strategy == TailorStrategy.EXPERIENCE_HIGHLIGHT and highlighted:
+                suggestions.append("Move the highlighted experience bullets higher on the page")
+            elif strategy == TailorStrategy.KEYWORD_MATCH and keywords:
+                suggestions.append("Use the target keywords naturally throughout the resume")
 
             return TailoringResult(
                 success=True,
@@ -171,6 +225,7 @@ class ResumeTailor:
         resume_path: Path,
         job_description: str,
         output_path: Optional[Path] = None,
+        strategy: TailorStrategy = TailorStrategy.KEYWORD_MATCH,
     ) -> TailoringResult:
         """Tailor a resume from a file."""
         if not resume_path.exists():
@@ -183,7 +238,7 @@ class ResumeTailor:
             )
 
         resume = resume_path.read_text()
-        result = self.tailor(resume, job_description)
+        result = self.tailor(resume, job_description, strategy=strategy)
 
         if result.success and output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)

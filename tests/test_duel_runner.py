@@ -36,8 +36,8 @@ class MockProvider:
         self.last_working_dir = working_dir
         if self._delay:
             await asyncio.sleep(self._delay)
-        # Yield the pre-built result as a sentinel so _run_agent can collect it.
-        # _run_agent builds its own AgentResult from yielded messages; we need
+        # Yield the pre-built result as a sentinel so _collect_agent_result can collect it.
+        # _collect_agent_result builds its own AgentResult from yielded messages; we need
         # the test to verify success/failure, so we signal failure via an exception.
         if not self._result.success:
             raise RuntimeError(self._result.stderr or "agent failed")
@@ -318,7 +318,7 @@ class TestRoundResult:
             workspace_b_name="g1",
         )
 
-        asyncio.run(runner.run_round("do the task", "black", "claude"))
+        asyncio.run(runner.run_round("do the task", "zai", "claude"))
 
         # Check that create was called with "g" and "g1", not "agent_a"/"agent_b"
         calls = [c.args[0] for c in mock_worktree.create.call_args_list]

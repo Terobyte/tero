@@ -32,8 +32,8 @@ def test_run_go_respects_project_config_defaults_when_flags_omitted(tmp_path, mo
         "defaults:\n"
         "  max_turns: 3\n"
         "  plan_file: custom.md\n"
-        "  player_provider: black\n"
-        "  coach_provider: black\n"
+        "  player_provider: zai\n"
+        "  coach_provider: zai\n"
     )
     (tmp_path / "custom.md").write_text("1. Build it\n")
 
@@ -470,7 +470,7 @@ def test_smoke_parse_go_with_common_flags():
         "--no-menu",
         "-w", "/tmp/project",
         "--player-provider", "claude",
-        "--coach-provider", "black",
+        "--coach-provider", "zai",
         "--player-model", "claude-sonnet",
         "--batch",
         "--tdd",
@@ -488,7 +488,7 @@ def test_smoke_parse_go_with_common_flags():
     assert args.no_menu is True
     assert args.working_dir == "/tmp/project"
     assert args.player_provider == "claude"
-    assert args.coach_provider == "black"
+    assert args.coach_provider == "zai"
     assert args.player_model == "claude-sonnet"
     assert args.batch_mode is True
     assert args.tdd_mode is True
@@ -553,8 +553,8 @@ def test_smoke_parse_go_with_fallback_chain_flags():
     parser = build_parser()
     args = parser.parse_args([
         "go",
-        "--player-fallback-chain", "claude,black",
-        "--coach-fallback-chain", "black,claude",
+        "--player-fallback-chain", "claude,zai",
+        "--coach-fallback-chain", "zai,claude",
         "--chain-retry-wait", "2.5",
         "--chain-max-retries", "3",
         "--preplan-provider", "claude",
@@ -565,8 +565,8 @@ def test_smoke_parse_go_with_fallback_chain_flags():
         "--max-review-iterations", "2",
     ])
 
-    assert args.player_fallback_chain == "claude,black"
-    assert args.coach_fallback_chain == "black,claude"
+    assert args.player_fallback_chain == "claude,zai"
+    assert args.coach_fallback_chain == "zai,claude"
     assert args.chain_retry_wait_s == 2.5
     assert args.chain_max_retries == 3
     assert args.preplan_provider == "claude"

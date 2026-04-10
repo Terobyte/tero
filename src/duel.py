@@ -11,7 +11,9 @@ from src.judge import JudgeRunner, JudgeDecision
 from src.providers.base import AgentResult
 
 
-async def _run_agent(agent, task: str, workspace: str, timeout_s: int) -> AgentResult:
+async def _collect_agent_result(
+    agent, task: str, workspace: str, timeout_s: int
+) -> AgentResult:
     """Drain an async-generator agent and return a consolidated AgentResult.
 
     asyncio.to_thread() only works for synchronous callables.  AgentProvider.run()
@@ -95,10 +97,17 @@ class DuelRunner:
         agent_b = self.registry.get(agent_b_name)
 
         # 2. Parallel agent launch — agents are async generators, not sync functions,
-        #    so they must be awaited directly via _run_agent (not asyncio.to_thread).
+        #    so they must be awaited directly via _collect_agent_result
+        #    (not asyncio.to_thread).
         result_a, result_b = await asyncio.gather(
-            asyncio.wait_for(_run_agent(agent_a, task, ws_a, timeout_s), timeout=timeout_s),
-            asyncio.wait_for(_run_agent(agent_b, task, ws_b, timeout_s), timeout=timeout_s),
+            asyncio.wait_for(
+                _collect_agent_result(agent_a, task, ws_a, timeout_s),
+                timeout=timeout_s,
+            ),
+            asyncio.wait_for(
+                _collect_agent_result(agent_b, task, ws_b, timeout_s),
+                timeout=timeout_s,
+            ),
         )
 
         # 3. Parallel Bug Detection

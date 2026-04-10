@@ -50,6 +50,34 @@ class BatchStepValidator:
         self.check_duplicates = check_duplicates
         self._seen_answers: dict[str, str] = {}
 
+    @staticmethod
+    def _hash_answer(answer: str) -> str:
+        """Build a deterministic fingerprint for normalized answer text."""
+        return hashlib.sha256(answer.strip().lower().encode()).hexdigest()
+
+    def _validate_duplicate(
+        self,
+        question_id: str,
+        answer_hash: str,
+        seen_answers: dict[str, str],
+    ) -> ValidationResult | None:
+        """Return a warning when the same answer text was already used."""
+        if not self.check_duplicates:
+            return None
+
+        first_question_id = seen_answers.get(answer_hash)
+        if first_question_id is None:
+            seen_answers[answer_hash] = question_id
+            return None
+
+        return ValidationResult(
+            question_id=question_id,
+            passed=False,
+            severity=ValidationSeverity.WARNING,
+            message="Duplicate answer detected",
+            details={"duplicate_of": first_question_id, "answer_hash": answer_hash},
+        )
+
     def validate_answer(
         self,
         question_id: str,
@@ -57,6 +85,22 @@ class BatchStepValidator:
         required: bool = True,
     ) -> ValidationResult:
         """Validate a single screening answer."""
+        return self._validate_answer(
+            question_id,
+            answer,
+            required=required,
+            seen_answers=self._seen_answers,
+        )
+
+    def _validate_answer(
+        self,
+        question_id: str,
+        answer: str,
+        *,
+        required: bool,
+        seen_answers: dict[str, str],
+    ) -> ValidationResult:
+        """Validate one answer using the provided duplicate-tracking state."""
         # Check empty
         if not answer or not answer.strip():
             if required:
@@ -94,19 +138,13 @@ class BatchStepValidator:
                 details={"length": len(answer)},
             )
 
-        # Check duplicate
-        if self.check_duplicates:
-            answer_hash = hashlib.sha256(answer.strip().lower().encode()).hexdigest()
-            if question_id not in self._seen_answers:
-                self._seen_answers[question_id] = answer_hash
-            elif self._seen_answers[question_id] == answer_hash:
-                return ValidationResult(
-                    question_id=question_id,
-                    passed=False,
-                    severity=ValidationSeverity.WARNING,
-                    message="Duplicate answer detected",
-                    details={"previous_hash": self._seen_answers[question_id]},
-                )
+        duplicate_result = self._validate_duplicate(
+            question_id,
+            self._hash_answer(answer),
+            seen_answers,
+        )
+        if duplicate_result is not None:
+            return duplicate_result
 
         return ValidationResult(
             question_id=question_id,
@@ -123,10 +161,16 @@ class BatchStepValidator:
         """Validate a batch of screening answers."""
         results = []
         required_questions = required_questions or set()
+        seen_answers: dict[str, str] = {}
 
         for question_id, answer in answers.items():
             is_required = question_id in required_questions
-            result = self.validate_answer(question_id, answer, required=is_required)
+            result = self._validate_answer(
+                question_id,
+                answer,
+                required=is_required,
+                seen_answers=seen_answers,
+            )
             results.append(result)
 
         # Check for missing required questions

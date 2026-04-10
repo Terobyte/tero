@@ -8,12 +8,10 @@ import subprocess
 from dataclasses import dataclass
 
 
-# Variables that MUST NOT be passed to native claude
-_BLACKBOX_VARS = [
+# Variables that MUST NOT be passed through to native Claude.
+_BLOCKED_ENV_VARS = [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
-    "BLACKBOX_ACCOUNT_A_TOKEN",
-    "BLACKBOX_ACCOUNT_B_TOKEN",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
     "ZAI_API_KEY",
@@ -120,9 +118,9 @@ class ClaudeNativeProvider:
         return f"Claude Pro ({self.config.default_model})"
 
     def _clean_env(self) -> dict:
-        """Copy of environment WITHOUT Blackbox variables."""
+        """Copy of environment with provider override variables removed."""
         env = os.environ.copy()
-        for var in _BLACKBOX_VARS:
+        for var in _BLOCKED_ENV_VARS:
             env.pop(var, None)
         claude_home = os.path.expanduser(self.config.claude_home)
         env["CLAUDE_HOME"] = claude_home

@@ -14,7 +14,7 @@ from src.learning.recorder import RunRecorder
 from src.plan_tracker import PlanTracker, parse_requirements
 
 
-PROVIDER_CHOICES = ["black", "turbo", "zai", "claude", "codex", "opencode", "kilo"]
+PROVIDER_CHOICES = ["zai", "claude", "codex", "opencode", "kilo"]
 
 
 def resolve_go_config(args):
@@ -251,6 +251,40 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
 
+    debug_parser = subparsers.add_parser("debug", help="Run automated bug-find-test-fix loop")
+    debug_parser.add_argument(
+        "--working-dir", "-w", type=str, default=".",
+        dest="working_dir",
+    )
+    debug_parser.add_argument(
+        "--player-provider", type=str, choices=PROVIDER_CHOICES,
+        default=None, dest="debug_player_provider",
+    )
+    debug_parser.add_argument(
+        "--tester-provider", type=str, choices=PROVIDER_CHOICES,
+        default=None, dest="debug_tester_provider",
+    )
+    debug_parser.add_argument(
+        "--fixer-provider", type=str, choices=PROVIDER_CHOICES,
+        default=None, dest="debug_fixer_provider",
+    )
+    debug_parser.add_argument(
+        "--intensity", type=str, choices=["low", "medium", "high"],
+        default=None, dest="debug_intensity",
+    )
+    debug_parser.add_argument(
+        "--limit", type=int, default=None, dest="debug_limit_value",
+    )
+    debug_parser.add_argument(
+        "--time", type=int, default=None,
+    )
+    debug_parser.add_argument(
+        "--infinite", action="store_true", default=False,
+    )
+    debug_parser.add_argument(
+        "--no-menu", action="store_true", default=False,
+    )
+
     return parser
 
 
@@ -294,6 +328,44 @@ async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
         sys.exit(1)
 
 
+def run_debug(args) -> None:
+    """Run the automated debugger loop."""
+    from src.config import resolve_config
+    from src.debugger import Debugger
+    from src.menu import run_debugger_menu
+
+    cli_overrides: dict = {"working_dir": args.working_dir}
+
+    if getattr(args, "debug_player_provider", None):
+        cli_overrides["debug_player_provider"] = args.debug_player_provider
+    if getattr(args, "debug_tester_provider", None):
+        cli_overrides["debug_tester_provider"] = args.debug_tester_provider
+    if getattr(args, "debug_fixer_provider", None):
+        cli_overrides["debug_fixer_provider"] = args.debug_fixer_provider
+    if getattr(args, "debug_intensity", None):
+        cli_overrides["debug_intensity"] = args.debug_intensity
+
+    # Limit mode resolution: --infinite > --time > --limit
+    if getattr(args, "infinite", False):
+        cli_overrides["debug_limit_mode"] = "infinite"
+        cli_overrides["debug_limit_value"] = 0
+    elif getattr(args, "time", None):
+        cli_overrides["debug_limit_mode"] = "time"
+        cli_overrides["debug_limit_value"] = args.time
+    elif getattr(args, "debug_limit_value", None):
+        cli_overrides["debug_limit_mode"] = "iterations"
+        cli_overrides["debug_limit_value"] = args.debug_limit_value
+
+    config = resolve_config(cli_overrides)
+
+    if not getattr(args, "no_menu", False):
+        config = run_debugger_menu(config)
+
+    debugger = Debugger(config)
+    result = debugger.run_sync()
+    sys.exit(0 if result.victory else 1)
+
+
 def run_history(args):
     """Show run history."""
     working_dir = Path(args.working_dir).resolve()
@@ -328,3 +400,9 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
+    elif args.command == "debug":
+        try:
+            run_debug(args)
+        except KeyboardInterrupt:
+            print("\nПрервано.")
+            sys.exit(130)

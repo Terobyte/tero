@@ -281,14 +281,14 @@ def test_resolve_config_should_skip_empty_strings():
 
     cli_args = {
         "working_dir": "/tmp",
-        "player_provider": "black",
+        "player_provider": "zai",
         "coach_provider": "",  # Empty string — FIX: should now override the default
         "max_turns": 10,  # Control: non-empty value should still pass through
     }
 
     config = resolve_config(cli_args)
 
-    # FIX VERIFIED: empty string from CLI overrides the default "black"
+    # FIX VERIFIED: empty string from CLI overrides the default "zai"
     assert config.coach_provider == "", (
         "FIX REGRESSION: empty string from CLI did not override the default provider"
     )

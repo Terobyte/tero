@@ -240,7 +240,7 @@ class TestReviewStrategy:
         session.config.batch_pre_model = "sonnet"
         session.config.batch_judge_provider = "codex"
         session.config.batch_judge_model = "gpt-5.4"
-        session.config.batch_post_provider = "black"
+        session.config.batch_post_provider = "zai"
         session.config.batch_post_model = "glm-5"
         session.build_provider_display = MagicMock(
             side_effect=lambda provider, model="": f"{provider}:{model or 'default'}"
@@ -250,9 +250,9 @@ class TestReviewStrategy:
 
         strategy = executor._review_strategy(3)
 
-        assert strategy["provider_name_override"] == "black"
+        assert strategy["provider_name_override"] == "zai"
         assert strategy["model_override"] == "glm-5"
-        assert strategy["label"] == "black:glm-5"
+        assert strategy["label"] == "zai:glm-5"
 
 
 class TestPlayerToolAvailabilityDetection:
@@ -411,7 +411,7 @@ class TestRunPhase:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -426,7 +426,7 @@ class TestRunPhase:
         session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
         session._runtime = None
-        session.player_model = "black | model=glm-5 | account=blackbox"
+        session.player_model = "zai | model=glm-5.1"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
             return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
@@ -490,7 +490,7 @@ class TestRunPhase:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -505,7 +505,7 @@ class TestRunPhase:
         session.config.batch_judge_model = "gpt-5.4"
         session.config.player_turns_per_session = 30
         session._runtime = None
-        session.player_model = "black | model=glm-5 | account=blackbox"
+        session.player_model = "zai | model=glm-5.1"
         session.coach_model = "claude | model=sonnet"
         session.build_provider_display = MagicMock(
             return_value=f"{session.config.batch_judge_provider} | model={session.config.batch_judge_model}"
@@ -745,7 +745,7 @@ class TestBatchExecutorRun:
         session.config = MagicMock()
         session.config.max_turns = 10
         session.config.player_timeout_s = 600
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.player_model = ""
         session.config.coach_model = ""
@@ -758,7 +758,7 @@ class TestBatchExecutorRun:
         session.config.batch_post_model = ""
         session.config.batch_judge_provider = "codex"
         session.config.batch_judge_model = "gpt-5.4"
-        session.player_model = "black | model=glm-5 | account=blackbox"
+        session.player_model = "zai | model=glm-5.1"
         session.coach_model = "claude | model=sonnet"
         session._runtime = None
         session.build_provider_display = MagicMock(
@@ -846,7 +846,7 @@ class TestBatchExecutorRun:
         await executor.run()
 
         out = capsys.readouterr().out
-        assert "Player: black | model=glm-5 | account=blackbox" in out
+        assert "Player: zai | model=glm-5.1" in out
         assert "Coach: claude | model=sonnet" in out
         assert "Pre-Coach: claude | model=sonnet" in out
         assert "Judge: codex | model=gpt-5.4" in out
@@ -972,7 +972,7 @@ class TestBatchPlayerRunnerSelection:
         session.config.max_turns = 3
         session.config.player_timeout_s = 60
         session.config.player_model = ""
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
@@ -1162,7 +1162,7 @@ class TestRunCoachTurnForPhase:
         session.config.coach_retry_max = 1
         session.config.coach_fallback_provider = "claude"
         session.config.coach_fallback_model = ""
-        session.config.coach_provider = "black"
+        session.config.coach_provider = "zai"
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
 
@@ -1311,7 +1311,7 @@ class TestCoachAlwaysCalled:
         session.config.player_model = ""
         session.config.coach_model = ""
         session.config.player_timeout_s = 60
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
@@ -1356,7 +1356,7 @@ class TestCoachAlwaysCalled:
         session.config.player_model = ""
         session.config.coach_model = ""
         session.config.player_timeout_s = 60
-        session.config.player_provider = "black"
+        session.config.player_provider = "zai"
         session.config.coach_provider = "claude"
         session.config.batch_pre_judge_attempts = 3
         session.config.batch_judge_attempts = 1
