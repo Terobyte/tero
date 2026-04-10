@@ -80,7 +80,7 @@ class TestFallbackEffectiveSlotLabel:
             config, "batch_pre_provider", "batch_pre_model"
         )
 
-        assert label == "zai (по умолчанию)"
+        assert label == "zai (GLM-5.1)"
 
 
 class TestShortModelName:
@@ -219,6 +219,51 @@ class TestBatchRolePrompts:
         assert pre_coach_lines
         assert "zai (GLM-5.1)" in pre_coach_lines[0]
         assert review_lines
+
+
+class TestZaiFixedModel:
+    """Regression: ZAI must return a fixed model so questionary.select() is never
+    called with an empty choices list (which crashes the menu).
+
+    Root cause: debugger iteration 3 removed FIXED_PROVIDER_MODELS but forgot
+    that _fixed_model_for_provider("zai") depended on it.  Without a fixed model,
+    _questionary_select_provider_model falls through to questionary.select() with
+    _model_presets_for_provider("zai") == {} → crash.
+    """
+
+    def test_fixed_model_returns_glm51_for_zai(self):
+        from src.menu import _fixed_model_for_provider
+
+        assert _fixed_model_for_provider("zai") == "glm-5.1"
+
+    def test_fixed_model_returns_glm51_for_lite_alias(self):
+        from src.menu import _fixed_model_for_provider
+
+        assert _fixed_model_for_provider("lite") == "glm-5.1"
+
+    def test_selecting_zai_does_not_prompt_for_model(self):
+        """Selecting ZAI must skip the model picker (fixed model → early return)."""
+        from src.config import Config
+        from src.menu import _questionary_select_provider_model
+
+        select_calls = []
+
+        def mock_select(*args, **kwargs):
+            select_calls.append(kwargs.get("choices", args[1] if len(args) > 1 else None))
+            return DummyPrompt("ZAI (Z.AI / GLM-5.1)")
+
+        with patch("src.menu.questionary", MagicMock(select=mock_select)):
+            result = _questionary_select_provider_model(
+                Config(player_provider="claude", player_model="sonnet"),
+                "player_provider",
+                "player_model",
+                "player",
+            )
+
+        assert result.player_provider == "zai"
+        assert result.player_model == "glm-5.1"
+        # Only one select call (provider picker), NOT a second one for model
+        assert len(select_calls) == 1
 
 
 class TestCustomModelHandling:

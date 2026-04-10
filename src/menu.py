@@ -70,9 +70,14 @@ def _provider_model_label(provider: str, model: str, default_text: str = "по �
 
 
 def _fixed_model_for_provider(provider: str) -> str:
-    """Return the model locked to a provider, or empty string if selectable."""
-    if provider == "lite":
-        provider = "zai"
+    """Return the model locked to a provider, or empty string if selectable.
+
+    IMPORTANT: ZAI must return a fixed model here.  Without it the menu calls
+    questionary.select() with an empty choices list and crashes.
+    See test_menu_bugs.py::TestZaiFixedModel for the regression test.
+    """
+    if provider in ("lite", "zai"):
+        return "glm-5.1"
     return ""
 
 
