@@ -166,7 +166,6 @@ class StatusBar:
             self._player_name = player_name
             self._coach_name = coach_name
             self._ctx_pct = ctx_pct
-            self._warning_text = None
         self._render()
 
     def show_warning(self, text: str, duration_s: float = 3.0) -> None:
@@ -485,7 +484,14 @@ class RuntimeControls:
         self._player_name = player_name
         self._coach_name = coach_name
         self._status_bar.update(player_name, coach_name, 0)
-        self._listener.start()
+        stop_event = getattr(self._listener, "_stop_event", None)
+        if stop_event is not None and stop_event.is_set():
+            self._listener = KeyboardListener()
+        try:
+            self._listener.start()
+        except RuntimeError:
+            self._listener = KeyboardListener()
+            self._listener.start()
         self._running = True
         # Handle terminal resize
         try:
@@ -498,6 +504,12 @@ class RuntimeControls:
         if not self._running:
             return
         self._listener.stop()
+        join = getattr(self._listener, "join", None)
+        if callable(join):
+            try:
+                join(timeout=0.2)
+            except RuntimeError:
+                pass
         self._status_bar.clear()
         self._running = False
 

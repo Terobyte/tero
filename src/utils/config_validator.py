@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -58,7 +57,7 @@ def validate_config(strict: bool = False) -> list[ConfigIssue]:
 
     # Check critical keys
     has_ai_key = False
-    for key, (severity, description) in REQUIRED_KEYS.items():
+    for key, (severity, _) in REQUIRED_KEYS.items():
         value = os.environ.get(key, "")
         if not value:
             if severity == "critical":
@@ -69,8 +68,12 @@ def validate_config(strict: bool = False) -> list[ConfigIssue]:
                     fix_hint=f"Add to .env: {key}=your_value_here",
                 ))
             elif severity == "ai":
-                # Track that we have at least one AI key
-                pass
+                issues.append(ConfigIssue(
+                    key=key,
+                    severity="warning",
+                    message=f"Missing optional AI provider key: {key}",
+                    fix_hint=f"Add to .env to enable this provider: {key}=your_value_here",
+                ))
             else:
                 issues.append(ConfigIssue(
                     key=key,
@@ -116,7 +119,7 @@ def print_config_report() -> None:
         elif severity == "critical":
             status = "❌"
         elif severity == "ai":
-            status = "⚠️" if any(i.key == "AI_API_KEY" for i in issues) else "✅"
+            status = "⚠️"
         else:
             status = "⚠️"
         print(f"  {status} {key:<25} {description}")

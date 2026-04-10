@@ -76,18 +76,23 @@ class TestWorktreeManagerCopyMode:
             assert "agent_a" in ws_a
             assert "agent_b" in ws_b
 
-    def test_create_duplicate_workspace_raises_error(self):
-        """Creating duplicate workspace for same agent raises error."""
+    def test_create_duplicate_workspace_recreates_same_name(self):
+        """Creating the same workspace twice should recreate it for the next round."""
         with tempfile.TemporaryDirectory() as tmpdir:
             source_dir = os.path.join(tmpdir, "source")
             session_dir = os.path.join(tmpdir, "session")
             os.makedirs(source_dir)
 
+            Path(source_dir, "main.py").write_text("print('fresh copy')")
             manager = WorktreeManager(session_dir, source_dir, mode="copy")
-            manager.create("agent_a")
+            first_ws = manager.create("agent_a")
+            Path(first_ws, "scratch.txt").write_text("stale")
 
-            with pytest.raises(ValueError, match="already created"):
-                manager.create("agent_a")
+            second_ws = manager.create("agent_a")
+
+            assert second_ws == first_ws
+            assert os.path.exists(os.path.join(second_ws, "main.py"))
+            assert not os.path.exists(os.path.join(second_ws, "scratch.txt"))
 
     def test_create_ignores_special_directories(self):
         """Copy mode ignores .git, __pycache__, etc."""
