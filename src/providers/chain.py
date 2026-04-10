@@ -19,10 +19,31 @@ class RateLimitError(Exception):
     """Raised when all providers in the chain are exhausted."""
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """Heuristic: does this exception indicate a rate limit?"""
+def _is_recoverable_error(exc: Exception) -> bool:
+    """Heuristic: does this exception look transient enough to retry/fallback?"""
     msg = str(exc).lower()
-    return any(kw in msg for kw in ("429", "rate", "limit", "too many requests"))
+    return any(
+        kw in msg
+        for kw in (
+            "429",
+            "rate",
+            "limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "connection reset",
+            "connection aborted",
+            "connection refused",
+            "connection error",
+            "network",
+            "temporar",
+            "unavailable",
+            "overloaded",
+            "gateway",
+            "eof",
+            "broken pipe",
+        )
+    )
 
 
 class ProviderChain:
@@ -88,8 +109,8 @@ class ProviderChain:
                         yield msg
                     return  # Success — done
                 except Exception as exc:
-                    if not _is_rate_limit_error(exc):
-                        raise  # non-rate-limit errors propagate immediately
+                    if not _is_recoverable_error(exc):
+                        raise  # non-recoverable errors propagate immediately
                     last_error = exc
                     # Discard partial output; do not yield anything to the caller.
                     buffer.clear()

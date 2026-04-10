@@ -114,7 +114,6 @@ class Orchestrator:
 
             # Run rounds
             round_num = 0
-            best_result = None
 
             while round_num < self.config.max_rounds:
                 round_num += 1
@@ -155,7 +154,6 @@ class Orchestrator:
                     # Promote
                     self.session.transition(SessionState.PROMOTING)
                     self._promote(winner_workspace)
-                    self.session.transition(SessionState.COMPLETED)
 
                     # Record run
                     run_id = self.recorder.record(
@@ -177,6 +175,11 @@ class Orchestrator:
                     # Rebuild insights (optional)
                     if self.analyzer:
                         self.analyzer.rebuild(self.recorder.load_all())
+
+                    self.session.transition(
+                        SessionState.COMPLETED,
+                        {"run_id": run_id, "final_winner": decision.action},
+                    )
 
                     # Feedback
                     if self.config.ask_feedback:
@@ -296,7 +299,7 @@ class Orchestrator:
         try:
             # Restore round counter
             # Bug fix #3: Subtract 1 so the first round_num += 1 brings us back to the interrupted round
-            round_num = current_round - 1
+            round_num = max(0, current_round - 1)
 
             # Read task
             task = Path(self.config.plan_file).read_text()
@@ -351,11 +354,37 @@ class Orchestrator:
 
                     self.session.transition(SessionState.PROMOTING)
                     self._promote(winner_workspace)
-                    self.session.transition(SessionState.COMPLETED)
+
+                    run_id = self.recorder.record(
+                        session_id=self.session_id,
+                        task_file=self.config.plan_file,
+                        task_type="unknown",
+                        task_complexity="unknown",
+                        config=vars(self.config),
+                        result_a=result.result_a,
+                        result_b=result.result_b,
+                        bugs_a=result.bugs_a,
+                        bugs_b=result.bugs_b,
+                        decision=decision,
+                        rounds_used=round_num,
+                        total_duration_s=time.time() - start_time,
+                        weights={"bug_score": 0.5, "duration": 0.1, "retry": 0.1},
+                    )
+
+                    if self.analyzer:
+                        self.analyzer.rebuild(self.recorder.load_all())
+
+                    self.session.transition(
+                        SessionState.COMPLETED,
+                        {"run_id": run_id, "final_winner": decision.action},
+                    )
 
                     duration = time.time() - start_time
                     print(f"\n✅ Complete! Winner: {decision.action}")
                     print(f"   Bug score: {winner_bugs.total}")
+
+                    if self.config.ask_feedback:
+                        self._ask_feedback(run_id)
 
                     return OrchestratorResult(
                         success=True,
@@ -363,7 +392,7 @@ class Orchestrator:
                         bug_score=winner_bugs.total,
                         rounds_used=round_num,
                         total_duration_s=duration,
-                        run_id=state.get("run_id"),
+                        run_id=run_id,
                     )
 
                 elif decision.action == "retry":
@@ -423,63 +452,24 @@ class Orchestrator:
     def _promote(self, winner_workspace: str):
         """Copy winner's changes to main working directory.
 
-        Bug fix #7: Also delete files that were removed in winner workspace.
+        Promotion only copies or updates winner files.
+        It intentionally avoids deleting unrelated local files from the target.
         """
-        import shutil
-
         ws = Path(winner_workspace)
         target = Path(self.config.working_dir)
         _skip = {".git", "__pycache__", ".g3",
                  self.config.agent_a_workspace, self.config.agent_b_workspace,
                  "node_modules", ".venv", "venv"}
 
-        # Protected files: never delete these even if absent from winner
-        _protected = {
-            ".env", ".env.local", ".env.production",
-            ".gitignore", ".git/config", ".gitattributes",
-            "config.yaml", "config.json", "config.toml",
-            "user_config.json",
-        }
-
-        # Bug fix #7: Track all files in winner workspace
-        winner_files: set[Path] = set()
         for item in ws.rglob("*"):
-            if item.is_file():
-                rel = item.relative_to(ws)
-                if any(p in _skip for p in rel.parts):
-                    continue
-                winner_files.add(rel)
-
-        # Delete files in target that don't exist in winner
-        for item in target.rglob("*"):
-            if item.is_file():
-                rel = item.relative_to(target)
-                if any(p in _skip for p in rel.parts):
-                    continue
-                if str(rel) in _protected or rel.name in _protected:
-                    continue
-                if rel not in winner_files:
-                    try:
-                        item.unlink()
-                        print(f"  Removed: {rel}")
-                    except (PermissionError, OSError) as exc:
-                        print(f"  Warning: failed to remove {rel}: {exc}")
-
-        # Copy/update files from winner
-        for rel in winner_files:
-            src = ws / rel
+            if not item.is_file():
+                continue
+            rel = item.relative_to(ws)
+            if any(p in _skip for p in rel.parts):
+                continue
             dest = target / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-
-        # Remove empty directories in target that don't exist in winner
-        winner_dirs = {d.relative_to(ws) for d in ws.rglob("*") if d.is_dir()}
-        for item in sorted(target.rglob("*"), reverse=True):
-            if item.is_dir() and not any(item.iterdir()):
-                rel = item.relative_to(target)
-                if rel not in winner_dirs:
-                    if not any(p in _skip for p in rel.parts):
-                        item.rmdir()
+            shutil.copy2(item, dest)
 
         print("📦 Promoted changes to main workspace")
 

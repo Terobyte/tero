@@ -51,6 +51,26 @@ async def _collect_agent_result(
         )
 
 
+async def _collect_agent_result_with_timeout(
+    agent, task: str, workspace: str, timeout_s: int
+) -> AgentResult:
+    """Treat a single agent timeout as that agent failing, not the whole duel."""
+    start = time.monotonic()
+    try:
+        return await asyncio.wait_for(
+            _collect_agent_result(agent, task, workspace, timeout_s),
+            timeout=timeout_s,
+        )
+    except asyncio.TimeoutError:
+        return AgentResult(
+            success=False,
+            exit_code=124,
+            stdout="",
+            stderr=f"Agent exceeded timeout of {timeout_s}s",
+            duration_s=time.monotonic() - start,
+        )
+
+
 @dataclass
 class RoundResult:
     result_a: AgentResult
@@ -100,14 +120,8 @@ class DuelRunner:
         #    so they must be awaited directly via _collect_agent_result
         #    (not asyncio.to_thread).
         result_a, result_b = await asyncio.gather(
-            asyncio.wait_for(
-                _collect_agent_result(agent_a, task, ws_a, timeout_s),
-                timeout=timeout_s,
-            ),
-            asyncio.wait_for(
-                _collect_agent_result(agent_b, task, ws_b, timeout_s),
-                timeout=timeout_s,
-            ),
+            _collect_agent_result_with_timeout(agent_a, task, ws_a, timeout_s),
+            _collect_agent_result_with_timeout(agent_b, task, ws_b, timeout_s),
         )
 
         # 3. Parallel Bug Detection

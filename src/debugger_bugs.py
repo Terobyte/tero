@@ -78,6 +78,21 @@ def _extract_json_from_text(text: str) -> list[str]:
     return candidates
 
 
+def _normalize_description(desc: str) -> str:
+    """Normalize a bug description for dedup comparison."""
+    s = re.sub(r"^[\-\d.]+\s*", "", desc.strip())
+    s = re.sub(r"^(High|Medium|Low|Critical):\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"(?:line|L|#)\s*\d+", "", s)
+    s = re.sub(r":\d+", "", s)
+    return s.lower().strip()[:60]
+
+
+def renumber_bugs(bugs: list[BugEntry]) -> None:
+    """Reassign contiguous IDs starting from 1."""
+    for i, bug in enumerate(bugs):
+        bug.id = i + 1
+
+
 _PROSE_FILE_LINE_RE = re.compile(r"\b(\w+\.py)[#:](?:L)?(\d+)\b")
 
 
@@ -162,6 +177,15 @@ def parse_bugs(raw_output: str, start_id: int = 1) -> list[BugEntry]:
     if not line_deduped:
         line_deduped = _extract_prose_fallback(raw_output)
 
+    # Description-based dedup: same file + same normalized description = same bug
+    seen_descs: set[tuple[str, str]] = set()
+    desc_deduped: list[dict] = []
+    for bug in line_deduped:
+        desc_key = (bug["file"], _normalize_description(bug["description"]))
+        if desc_key not in seen_descs:
+            seen_descs.add(desc_key)
+            desc_deduped.append(bug)
+
     return [
         BugEntry(
             id=start_id + i,
@@ -170,22 +194,27 @@ def parse_bugs(raw_output: str, start_id: int = 1) -> list[BugEntry]:
             description=b["description"],
             severity=b["severity"],
         )
-        for i, b in enumerate(line_deduped)
+        for i, b in enumerate(desc_deduped)
     ]
 
 
 def merge_bugs(existing: list[BugEntry], new_bugs: list[BugEntry]) -> list[BugEntry]:
-    """Merge new_bugs into existing, deduplicating by (file, line).
+    """Merge new_bugs into existing, deduplicating by (file, line) and description.
 
-    New bugs that share (file, line) with an existing bug are discarded.
-    Returns the merged list.
+    New bugs that share (file, line) or (file, normalized_description) with
+    an existing bug are discarded.
     """
-    seen: set[tuple[str, int]] = {(b.file, b.line) for b in existing}
+    seen_lines: set[tuple[str, int]] = {(b.file, b.line) for b in existing}
+    seen_descs: set[tuple[str, str]] = {
+        (b.file, _normalize_description(b.description)) for b in existing
+    }
     result = list(existing)
     for bug in new_bugs:
-        key = (bug.file, bug.line)
-        if key not in seen:
-            seen.add(key)
+        line_key = (bug.file, bug.line)
+        desc_key = (bug.file, _normalize_description(bug.description))
+        if line_key not in seen_lines and desc_key not in seen_descs:
+            seen_lines.add(line_key)
+            seen_descs.add(desc_key)
             result.append(bug)
     return result
 

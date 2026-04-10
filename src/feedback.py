@@ -107,20 +107,32 @@ def _is_assistant_message(msg) -> bool:
 
 
 def _latest_assistant_text(messages: list) -> str:
-    """Return combined text from all assistant messages.
+    """Return the latest assistant response text.
 
-    Codex emits each text block as a separate assistant message,
-    so checking only the last one misses the verdict marker.
-    Claude SDK puts everything in one message, so concatenation
-    still returns the correct result.
+    Native providers can split one response across several consecutive
+    assistant messages, so we walk backward, skip trailing tool-only
+    assistant messages, and combine only the most recent contiguous
+    assistant text chunk. Older assistant responses are ignored.
     """
     texts: list[str] = []
-    for msg in messages:
+    seen_text = False
+
+    for msg in reversed(messages):
         if not _is_assistant_message(msg):
+            if seen_text:
+                break
             continue
+
         text = _extract_text_from_message(msg).strip()
         if text:
             texts.append(text)
+            seen_text = True
+            continue
+
+        if seen_text:
+            continue
+
+    texts.reverse()
     return "\n".join(texts)
 
 

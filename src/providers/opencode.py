@@ -111,6 +111,7 @@ class OpenCodeProvider:
             stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
             if stderr_message is not None:
                 yield stderr_message
+            self._raise_for_returncode(proc.returncode, stderr_bytes)
 
         finally:
             if proc and proc.returncode is None:
@@ -231,6 +232,19 @@ class OpenCodeProvider:
         stderr_data = await stderr.read()
         return await self._stderr_message_from_bytes(stderr_data)
 
+    def _raise_for_returncode(self, returncode: int | None, stderr_data: bytes | str) -> None:
+        """Raise when the OpenCode subprocess exits unsuccessfully."""
+        if returncode in (None, 0):
+            return
+
+        if isinstance(stderr_data, bytes):
+            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        else:
+            stderr_text = (stderr_data or "").strip()
+
+        detail = stderr_text or "subprocess exited without stderr output"
+        raise RuntimeError(f"opencode exited with code {returncode}: {detail}")
+
     def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
         """Build separate tool-use and tool-result messages for one command."""
         state = part.get("state", {})
@@ -238,7 +252,7 @@ class OpenCodeProvider:
         inp = state.get("input", {})
         cmd = inp.get("command") or inp.get("description") or str(inp)
         output = state.get("output", "")
-        exit_code = state.get("metadata", {}).get("exit", 0)
+        exit_code = state.get("metadata", {}).get("exit")
         result_text = output[:MAX_TOOL_OUTPUT]
 
         return [
@@ -257,7 +271,7 @@ class OpenCodeProvider:
                 content=[ToolResultBlock(
                     tool_use_id=call_id,
                     content=result_text,
-                    is_error=(exit_code != 0),
+                    is_error=(exit_code is not None and exit_code != 0),
                 )],
                 type="tool_result",
             ),

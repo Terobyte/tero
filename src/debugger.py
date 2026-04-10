@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import Config
-from src.debugger_bugs import BugEntry, parse_bugs, merge_bugs, write_bugs_md, write_final_report
+from src.debugger_bugs import BugEntry, parse_bugs, merge_bugs, renumber_bugs, write_bugs_md, write_final_report
 from src.debugger_context import build_context, plan_file_chunks
 from src.debugger_prompts import INTENSITY_PROMPTS, TESTER_PROMPT, FIXER_PROMPT
 from src.providers import create_provider
@@ -32,8 +32,9 @@ class _Pulse:
 
     _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    def __init__(self, prefix: str):
+    def __init__(self, prefix: str, status_fn=None):
         self._prefix = prefix
+        self._status_fn = status_fn
         self._state = "active"  # active | waiting | retrying
         self._last_activity = time.time()
         self._task: asyncio.Task | None = None
@@ -80,8 +81,9 @@ class _Pulse:
                 }[self._state]
 
                 frame = self._FRAMES[idx % len(self._FRAMES)]
+                status = f" {self._status_fn()}" if self._status_fn else ""
                 suffix = f" {self._retry_label}" if self._retry_label else ""
-                print(f"\r{self._prefix}{color}{frame}\033[0m{suffix}\033[K", end="", flush=True)
+                print(f"\r{self._prefix}{color}{frame}\033[0m{status}{suffix}\033[K", end="", flush=True)
 
                 idx += 1
                 await asyncio.sleep(0.12)
@@ -171,7 +173,6 @@ class Debugger:
             new_bugs = await self._run_player(chunk)
             if new_bugs is None:
                 break
-            self._display_status(new_bugs, phase="player")
 
             if not new_bugs:
                 self._clean_passes += 1
@@ -183,6 +184,7 @@ class Debugger:
                 self._clean_passes = 0
 
             self._bugs = merge_bugs(self._bugs, new_bugs)
+            renumber_bugs(self._bugs)
 
             # Tester: confirm bugs
             open_bugs = [b for b in self._bugs if b.status == "open"]
@@ -190,7 +192,6 @@ class Debugger:
                 tester_ok = await self._run_tester(open_bugs)
                 if not tester_ok:
                     break
-                self._display_status([], phase="tester")
 
             # Fixer: fix confirmed bugs
             confirmed = [b for b in self._bugs if b.status == "confirmed"]
@@ -200,7 +201,6 @@ class Debugger:
                     break
                 if fixed_count > 0:
                     self._git_commit(self._iteration, fixed_count)
-                self._display_status([], phase="fixer")
 
             # Write once per iteration after all phases complete
             write_bugs_md(self._bugs, bugs_md_path, self._iteration)
@@ -272,8 +272,8 @@ class Debugger:
 
     async def _run_tester(self, bugs: list[BugEntry]) -> bool:
         """Run the tester agent to confirm or refute bugs."""
-        prefix = f"   Tester ({len(bugs)} bugs) "
-        pulse = _Pulse(prefix)
+        prefix = f"   Tester [{self.config.debug_tester_provider}] "
+        pulse = _Pulse(prefix, status_fn=self._compact_status)
         await pulse.start()
 
         bug_list = "\n".join(
@@ -326,8 +326,8 @@ class Debugger:
 
     async def _run_fixer(self, confirmed: list[BugEntry]) -> int | None:
         """Run the fixer agent to fix confirmed bugs."""
-        prefix = f"   Fixer ({len(confirmed)} bugs) "
-        pulse = _Pulse(prefix)
+        prefix = f"   Fixer [{self.config.debug_fixer_provider}] "
+        pulse = _Pulse(prefix, status_fn=self._compact_status)
         await pulse.start()
 
         bug_list = "\n".join(
@@ -602,20 +602,13 @@ class Debugger:
     def _grey(n: int) -> str:
         return f"\033[90m{n}\033[0m"
 
-    def _display_status(self, new_bugs: list[BugEntry], phase: str) -> None:
-        """Print a brief status line with colored bug counters."""
-        open_count = sum(1 for b in self._bugs if b.status == "open")
-        confirmed_count = sum(1 for b in self._bugs if b.status == "confirmed")
-        fixed_count = sum(1 for b in self._bugs if b.status == "fixed")
-        fp_count = sum(1 for b in self._bugs if b.status in ("false_positive", "invalid_test"))
-        total = len(self._bugs)
-        print(
-            f"   [{phase}] total={total} "
-            f"open={self._red(open_count)} "
-            f"confirmed={self._yellow(confirmed_count)} "
-            f"fixed={self._green(fixed_count)} "
-            f"fp={self._grey(fp_count)}"
-        )
+    def _compact_status(self) -> str:
+        """Format bug counts as colored numbers for inline display."""
+        o = sum(1 for b in self._bugs if b.status == "open")
+        c = sum(1 for b in self._bugs if b.status == "confirmed")
+        f = sum(1 for b in self._bugs if b.status == "fixed")
+        p = sum(1 for b in self._bugs if b.status in ("false_positive", "invalid_test"))
+        return f"{self._red(o)} {self._yellow(c)} {self._green(f)} {self._grey(p)}"
 
     def _display_final(self, victory: bool, duration: float) -> None:
         """Print final summary with colored counters."""

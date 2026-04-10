@@ -59,7 +59,7 @@ class WorktreeManager:
         ws = os.path.join(base, agent_name)
         if not os.path.exists(ws):
             return ""
-        if self._is_git() and os.path.isdir(os.path.join(ws, ".git")):
+        if self._is_git() and os.path.exists(os.path.join(ws, ".git")):
             r = subprocess.run(
                 ["git", "diff", "HEAD"],
                 cwd=ws, capture_output=True, text=True
@@ -106,7 +106,7 @@ class WorktreeManager:
             self.cleanup(name)
 
     def _is_git(self) -> bool:
-        return os.path.isdir(os.path.join(self.source_dir, ".git"))
+        return os.path.exists(os.path.join(self.source_dir, ".git"))
 
     def _is_dirty(self) -> bool:
         """Bug fix #1: Check if repo has uncommitted or untracked changes."""
