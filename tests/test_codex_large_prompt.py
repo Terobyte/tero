@@ -55,8 +55,12 @@ class TestLargeSystemPrompt:
 
 
 class TestCodexTranscriptGuarantee:
-    def test_turn_completed_yields_text(self):
-        """turn.completed must produce a TextBlock so transcript is non-empty."""
+    def test_turn_completed_yields_empty_content(self):
+        """turn.completed must NOT produce text — it's a lifecycle event, not a verdict.
+
+        Having text in turn.completed caused parse_coach_output to pick up
+        '[codex] turn completed' instead of the real IMPLEMENTATION_APPROVED verdict.
+        """
         provider = CodexProvider(CodexConfig())
         event = {
             "type": "turn.completed",
@@ -65,10 +69,9 @@ class TestCodexTranscriptGuarantee:
         result = provider._adapt_codex_event(event)
         assert result is not None
         assert result.role == "assistant"
-        # Must have at least one TextBlock
-        text_blocks = [b for b in result.content if isinstance(b, TextBlock)]
-        assert len(text_blocks) >= 1
-        assert text_blocks[0].text  # Non-empty
+        assert result.stop_reason == "end_turn"
+        # Content must be empty so _latest_assistant_text skips this message
+        assert result.content == []
 
     def test_agent_message_yields_text(self):
         """agent_message events must produce text (existing behavior)."""
@@ -80,3 +83,34 @@ class TestCodexTranscriptGuarantee:
         result = provider._adapt_codex_event(event)
         assert result is not None
         assert "edit the file" in result.content[0].text
+
+    def test_codex_approved_not_masked_by_turn_completed(self):
+        """Regression: turn.completed must not mask IMPLEMENTATION_APPROVED verdict.
+
+        Before fix, _latest_assistant_text picked '[codex] turn completed'
+        (the last assistant message) instead of the real verdict text.
+        """
+        from src.feedback import parse_coach_output, Approved
+        from src.providers.message_adapter import AdaptedMessage, TextBlock
+
+        messages = [
+            AdaptedMessage(
+                role="assistant",
+                content=[TextBlock(text="IMPLEMENTATION_APPROVED")],
+                type="text",
+            ),
+            AdaptedMessage(
+                role="assistant",
+                content=[TextBlock(text="1. No blocking findings.")],
+                type="text",
+            ),
+            # turn.completed — lifecycle event, must not mask verdict
+            AdaptedMessage(
+                role="assistant",
+                content=[],
+                stop_reason="end_turn",
+                type="result",
+            ),
+        ]
+        verdict = parse_coach_output(messages)
+        assert isinstance(verdict, Approved)

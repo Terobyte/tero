@@ -107,14 +107,21 @@ def _is_assistant_message(msg) -> bool:
 
 
 def _latest_assistant_text(messages: list) -> str:
-    """Return text from the latest assistant message that actually contains text."""
-    for msg in reversed(messages):
+    """Return combined text from all assistant messages.
+
+    Codex emits each text block as a separate assistant message,
+    so checking only the last one misses the verdict marker.
+    Claude SDK puts everything in one message, so concatenation
+    still returns the correct result.
+    """
+    texts: list[str] = []
+    for msg in messages:
         if not _is_assistant_message(msg):
             continue
         text = _extract_text_from_message(msg).strip()
         if text:
-            return text
-    return ""
+            texts.append(text)
+    return "\n".join(texts)
 
 
 def _extract_text_from_message(msg) -> str:

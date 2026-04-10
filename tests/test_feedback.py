@@ -144,19 +144,22 @@ class TestParseCoachOutput:
         assert isinstance(verdict, Feedback)
         assert "Reviewer did not return a valid structured verdict" in verdict.text
 
-    def test_last_assistant_message_wins(self):
-        """Test that last assistant message is used."""
+    def test_approved_in_any_assistant_message_wins(self):
+        """APPROVED in any assistant message means approved.
+
+        Codex splits one response into multiple messages, so the APPROVED
+        marker may be in an earlier message while details follow in later ones.
+        """
         msg1 = MockAssistantMessage(content=[
-            MockTextBlock("IMPLEMENTATION_APPROVED")  # Should be ignored
+            MockTextBlock("IMPLEMENTATION_APPROVED")
         ])
         msg2 = MockAssistantMessage(content=[
-            MockTextBlock("Actually, found more issues")
+            MockTextBlock("1. No blocking findings.")
         ])
 
         verdict = parse_coach_output([msg1, msg2])
 
-        assert isinstance(verdict, Feedback)
-        assert "Reviewer did not return a valid structured verdict" in verdict.text
+        assert isinstance(verdict, Approved)
 
     def test_uses_latest_text_message_when_final_assistant_is_tool_only(self):
         """A trailing tool-only assistant message should not erase coach feedback."""
