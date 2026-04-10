@@ -36,6 +36,8 @@ class JudgeRunner:
             return JudgeDecision(action="winner_a", confidence="high", reason="Agent B failed")
         if getattr(result_b, "success", False) and not getattr(result_a, "success", False):
             return JudgeDecision(action="winner_b", confidence="high", reason="Agent A failed")
+        if not getattr(result_a, "success", False) and not getattr(result_b, "success", False):
+            return JudgeDecision(action="retry", confidence="high", reason="Both agents failed")
 
         bugs_total_a = getattr(bugs_a, "total", 0)
         bugs_total_b = getattr(bugs_b, "total", 0)

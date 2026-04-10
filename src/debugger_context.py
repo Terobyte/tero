@@ -368,13 +368,19 @@ def _context_budget(file_count: int) -> int:
 def _allocate_section_budgets(full_sizes: list[int], total_budget: int) -> list[int]:
     if not full_sizes:
         return []
+    if total_budget <= 0:
+        return [0] * len(full_sizes)
     if sum(full_sizes) <= total_budget:
         return full_sizes[:]
     budgets = [0] * len(full_sizes)
     remaining = set(range(len(full_sizes)))
     remaining_budget = total_budget
     while remaining and remaining_budget > 0:
-        share = max(1, remaining_budget // len(remaining))
+        share = remaining_budget // len(remaining)
+        if share == 0:
+            for i in sorted(remaining)[:remaining_budget]:
+                budgets[i] += 1
+            return budgets
         satisfied = [i for i in remaining if full_sizes[i] <= share]
         if not satisfied:
             ordered = sorted(remaining)

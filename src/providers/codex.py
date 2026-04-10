@@ -142,6 +142,7 @@ class CodexProvider:
             stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
             if stderr_message is not None:
                 yield stderr_message
+            self._raise_for_returncode(proc.returncode, stderr_bytes)
 
         finally:
             if proc and proc.returncode is None:
@@ -329,6 +330,19 @@ class CodexProvider:
 
         stderr_data = await stderr.read()
         return await self._stderr_message_from_bytes(stderr_data)
+
+    def _raise_for_returncode(self, returncode: int | None, stderr_data: bytes | str) -> None:
+        """Raise when the Codex subprocess exits unsuccessfully."""
+        if returncode in (None, 0):
+            return
+
+        if isinstance(stderr_data, bytes):
+            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        else:
+            stderr_text = (stderr_data or "").strip()
+
+        detail = stderr_text or "subprocess exited without stderr output"
+        raise RuntimeError(f"codex exited with code {returncode}: {detail}")
 
     def _adapt_codex_event(self, event: dict) -> AdaptedMessage | None:
         """Convert Codex JSONL event to AdaptedMessage.
@@ -579,6 +593,7 @@ class CodexProvider:
             stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
             if stderr_message is not None:
                 yield stderr_message
+            self._raise_for_returncode(proc.returncode, stderr_bytes)
 
         finally:
             if proc and proc.returncode is None:

@@ -159,29 +159,53 @@ class RunRecorder:
 
     def update_feedback(self, run_id: str, rating: str) -> bool:
         """Persist user feedback for an existing run. Returns True if updated."""
-        records = self._read_all_records()
+        self._ensure_dir()
         updated = False
 
-        for index, record in enumerate(records):
-            if record.run_id != run_id:
-                continue
-            records[index] = RunRecord(
-                run_id=record.run_id,
-                timestamp=record.timestamp,
-                requirements_file=record.requirements_file,
-                turns_used=record.turns_used,
-                max_turns=record.max_turns,
-                status=record.status,
-                total_duration_s=record.total_duration_s,
-                turn_details=record.turn_details,
-                feedback=rating,
-                metadata=record.metadata,
-            )
-            updated = True
-            break
+        with open(self.runs_file, "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                f.seek(0)
+                records: list[RunRecord] = []
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    data["turn_details"] = self._normalize_turn_details(
+                        data.get("turn_details") or []
+                    )
+                    if not isinstance(data.get("metadata"), dict):
+                        data["metadata"] = {}
+                    records.append(RunRecord(**data))
 
-        if updated:
-            self._write_all_records(records)
+                for index, record in enumerate(records):
+                    if record.run_id != run_id:
+                        continue
+                    records[index] = RunRecord(
+                        run_id=record.run_id,
+                        timestamp=record.timestamp,
+                        requirements_file=record.requirements_file,
+                        turns_used=record.turns_used,
+                        max_turns=record.max_turns,
+                        status=record.status,
+                        total_duration_s=record.total_duration_s,
+                        turn_details=record.turn_details,
+                        feedback=rating,
+                        metadata=record.metadata,
+                    )
+                    updated = True
+                    break
+
+                if updated:
+                    f.seek(0)
+                    f.truncate()
+                    for record in records:
+                        f.write(json.dumps(asdict(record)) + "\n")
+                    f.flush()
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
         return updated
 
 
