@@ -367,7 +367,7 @@ class CodexProvider:
             self._last_output_tokens = usage.get("output_tokens", 0)
             return AdaptedMessage(
                 role="assistant",
-                content=[TextBlock(text="[codex] turn completed")],
+                content=[],
                 stop_reason="end_turn",
                 type="result",
             )
