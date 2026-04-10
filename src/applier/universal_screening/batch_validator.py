@@ -161,7 +161,6 @@ class BatchStepValidator:
         """Validate a batch of screening answers."""
         results = []
         required_questions = required_questions or set()
-        seen_answers: dict[str, str] = {}
 
         for question_id, answer in answers.items():
             is_required = question_id in required_questions
@@ -169,7 +168,7 @@ class BatchStepValidator:
                 question_id,
                 answer,
                 required=is_required,
-                seen_answers=seen_answers,
+                seen_answers=self._seen_answers,
             )
             results.append(result)
 

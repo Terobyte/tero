@@ -320,6 +320,11 @@ class Debugger:
             if status in ("confirmed", "false_positive", "invalid_test"):
                 bug.status = status
                 bug.test_file = result.get("test_file")
+                # A "confirmed" bug with no test file can never be verified
+                # by _verify_confirmed_fixes — treat it as invalid_test to
+                # prevent it from looping in the fixer indefinitely.
+                if bug.status == "confirmed" and not bug.test_file:
+                    bug.status = "invalid_test"
         return True
 
     # ── Fixer ─────────────────────────────────────────────────────────────────
@@ -332,6 +337,7 @@ class Debugger:
 
         bug_list = "\n".join(
             f"{b.id}. {b.file}:{b.line} — {b.description}"
+            + (f"\n   Failing test: {b.test_file}" if b.test_file else "")
             for b in confirmed
         )
         # Targeted context: only files with confirmed bugs

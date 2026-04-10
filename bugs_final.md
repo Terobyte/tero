@@ -1,10 +1,92 @@
 # Debugger Final Report
 
 **Outcome:** VICTORY — no bugs in 3 consecutive clean passes
-**Duration:** 0m 46s
-**Total bugs found:** 0
-**Fixed:** 0
+**Duration:** 54m 39s
+**Total bugs found:** 79
+**Fixed:** 79
 **Confirmed (unfixed):** 0
 **False positives:** 0
 **Open (unverified):** 0
+
+## Fixed Bugs
+
+- [1] `run_slug_collection.py:125` — - High: The slug collector is extracting the wrong part of the URL for most CDX sources. scripts/run_slug_collection.py#L125 pulls the first path segment after `domain_pattern`, but scripts/run_slug_c
+- [2] `run_slug_collection.py:166` — - High: The slug collector is extracting the wrong part of the URL for most CDX sources. scripts/run_slug_collection.py#L125 pulls the first path segment after `domain_pattern`, but scripts/run_slug_c
+- [3] `run_slug_collection.py:207` — - High: The slug collector is extracting the wrong part of the URL for most CDX sources. scripts/run_slug_collection.py#L125 pulls the first path segment after `domain_pattern`, but scripts/run_slug_c
+- [4] `run_slug_collection.py:242` — - High: The slug collector is extracting the wrong part of the URL for most CDX sources. scripts/run_slug_collection.py#L125 pulls the first path segment after `domain_pattern`, but scripts/run_slug_c
+- [5] `run_slug_collection.py:277` — - High: The slug collector is extracting the wrong part of the URL for most CDX sources. scripts/run_slug_collection.py#L125 pulls the first path segment after `domain_pattern`, but scripts/run_slug_c
+- [6] `debugger.py:184` — - High: The debugger marks bugs as fixed even when nothing proved they were fixed. src/debugger.py#L184 flips every confirmed bug to `"fixed"` immediately after src/debugger.py#L289, but `_run_fixer()
+- [7] `debugger.py:289` — - High: The debugger marks bugs as fixed even when nothing proved they were fixed. src/debugger.py#L184 flips every confirmed bug to `"fixed"` immediately after src/debugger.py#L289, but `_run_fixer()
+- [8] `debugger.py:406` — - High: The debugger marks bugs as fixed even when nothing proved they were fixed. src/debugger.py#L184 flips every confirmed bug to `"fixed"` immediately after src/debugger.py#L289, but `_run_fixer()
+- [9] `batch_executor.py:145` — - Medium: The batch completion-report gate is easy to bypass. src/batch_executor.py#L145 only checks whether `"what changed:"`, `"evidence:"`, and `"verification:"` appear anywhere in the text, and sr
+- [10] `batch_executor.py:580` — - Medium: The batch completion-report gate is easy to bypass. src/batch_executor.py#L145 only checks whether `"what changed:"`, `"evidence:"`, and `"verification:"` appear anywhere in the text, and sr
+- [11] `batch_validator.py:97` — - Medium: Duplicate detection in the batch validator does not match its stated behavior and leaks state across batches. src/applier/universal_screening/batch_validator.py#L97 keys duplicates by `quest
+- [12] `batch_validator.py:118` — - Medium: Duplicate detection in the batch validator does not match its stated behavior and leaks state across batches. src/applier/universal_screening/batch_validator.py#L97 keys duplicates by `quest
+- [13] `bug_detector.py:117` — - Medium: Missing developer tools are counted as code bugs in `BugDetector`. src/bug_detector.py#L117 claims to “fallback to pyflakes”, but when `python3 -m flake8` returns `No module named flake8`, s
+- [14] `bug_detector.py:143` — - Medium: Missing developer tools are counted as code bugs in `BugDetector`. src/bug_detector.py#L117 claims to “fallback to pyflakes”, but when `python3 -m flake8` returns `No module named flake8`, s
+- [15] `bug_detector.py:179` — - Medium: Missing developer tools are counted as code bugs in `BugDetector`. src/bug_detector.py#L117 claims to “fallback to pyflakes”, but when `python3 -m flake8` returns `No module named flake8`, s
+- [16] `resume_tailor.py:100` — - Medium: `ResumeTailor.tailor()` ignores its `strategy` argument, so all strategies behave identically. src/ai/resume_tailor.py#L100 accepts `TailorStrategy`, but never branches on it. Separately, sr
+- [17] `resume_tailor.py:57` — - Medium: `ResumeTailor.tailor()` ignores its `strategy` argument, so all strategies behave identically. src/ai/resume_tailor.py#L100 accepts `TailorStrategy`, but never branches on it. Separately, sr
+- [18] `g3.py:22` — - Medium: `g3.py` silently drops the `debug` subcommand. g3.py#L22 reuses the shared parser, and src/cli_entry.py#L254 definitely defines `debug`, but `g3.main()` only handles `go` and `history`. So `
+- [19] `cli_entry.py:254` — - Medium: `g3.py` silently drops the `debug` subcommand. g3.py#L22 reuses the shared parser, and src/cli_entry.py#L254 definitely defines `debug`, but `g3.main()` only handles `go` and `history`. So `
+- [25] `run_slug_collection.py:312` — 1. High: The subdomain-based slug collectors are extracting the wrong part of the URL. run_slug_collection.py splits on `boards.greenhouse.io` / `jobs.lever.co` / etc. and then reads the first path se
+- [26] `batch_executor.py:120` — 2. High: Batch execution can accept a fake completion and mark the whole phase done. batch_executor.py treats any standalone `PHASE_COMPLETE:` line as “all steps complete” without verifying the phase 
+- [28] `debugger.py:321` — 3. High: The debugger can declare victory when the provider is just failing. debugger.py swallows exceptions after retries and returns partial or empty text, and debugger.py interprets “no parsed bugs
+- [29] `debugger.py:164` — 3. High: The debugger can declare victory when the provider is just failing. debugger.py swallows exceptions after retries and returns partial or empty text, and debugger.py interprets “no parsed bugs
+- [30] `debugger.py:502` — 4. High: The tester/fixer pipeline upgrades uncertainty into “fixed bugs.” debugger.py treats unparseable tester output as “every bug is confirmed,” and debugger.py immediately marks every confirmed b
+- [31] `debugger.py:183` — 4. High: The tester/fixer pipeline upgrades uncertainty into “fixed bugs.” debugger.py treats unparseable tester output as “every bug is confirmed,” and debugger.py immediately marks every confirmed b
+- [34] `config.py:302` — 7. Medium: Config loading assumes every YAML file has a mapping at the root. config.py can return a list or scalar from `yaml.safe_load`, but callers later use `.get()` / `.update()` on that value as 
+- [36] `resume_tailor.py:81` — 8. Medium: `ResumeTailor` does not honor its public API. resume_tailor.py ignores the `strategy` argument entirely, and resume_tailor.py returns the original resume unchanged despite claiming to “high
+- [37] `codex.py:138` — 1. Non-zero Codex/OpenCode subprocess exits are treated as successful runs. In src/providers/codex.py and src/providers/opencode.py, the code waits for the process and emits stderr text, but never che
+- [38] `opencode.py:107` — 1. Non-zero Codex/OpenCode subprocess exits are treated as successful runs. In src/providers/codex.py and src/providers/opencode.py, the code waits for the process and emits stderr text, but never che
+- [39] `duel.py:24` — 1. Non-zero Codex/OpenCode subprocess exits are treated as successful runs. In src/providers/codex.py and src/providers/opencode.py, the code waits for the process and emits stderr text, but never che
+- [40] `judge.py:35` — 2. The judge can select and promote a loser even when both agents failed. In src/judge.py, only the asymmetric fail case is handled; if both `result_a.success` and `result_b.success` are false, the co
+- [41] `judge.py:64` — 2. The judge can select and promote a loser even when both agents failed. In src/judge.py, only the asymmetric fail case is handled; if both `result_a.success` and `result_b.success` are false, the co
+- [42] `duel.py:102` — 3. A single agent timeout aborts the whole duel instead of being scored as that agent failing. In src/duel.py, `asyncio.wait_for()` wraps `_collect_agent_result()` outside the helper, so `TimeoutError
+- [43] `feedback.py:109` — 4. Verdict parsing can incorrectly approve because it concatenates all assistant messages, then searches for pass markers before issues. `_latest_assistant_text()` in src/feedback.py joins every assis
+- [44] `feedback.py:75` — 4. Verdict parsing can incorrectly approve because it concatenates all assistant messages, then searches for pass markers before issues. `_latest_assistant_text()` in src/feedback.py joins every assis
+- [45] `feedback.py:269` — 4. Verdict parsing can incorrectly approve because it concatenates all assistant messages, then searches for pass markers before issues. `_latest_assistant_text()` in src/feedback.py joins every assis
+- [46] `orchestrator.py:158` — 5. `resume()` expects `run_id` and `final_winner` in session state, but `run()` never stores them. Success path in src/orchestrator.py records the run externally, then returns, while resumed/completed
+- [47] `orchestrator.py:273` — 5. `resume()` expects `run_id` and `final_winner` in session state, but `run()` never stores them. Success path in src/orchestrator.py records the run externally, then returns, while resumed/completed
+- [48] `orchestrator.py:366` — 5. `resume()` expects `run_id` and `final_winner` in session state, but `run()` never stores them. Success path in src/orchestrator.py records the run externally, then returns, while resumed/completed
+- [49] `recorder.py:137` — 6. Feedback updates can silently drop concurrently appended history entries. `record()` uses `flock()` in src/learning/recorder.py, but `update_feedback()` does an unlocked read-modify-rewrite via `_w
+- [50] `recorder.py:120` — 6. Feedback updates can silently drop concurrently appended history entries. `record()` uses `flock()` in src/learning/recorder.py, but `update_feedback()` does an unlocked read-modify-rewrite via `_w
+- [51] `recorder.py:160` — 6. Feedback updates can silently drop concurrently appended history entries. `record()` uses `flock()` in src/learning/recorder.py, but `update_feedback()` does an unlocked read-modify-rewrite via `_w
+- [52] `debugger_context.py:377` — 7. `_allocate_section_budgets()` can allocate more than the total budget. In src/debugger_context.py, `share` is forced to at least 1; when `remaining_budget < len(remaining)`, `remainder` becomes neg
+- [53] `debugger_context.py:383` — 7. `_allocate_section_budgets()` can allocate more than the total budget. In src/debugger_context.py, `share` is forced to at least 1; when `remaining_budget < len(remaining)`, `remainder` becomes neg
+- [54] `orchestrator.py:461` — - High: src/orchestrator.py:461 deletes every non-protected file in `working_dir` that is absent from the winner workspace, so unrelated local/untracked files are destroyed on promotion even if the ag
+- [55] `codex.py:139` — - High: src/providers/codex.py:139 and src/providers/opencode.py:108 wait for the subprocess to exit but never check `proc.returncode`; a crashed CLI session is turned into a normal stderr message, an
+- [56] `opencode.py:108` — - High: src/providers/codex.py:139 and src/providers/opencode.py:108 wait for the subprocess to exit but never check `proc.returncode`; a crashed CLI session is turned into a normal stderr message, an
+- [57] `chain.py:91` — - High: src/providers/chain.py:91 only falls back when `_is_rate_limit_error(exc)` is true, so ordinary transient provider failures like connection resets abort the whole chain immediately instead of 
+- [59] `orchestrator.py:299` — - Medium: src/orchestrator.py:299 unconditionally does `current_round - 1`; if a session is resumed before any round has started (`current_round == 0`), the loop starts by executing a bogus round `0`.
+- [60] `worktree.py:62` — - Medium: src/worktree.py:62 checks `ws/.git` with `isdir()`, but git worktrees use a `.git` file, so git-mode workspaces never take the `git diff HEAD` path and always fall back to the slower filesys
+- [61] `structured_logger.py:27` — 1. JSON logging is broken in src/utils/structured_logger.py:27 and src/utils/structured_logger.py:62. `logger.add(json_sink, format="{message}")` sends a formatted string to the sink, but `json_sink()
+- [62] `structured_logger.py:62` — 1. JSON logging is broken in src/utils/structured_logger.py:27 and src/utils/structured_logger.py:62. `logger.add(json_sink, format="{message}")` sends a formatted string to the sink, but `json_sink()
+- [63] `cost_tracker.py:174` — 2. Monthly cost totals are overstated in src/utils/cost_tracker.py:174. `get_monthly_total()` only checks `e.timestamp >= month_start`, so asking for January includes February and later entries too. T
+- [64] `cost_tracker.py:184` — 2. Monthly cost totals are overstated in src/utils/cost_tracker.py:174. `get_monthly_total()` only checks `e.timestamp >= month_start`, so asking for January includes February and later entries too. T
+- [65] `cost_tracker.py:194` — 2. Monthly cost totals are overstated in src/utils/cost_tracker.py:174. `get_monthly_total()` only checks `e.timestamp >= month_start`, so asking for January includes February and later entries too. T
+- [66] `runtime_controls.py:163` — 3. Active warnings are cleared by normal status refreshes in src/runtime_controls.py:163. `StatusBar.update()` always sets `_warning_text = None`, but src/coach_player.py:1419 calls `runtime.update_co
+- [67] `coach_player.py:1419` — 3. Active warnings are cleared by normal status refreshes in src/runtime_controls.py:163. `StatusBar.update()` always sets `_warning_text = None`, but src/coach_player.py:1419 calls `runtime.update_co
+- [68] `runtime_controls.py:443` — 4. `RuntimeControls` cannot be restarted after `stop()` in src/runtime_controls.py:443, src/runtime_controls.py:481, and src/runtime_controls.py:496. The listener thread is created once in `__init__`,
+- [69] `runtime_controls.py:481` — 4. `RuntimeControls` cannot be restarted after `stop()` in src/runtime_controls.py:443, src/runtime_controls.py:481, and src/runtime_controls.py:496. The listener thread is created once in `__init__`,
+- [70] `runtime_controls.py:496` — 4. `RuntimeControls` cannot be restarted after `stop()` in src/runtime_controls.py:443, src/runtime_controls.py:481, and src/runtime_controls.py:496. The listener thread is created once in `__init__`,
+- [71] `cost_tracker.py:78` — 5. A single malformed history entry can crash cost tracking startup in src/utils/cost_tracker.py:78. `_load_history()` only catches `JSONDecodeError` and `KeyError`; bad timestamps or unknown provider
+- [72] `state.py:115` — 6. Invalid persisted session states break transitions, including failure handling, in src/state.py:115. `SessionState(self._state.get("state", "created"))` runs before the unconditional `FAILED`/`STOP
+- [73] `config_validator.py:112` — 7. The config report mislabels missing AI keys as healthy in src/utils/config_validator.py:112. If any one AI key is set, every missing AI key prints `✅`, which is misleading for operators trying to s
+- [74] `worktree.py:29` — 1. `WorktreeManager` breaks multi-round runs and retries because workspace names are treated as single-use for the lifetime of the manager. `create()` adds the agent name to `_used` and neither `clean
+- [75] `worktree.py:31` — 1. `WorktreeManager` breaks multi-round runs and retries because workspace names are treated as single-use for the lifetime of the manager. `create()` adds the agent name to `_used` and neither `clean
+- [76] `worktree.py:101` — 1. `WorktreeManager` breaks multi-round runs and retries because workspace names are treated as single-use for the lifetime of the manager. `create()` adds the agent name to `_used` and neither `clean
+- [77] `duel.py:113` — 1. `WorktreeManager` breaks multi-round runs and retries because workspace names are treated as single-use for the lifetime of the manager. `create()` adds the agent name to `_used` and neither `clean
+- [80] `structured_logger.py:87` — 2. `setup_logging(json_output=True)` is broken at first log emission. Loguru passes a `Message` object/string wrapper to callable sinks, but `json_sink()` treats `message` like a dict and does `messag
+- [81] `state.py:49` — 3. The session state machine is incompatible with resume logic. `Orchestrator.resume()` always transitions back to `AGENTS_RUNNING`, but `SessionManager` only allows `RETRY -> AGENTS_RUNNING`; states 
+- [82] `state.py:54` — 3. The session state machine is incompatible with resume logic. `Orchestrator.resume()` always transitions back to `AGENTS_RUNNING`, but `SessionManager` only allows `RETRY -> AGENTS_RUNNING`; states 
+- [83] `state.py:71` — 3. The session state machine is incompatible with resume logic. `Orchestrator.resume()` always transitions back to `AGENTS_RUNNING`, but `SessionManager` only allows `RETRY -> AGENTS_RUNNING`; states 
+- [84] `state.py:109` — 3. The session state machine is incompatible with resume logic. `Orchestrator.resume()` always transitions back to `AGENTS_RUNNING`, but `SessionManager` only allows `RETRY -> AGENTS_RUNNING`; states 
+- [85] `orchestrator.py:321` — 3. The session state machine is incompatible with resume logic. `Orchestrator.resume()` always transitions back to `AGENTS_RUNNING`, but `SessionManager` only allows `RETRY -> AGENTS_RUNNING`; states 
+- [86] `cost_tracker.py:88` — 4. `CostTracker._load_history()` still crashes on common forms of corrupted history. It only catches `JSONDecodeError` and `KeyError`, but `datetime.fromisoformat()` and `Provider(...)` both raise `Va
+- [87] `cost_tracker.py:93` — 4. `CostTracker._load_history()` still crashes on common forms of corrupted history. It only catches `JSONDecodeError` and `KeyError`, but `datetime.fromisoformat()` and `Provider(...)` both raise `Va
+- [88] `cost_tracker.py:101` — 4. `CostTracker._load_history()` still crashes on common forms of corrupted history. It only catches `JSONDecodeError` and `KeyError`, but `datetime.fromisoformat()` and `Provider(...)` both raise `Va
+- [90] `cost_tracker.py:179` — 5. `get_monthly_total()` does not actually return the total for a specific month; it returns the total from the start of that month onward. A January query will include February, March, etc., which ma
+- [91] `runtime_controls.py:444` — 6. `RuntimeControls` cannot be cleanly restarted after `stop()`. The listener thread is created once in `__init__`, `stop()` only sets its stop event, and `start()` calls `.start()` on the same thread
+- [92] `runtime_controls.py:488` — 6. `RuntimeControls` cannot be cleanly restarted after `stop()`. The listener thread is created once in `__init__`, `stop()` only sets its stop event, and `start()` calls `.start()` on the same thread
 
