@@ -21,12 +21,12 @@ def _make_tool_result_msg() -> AdaptedMessage:
 def test_compact_summary_keeps_assistant_text():
     """Compact summary preserves assistant text, drops tool results."""
     msgs = [
-        _make_assistant_msg("I read config.py and found CcgEnv."),
+        _make_assistant_msg("I read config.py and found ZaiEnv."),
         _make_tool_result_msg(),
         _make_assistant_msg("Step 1 done: added from_env_b()"),
     ]
     summary = _build_compact_summary(msgs)
-    assert "CcgEnv" in summary
+    assert "ZaiEnv" in summary
     assert "Step 1 done" in summary
     assert "big file content" not in summary  # tool results dropped
 

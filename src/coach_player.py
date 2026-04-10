@@ -48,7 +48,7 @@ from src.prompts import (
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
 from src.providers.codex import CodexProvider
-from src.providers.ccg import run_agent
+
 from src import streaming as streaming_ui
 from src.streaming import BOLD, RESET, GREEN, RED, YELLOW
 from src.runtime_controls import RuntimeControls
@@ -176,7 +176,6 @@ class CoachPlayerSession:
         """Create a provider instance without mutating the session cache."""
         return create_provider(
             provider_name,
-            None,
             self.provider_configs.get(provider_name),
         )
 
@@ -1359,7 +1358,7 @@ class CoachPlayerSession:
                 "model": model,
             }
 
-            # Pass context limits to providers that support them (CCG)
+            # Pass context limits to providers that support them
             params = inspect.signature(provider.run).parameters
             accepts_kwargs = any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()

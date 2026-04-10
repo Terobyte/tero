@@ -8,12 +8,6 @@ from pathlib import Path
 import yaml
 
 
-FIXED_PROVIDER_MODELS: dict[str, str] = {
-    "black": "blackboxai/z-ai/glm-5",
-    "turbo": "glm-5-turbo",
-    "zai": "glm-5.1",
-}
-
 _UNSAFE_GLOBAL_DEFAULT_KEYS = {
     "batch_mode",
     "tdd_mode",
@@ -53,235 +47,6 @@ def _read_export_from_zshrc(env_name: str) -> str:
 
 
 @dataclass
-class CcgEnv:
-    """Environment variables for the Blackbox Claude bridge."""
-
-    base_url: str
-    auth_token: str
-    model: str
-    small_model: str
-    claude_home: str
-    account_label: str = "blackbox"
-
-    @classmethod
-    def from_env(cls, claude_home: str = "~/.claude-black") -> "CcgEnv":
-        """Create CcgEnv from environment for the default Blackbox setup."""
-        token = (
-            os.environ.get("BLACKBOX_API_KEY")
-            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-            or os.environ.get("BLACKBOX_ACCOUNT_A_TOKEN")
-            or ""
-        )
-        return cls(
-            base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
-            auth_token=token,
-            model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
-            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "minimax-2.5"),
-            claude_home=os.path.expanduser(claude_home),
-        )
-
-    @classmethod
-    def from_env_b(cls, claude_home: str = "~/.claude-black") -> "CcgEnv":
-        """Backward-compatible alias for a legacy second Blackbox account."""
-        return cls(
-            base_url=os.environ.get("ANTHROPIC_BASE_URL", "https://api.blackbox.ai"),
-            auth_token=(
-                os.environ.get("BLACKBOX_API_KEY")
-                or os.environ.get("BLACKBOX_ACCOUNT_B_TOKEN", "")
-            ),
-            model=os.environ.get("ANTHROPIC_MODEL", "blackboxai/z-ai/glm-5"),
-            small_model=os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "minimax-2.5"),
-            claude_home=os.path.expanduser(claude_home),
-            account_label="blackbox",
-        )
-
-    @classmethod
-    def from_claude_home(
-        cls, claude_home: str, account_label: str = "blackbox"
-    ) -> "CcgEnv":
-        """Load Blackbox settings from a Claude home directory, falling back to env."""
-        expanded_home = os.path.expanduser(claude_home)
-        settings_path = Path(expanded_home) / "settings.json"
-
-        env_values: dict[str, str] = {}
-        if settings_path.exists():
-            try:
-                data = json.loads(settings_path.read_text())
-                raw_env = data.get("env", {})
-                if isinstance(raw_env, dict):
-                    env_values = {str(k): str(v) for k, v in raw_env.items()}
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                env_values = {}
-
-        token = (
-            env_values.get("BLACKBOX_API_KEY")
-            or env_values.get("ANTHROPIC_AUTH_TOKEN")
-            or env_values.get("BLACKBOX_ACCOUNT_A_TOKEN")
-            or os.environ.get("BLACKBOX_API_KEY")
-            or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-            or os.environ.get("BLACKBOX_ACCOUNT_A_TOKEN")
-            or ""
-        )
-        model = (
-            env_values.get("ANTHROPIC_MODEL")
-            or os.environ.get("ANTHROPIC_MODEL")
-            or "blackboxai/z-ai/glm-5"
-        )
-        small_model = (
-            env_values.get("ANTHROPIC_SMALL_FAST_MODEL")
-            or os.environ.get("ANTHROPIC_SMALL_FAST_MODEL")
-            or "minimax-2.5"
-        )
-        base_url = (
-            env_values.get("ANTHROPIC_BASE_URL")
-            or os.environ.get("ANTHROPIC_BASE_URL")
-            or "https://api.blackbox.ai"
-        )
-
-        return cls(
-            base_url=base_url,
-            auth_token=token,
-            model=model,
-            small_model=small_model,
-            claude_home=expanded_home,
-            account_label=account_label,
-        )
-
-    @classmethod
-    def for_account(
-        cls,
-        account_name: str,
-        provider_config: dict | None = None,
-    ) -> "CcgEnv":
-        """Create CcgEnv for a specific provider name.
-
-        Args:
-            account_name: Provider name ("black" or legacy aliases)
-            provider_config: Optional config from .g3/config.yaml providers section
-                Supports: auth_token, base_url, model, small_model, claude_home, account_label
-
-        Returns:
-            CcgEnv with the appropriate token and settings
-        """
-        provider_config = provider_config or {}
-
-        raw_name = str(account_name).strip().lower()
-        normalized_name = _normalize_provider_name(raw_name)
-
-        if raw_name in {"ccg", "ccg1", "black1"}:
-            token_env_names = ("BLACKBOX_ACCOUNT_A_TOKEN",)
-            default_home = "~/.claude-black"
-            default_label = "blackbox-a"
-            default_base_url = "https://api.blackbox.ai"
-            default_model = FIXED_PROVIDER_MODELS["black"]
-            default_small_model = "minimax-2.5"
-        elif raw_name in {"ccg2", "black2"}:
-            token_env_names = ("BLACKBOX_ACCOUNT_B_TOKEN",)
-            default_home = "~/.claude-black"
-            default_label = "blackbox-b"
-            default_base_url = "https://api.blackbox.ai"
-            default_model = FIXED_PROVIDER_MODELS["black"]
-            default_small_model = "minimax-2.5"
-        elif normalized_name == "black":
-            token_env_names = (
-                "BLACKBOX_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN",
-                "BLACKBOX_ACCOUNT_A_TOKEN",
-                "BLACKBOX_ACCOUNT_B_TOKEN",
-            )
-            default_home = "~/.claude-black"
-            default_label = "blackbox"
-            default_base_url = "https://api.blackbox.ai"
-            default_model = FIXED_PROVIDER_MODELS["black"]
-            default_small_model = "minimax-2.5"
-        elif normalized_name == "turbo":
-            token_env_names = ("ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-            default_home = "~/.claude-turbo"
-            default_label = "turbo"
-            default_base_url = "https://api.z.ai/api/anthropic"
-            default_model = FIXED_PROVIDER_MODELS["turbo"]
-            default_small_model = "glm-4.5-air"
-        elif normalized_name == "zai":
-            token_env_names = ("ZAI_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-            default_home = "~/.claude-zai"
-            default_label = "zai"
-            default_base_url = "https://api.z.ai/api/anthropic"
-            default_model = FIXED_PROVIDER_MODELS["zai"]
-            default_small_model = "glm-4.5-air"
-        else:
-            token_env_names = ("ANTHROPIC_AUTH_TOKEN",)
-            default_home = "~/.claude"
-            default_label = normalized_name
-            default_base_url = "https://api.blackbox.ai"
-            default_model = FIXED_PROVIDER_MODELS["black"]
-            default_small_model = "minimax-2.5"
-
-        token = (
-            provider_config.get("auth_token")
-            or next(
-                (
-                    os.environ.get(env_name, "")
-                    for env_name in token_env_names
-                    if os.environ.get(env_name)
-                ),
-                "",
-            )
-            or next(
-                (value for env_name in token_env_names if (value := _read_export_from_zshrc(env_name))),
-                "",
-            )
-            or ""
-        )
-
-        # Use provider config values if available, otherwise defaults
-        claude_home = provider_config.get("claude_home", default_home)
-        account_label = provider_config.get("account_label", default_label)
-
-        # Base URL and model: config > env > defaults
-        base_url = (
-            provider_config.get("base_url")
-            or os.environ.get("ANTHROPIC_BASE_URL")
-            or default_base_url
-        )
-        model = (
-            provider_config.get("model")
-            or os.environ.get("ANTHROPIC_MODEL")
-            or default_model
-        )
-        small_model = (
-            provider_config.get("small_model")
-            or os.environ.get("ANTHROPIC_SMALL_FAST_MODEL")
-            or default_small_model
-        )
-
-        return cls(
-            base_url=base_url,
-            auth_token=token,
-            model=model,
-            small_model=small_model,
-            claude_home=os.path.expanduser(claude_home),
-            account_label=account_label,
-        )
-
-    def as_dict(self) -> dict[str, str]:
-        env: dict[str, str] = {
-            "ANTHROPIC_BASE_URL": self.base_url,
-            "ANTHROPIC_AUTH_TOKEN": self.auth_token,
-            "ANTHROPIC_MODEL": self.model,
-            "ANTHROPIC_SMALL_FAST_MODEL": self.small_model,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": self.model,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": self.model,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": self.small_model,
-            "CLAUDE_HOME": self.claude_home,
-        }
-        if "blackbox.ai" in self.base_url:
-            env["BLACKBOX_API_KEY"] = self.auth_token
-        else:
-            env["ZAI_API_KEY"] = self.auth_token
-        return env
-
-
-@dataclass
 class Config:
     """Resolved configuration."""
 
@@ -292,12 +57,12 @@ class Config:
     working_dir: str = "."
     player_timeout_s: int = 600
     coach_timeout_s: int = 300
-    claude_home: str = "~/.claude-black"
+    claude_home: str = "~/.claude-zai"
     coach_model: str = ""  # empty = use default model from env
 
     # Provider selection (NEW)
-    player_provider: str = "black"  # "black" | "turbo" | "zai" | "claude" | "codex" | "opencode"
-    coach_provider: str = "black"  # "black" | "turbo" | "zai" | "claude" | "codex" | "opencode"
+    player_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
+    coach_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
     player_model: str = ""  # model for player (empty = provider default)
     batch_mode: bool = False  # --batch / G3_BATCH_MODE
     batch_pre_judge_attempts: int = 3
@@ -314,8 +79,8 @@ class Config:
     run_types: bool = True
     run_compile: bool = True
     judge: str = "claude"
-    agent_a: str = "black"
-    agent_b: str = "black"
+    agent_a: str = "zai"
+    agent_b: str = "zai"
     ask_feedback: bool = False
 
     # TDD Mode (Phase 2)
@@ -339,17 +104,17 @@ class Config:
     max_continuation_attempts: int = 2
 
     # Batch role providers + models (configurable per slot)
-    batch_pre_provider: str = "black"
+    batch_pre_provider: str = "zai"
     batch_pre_model: str = ""  # fixed provider default
     batch_judge_provider: str = "codex"  # native Codex CLI judge by default
     batch_judge_model: str = ""  # default model from ~/.codex/config.toml
-    batch_post_provider: str = "black"
+    batch_post_provider: str = "zai"
     batch_post_model: str = ""  # fixed provider default
-    test_writer_provider: str = "black"
+    test_writer_provider: str = "zai"
     test_writer_model: str = ""
     # Pre-plan provider
     preplan_mode: bool = False
-    preplan_provider: str = "black"
+    preplan_provider: str = "zai"
     preplan_model: str = ""  # empty = provider default
     preplan_timeout_s: int = 120
 
@@ -357,10 +122,20 @@ class Config:
     max_review_iterations: int = 3
 
     # Provider fallback chain
-    player_fallback_chain: str = ""   # comma-separated: "turbo,zai"
-    coach_fallback_chain: str = ""    # comma-separated: "black,turbo"
+    player_fallback_chain: str = ""   # comma-separated: "codex,zai"
+    coach_fallback_chain: str = ""    # comma-separated: "codex,zai"
     chain_retry_wait_s: float = 60.0
     chain_max_retries: int = 2
+    debug_player_provider: str = "zai"
+    debug_tester_provider: str = "claude"
+    debug_fixer_provider: str = "codex"
+    debug_player_model: str = ""
+    debug_tester_model: str = ""
+    debug_fixer_model: str = ""
+    debug_intensity: str = "medium"
+    debug_limit_mode: str = "infinite"
+    debug_limit_value: int = 10
+    debug_victory_threshold: int = 3
 
 
 @dataclass
@@ -372,6 +147,63 @@ class ProviderConfig:
 
 
 ResolvedConfig = Config
+
+
+_ENV_MAP = {
+    "G3_MAX_TURNS": ("max_turns", int),
+    "G3_AUTONOMOUS": ("autonomous", lambda x: x.lower() == "true"),
+    "G3_PLAYER_PROVIDER": ("player_provider", str),
+    "G3_COACH_PROVIDER": ("coach_provider", str),
+    "G3_PLAYER_MODEL": ("player_model", str),
+    "G3_COACH_MODEL": ("coach_model", str),
+    "G3_BATCH_MODE": ("batch_mode", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_BATCH_PRE_JUDGE_ATTEMPTS": ("batch_pre_judge_attempts", int),
+    "G3_BATCH_JUDGE_ATTEMPTS": ("batch_judge_attempts", int),
+    "G3_BATCH_POST_JUDGE_ATTEMPTS": ("batch_post_judge_attempts", int),
+    # TDD Mode
+    "G3_TDD_MODE": ("tdd_mode", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_TEST_COMMAND": ("test_command", str),
+    "G3_TEST_TIMEOUT_S": ("test_timeout_s", int),
+    # Code Review
+    "G3_CODE_REVIEW": ("code_review", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_REVIEW_PROVIDER": ("review_provider", str),
+    "G3_REVIEW_MODEL": ("review_model", str),
+    # Coach fallback
+    "G3_COACH_RETRY_MAX": ("coach_retry_max", int),
+    "G3_COACH_FALLBACK_PROVIDER": ("coach_fallback_provider", str),
+    "G3_COACH_FALLBACK_MODEL": ("coach_fallback_model", str),
+    # Batch roles
+    "G3_BATCH_PRE_PROVIDER": ("batch_pre_provider", str),
+    "G3_BATCH_PRE_MODEL": ("batch_pre_model", str),
+    "G3_BATCH_JUDGE_PROVIDER": ("batch_judge_provider", str),
+    "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
+    "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
+    "G3_BATCH_POST_MODEL": ("batch_post_model", str),
+    "G3_TEST_WRITER_PROVIDER": ("test_writer_provider", str),
+    "G3_TEST_WRITER_MODEL": ("test_writer_model", str),
+    "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
+    # Pre-plan
+    "G3_PREPLAN_MODE": ("preplan_mode", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_PREPLAN_PROVIDER": ("preplan_provider", str),
+    "G3_PREPLAN_MODEL": ("preplan_model", str),
+    # Context management
+    "G3_CONTEXT_LIMIT": ("context_limit", int),
+    "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
+    "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
+    # Provider fallback chain
+    "G3_PLAYER_FALLBACK_CHAIN": ("player_fallback_chain", str),
+    "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
+    "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
+    "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
+    # Debugger
+    "G3_DEBUG_PLAYER_PROVIDER": ("debug_player_provider", str),
+    "G3_DEBUG_TESTER_PROVIDER": ("debug_tester_provider", str),
+    "G3_DEBUG_FIXER_PROVIDER": ("debug_fixer_provider", str),
+    "G3_DEBUG_INTENSITY": ("debug_intensity", str),
+    "G3_DEBUG_LIMIT_MODE": ("debug_limit_mode", str),
+    "G3_DEBUG_LIMIT_VALUE": ("debug_limit_value", int),
+    "G3_DEBUG_VICTORY_THRESHOLD": ("debug_victory_threshold", int),
+}
 
 
 # Known context window sizes (tokens) by model name pattern.
@@ -413,13 +245,8 @@ def get_context_window(model: str) -> int:
 
 
 def _normalize_provider_name(value: str) -> str:
-    """Map legacy provider aliases onto the canonical names."""
+    """Normalize supported Z.AI shorthands onto the canonical provider name."""
     aliases = {
-        "ccg": "black",
-        "ccg1": "black",
-        "ccg2": "black",
-        "black1": "black",
-        "black2": "black",
         "z.ai": "zai",
         "glm51": "zai",
         "glm-51": "zai",
@@ -431,9 +258,9 @@ def _normalize_provider_name(value: str) -> str:
         "glm47lite": "zai",
         "glm-4.7-lite": "zai",
         "lite": "zai",
-        "glm5turbo": "turbo",
-        "glm-5turbo": "turbo",
-        "glm-5-turbo": "turbo",
+        "glm5turbo": "zai",
+        "glm-5turbo": "zai",
+        "glm-5-turbo": "zai",
     }
     return aliases.get(value, value)
 
@@ -475,7 +302,8 @@ def short_model_name(model: str) -> str:
 def _load_yaml(path: Path) -> dict:
     if path.exists():
         with open(path) as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f)
+            return data if isinstance(data, dict) else {}
     return {}
 
 
@@ -570,54 +398,7 @@ def resolve_config(cli_args: dict) -> Config:
     defaults.update(_load_defaults_section(project_config))
 
     # Env overrides
-    env_map = {
-        "G3_MAX_TURNS": ("max_turns", int),
-        "G3_AUTONOMOUS": ("autonomous", lambda x: x.lower() == "true"),
-        "G3_PLAYER_PROVIDER": ("player_provider", str),
-        "G3_COACH_PROVIDER": ("coach_provider", str),
-        "G3_PLAYER_MODEL": ("player_model", str),
-        "G3_COACH_MODEL": ("coach_model", str),
-        "G3_BATCH_MODE": ("batch_mode", lambda x: x.lower() in ("true", "1", "yes")),
-        "G3_BATCH_PRE_JUDGE_ATTEMPTS": ("batch_pre_judge_attempts", int),
-        "G3_BATCH_JUDGE_ATTEMPTS": ("batch_judge_attempts", int),
-        "G3_BATCH_POST_JUDGE_ATTEMPTS": ("batch_post_judge_attempts", int),
-        # TDD Mode
-        "G3_TDD_MODE": ("tdd_mode", lambda x: x.lower() in ("true", "1", "yes")),
-        "G3_TEST_COMMAND": ("test_command", str),
-        "G3_TEST_TIMEOUT_S": ("test_timeout_s", int),
-        # Code Review
-        "G3_CODE_REVIEW": ("code_review", lambda x: x.lower() in ("true", "1", "yes")),
-        "G3_REVIEW_PROVIDER": ("review_provider", str),
-        "G3_REVIEW_MODEL": ("review_model", str),
-        # Coach fallback
-        "G3_COACH_RETRY_MAX": ("coach_retry_max", int),
-        "G3_COACH_FALLBACK_PROVIDER": ("coach_fallback_provider", str),
-        "G3_COACH_FALLBACK_MODEL": ("coach_fallback_model", str),
-        # Batch roles
-        "G3_BATCH_PRE_PROVIDER": ("batch_pre_provider", str),
-        "G3_BATCH_PRE_MODEL": ("batch_pre_model", str),
-        "G3_BATCH_JUDGE_PROVIDER": ("batch_judge_provider", str),
-        "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
-        "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
-        "G3_BATCH_POST_MODEL": ("batch_post_model", str),
-        "G3_TEST_WRITER_PROVIDER": ("test_writer_provider", str),
-        "G3_TEST_WRITER_MODEL": ("test_writer_model", str),
-        "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
-        # Pre-plan
-        "G3_PREPLAN_MODE": ("preplan_mode", lambda x: x.lower() in ("true", "1", "yes")),
-        "G3_PREPLAN_PROVIDER": ("preplan_provider", str),
-        "G3_PREPLAN_MODEL": ("preplan_model", str),
-        # Context management
-        "G3_CONTEXT_LIMIT": ("context_limit", int),
-        "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
-        "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
-        # Provider fallback chain
-        "G3_PLAYER_FALLBACK_CHAIN": ("player_fallback_chain", str),
-        "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
-        "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
-        "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
-    }
-    for env_key, (cfg_key, conv) in env_map.items():
+    for env_key, (cfg_key, conv) in _ENV_MAP.items():
         if val := os.environ.get(env_key):
             defaults[cfg_key] = conv(val)
 

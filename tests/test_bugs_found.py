@@ -478,13 +478,13 @@ class TestPhaseZeroIdMappingFragility(unittest.TestCase):
 
 
 class TestClaudeNativeZaiKeyLeak(unittest.TestCase):
-    """Bug: _BLACKBOX_VARS does not include ZAI_API_KEY, so native Claude
+    """Bug: blocked provider env vars do not include ZAI_API_KEY, so native Claude
     CLI may pick up wrong credentials.
     """
 
     def test_zai_api_key_stripped_from_clean_env(self):
         """_clean_env() must remove ZAI_API_KEY to prevent credential conflict."""
-        from src.providers.claude_native import ClaudeNativeProvider, _BLACKBOX_VARS
+        from src.providers.claude_native import ClaudeNativeProvider, _BLOCKED_ENV_VARS
 
         provider = ClaudeNativeProvider()
 
@@ -495,30 +495,7 @@ class TestClaudeNativeZaiKeyLeak(unittest.TestCase):
             "ZAI_API_KEY",
             env,
             "ZAI_API_KEY leaked into Claude native env — "
-            "not listed in _BLACKBOX_VARS, credentials conflict possible",
-        )
-
-    def test_blackbox_vars_covers_all_provider_keys(self):
-        """_BLACKBOX_VARS should include keys from ALL providers to prevent leaks."""
-        from src.providers.claude_native import _BLACKBOX_VARS
-        from src.config import CcgEnv
-
-        # Collect all keys that CcgEnv sets
-        env_obj = CcgEnv(
-            base_url="https://test",
-            auth_token="t",
-            model="m",
-            small_model="s",
-            claude_home="/tmp",
-        )
-        env_dict = env_obj.as_dict()
-
-        missing_keys = set(env_dict.keys()) - set(_BLACKBOX_VARS) - {"CLAUDE_HOME"}
-
-        self.assertEqual(
-            len(missing_keys),
-            0,
-            f"Keys set by CcgEnv but not stripped by _clean_env: {missing_keys}",
+            "not listed in _BLOCKED_ENV_VARS, credentials conflict possible",
         )
 
 

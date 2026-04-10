@@ -16,26 +16,6 @@ class DummyPrompt:
 
 
 class TestCoachModelStandalone:
-    def test_coach_model_shows_correct_presets_for_provider(self):
-        from src.config import Config
-        from src.menu import _edit_setting_questionary, CCG_MODEL_PRESETS
-
-        config = Config(
-            coach_provider="black",
-            coach_model="blackboxai/z-ai/glm-5",
-        )
-
-        captured_choices = []
-
-        def mock_select(label, choices=None, **kwargs):
-            captured_choices.append(choices)
-            return DummyPrompt(None)
-
-        with patch("src.menu.questionary", MagicMock(select=mock_select)):
-            _edit_setting_questionary(config, "coach_model")
-
-        assert captured_choices[0] == list(CCG_MODEL_PRESETS.keys())
-
     def test_coach_model_shows_correct_presets_for_claude(self):
         from src.config import Config
         from src.menu import _edit_setting_questionary, CLAUDE_MODEL_PRESETS
@@ -63,8 +43,8 @@ class TestProviderModelCarryover:
         from src.menu import _questionary_select_provider_model
 
         config = Config(
-            player_provider="black",
-            player_model="blackboxai/z-ai/glm-5",
+            player_provider="zai",
+            player_model="glm-5.1",
         )
 
         call_count = [0]
@@ -85,14 +65,14 @@ class TestProviderModelCarryover:
 
 
 class TestFallbackEffectiveSlotLabel:
-    def test_effective_label_shows_fixed_model(self):
+    def test_effective_label_shows_provider_default(self):
         from src.config import Config
         from src.menu import _fallback_effective_slot_label
 
         config = Config(
-            batch_pre_provider="black",
+            batch_pre_provider="zai",
             batch_pre_model="",
-            coach_provider="black",
+            coach_provider="zai",
             coach_model="",
         )
 
@@ -100,7 +80,7 @@ class TestFallbackEffectiveSlotLabel:
             config, "batch_pre_provider", "batch_pre_model"
         )
 
-        assert label == "black (GLM-5)"
+        assert label == "zai (по умолчанию)"
 
 
 class TestShortModelName:
@@ -115,7 +95,7 @@ class TestReviewProviderMenu:
         from src.config import Config
         from src.menu import _edit_setting_questionary
 
-        prompts = iter(["Codex (native CLI)", "o3"])
+        prompts = iter(["Codex (native CLI)", "High"])
 
         def mock_select(*args, **kwargs):
             return DummyPrompt(next(prompts))
@@ -123,8 +103,8 @@ class TestReviewProviderMenu:
         with patch("src.menu.questionary", MagicMock(select=mock_select)):
             updated = _edit_setting_questionary(
                 Config(
-                    coach_provider="black",
-                    coach_model="blackboxai/z-ai/glm-5",
+                    coach_provider="zai",
+                    coach_model="glm-5.1",
                     review_provider="",
                     review_model="",
                 ),
@@ -132,7 +112,7 @@ class TestReviewProviderMenu:
             )
 
         assert updated.review_provider == "codex"
-        assert updated.review_model == "o3"
+        assert updated.review_model == "gpt-5.4"
 
 
 class TestSaveDefault:
@@ -143,8 +123,8 @@ class TestSaveDefault:
         monkeypatch.setenv("HOME", str(tmp_path))
 
         config = Config(
-            player_fallback_chain="turbo,zai",
-            coach_fallback_chain="black,turbo",
+            player_fallback_chain="claude,zai",
+            coach_fallback_chain="zai,claude",
             chain_retry_wait_s=30.0,
             chain_max_retries=3,
         )
@@ -153,8 +133,8 @@ class TestSaveDefault:
 
         saved = yaml.safe_load((tmp_path / ".g3" / "config.yaml").read_text())
         defaults = saved["defaults"]
-        assert defaults["player_fallback_chain"] == "turbo,zai"
-        assert defaults["coach_fallback_chain"] == "black,turbo"
+        assert defaults["player_fallback_chain"] == "claude,zai"
+        assert defaults["coach_fallback_chain"] == "zai,claude"
         assert defaults["chain_retry_wait_s"] == 30.0
         assert defaults["chain_max_retries"] == 3
 
@@ -228,8 +208,8 @@ class TestBatchRolePrompts:
             Config(
                 batch_pre_provider="",
                 batch_pre_model="",
-                coach_provider="black",
-                coach_model="blackboxai/z-ai/glm-5",
+                coach_provider="zai",
+                coach_model="glm-5.1",
             )
         )
 
@@ -237,7 +217,7 @@ class TestBatchRolePrompts:
         review_lines = [title for title in captured_titles if "Review Agent:" in title]
 
         assert pre_coach_lines
-        assert "black (GLM-5)" in pre_coach_lines[0]
+        assert "zai (GLM-5.1)" in pre_coach_lines[0]
         assert review_lines
 
 

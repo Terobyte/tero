@@ -89,13 +89,16 @@ def build_batch_prompt(
 
 
 _STEP_DONE_RE = re.compile(r"step\s+(\d+)\s+done\s*:", re.IGNORECASE)
-_PHASE_COMPLETE_RE = re.compile(
-    r"^\s*PHASE_COMPLETE\s*:.*$",
-    re.IGNORECASE | re.MULTILINE,
+_PHASE_COMPLETE_LINE_RE = re.compile(
+    r"^\s*PHASE_COMPLETE\s*:\s*(.*?)\s*$",
+    re.IGNORECASE,
 )
-# Sentence continuation: period followed by space and word — indicates the
-# PHASE_COMPLETE marker is embedded in discussion text, not a standalone report.
-_SENTENCE_CONTINUATION_RE = re.compile(r"\.\s+\S")
+_DISCUSSION_CONTINUATION_RE = re.compile(
+    r"\b(?:let\s+me|when\s+i(?:'m|\s+am)|but\s+first|first\s+let\s+me|"
+    r"explor\w*|think\s+about|i\s+should|i\s+will|still\s+need|need\s+to|"
+    r"before\s+i|going\s+to)\b",
+    re.IGNORECASE,
+)
 _REQUIRED_REPORT_HEADERS = ("what changed:", "evidence:", "verification:")
 _TOOLS_UNAVAILABLE_PATTERNS = (
     "tools are not available",
@@ -114,21 +117,93 @@ _TOOLS_UNAVAILABLE_PATTERNS = (
 )
 
 
+def _phase_complete_matches(raw_value: str, phase_name: str) -> bool:
+    """Return True when a PHASE_COMPLETE line names the current phase."""
+    candidate = raw_value.strip()
+    if not candidate:
+        return False
+
+    expected = phase_name.strip()
+    variants = [expected]
+    if "·" in expected:
+        variants.append(expected.split("·", 1)[0].strip())
+    if "(" in expected:
+        variants.append(expected.split("(", 1)[0].strip())
+
+    def _matches_variant(left: str, right: str) -> bool:
+        if left.casefold() == right.casefold():
+            return True
+        if left.casefold().startswith(right.casefold()):
+            suffix = left[len(right):]
+            return not suffix or suffix[0].isspace() or suffix[0] in ".:;,-()[]{}"
+        return False
+
+    return any(
+        _matches_variant(candidate, variant) or _matches_variant(variant, candidate)
+        for variant in variants
+        if variant
+    )
+
+
+def _find_phase_complete_index(lines: list[str], phase_name: str) -> int | None:
+    """Return the line index of a valid PHASE_COMPLETE marker for this phase."""
+    for index, raw_line in enumerate(lines):
+        match = _PHASE_COMPLETE_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        value = match.group(1)
+        if _DISCUSSION_CONTINUATION_RE.search(value):
+            continue
+        if _phase_complete_matches(value, phase_name):
+            return index
+    return None
+
+
+def _extract_completion_report_sections(text: str, phase_name: str) -> dict[str, list[str]] | None:
+    """Parse the mandatory completion report after a valid PHASE_COMPLETE line."""
+    lines = text.splitlines()
+    phase_line_index = _find_phase_complete_index(lines, phase_name)
+    if phase_line_index is None:
+        return None
+
+    headers = {
+        "what changed:": "what changed",
+        "evidence:": "evidence",
+        "verification:": "verification",
+    }
+    sections: dict[str, list[str]] = {value: [] for value in headers.values()}
+    current_section: str | None = None
+
+    for raw_line in lines[phase_line_index + 1 :]:
+        lowered = raw_line.strip().lower()
+        if lowered in headers:
+            current_section = headers[lowered]
+            continue
+        if current_section is None:
+            if raw_line.strip():
+                continue
+            continue
+        sections[current_section].append(raw_line)
+
+    if any(not any(line.strip() for line in section_lines) for section_lines in sections.values()):
+        return None
+
+    return sections
+
+
 def parse_completed_steps(result, phase: Phase) -> list[str]:
     """Extract confirmed-done step texts from Player output (result.text).
 
-    PHASE_COMPLETE on its own line → return all step texts.
-    Rejects PHASE_COMPLETE embedded in discussion (sentence continuations).
+    PHASE_COMPLETE on its own line -> return all step texts.
+    Rejects PHASE_COMPLETE mentions that are still prompt-echo discussion rather
+    than a real completion marker.
     Otherwise scan for 'Step X done:' (1-based, case-insensitive).
     Out-of-range indices are ignored.
     """
     text = result.text
 
-    match = _PHASE_COMPLETE_RE.search(text)
-    if match:
-        preceding_line = text[:match.start()].split("\n")[-1]
-        if not _SENTENCE_CONTINUATION_RE.search(preceding_line):
-            return [s.text for s in phase.steps]
+    if _find_phase_complete_index(text.splitlines(), phase.name) is not None:
+        return [s.text for s in phase.steps]
 
     confirmed: set[int] = set()
     for match in _STEP_DONE_RE.finditer(text):
@@ -139,10 +214,10 @@ def parse_completed_steps(result, phase: Phase) -> list[str]:
     return [phase.steps[i].text for i in sorted(confirmed)]
 
 
-def has_required_completion_report(text: str) -> bool:
+def has_required_completion_report(text: str, phase: Phase) -> bool:
     """Return True when the Player included the mandatory completion report."""
-    lowered = text.lower()
-    return all(header in lowered for header in _REQUIRED_REPORT_HEADERS)
+    sections = _extract_completion_report_sections(text, phase.name)
+    return sections is not None
 
 
 def player_claimed_tools_unavailable(result) -> bool:
@@ -295,7 +370,7 @@ class BatchExecutor:
             return self._provider_label(provider, model)
         if model:
             return self._provider_label(
-                self._config_str("coach_provider", "black"),
+                self._config_str("coach_provider", "zai"),
                 model,
             )
         return self._role_label("coach")
@@ -375,7 +450,7 @@ class BatchExecutor:
         if post_attempts > 0 and attempt_num > judge_end:
             post_provider = self._config_str(
                 "batch_post_provider",
-                self._config_str("coach_provider", "black"),
+                self._config_str("coach_provider", "zai"),
             )
             post_model = self._config_str("batch_post_model", "")
             return {
@@ -388,7 +463,7 @@ class BatchExecutor:
 
         pre_provider = self._config_str(
             "batch_pre_provider",
-            self._config_str("coach_provider", "black"),
+            self._config_str("coach_provider", "zai"),
         )
         pre_model = self._config_str("batch_pre_model", "")
         return {
@@ -574,7 +649,7 @@ class BatchExecutor:
                 streaming_ui.print_step_rejected(coach_feedback)
                 continue
 
-            if not has_required_completion_report(result.text):
+            if not has_required_completion_report(result.text, phase):
                 coach_feedback = build_missing_report_feedback(phase)
                 streaming_ui.print_step_rejected(coach_feedback)
                 continue

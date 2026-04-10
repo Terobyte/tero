@@ -13,7 +13,7 @@ def test_phase_zero_fallback_on_step_count_mismatch(tmp_path, capsys):
 
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
 
@@ -60,7 +60,7 @@ def test_phase_zero_preserves_done_flags_and_writes_enriched_plan(tmp_path):
 """
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
     raw_plan = "- [x] Create pyproject.toml\n- [ ] Add auth middleware\n"
@@ -121,7 +121,7 @@ def test_phase_zero_skips_llm_when_plan_is_already_polished(tmp_path):
 """
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
 
@@ -160,7 +160,7 @@ def test_phase_zero_uses_single_quick_polish_turn(tmp_path):
 
     cfg = Config(
         preplan_mode=True,
-        preplan_provider="black",
+        preplan_provider="zai",
         working_dir=str(tmp_path),
     )
     captured: dict[str, object] = {}

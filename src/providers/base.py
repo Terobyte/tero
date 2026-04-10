@@ -62,6 +62,6 @@ class AgentProvider(Protocol):
         """Human-readable name for UI display.
 
         Returns:
-            Display name like "Claude Pro (sonnet)" or "CCG (glm-5)"
+            Display name like "Claude Pro (sonnet)" or "ZAI (glm-5.1)"
         """
         ...

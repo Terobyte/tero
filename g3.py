@@ -6,6 +6,7 @@ from src.cli_entry import (
     build_parser,
     prepare_go_config as _shared_prepare_go_config,
     resolve_go_config as _shared_resolve_go_config,
+    run_debug as _shared_run_debug,
     run_go as _shared_run_go,
     run_history as _shared_run_history,
 )
@@ -32,6 +33,12 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
+    elif args.command == "debug":
+        try:
+            run_debug(args)
+        except KeyboardInterrupt:
+            print("\nПрервано.")
+            sys.exit(130)
 
 
 async def run_go(args, config=None):
@@ -40,6 +47,10 @@ async def run_go(args, config=None):
 
 def run_history(args):
     return _shared_run_history(args)
+
+
+def run_debug(args):
+    return _shared_run_debug(args)
 
 
 if __name__ == "__main__":

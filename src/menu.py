@@ -3,7 +3,7 @@
 from pathlib import Path
 import yaml
 
-from src.config import Config, FIXED_PROVIDER_MODELS, short_model_name
+from src.config import Config, short_model_name
 
 try:
     import questionary
@@ -12,36 +12,15 @@ try:
 except ImportError:
     QUESTIONARY_AVAILABLE = False
 
-# Blackbox model IDs
-CCG_MODEL_PRESETS = {
-    "GLM-5    (blackboxai/z-ai/glm-5)": "blackboxai/z-ai/glm-5",
-    "Turbo    (glm-5-turbo via Z.AI)": "glm-5-turbo",
-    "ZAI      (glm-5.1 via Z.AI)": "glm-5.1",
-    "Sonnet   (claude-sonnet-4-6)": "claude-sonnet-4-6",
-    "Opus     (claude-opus-4-6)": "claude-opus-4-6",
-    "Kimi     (kimi-k2.5)": "kimi-k2.5",
-    "Ввести вручную...": "__custom__",
-}
-
 # Codex model IDs
 CODEX_MODEL_PRESETS = {
-    "GPT-5.4 (default)": "",
-    "GPT-5.4 xhigh reasoning": "gpt-5.4",
-    "o3": "o3",
-    "o4-mini": "o4-mini",
-    "Ввести вручную...": "__custom__",
+    "Medium (default)": "",
+    "High": "gpt-5.4",
 }
 
-# OpenCode model IDs (MIMO, Kimi, MiniMax, Nemotron — all free)
+# OpenCode model IDs
 OPENCODE_MODEL_PRESETS = {
-    "MIMO Pro  (free)": "opencode/mimo-v2-pro-free",
-    "MIMO Omni (free)": "opencode/mimo-v2-omni-free",
     "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
-    "Kimi K2   (free)": "openrouter/moonshotai/kimi-k2:free",
-    "Kimi K2.5": "openrouter/moonshotai/kimi-k2.5",
-    "Z.AI     (glm-5.1 direct)": "zai/glm-5.1",
-    "Nemotron 3 Super (free)": "opencode/nemotron-3-super-free",
-    "Ввести вручную...": "__custom__",
 }
 
 KILO_MODEL_PRESETS = {
@@ -51,8 +30,6 @@ KILO_MODEL_PRESETS = {
 
 # Provider choices
 PROVIDER_PRESETS = {
-    "BLACK (Blackbox/GLM-5)": "black",
-    "TURBO (Z.AI / GLM-5 Turbo)": "turbo",
     "ZAI (Z.AI / GLM-5.1)": "zai",
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
@@ -96,7 +73,7 @@ def _fixed_model_for_provider(provider: str) -> str:
     """Return the model locked to a provider, or empty string if selectable."""
     if provider == "lite":
         provider = "zai"
-    return FIXED_PROVIDER_MODELS.get(provider, "")
+    return ""
 
 
 def _effective_provider_model(
@@ -124,7 +101,7 @@ def _model_presets_for_provider(provider: str) -> dict[str, str]:
         return OPENCODE_MODEL_PRESETS
     if provider == "kilo":
         return KILO_MODEL_PRESETS
-    return CCG_MODEL_PRESETS
+    return {}
 
 
 def _custom_model_allowed(provider: str) -> bool:
@@ -351,6 +328,20 @@ def _parse_batch_retry_counts(raw: str) -> tuple[int, int, int] | None:
     return counts
 
 
+def _launch_debugger(config: "Config") -> None:
+    """Launch the debugger loop and exit when done."""
+    import sys
+    from src.debugger import Debugger
+
+    debugger = Debugger(config)
+    try:
+        result = debugger.run_sync()
+    except KeyboardInterrupt:
+        print("\n\nПрервано.")
+        sys.exit(130)
+    sys.exit(0 if result.victory else 1)
+
+
 def run_settings_menu(config: Config) -> Config | None:
     """Show interactive settings menu. Returns updated config or None if user quit.
 
@@ -408,8 +399,15 @@ def _questionary_menu(config: Config) -> Config | None:
         )
 
         wd_display = config.working_dir.replace(str(Path.home()), "~")
+        debug_display = (
+            f"{config.debug_player_provider}/"
+            f"{config.debug_tester_provider}/"
+            f"{config.debug_fixer_provider} "
+            f"[{config.debug_intensity}]"
+        )
         choices = [
             questionary.Choice(f"▶   Запустить", value="start"),
+            questionary.Choice(f"🔍  Debugger:       {debug_display}", value="start_debug"),
             questionary.Separator("─── провайдеры ──────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
@@ -493,6 +491,8 @@ def _questionary_menu(config: Config) -> Config | None:
             return None
         if answer == "start":
             return config
+        if answer == "start_debug":
+            config = run_debugger_menu(config)  # launches internally, or returns on "back"
         if answer == "save_default":
             _save_global_default(config)
             continue
@@ -702,6 +702,7 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [9] Judge:         {judge_display}")
         print(f"  [0] Post-Coach:    {batch_post_display}")
         print(f"  [w] TestWriter:    {test_writer_display}")
+        print(f"  [d] Debugger:      {config.debug_player_provider}/{config.debug_tester_provider}/{config.debug_fixer_provider} [{config.debug_intensity}]")
         print(f"  [s] Сохранить как default")
         print(f"  [Enter] Запустить")
         print(f"  [q] Выход\n")
@@ -712,6 +713,9 @@ def _fallback_menu(config: Config) -> Config | None:
             return config
         if answer == "q":
             return None
+        if answer == "d":
+            config = _fallback_debugger_menu(config)
+            _launch_debugger(config)
         if answer == "s":
             _save_global_default(config)
         elif answer == "p":
@@ -808,3 +812,114 @@ def _fallback_menu(config: Config) -> Config | None:
             )
 
         print()
+
+
+# ── Debugger menu ─────────────────────────────────────────────────────────────
+
+DEBUG_INTENSITY_PRESETS = {
+    "Low  (1 pass — structural analysis)": "low",
+    "Medium (2 passes — structural + anchor)": "medium",
+    "High  (5 passes — all audits)": "high",
+}
+
+DEBUG_LIMIT_PRESETS = {
+    "Infinite": ("infinite", 0),
+    "5 iterations": ("iterations", 5),
+    "10 iterations": ("iterations", 10),
+    "20 iterations": ("iterations", 20),
+    "10 minutes": ("time", 10),
+    "30 minutes": ("time", 30),
+    "60 minutes": ("time", 60),
+}
+
+
+def run_debugger_menu(config: "Config") -> "Config":
+    """Interactive menu for the debugger command.
+
+    Returns updated config with debug_* fields set.
+    """
+    if not QUESTIONARY_AVAILABLE:
+        return _fallback_debugger_menu(config)
+
+    while True:
+        player_display = _provider_model_label(config.debug_player_provider, config.debug_player_model)
+        tester_display = _provider_model_label(config.debug_tester_provider, config.debug_tester_model)
+        fixer_display = _provider_model_label(config.debug_fixer_provider, config.debug_fixer_model)
+
+        intensity_label = next(
+            (k for k, v in DEBUG_INTENSITY_PRESETS.items() if v == config.debug_intensity),
+            config.debug_intensity,
+        )
+        limit_label = next(
+            (k for k, (m, v) in DEBUG_LIMIT_PRESETS.items() if m == config.debug_limit_mode and v == config.debug_limit_value),
+            f"{config.debug_limit_mode}/{config.debug_limit_value}",
+        )
+
+        choices = [
+            questionary.Choice("▶   Запустить Debugger", value="start"),
+            questionary.Separator("─── агенты ──────────────────────────────"),
+            questionary.Choice(f"    Player (ищет баги):   {player_display}", value="player"),
+            questionary.Choice(f"    Tester (пишет тесты): {tester_display}", value="tester"),
+            questionary.Choice(f"    Fixer (чинит баги):   {fixer_display}", value="fixer"),
+            questionary.Separator("─── параметры ───────────────────────────"),
+            questionary.Choice(f"    Интенсивность:        {intensity_label}", value="intensity"),
+            questionary.Choice(f"    Лимит:                {limit_label}", value="limit"),
+            questionary.Separator("─────────────────────────────────────────"),
+            questionary.Choice("←   Назад", value="back"),
+        ]
+
+        answer = questionary.select(
+            "🔍 Debugger — настройка  (↑↓ выбор, Enter)",
+            choices=choices,
+            use_shortcuts=False,
+        ).ask()
+
+        if answer is None or answer == "back":
+            return config
+        if answer == "start":
+            _launch_debugger(config)  # exits via sys.exit()
+
+        if answer == "player":
+            config = _questionary_select_provider_model(
+                config, "debug_player_provider", "debug_player_model", "Player"
+            )
+        elif answer == "tester":
+            config = _questionary_select_provider_model(
+                config, "debug_tester_provider", "debug_tester_model", "Tester"
+            )
+        elif answer == "fixer":
+            config = _questionary_select_provider_model(
+                config, "debug_fixer_provider", "debug_fixer_model", "Fixer"
+            )
+        elif answer == "intensity":
+            choice = questionary.select(
+                "Интенсивность:",
+                choices=list(DEBUG_INTENSITY_PRESETS.keys()),
+            ).ask()
+            if choice:
+                config = Config(**{**config.__dict__, "debug_intensity": DEBUG_INTENSITY_PRESETS[choice]})
+        elif answer == "limit":
+            choice = questionary.select(
+                "Лимит:",
+                choices=list(DEBUG_LIMIT_PRESETS.keys()),
+            ).ask()
+            if choice:
+                mode, value = DEBUG_LIMIT_PRESETS[choice]
+                config = Config(**{**config.__dict__, "debug_limit_mode": mode, "debug_limit_value": value})
+
+
+def _fallback_debugger_menu(config: "Config") -> "Config":
+    """Plain-text fallback for debugger menu when questionary is not available."""
+    print("\n🔍 Debugger — настройка")
+    print(f"  Player:    {config.debug_player_provider}")
+    print(f"  Tester:    {config.debug_tester_provider}")
+    print(f"  Fixer:     {config.debug_fixer_provider}")
+    print(f"  Intensity: {config.debug_intensity}")
+    print(f"  Limit:     {config.debug_limit_mode}/{config.debug_limit_value}")
+    print("\n  (установи questionary для интерактивного меню: pip install questionary)")
+    print("  Нажми Enter для продолжения, q для выхода")
+    answer = input("  › ").strip().lower()
+    if answer == "q":
+        import sys
+        sys.exit(0)
+    return config

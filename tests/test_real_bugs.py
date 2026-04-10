@@ -419,11 +419,11 @@ class TestBug8_ReviewStrategyEmptyJudgeProvider:
         session.config.batch_post_judge_attempts = 1
         session.config.batch_judge_provider = ""  # Not set
         session.config.batch_judge_model = ""
-        session.config.batch_pre_provider = "black"
+        session.config.batch_pre_provider = "zai"
         session.config.batch_pre_model = ""
-        session.config.batch_post_provider = "black"
+        session.config.batch_post_provider = "zai"
         session.config.batch_post_model = ""
-        session.config.coach_provider = "black"
+        session.config.coach_provider = "zai"
         session.config.coach_model = ""
 
         tracker = MagicMock()

@@ -21,7 +21,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 from typing import Optional
 
 try:
@@ -137,26 +137,18 @@ def extract_slug_from_url(url: str, domain_pattern: str) -> Optional[str]:
         return None
     
     try:
-        # Normalize URL
-        url = url.lower().strip()
-        
-        # Remove protocol
-        if '://' in url:
-            url = url.split('://', 1)[1]
-        
-        # Find the domain and extract path
-        if domain_pattern in url:
-            parts = url.split(domain_pattern, 1)
-            if len(parts) > 1:
-                path = parts[1].lstrip('/')
-                
-                # Get first path segment (the slug)
-                slug = path.split('/')[0].split('?')[0].split('#')[0]
-                slug = slug.strip()
-                
-                # Validate
-                if is_valid_slug(slug):
-                    return slug
+        normalized = url.lower().strip()
+        if "://" not in normalized:
+            normalized = f"https://{normalized}"
+
+        parsed = urlparse(normalized)
+        host = parsed.netloc.split("@")[-1].split(":")[0].strip(".")
+        suffix = f".{domain_pattern.lower()}"
+
+        if host.endswith(suffix):
+            slug = host[: -len(suffix)].split(".")[-1].strip()
+            if is_valid_slug(slug):
+                return slug
     except Exception:
         pass
     

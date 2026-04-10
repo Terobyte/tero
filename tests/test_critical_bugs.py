@@ -66,11 +66,11 @@ class TestBug_DuelAsyncioToThread:
     @pytest.mark.asyncio
     async def test_asyncio_to_thread_does_not_execute_async_generator(self):
         """
-        FIX VERIFIED: _run_agent (which replaced asyncio.to_thread in duel.py)
+        FIX VERIFIED: _collect_agent_result (which replaced asyncio.to_thread in duel.py)
         correctly executes async generator agents.
         EXPECTED: generator body executes (executed has items)
         """
-        from src.duel import _run_agent
+        from src.duel import _collect_agent_result
 
         executed = []
 
@@ -80,30 +80,31 @@ class TestBug_DuelAsyncioToThread:
                 yield "message1"
                 yield "message2"
 
-        await _run_agent(FakeAgent(), "task", "/ws", 60)
+        await _collect_agent_result(FakeAgent(), "task", "/ws", 60)
 
         assert len(executed) > 0, (
-            "FIX BROKEN: _run_agent should execute the async generator body, "
+            "FIX BROKEN: _collect_agent_result should execute the async generator body, "
             "but 'executed' is still empty."
         )
 
     @pytest.mark.asyncio
     async def test_duel_runner_agent_result_is_not_async_generator_object(self):
         """
-        FIX VERIFIED: _run_agent returns AgentResult, not an async generator object.
+        FIX VERIFIED: _collect_agent_result returns AgentResult, not an async generator object.
         EXPECTED: result is AgentResult
         """
-        from src.duel import _run_agent
+        from src.duel import _collect_agent_result
         from src.providers.base import AgentResult
 
         class FakeAgent:
             async def run(self, prompt, system_prompt, working_dir, max_turns=30, model=""):
                 yield "message"
 
-        result = await _run_agent(FakeAgent(), "task", "/ws", 60)
+        result = await _collect_agent_result(FakeAgent(), "task", "/ws", 60)
 
         assert isinstance(result, AgentResult), (
-            f"FIX BROKEN: _run_agent returned '{type(result).__name__}', not AgentResult."
+            "FIX BROKEN: _collect_agent_result returned "
+            f"'{type(result).__name__}', not AgentResult."
         )
 
 

@@ -19,6 +19,6 @@ def test_config_preplan_defaults():
 
     cfg = Config()
     assert cfg.preplan_mode is False  # opt-in, like tdd_mode
-    assert cfg.preplan_provider == "black"
+    assert cfg.preplan_provider == "zai"
     assert cfg.preplan_model == ""
     assert cfg.preplan_timeout_s == 120

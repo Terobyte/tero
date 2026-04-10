@@ -243,9 +243,7 @@ class StatusBar:
 
 # Model presets available at runtime
 MODEL_PRESETS: list[tuple[str, str, str]] = [
-    ("GLM-5", "black", "blackboxai/z-ai/glm-5"),
-    ("Turbo", "turbo", "glm-5-turbo"),
-    ("ZAI", "zai", "glm-5.1"),
+    ("GLM-5.1", "zai", "glm-5.1"),
     ("Sonnet", "claude", "claude-sonnet-4-6"),
     ("Opus", "claude", "claude-opus-4-6"),
     ("GPT-5.4", "codex", ""),
