@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import Config
-from src.debugger_bugs import BugEntry, parse_bugs, merge_bugs, renumber_bugs, write_bugs_md, write_final_report
-from src.debugger_context import build_context, plan_file_chunks
-from src.debugger_prompts import INTENSITY_PROMPTS, TESTER_PROMPT, FIXER_PROMPT
+from src.debugger_bugs import (
+    BugEntry,
+    extract_json_from_text,
+    renumber_bugs,
+    strip_trailing_commas,
+    write_bugs_md,
+    write_final_report,
+)
+from src.debugger_graph import build_dependency_graph, DependencyGraph
+from src.debugger_contracts import FileContract, extract_contracts
+from src.debugger_edges import analyze_edges, run_deep_dives, findings_to_bugs
+from src.debugger_intra import analyze_all_files
+from src.debugger_llm import collect_text, CollectedTextResult, _STALE_THRESHOLD_S
+from src.debugger_prompts import TESTER_PROMPT, FIXER_PROMPT
+from src.debugger_render import build_context_from_graph
 from src.providers import create_provider
-
-
-# Retry schedule: 60s → 120s → 240s (7 min total before giving up)
-_RETRY_BACKOFF_S = [60, 120, 240]
-_STALE_THRESHOLD_S = 15  # switch dot to yellow after no data for this long
 
 
 class _Pulse:
@@ -103,14 +109,6 @@ class DebuggerResult:
     duration_s: float
 
 
-@dataclass
-class _CollectedTextResult:
-    """Provider output plus whether the run completed successfully."""
-
-    text: str
-    completed: bool
-
-
 class Debugger:
     """Automated bug-find-test-fix loop."""
 
@@ -132,9 +130,9 @@ class Debugger:
         self._start_time = 0.0
         self._inconclusive_reason: str | None = None
 
-        # Chunk planning — split codebase into context-sized pieces
-        self._chunks = plan_file_chunks(self.working_dir)
-        self._chunk_cursor = 0
+        # Graph-aware state — dependency graph and contract cache
+        self._graph: DependencyGraph | None = None
+        self._contracts: dict[str, FileContract] = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -143,12 +141,15 @@ class Debugger:
         return asyncio.run(self.run())
 
     async def run(self) -> DebuggerResult:
-        """Main debugger loop."""
+        """Main debugger loop — 6-phase graph-aware pipeline."""
         self._start_time = time.time()
         bugs_md_path = f"{self.working_dir}/bugs.md"
 
-        total_chunks = len(self._chunks)
-        total_files = sum(len(c) for c in self._chunks)
+        # Initial build for the startup banner stats
+        self._graph = build_dependency_graph(self.working_dir)
+        total_files = len(self._graph.files)
+        total_edges = len(self._graph.edges)
+        total_sccs = len(self._graph.sccs)
 
         print(f"\n🔍 Debugger started")
         print(f"   Player:  {self.config.debug_player_provider}")
@@ -156,44 +157,96 @@ class Debugger:
         print(f"   Fixer:   {self.config.debug_fixer_provider}")
         print(f"   Mode:    {self.config.debug_intensity} intensity")
         print(f"   Limit:   {self.config.debug_limit_mode}")
-        print(f"   Files:   {total_files} across {total_chunks} chunk(s)")
+        print(f"   Dive:    {self.config.debug_deep_dive_mode}")
+        print(f"   Files:   {total_files} files, {total_edges} edges, {total_sccs} SCCs")
         print()
 
-        while True:
-            self._iteration += 1
+        if total_files == 0:
+            print(f"   ✗ No Python files found in {self.working_dir}")
+            print(f"   Check --working-dir or run from the target project directory.")
+            return DebuggerResult(
+                victory=False,
+                iterations=0,
+                total_bugs=0,
+                fixed_bugs=0,
+                confirmed_bugs=0,
+                duration_s=time.time() - self._start_time,
+            )
 
+        while True:
             if self._should_stop():
                 break
 
-            # Select file chunk for this iteration
-            chunk = self._next_chunk()
-            self._display_iteration_header(chunk)
+            self._iteration += 1
+            pre_count = len(self._bugs)
 
-            # Player: find bugs
-            new_bugs = await self._run_player(chunk)
-            if new_bugs is None:
-                break
+            # Phase 0: Rebuild dependency graph so fixer edits are visible
+            self._display_phase_header("Phase 0: Dependency Graph")
+            self._graph = build_dependency_graph(self.working_dir)
+            print(f"   files={len(self._graph.files)} edges={len(self._graph.edges)} SCCs={len(self._graph.sccs)}")
 
-            if not new_bugs:
+            # Phase 1: Extract contracts (cached between iterations)
+            self._display_phase_header("Phase 1: Contracts")
+            pre_contract_count = sum(
+                1 for rp in self._graph.files
+                if rp in self._contracts
+                and self._contracts[rp].source_hash == self._graph.files[rp].source_hash
+            )
+            self._contracts = await extract_contracts(
+                self._graph, self._player, self.config, self.working_dir
+            )
+            total_files = len(self._graph.files)
+            print(f"   fresh={total_files - pre_contract_count} cached={pre_contract_count}")
+
+            # Phase 2: Cross-file edge analysis
+            self._display_phase_header("Phase 2: Edge Analysis")
+            high_findings, medium_findings = await analyze_edges(
+                self._graph, self._contracts, self._player, self.config, self.working_dir
+            )
+            print(f"   high={len(high_findings)} medium={len(medium_findings)}")
+
+            # Phase 3: Deep dives to confirm medium findings
+            self._display_phase_header("Phase 3: Deep Dives")
+            confirmed_findings = await run_deep_dives(
+                medium_findings, self.working_dir, self._player, self.config
+            )
+            print(f"   confirmed={len(confirmed_findings)}/{len(medium_findings)}")
+
+            # Phase 4: Intra-file analysis (merges edge bugs + per-file analysis)
+            self._display_phase_header("Phase 4: Intra-File Analysis")
+            edge_bugs = findings_to_bugs(
+                high_findings + confirmed_findings,
+                start_id=max((b.id for b in self._bugs), default=0) + 1,
+            )
+            self._bugs = await analyze_all_files(
+                self._graph, self._contracts, self._player, self.config,
+                self.working_dir, existing_bugs=self._bugs + edge_bugs,
+            )
+            renumber_bugs(self._bugs)
+
+            new_found = len(self._bugs) > pre_count
+            open_or_confirmed = [b for b in self._bugs if b.status in ("open", "confirmed")]
+
+            if new_found:
+                self._clean_passes = 0
+            elif not open_or_confirmed:
+                # No new bugs AND nothing left unresolved → clean pass
                 self._clean_passes += 1
-                print(f"   No new bugs found. Clean passes: {self._clean_passes}/{self.config.debug_victory_threshold}")
+                print(f"   No open bugs. Clean passes: {self._clean_passes}/{self.config.debug_victory_threshold}")
+                write_bugs_md(self._bugs, bugs_md_path, self._iteration)
                 if self._clean_passes >= self.config.debug_victory_threshold:
                     break
                 continue
-            else:
-                self._clean_passes = 0
+            # else: no new bugs but unresolved bugs remain → fall through to Phase 5
 
-            self._bugs = merge_bugs(self._bugs, new_bugs)
-            renumber_bugs(self._bugs)
-
-            # Tester: confirm bugs
+            # Phase 5: Test & Fix
+            self._display_phase_header("Phase 5: Test & Fix")
             open_bugs = [b for b in self._bugs if b.status == "open"]
             if open_bugs:
                 tester_ok = await self._run_tester(open_bugs)
                 if not tester_ok:
                     break
 
-            # Fixer: fix confirmed bugs
             confirmed = [b for b in self._bugs if b.status == "confirmed"]
             if confirmed:
                 fixed_count = await self._run_fixer(confirmed)
@@ -202,7 +255,6 @@ class Debugger:
                 if fixed_count > 0:
                     self._git_commit(self._iteration, fixed_count)
 
-            # Write once per iteration after all phases complete
             write_bugs_md(self._bugs, bugs_md_path, self._iteration)
 
         duration = time.time() - self._start_time
@@ -225,48 +277,8 @@ class Debugger:
             duration_s=duration,
         )
 
-    # ── Player ────────────────────────────────────────────────────────────────
-
-    async def _run_player(self, chunk: list[str] | None = None) -> list[BugEntry] | None:
-        """Run the player (bug-finder) on the given file chunk."""
-        context = build_context(self.working_dir, file_subset=chunk)
-        prompts = INTENSITY_PROMPTS.get(self.config.debug_intensity, INTENSITY_PROMPTS["medium"])
-
-        all_raw: list[BugEntry] = []
-        start_id = max((b.id for b in self._bugs), default=0) + 1
-
-        for i, system_prompt in enumerate(prompts):
-            prompt_label = ["main", "anchor", "red_team", "boundary", "completeness"][i] if i < 5 else f"prompt_{i}"
-            prefix = f"   Player [{prompt_label}] "
-            pulse = _Pulse(prefix)
-            await pulse.start()
-
-            user_prompt = (
-                f"Analyze the following code for bugs.\n\n"
-                f"{context}"
-            )
-
-            collected = await self._collect_text(
-                self._player,
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                max_turns=1,
-                model=self.config.debug_player_model,
-                pulse=pulse,
-            )
-
-            await pulse.stop()
-            if not collected.completed or not collected.text.strip():
-                self._mark_inconclusive(
-                    f"Player output was incomplete for prompt '{prompt_label}'."
-                )
-                return None
-
-            found = parse_bugs(collected.text, start_id=start_id + len(all_raw))
-            print(f"{prefix}{len(found)} bugs")
-            all_raw.extend(found)
-
-        return all_raw
+    def _display_phase_header(self, name: str) -> None:
+        print(f"\n── {name} {'─' * max(1, 50 - len(name))}")
 
     # ── Tester ────────────────────────────────────────────────────────────────
 
@@ -275,29 +287,31 @@ class Debugger:
         prefix = f"   Tester [{self.config.debug_tester_provider}] "
         pulse = _Pulse(prefix, status_fn=self._compact_status)
         await pulse.start()
+        try:
+            bug_list = "\n".join(
+                f"{b.id}. [{b.severity}] {b.file}:{b.line} — {b.description}"
+                for b in bugs
+            )
+            # Targeted context: only files mentioned in bugs
+            bug_files = sorted({b.file for b in bugs})
+            context = build_context_from_graph(self._graph, self._contracts, self.working_dir, file_subset=bug_files)
+            user_prompt = (
+                f"## Bug List to Verify\n\n{bug_list}\n\n"
+                f"## Code Context\n\n{context}"
+            )
 
-        bug_list = "\n".join(
-            f"{b.id}. [{b.severity}] {b.file}:{b.line} — {b.description}"
-            for b in bugs
-        )
-        # Targeted context: only files mentioned in bugs
-        bug_files = sorted({b.file for b in bugs})
-        context = build_context(self.working_dir, file_subset=bug_files)
-        user_prompt = (
-            f"## Bug List to Verify\n\n{bug_list}\n\n"
-            f"## Code Context\n\n{context}"
-        )
+            collected = await collect_text(
+                self._tester,
+                prompt=user_prompt,
+                system_prompt=TESTER_PROMPT,
+                working_dir=self.working_dir,
+                max_turns=30,
+                model=self.config.debug_tester_model,
+                pulse=pulse,
+            )
+        finally:
+            await pulse.stop()
 
-        collected = await self._collect_text(
-            self._tester,
-            prompt=user_prompt,
-            system_prompt=TESTER_PROMPT,
-            max_turns=30,
-            model=self.config.debug_tester_model,
-            pulse=pulse,
-        )
-
-        await pulse.stop()
         if not collected.completed or not collected.text.strip():
             self._mark_inconclusive("Tester output was incomplete.")
             return False
@@ -334,30 +348,32 @@ class Debugger:
         prefix = f"   Fixer [{self.config.debug_fixer_provider}] "
         pulse = _Pulse(prefix, status_fn=self._compact_status)
         await pulse.start()
+        try:
+            bug_list = "\n".join(
+                f"{b.id}. {b.file}:{b.line} — {b.description}"
+                + (f"\n   Failing test: {b.test_file}" if b.test_file else "")
+                for b in confirmed
+            )
+            # Targeted context: only files with confirmed bugs
+            bug_files = sorted({b.file for b in confirmed})
+            context = build_context_from_graph(self._graph, self._contracts, self.working_dir, file_subset=bug_files)
+            user_prompt = (
+                f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n"
+                f"## Code Context\n\n{context}"
+            )
 
-        bug_list = "\n".join(
-            f"{b.id}. {b.file}:{b.line} — {b.description}"
-            + (f"\n   Failing test: {b.test_file}" if b.test_file else "")
-            for b in confirmed
-        )
-        # Targeted context: only files with confirmed bugs
-        bug_files = sorted({b.file for b in confirmed})
-        context = build_context(self.working_dir, file_subset=bug_files)
-        user_prompt = (
-            f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n"
-            f"## Code Context\n\n{context}"
-        )
+            collected = await collect_text(
+                self._fixer,
+                prompt=user_prompt,
+                system_prompt=FIXER_PROMPT,
+                working_dir=self.working_dir,
+                max_turns=50,
+                model=self.config.debug_fixer_model,
+                pulse=pulse,
+            )
+        finally:
+            await pulse.stop()
 
-        collected = await self._collect_text(
-            self._fixer,
-            prompt=user_prompt,
-            system_prompt=FIXER_PROMPT,
-            max_turns=50,
-            model=self.config.debug_fixer_model,
-            pulse=pulse,
-        )
-
-        await pulse.stop()
         if not collected.completed or not collected.text.strip():
             self._mark_inconclusive("Fixer output was incomplete.")
             return None
@@ -368,130 +384,30 @@ class Debugger:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    async def _collect_text(
-        self,
-        provider,
-        prompt: str,
-        system_prompt: str,
-        max_turns: int,
-        model: str = "",
-        pulse: _Pulse | None = None,
-    ) -> _CollectedTextResult:
-        """Collect text from provider with retry and live pulse status."""
-        for attempt in range(len(_RETRY_BACKOFF_S) + 1):
-            parts: list[str] = []
-            try:
-                async for message in provider.run(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    working_dir=self.working_dir,
-                    max_turns=max_turns,
-                    model=model,
-                ):
-                    if pulse:
-                        pulse.heartbeat()
-                    self._extract_text(message, parts)
-                return _CollectedTextResult(text="\n".join(parts), completed=True)
-            except Exception:
-                if attempt >= len(_RETRY_BACKOFF_S):
-                    return _CollectedTextResult(text="\n".join(parts), completed=False)
-
-                # Retry with countdown visible on the pulse
-                wait = _RETRY_BACKOFF_S[attempt]
-                if pulse:
-                    for remaining in range(wait, 0, -1):
-                        pulse.set_retrying(attempt + 1, remaining)
-                        await asyncio.sleep(1)
-                else:
-                    await asyncio.sleep(wait)
-
-        return _CollectedTextResult(text="", completed=False)
-
-    @staticmethod
-    def _extract_text(message, parts: list[str]) -> None:
-        """Extract text from any provider message format into parts list.
-
-        Handles: SDK objects (.content), AdaptedMessage, raw dicts from
-        claude_native CLI events, and bare strings.
-        """
-        if isinstance(message, str):
-            parts.append(message)
-            return
-
-        # Objects with .content (SDK messages, AdaptedMessage)
-        if hasattr(message, "content") and not isinstance(message, dict):
-            content = message.content
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if hasattr(block, "text"):
-                        parts.append(block.text)
-                    elif isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(block.get("text", ""))
-            return
-
-        # Dicts from claude_native provider (raw Claude CLI JSON events)
-        if isinstance(message, dict):
-            # {"type": "text", "text": "..."} — non-JSON line fallback
-            if message.get("type") == "text" and "text" in message:
-                parts.append(message["text"])
-            # {"result": "full text"} — result event
-            if "result" in message and isinstance(message.get("result"), str):
-                parts.append(message["result"])
-            # {"message": {"content": [{"type": "text", "text": "..."}]}}
-            msg_data = message.get("message")
-            if isinstance(msg_data, dict):
-                content = msg_data.get("content")
-                if isinstance(content, str):
-                    parts.append(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            parts.append(block.get("text", ""))
-
     def _should_stop(self) -> bool:
-        """Check whether to stop the loop based on limit_mode."""
+        """Check whether to stop the loop based on limit_mode.
+
+        Uses ``>=`` so that ``debug_limit_value=N`` means exactly N iterations
+        (checked before incrementing self._iteration).
+        """
         mode = self.config.debug_limit_mode
         if mode == "infinite":
             return False
         if mode == "iterations":
-            return self._iteration > self.config.debug_limit_value
+            return self._iteration >= self.config.debug_limit_value
         if mode == "time":
             elapsed_min = (time.time() - self._start_time) / 60
             return elapsed_min >= self.config.debug_limit_value
         return False
 
-    def _next_chunk(self) -> list[str] | None:
-        """Return the next file chunk and advance the cursor."""
-        if not self._chunks:
-            return None
-        chunk = self._chunks[self._chunk_cursor % len(self._chunks)]
-        self._chunk_cursor += 1
-        return chunk
-
-    def _display_iteration_header(self, chunk: list[str] | None) -> None:
-        """Print iteration header with chunk info."""
-        if chunk and self._chunks:
-            idx = ((self._chunk_cursor - 1) % len(self._chunks)) + 1
-            total = len(self._chunks)
-            names = [f.rsplit("/", 1)[-1] for f in chunk[:4]]
-            summary = ", ".join(names)
-            if len(chunk) > 4:
-                summary += f" +{len(chunk) - 4}"
-            print(f"── Iteration {self._iteration} ── chunk {idx}/{total} [{summary}] ──")
-        else:
-            print(f"── Iteration {self._iteration} ──────────────────────────────────")
-
     def _git_commit(self, iteration: int, count: int) -> None:
-        """Commit all changes after a fix iteration."""
+        """Commit debugger-generated changes (source fixes + output files) after a fix iteration."""
         try:
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=self.working_dir,
-                check=True,
-                capture_output=True,
-            )
+            # Stage only Python source files and known debug output files;
+            # never stage unrelated user changes (notes, config, etc.)
+            subprocess.run(["git", "add", "--", "*.py"], cwd=self.working_dir, check=False, capture_output=True)
+            for fname in ("bugs.md", "bugs_final.md"):
+                subprocess.run(["git", "add", fname], cwd=self.working_dir, check=False, capture_output=True)
             msg = f"fix(debugger): iteration {iteration} — {count} bug(s) fixed"
             subprocess.run(
                 ["git", "commit", "-m", msg],
@@ -499,43 +415,21 @@ class Debugger:
                 check=True,
                 capture_output=True,
             )
-        except subprocess.CalledProcessError:
-            pass  # No changes to commit or git not available
+        except Exception:
+            pass  # No changes to commit, git not available, or disk/permission issue
 
     def _parse_tester_results(self, raw: str) -> dict[int, dict[str, str | None]]:
         """Extract tester JSON results keyed by bug id."""
         results: dict[int, dict[str, str | None]] = {}
 
-        # Try to extract JSON array from tester output
-        candidates: list[str] = []
-        for m in re.findall(r"```json\s*\n(.*?)\s*```", raw, re.DOTALL):
-            candidates.append(m)
-        for m in re.findall(r"```\s*\n(.*?)\s*```", raw, re.DOTALL):
-            if m.strip().startswith("["):
-                candidates.append(m)
-        # Bracket-matched arrays
-        depth = 0
-        start = None
-        for i, ch in enumerate(raw):
-            if ch == "[" and depth == 0:
-                start = i
-                depth += 1
-            elif ch == "[":
-                depth += 1
-            elif ch == "]" and depth > 0:
-                depth -= 1
-                if depth == 0 and start is not None:
-                    candidates.append(raw[start : i + 1])
-                    start = None
-        candidates.append(raw.strip())
-
-        for candidate in candidates:
+        for candidate in extract_json_from_text(raw):
             try:
-                data = json.loads(re.sub(r",\s*([}\]])", r"\1", candidate))
+                data = json.loads(strip_trailing_commas(candidate))
             except json.JSONDecodeError:
                 continue
             if not isinstance(data, list):
                 continue
+            candidate_results: dict[int, dict[str, str | None]] = {}
             for entry in data:
                 if not isinstance(entry, dict):
                     continue
@@ -545,12 +439,12 @@ class Debugger:
                 if isinstance(bug_id, int) and status in (
                     "confirmed", "false_positive", "invalid_test"
                 ):
-                    results[bug_id] = {
+                    candidate_results[bug_id] = {
                         "status": status,
                         "test_file": test_file if isinstance(test_file, str) and test_file else None,
                     }
-            if results:
-                break
+            if candidate_results:
+                results = candidate_results
 
         return results
 

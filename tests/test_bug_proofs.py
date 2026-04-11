@@ -418,15 +418,12 @@ def test_bug_detector_lint_should_have_real_fallback():
 
     source = inspect.getsource(BugDetector._check_lint)
 
-    # Count the number of commands in the tuple
-    # The bug: for cmd in (["python3", "-m", "flake8", ...],):
-    # Only one command in the tuple
-    for_block = (
-        source.split("for cmd in")[1].split(":")[0] if "for cmd in" in source else ""
-    )
-
-    # Count list literals (each [...] is a command)
-    command_count = for_block.count("[")
+    # Count commands in the `commands` tuple by extracting the block
+    # between the assignment and the for-loop, then counting `), (` separators.
+    commands_idx = source.find("commands")
+    for_idx = source.find("for ", commands_idx)
+    commands_block = source[commands_idx:for_idx]
+    command_count = commands_block.count("), (") + 1 if "commands" in commands_block else 0
 
     # CORRECT behavior: should have at least 2 fallback commands
     assert command_count >= 2, (
@@ -739,4 +736,260 @@ def test_bug_detector_tests_should_exclude_venv_and_node_modules():
     assert has_exclusions, (
         "BUG CONFIRMED: _check_tests runs pytest on entire working_dir — "
         "includes .venv, node_modules, and unrelated test files"
+    )
+
+
+# ============================================================================
+# BUG #17 (HIGH): merge_bugs discards regressions at previously-fixed lines
+# File: src/debugger_bugs.py:207-218
+# EXPECTED: new bugs at previously-fixed lines should be accepted (regressions)
+# ACTUAL: seen_lines includes ALL bugs (including fixed), blocking regressions
+# ============================================================================
+
+
+def test_merge_bugs_should_accept_regressions_at_fixed_lines():
+    """merge_bugs should not discard new bugs at lines where old bugs are fixed.
+
+    The bug: seen_lines is built from ALL bugs regardless of status.
+    If a bug was fixed at line 100 and a regression appears at line 100,
+    merge_bugs silently discards the regression.
+    """
+    from src.debugger_bugs import BugEntry, merge_bugs
+
+    existing = [
+        BugEntry(
+            id=1, file="config.py", line=437,
+            description="unsafe key bypass",
+            severity="high", status="fixed",
+        ),
+    ]
+    new_bugs = [
+        BugEntry(
+            id=2, file="config.py", line=437,
+            description="regression: key bypass re-introduced",
+            severity="critical",
+        ),
+    ]
+
+    merged = merge_bugs(existing, new_bugs)
+
+    # CORRECT: regression at a previously-fixed line should be accepted
+    assert len(merged) == 2, (
+        "BUG CONFIRMED: merge_bugs discards regressions at previously-fixed lines — "
+        "seen_lines includes bugs with status='fixed', so new bugs at those lines "
+        "are silently ignored"
+    )
+
+
+# ============================================================================
+# BUG #18 (MEDIUM): _run_tester/_run_fixer don't guarantee pulse cleanup
+# File: src/debugger.py:266-290, 326-351
+# EXPECTED: pulse.stop() called via try/finally
+# ACTUAL: no try/finally — if code between start/stop raises, task leaks
+# ============================================================================
+
+
+def test_run_tester_uses_try_finally_for_pulse():
+    """_run_tester should use try/finally to ensure pulse.stop() is always called.
+
+    The bug: pulse.start() creates an asyncio.Task but pulse.stop() is not
+    guaranteed via try/finally. If build_context raises, the animation leaks.
+    """
+    import inspect
+    from src.debugger import Debugger
+
+    source = inspect.getsource(Debugger._run_tester)
+
+    if "pulse.start()" not in source:
+        return
+
+    start_idx = source.index("pulse.start()")
+    stop_idx = source.index("pulse.stop()")
+    between = source[start_idx:stop_idx]
+
+    # CORRECT: should have try and finally between start() and stop()
+    has_try = "try:" in between or source[:start_idx].rstrip().endswith("try:")
+    has_finally = "finally:" in between
+
+    assert has_try and has_finally, (
+        "BUG CONFIRMED: _run_tester doesn't use try/finally for pulse cleanup — "
+        "animation task leaks if build_context() raises between start() and stop()"
+    )
+
+
+def test_run_fixer_uses_try_finally_for_pulse():
+    """_run_fixer should use try/finally to ensure pulse.stop() is always called.
+
+    Same bug as _run_tester — no try/finally for pulse cleanup.
+    """
+    import inspect
+    from src.debugger import Debugger
+
+    source = inspect.getsource(Debugger._run_fixer)
+
+    if "pulse.start()" not in source:
+        return
+
+    start_idx = source.index("pulse.start()")
+    stop_idx = source.index("pulse.stop()")
+    between = source[start_idx:stop_idx]
+
+    has_try = "try:" in between or source[:start_idx].rstrip().endswith("try:")
+    has_finally = "finally:" in between
+
+    assert has_try and has_finally, (
+        "BUG CONFIRMED: _run_fixer doesn't use try/finally for pulse cleanup — "
+        "animation task leaks if build_context() raises between start() and stop()"
+    )
+
+
+# ============================================================================
+# BUG #19 (MEDIUM): _git_commit only catches CalledProcessError
+# File: src/debugger.py:411-412
+# EXPECTED: should handle FileNotFoundError, PermissionError, OSError
+# ACTUAL: only CalledProcessError caught — other failures crash the debugger
+# ============================================================================
+
+
+def test_git_commit_handles_all_subprocess_failures():
+    """_git_commit should handle all subprocess failure modes gracefully.
+
+    The bug: except clause only catches CalledProcessError. FileNotFoundError
+    (git not installed), PermissionError (.git locked), OSError (disk full)
+    are not caught and crash the debugger loop.
+    """
+    import inspect
+    from src.debugger import Debugger
+
+    source = inspect.getsource(Debugger._git_commit)
+
+    catches_broad = "except Exception" in source or "except:" in source
+    catches_narrow = "CalledProcessError" in source
+
+    # CORRECT: should either catch broadly or handle all specific error types
+    assert not (catches_narrow and not catches_broad), (
+        "BUG CONFIRMED: _git_commit only catches CalledProcessError — "
+        "FileNotFoundError, PermissionError, OSError (disk full) crash the debugger "
+        "and silently lose fix work"
+    )
+
+
+# ============================================================================
+# BUG #20 (LOW): discover_py_files crashes on symlinks outside project root
+# File: src/debugger_graph.py:29-34
+# EXPECTED: should skip symlinks pointing outside the project tree
+# ACTUAL: path.relative_to(root) raises ValueError for external symlinks
+# ============================================================================
+
+
+def test_discover_py_files_handles_external_symlinks(tmp_path):
+    """discover_py_files should not crash when symlinks point outside the project.
+
+    The bug: rglob follows symlinks, and path.relative_to(root) raises
+    ValueError when the target is outside the project root.
+    """
+    from src.debugger_graph import discover_py_files
+
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "other.py").write_text("x = 1\n")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "real.py").write_text("y = 2\n")
+
+    link = project / "linked.py"
+    try:
+        link.symlink_to(external / "other.py")
+    except OSError:
+        pytest.skip("Symlinks not supported on this filesystem")
+
+    # CORRECT: should not crash, should return at least real.py
+    files = discover_py_files(str(project))
+    assert isinstance(files, list) and len(files) >= 1, (
+        "BUG CONFIRMED: discover_py_files crashes on symlinks outside project root — "
+        "path.relative_to(root) raises ValueError"
+    )
+
+
+# ============================================================================
+# BUG #21 (LOW): collect_text has unreachable final return
+# File: src/debugger_llm.py:109
+# EXPECTED: all code paths should be reachable
+# ACTUAL: final return is dead code — for-loop always returns before it
+# ============================================================================
+
+
+def test_collect_text_has_no_unreachable_return():
+    """collect_text should not have unreachable code after the retry loop.
+
+    The bug: the final return is unreachable — the for-loop always returns
+    on its last iteration (completed=True or completed=False).
+    """
+    import ast
+    import inspect
+    from src.debugger_llm import collect_text
+
+    source = inspect.getsource(collect_text)
+    tree = ast.parse(source)
+
+    func_node = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and n.name == "collect_text"),
+        None,
+    )
+    assert func_node is not None
+
+    last_stmt = func_node.body[-1]
+    has_for = any(isinstance(s, ast.For) for s in func_node.body)
+
+    # CORRECT: last statement should not be an unreachable return after a for loop
+    assert not (isinstance(last_stmt, ast.Return) and has_for), (
+        "BUG CONFIRMED: collect_text ends with unreachable return — "
+        "the for-loop always returns, making the final return dead code"
+    )
+
+
+# ============================================================================
+# BUG #22 (LOW): _build_structure_overview is dead code
+# File: src/debugger_context.py:381-405
+# EXPECTED: all defined functions should be used
+# ACTUAL: _build_structure_overview is defined (~25 lines) but never called
+# ============================================================================
+
+
+# ============================================================================
+# BUG #23 (LOW): parse_file silently corrupts non-UTF-8 source
+# File: src/debugger_graph.py:339
+# EXPECTED: should skip or reject non-UTF-8 files explicitly
+# ACTUAL: errors="replace" silently replaces invalid bytes with �
+# ============================================================================
+
+
+def test_parse_file_rejects_non_utf8_source(tmp_path):
+    """parse_file should not silently parse non-UTF-8 encoded files.
+
+    The bug: read_text(encoding="utf-8", errors="replace") silently replaces
+    invalid bytes, corrupting string literals that may contain bugs.
+    """
+    from src.debugger_graph import parse_file
+
+    src = tmp_path / "latin.py"
+    # \xe9 is valid Latin-1 (é) but invalid UTF-8
+    src.write_bytes(b'def foo():\n    name = "r\xe9sum\xe9"\n    return name\n')
+
+    # Verify file is genuinely non-UTF-8
+    try:
+        src.read_text(encoding="utf-8", errors="strict")
+        pytest.skip("File unexpectedly valid UTF-8")
+    except UnicodeDecodeError:
+        pass  # Expected — file has non-UTF-8 bytes
+
+    node = parse_file(str(src), "latin.py", str(tmp_path))
+
+    # CORRECT: should return None for non-UTF-8 files, not silently corrupt
+    assert node is None, (
+        "BUG CONFIRMED: parse_file silently parses non-UTF-8 source with "
+        "errors='replace', corrupting content — should return None or raise"
     )

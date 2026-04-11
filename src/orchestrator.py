@@ -74,6 +74,7 @@ class Orchestrator:
     def run(self) -> OrchestratorResult:
         """Execute the full duel pipeline."""
         start_time = time.time()
+        round_num = 0
 
         try:
             # Create session state
@@ -113,8 +114,6 @@ class Orchestrator:
             )
 
             # Run rounds
-            round_num = 0
-
             while round_num < self.config.max_rounds:
                 round_num += 1
                 print(f"\n━━━ Round {round_num}/{self.config.max_rounds} ━━━")
@@ -460,6 +459,9 @@ class Orchestrator:
         _skip = {".git", "__pycache__", ".g3",
                  self.config.agent_a_workspace, self.config.agent_b_workspace,
                  "node_modules", ".venv", "venv"}
+
+        # Protected files that must never be overwritten during promotion
+        _protected = {".env", ".gitignore", "config.yaml"}
 
         for item in ws.rglob("*"):
             if not item.is_file():

@@ -451,6 +451,7 @@ class RuntimeControls:
         self._player_name: str = ""
         self._coach_name: str = ""
         self._running = False
+        self._prev_sigwinch: object = None
 
     @staticmethod
     def _preset_index_for(provider_name: str, model: str, fallback: int = 0) -> int:
@@ -495,6 +496,7 @@ class RuntimeControls:
         self._running = True
         # Handle terminal resize
         try:
+            self._prev_sigwinch = signal.getsignal(signal.SIGWINCH)
             signal.signal(signal.SIGWINCH, lambda *_: self._status_bar._render())
         except (OSError, ValueError, RuntimeError):
             pass  # SIGWINCH not available on all platforms
@@ -511,6 +513,12 @@ class RuntimeControls:
             except RuntimeError:
                 pass
         self._status_bar.clear()
+        if self._prev_sigwinch is not None:
+            try:
+                signal.signal(signal.SIGWINCH, self._prev_sigwinch)
+            except (OSError, ValueError, RuntimeError):
+                pass
+            self._prev_sigwinch = None
         self._running = False
 
     def pause_render(self) -> None:

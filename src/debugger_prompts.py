@@ -364,6 +364,11 @@ For each class, list checks:
 MANDATORY: Check ALL classes and ALL methods. A class with 5 fields needs 5 field-usage checks.
 '''
 
+CONTRACT_AWARENESS_PREFIX = (
+    "You are also given contracts for imported modules that describe their interfaces. "
+    "Use these contracts to verify cross-module interactions within this file.\n\n"
+)
+
 INTENSITY_PROMPTS = {
     "low": [PLAYER_PROMPT_MAIN],
     "medium": [PLAYER_PROMPT_MAIN, PLAYER_PROMPT_ANCHOR],
@@ -409,6 +414,332 @@ Status values:
 - `confirmed` — test written, test fails (bug is real), test file path provided
 - `false_positive` — bug description is wrong, code is actually correct
 - `invalid_test` — could not write a reliable test (e.g. external dependency, non-deterministic)
+'''
+
+CONTRACT_EXTRACTION_PROMPT = '''You are a code-contract extraction assistant. Analyse the provided source file(s) and produce a structured JSON contract describing every **public** export.
+
+## Rules
+
+1. **Public-only** — Skip names that start with a single underscore (`_`). Only document exports that are part of the module's public API (functions, classes, constants without a leading `_`).
+2. **Maximum 100 words per function contract** — keep each export entry concise.
+3. Respond ONLY with valid JSON — no commentary before or after the JSON block.
+
+## Single-file format
+
+When analysing a single file, return a JSON object with these top-level keys:
+
+```json
+{
+  "rel_path": "src/example.py",
+  "exports": [
+    {
+      "name": "process_data",
+      "signature": "process_data(data: list[dict], key: str) -> dict",
+      "preconditions": ["data must be non-empty", "key must exist in each dict"],
+      "postconditions": ["returned dict is keyed by the value of key"],
+      "side_effects": ["logs start and end of processing"],
+      "raises": ["ValueError if data is empty", "KeyError if key missing"],
+      "return_type": "dict"
+    }
+  ],
+  "imports_usage": [
+    {
+      "source_module": "logging",
+      "symbol": "getLogger",
+      "usage_description": "creates module-level logger for debug/info messages"
+    }
+  ],
+  "invariants": [
+    "module-level _registry dict is never mutated after initial population"
+  ]
+}
+```
+
+### Field descriptions
+
+| Key              | Description                                                          |
+|------------------|----------------------------------------------------------------------|
+| `exports`        | List of objects, one per public symbol (function, class, constant).  |
+| `name`           | The export's identifier.                                             |
+| `signature`      | Full callable signature string (or `""` for non-callables).          |
+| `preconditions`  | Conditions that must hold **before** the function runs.              |
+| `postconditions` | Conditions that hold **after** the function returns successfully.    |
+| `side_effects`   | Observable effects beyond the return value (I/O, mutation, logging).|
+| `raises`         | Exception types and trigger conditions.                              |
+| `return_type`    | Declared or inferred return type annotation string.                  |
+| `imports_usage`  | One entry per imported symbol describing how it is used.             |
+| `invariants`     | Module-level or class-level properties that always hold.             |
+
+## Batch format (multiple files)
+
+When multiple files are provided, return a JSON object **keyed by relative path**. Each value follows the single-file schema above:
+
+```json
+{
+  "src/foo.py": {
+    "rel_path": "src/foo.py",
+    "exports": [ ... ],
+    "imports_usage": [ ... ],
+    "invariants": [ ... ]
+  },
+  "src/bar.py": {
+    "rel_path": "src/bar.py",
+    "exports": [ ... ],
+    "imports_usage": [ ... ],
+    "invariants": [ ... ]
+  }
+}
+```
+
+Again: skip any symbol whose name starts with `_`. Output ONLY the JSON object.
+'''
+
+EDGE_ANALYSIS_PROMPT = '''You are a cross-file bug detector. You are given:
+1. The FULL source code of a caller file
+2. CONTRACTS of all modules it imports (not their full source)
+
+Your job: find bugs at the BOUNDARY between the caller and its dependencies.
+
+## 6 Check Types
+
+For EACH imported function/class used in the caller, verify:
+
+### 1. signature_mismatch — Wrong number or types of arguments
+
+Does the caller pass the correct number and types of arguments?
+Look for: extra args, missing args, wrong arg types, wrong keyword names.
+
+Example: The contract says `process(data: list, key: str)` but the caller
+writes `process(data, key, extra_arg)` or `process(data=items)` where
+`items` is a dict, not a list.
+
+### 2. return_ignored — Return value discarded
+
+Does the callee return a value that the caller should use but doesn't?
+Look for: bool returns (success/failure) used as bare calls, computed
+results discarded.
+
+Example: The contract says `reserve() -> bool` (True on success) but the
+caller writes `self.inventory.reserve(item)` without checking the result
+and then proceeds as if the reservation succeeded.
+
+### 3. none_not_handled — Optional return not checked for None
+
+Can the callee return None? Does the caller check for it?
+Look for: functions that return Optional[X] but caller does .attr or
+[index] on result without a None guard.
+
+Example: The contract says `get_user(id: int) -> Optional[User]` but the
+caller writes `user = get_user(uid); user.name` without checking
+`if user is None`.
+
+### 4. exception_uncaught — Declared exception not caught
+
+Does the callee raise exceptions the caller doesn't catch?
+Look for: documented raises in the contract vs try/except in the caller.
+
+Example: The contract says `raises: ValueError if amount < 0` but the
+caller passes a user-provided amount with no try/except around the call.
+
+### 5. side_effect_order — State used before it is set
+
+Does the caller assume state that the callee hasn't set yet?
+Look for: calling methods in wrong order, using results before side
+effects complete.
+
+Example: The contract says `connect() must be called before query()` but
+the caller calls `query()` without first calling `connect()`. Or the
+caller reads a field that is only populated by a method it hasn't called.
+
+### 6. type_mismatch — Wrong type passed or expected
+
+Does the caller pass or expect the wrong type?
+Look for: passing dict where list expected, str where Path expected,
+int where float needed.
+
+Example: The contract says `write(path: Path, data: bytes)` but the
+caller passes a plain string `write("file.txt", data)` or passes
+`data` as a str instead of bytes.
+
+## Output
+
+JSON array of findings:
+
+```json
+[
+    {
+        "caller_file": "src/debugger.py",
+        "callee_file": "src/config.py",
+        "caller_line": 42,
+        "description": "resolve_config() called with 2 args but signature takes 1",
+        "confidence": "high",
+        "check_type": "signature_mismatch"
+    }
+]
+```
+
+Confidence levels:
+- **high** — certain bug, clear contract violation
+- **medium** — likely bug, but depends on runtime conditions
+- **low** — possible issue, speculative
+
+If no cross-file bugs found, return `[]`.
+Do NOT report bugs within the caller that don't involve its dependencies.
+Do NOT report intra-file bugs.
+Do NOT report style issues or suggestions.
+'''
+
+SCC_ANALYSIS_PROMPT = '''You are a circular-dependency bug detector. You are given:
+1. The FULL source code of every file in a strongly connected component (SCC) —
+   a set of modules that import each other, directly or indirectly, forming a cycle.
+2. CONTRACTS for any external modules they import.
+
+Your job: find bugs caused or masked by the circular dependency itself.
+
+## 4 Check Types
+
+For EACH pair of mutually-dependent modules in the SCC, verify:
+
+### 1. init_ordering — Import-time AttributeError from incomplete initialisation
+
+When module A imports module B and B imports A, Python finishes executing one
+module before the other.  If the *later* module tries to access a name from the
+*earlier* module that has not yet been defined (class, function, constant), the
+result is an AttributeError at import time — or, if the access is inside a
+function body, an AttributeError at call time.
+
+Look for:
+- References to names (classes, functions, constants) in one SCC module that
+  depend on code executed later in another SCC module during the import cycle.
+- Function/method bodies that reference a module-level name from a cyclic peer
+  that may not have been populated yet at the time the function is *called*
+  (even if the import itself succeeds).
+- Conditional imports or `TYPE_CHECKING` guards that hide a runtime dependency
+  the code actually needs.
+
+### 2. stale_state — Mutual state mutation producing stale or inconsistent state
+
+When two modules in a cycle share mutable module-level state (globals, caches,
+registries, singleton instances), mutations made by one module can be invisible
+or partially visible to the other due to import-time execution order or
+rebinding.
+
+Look for:
+- Module-level mutable containers (dicts, lists, sets) populated during import
+  in one SCC module but read during import in another — the reader may see an
+  empty or partially-filled container.
+- Singleton or cache instances created in module A and also referenced from
+  module B where B's import-time code mutates the instance before A has finished
+  initialising it.
+- Functions in different SCC modules that read and write the same global state
+  without synchronisation, leading to lost updates when called in a specific
+  order.
+
+### 3. contract_violation — Interface contract broken across every direction of the cycle
+
+In a cycle A → B → C → A, a contract break between any pair propagates around
+the entire loop.  Check the contract at **every edge** in the cycle, not just
+one direction.
+
+Look for:
+- A function in module A calls a function in module B passing wrong argument
+  types or counts (signature_mismatch across the cycle).
+- A callee in the cycle returns Optional[X] but the caller dereferences the
+  result without a None guard (none_not_handled across the cycle).
+- A callee in the cycle raises an exception that the caller does not catch
+  (exception_uncaught across the cycle).
+- Return values that signal success/failure (bool) are silently discarded
+  (return_ignored across the cycle).
+
+### 4. reimport_side_effect — Re-import or late-binding side effects
+
+Python's import system caches modules in `sys.modules`, so a second import of
+the same module returns the existing object.  However, `importlib.reload()` or
+manual manipulation of `sys.modules` can re-trigger module-level code.
+
+Look for:
+- Module-level code that has **idempotency bugs**: running it twice (e.g., after
+  a reload) would duplicate registry entries, double-count metrics, or append
+  to a list that was already populated.
+- `from X import *` or `__all__` manipulation inside the SCC that may shadow or
+  overwrite names unexpectedly when the import graph is re-traversed.
+- Decorator or metaclass registration side effects that fire at import time and
+  assume they only execute once.
+
+## Output
+
+JSON array of findings — same schema as EDGE_ANALYSIS_PROMPT:
+
+```json
+[
+    {
+        "caller_file": "src/module_a.py",
+        "callee_file": "src/module_b.py",
+        "caller_line": 42,
+        "description": "module_a accesses Foo from module_b during import, but module_b has not yet defined Foo because it is still importing module_a",
+        "confidence": "high",
+        "check_type": "init_ordering"
+    }
+]
+```
+
+Confidence levels:
+- **high** — certain bug, reproducible import-time or runtime failure
+- **medium** — likely bug, depends on execution order
+- **low** — possible issue, speculative
+
+check_type must be one of: `init_ordering`, `stale_state`, `contract_violation`, `reimport_side_effect`.
+
+If no circular-dependency bugs are found, return `[]`.
+Do NOT report bugs that are unrelated to the circular dependency.
+Do NOT report intra-file bugs (single-file issues).
+Do NOT report style issues or suggestions.
+'''
+
+DEEP_DIVE_PROMPT = '''You are verifying a specific cross-file bug finding. You are given:
+1. The FULL source code of the **caller** file: {caller_file}
+2. The FULL source code of the **callee** file: {callee_file}
+
+A previous analysis flagged a potential bug at line {caller_line} of the caller:
+
+- **Check type**: {check_type}
+- **Description**: {description}
+
+## Your task
+
+Read BOTH source files carefully.  Trace the specific call site at line
+{caller_line} in the caller.  Walk into the callee's implementation if
+needed.  Decide whether the flagged issue is a **real bug** or a **false
+positive**.
+
+Consider:
+- Does the call site actually exist at that line?
+- Are the argument types and counts correct for the callee's real signature?
+- If the issue is a missing None guard, can the callee actually return None
+  in this call's context?
+- If the issue is an uncaught exception, can the exception actually be raised
+  given the arguments passed?
+- If the issue is a return_ignored, does the caller's control flow actually
+  depend on the result elsewhere?
+
+## Output
+
+Respond with a single JSON object (no surrounding text):
+
+```json
+{{"confirmed": true, "reason": "The caller at line {caller_line} passes a str to process() which expects list — this will raise TypeError at runtime."}}
+```
+
+or
+
+```json
+{{"confirmed": false, "reason": "The callee's signature accepts Any, and the caller's argument is validated two lines above, so this is not a bug."}}
+```
+
+Fields:
+- **confirmed** (bool): `true` if the bug is real, `false` if it is a false positive.
+- **reason** (str): One or two sentences explaining your conclusion, referencing
+  specific line numbers and code from the provided source files.
 '''
 
 FIXER_PROMPT = '''You are a senior engineer fixing confirmed bugs.

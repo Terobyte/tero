@@ -134,8 +134,12 @@ class Config:
     debug_fixer_model: str = ""
     debug_intensity: str = "medium"
     debug_limit_mode: str = "infinite"
-    debug_limit_value: int = 10
+    debug_limit_value: int = 3
     debug_victory_threshold: int = 3
+    debug_max_concurrent_llm: int = 5
+    debug_deep_dive_mode: str = "normal"  # "skip" | "normal" | "aggressive"
+    debug_cache_contracts: bool = True
+    debug_edge_batch_size: int = 5
 
 
 @dataclass
@@ -203,6 +207,10 @@ _ENV_MAP = {
     "G3_DEBUG_LIMIT_MODE": ("debug_limit_mode", str),
     "G3_DEBUG_LIMIT_VALUE": ("debug_limit_value", int),
     "G3_DEBUG_VICTORY_THRESHOLD": ("debug_victory_threshold", int),
+    "G3_DEBUG_MAX_CONCURRENT_LLM": ("debug_max_concurrent_llm", int),
+    "G3_DEBUG_DEEP_DIVE_MODE": ("debug_deep_dive_mode", str),
+    "G3_DEBUG_CACHE_CONTRACTS": ("debug_cache_contracts", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_DEBUG_EDGE_BATCH_SIZE": ("debug_edge_batch_size", int),
 }
 
 
@@ -433,7 +441,7 @@ def resolve_config(cli_args: dict) -> Config:
     # Collect them into defaults so the unknown-key warning can catch them.
     _KNOWN_SECTIONS = {"defaults", "provider"}
     for key, val in project.items():
-        if key not in _KNOWN_SECTIONS and key not in defaults:
+        if key not in _KNOWN_SECTIONS and key not in _UNSAFE_GLOBAL_DEFAULT_KEYS and key not in defaults:
             defaults[key] = val
 
     valid_fields = Config.__dataclass_fields__
