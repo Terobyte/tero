@@ -22,23 +22,37 @@ class BugEntry:
 
 # ── JSON extraction ───────────────────────────────────────────────────────────
 
-def _strip_trailing_commas(json_text: str) -> str:
+def strip_trailing_commas(json_text: str) -> str:
     """Remove trailing commas before ] or } to fix common LLM JSON quirks."""
     return re.sub(r",\s*([}\]])", r"\1", json_text)
 
 
-def _extract_json_from_text(text: str) -> list[str]:
+def _append_unique_candidate(
+    candidates: list[str],
+    seen: set[str],
+    candidate: str,
+) -> None:
+    """Append a JSON candidate once, preserving first-seen order."""
+    normalized = candidate.strip()
+    if not normalized or normalized in seen:
+        return
+    seen.add(normalized)
+    candidates.append(normalized)
+
+
+def extract_json_from_text(text: str) -> list[str]:
     """Extract potential JSON arrays from LLM output using multiple strategies."""
     candidates: list[str] = []
+    seen: set[str] = set()
 
     # Strategy 1: ```json blocks
     for match in re.findall(r"```json\s*\n(.*?)\s*```", text, re.DOTALL):
-        candidates.append(match)
+        _append_unique_candidate(candidates, seen, match)
 
     # Strategy 2: ``` blocks starting with [
     for match in re.findall(r"```\s*\n(.*?)\s*```", text, re.DOTALL):
         if match.strip().startswith("["):
-            candidates.append(match)
+            _append_unique_candidate(candidates, seen, match)
 
     # Strategy 3: bracket-matched [...] arrays
     depth = 0
@@ -52,11 +66,11 @@ def _extract_json_from_text(text: str) -> list[str]:
         elif ch == "]" and depth > 0:
             depth -= 1
             if depth == 0 and start is not None:
-                candidates.append(text[start : i + 1])
+                _append_unique_candidate(candidates, seen, text[start : i + 1])
                 start = None
 
     # Strategy 4: entire text
-    candidates.append(text.strip())
+    _append_unique_candidate(candidates, seen, text)
 
     # Strategy 5: standalone {...} objects with "file" and "line"
     obj_depth = 0
@@ -72,7 +86,7 @@ def _extract_json_from_text(text: str) -> list[str]:
             if obj_depth == 0 and obj_start is not None:
                 obj_text = text[obj_start : i + 1]
                 if '"file"' in obj_text and '"line"' in obj_text:
-                    candidates.append("[" + obj_text + "]")
+                    _append_unique_candidate(candidates, seen, "[" + obj_text + "]")
                 obj_start = None
 
     return candidates
@@ -80,11 +94,13 @@ def _extract_json_from_text(text: str) -> list[str]:
 
 def _normalize_description(desc: str) -> str:
     """Normalize a bug description for dedup comparison."""
-    s = re.sub(r"^[\-\d.]+\s*", "", desc.strip())
+    s = desc.strip()
+    s = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", s)
     s = re.sub(r"^(High|Medium|Low|Critical):\s*", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"(?:line|L|#)\s*\d+", "", s)
-    s = re.sub(r":\d+", "", s)
-    return s.lower().strip()[:60]
+    s = re.sub(r"(?:\b(?:line|L)\s*\d+\b|#\s*\d+\b)", "", s)
+    s = re.sub(r":\d+\b", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.lower().strip()
 
 
 def renumber_bugs(bugs: list[BugEntry]) -> None:
@@ -131,13 +147,13 @@ def parse_bugs(raw_output: str, start_id: int = 1) -> list[BugEntry]:
         raw_output: Raw text from the player model.
         start_id: First bug ID to assign (allows merging across iterations).
     """
-    candidates = _extract_json_from_text(raw_output)
+    candidates = extract_json_from_text(raw_output)
 
     raw_bugs: list[dict] = []
     seen_entries: set[tuple[str, int, str]] = set()
 
     for candidate in candidates:
-        cleaned = _strip_trailing_commas(candidate)
+        cleaned = strip_trailing_commas(candidate)
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
@@ -204,9 +220,12 @@ def merge_bugs(existing: list[BugEntry], new_bugs: list[BugEntry]) -> list[BugEn
     New bugs that share (file, line) or (file, normalized_description) with
     an existing bug are discarded.
     """
-    seen_lines: set[tuple[str, int]] = {(b.file, b.line) for b in existing}
+    seen_lines: set[tuple[str, int]] = {
+        (b.file, b.line) for b in existing if b.status != "fixed"
+    }
     seen_descs: set[tuple[str, str]] = {
-        (b.file, _normalize_description(b.description)) for b in existing
+        (b.file, _normalize_description(b.description))
+        for b in existing if b.status != "fixed"
     }
     result = list(existing)
     for bug in new_bugs:

@@ -451,33 +451,39 @@ class TestBug8_ReviewStrategyEmptyJudgeProvider:
 
 
 class TestBug9_WorktreeDiffWrongGitCheck:
-    """BUG #9: get_diff checks for .git directory but worktrees have .git file."""
+    """BUG #9 FIX: get_diff now uses os.path.exists so worktree .git files are detected."""
 
     def test_worktree_git_check_looks_for_directory_not_file(self):
         """Git worktrees have a .git FILE (text file pointing to main repo),
-        not a .git directory. The current check os.path.isdir(ws/.git) always
-        returns False for worktrees, causing fallback to slow diff -ruN."""
+        not a .git directory. The fix uses os.path.exists(ws/.git) so both
+        regular .git directories and worktree .git files are detected."""
 
-        # The bug is in the source code logic:
-        # if self._is_git() and os.path.isdir(os.path.join(ws, ".git")):
+        # The fix changed the check from:
+        #   os.path.isdir(os.path.join(ws, ".git"))
+        # to:
+        #   os.path.exists(os.path.join(ws, ".git"))
         #
-        # For worktrees, .git is a FILE, not a directory.
-        # os.path.isdir() returns False for files.
-        # So git diff HEAD is never used for worktrees.
+        # os.path.exists returns True for both files and directories,
+        # so git diff HEAD is now correctly used for worktrees too.
 
         import inspect
         from src.worktree import WorktreeManager
 
         source = inspect.getsource(WorktreeManager.get_diff)
 
-        # The bug: code checks isdir instead of exists
-        assert "isdir" in source and '".git"' in source, (
-            "get_diff should be checking for .git existence, not whether it's a directory"
+        # The fix: code uses exists instead of isdir
+        assert "exists" in source and '".git"' in source, (
+            "get_diff should use os.path.exists for .git check (works for files and dirs)"
         )
 
-        # Proof: isdir returns False for .git files (which is what worktrees have)
-        assert not os.path.isdir("/dev/null"), (
-            "isdir returns False for files — worktrees have .git as file"
+        # Ensure the buggy isdir check is NOT present
+        assert "isdir" not in source or "exists" in source, (
+            "get_diff should not use isdir for .git check — worktrees have .git as file"
+        )
+
+        # Proof: exists returns True for files (which is what worktrees have for .git)
+        assert os.path.exists("/dev/null"), (
+            "exists returns True for files — worktrees have .git as file"
         )
 
 

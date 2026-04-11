@@ -74,23 +74,39 @@ class ClaudeNativeProvider:
             await proc.stdin.drain()
             proc.stdin.close()
 
-            async for line in proc.stdout:
-                line = line.decode().strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    yield event
-                except json.JSONDecodeError:
-                    yield {"type": "text", "text": line}
+            # Drain stderr concurrently so a full stderr pipe cannot
+            # deadlock the stdout streaming loop.
+            stderr_chunks: list[bytes] = []
+
+            async def _drain_stderr() -> None:
+                while True:
+                    chunk = await proc.stderr.read(4096)
+                    if not chunk:
+                        break
+                    stderr_chunks.append(chunk)
+
+            stderr_task = asyncio.create_task(_drain_stderr())
+
+            try:
+                async for line in proc.stdout:
+                    line = line.decode().strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        yield event
+                    except json.JSONDecodeError:
+                        yield {"type": "text", "text": line}
+            finally:
+                await stderr_task
 
             await proc.wait()
 
             if proc.returncode and proc.returncode != 0:
-                stderr = await proc.stderr.read()
+                stderr_text = b"".join(stderr_chunks).decode(errors="replace").strip()
+                detail = stderr_text or "(no stderr — check stdout for errors)"
                 raise RuntimeError(
-                    f"claude CLI exited with code {proc.returncode}: "
-                    f"{stderr.decode()}"
+                    f"claude CLI exited with code {proc.returncode}: {detail}"
                 )
         finally:
             if proc and proc.returncode is None:

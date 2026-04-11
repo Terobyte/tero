@@ -4,7 +4,7 @@ import inspect
 import re
 from dataclasses import dataclass, replace
 
-from src.feedback import Approved, Feedback
+from src.feedback import Approved, Feedback, NoVerdict
 from src.plan_tracker import PlanItem, Phase
 
 
@@ -677,7 +677,7 @@ class BatchExecutor:
 
             if isinstance(verdict, Approved):
                 return True
-            if getattr(type(verdict), "__name__", "") == "NoVerdict":
+            if isinstance(verdict, NoVerdict):
                 coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
                 streaming_ui.print_step_rejected(coach_feedback)
                 continue
