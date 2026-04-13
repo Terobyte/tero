@@ -2,18 +2,23 @@
 
 import json
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from src.config import get_context_window
+from src.constants import (
+    DEFAULT_CONTEXT_LIMIT,
+    DEFAULT_COMPACT_THRESHOLD,
+)
 
 _ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
 _ZAI_DEFAULT_MODEL = "glm-5.1"
 
-# Claude Code assumes ~200k context for unrecognised models.
-# We rescale autoCompactThreshold so compaction fires at the right real-window size.
-_CLAUDE_CODE_ASSUMED_WINDOW = 200_000
-
 try:
     from claude_agent_sdk import query, ClaudeAgentOptions
+
     SDK_AVAILABLE = True
 except ImportError:
     SDK_AVAILABLE = False
@@ -24,13 +29,16 @@ except ImportError:
 @dataclass
 class ZaiConfig:
     """Configuration for the Z.AI provider."""
+
     claude_home: str = "~/.claude-zai"
     default_model: str = _ZAI_DEFAULT_MODEL
 
 
 def _load_token(claude_home: str) -> str:
     """Read ZAI_API_KEY from env, then fall back to settings.json in claude_home."""
-    token = os.environ.get("ZAI_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+    token = (
+        os.environ.get("ZAI_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+    )
     if token:
         return token
 
@@ -39,7 +47,11 @@ def _load_token(claude_home: str) -> str:
         try:
             data = json.loads(settings_path.read_text())
             env_vals = data.get("env", {})
-            return env_vals.get("ZAI_API_KEY") or env_vals.get("ANTHROPIC_AUTH_TOKEN") or ""
+            return (
+                env_vals.get("ZAI_API_KEY")
+                or env_vals.get("ANTHROPIC_AUTH_TOKEN")
+                or ""
+            )
         except (OSError, json.JSONDecodeError):
             pass
     return ""
@@ -59,7 +71,9 @@ def _make_compact_hooks(context_limit: int, threshold: float) -> dict:
             ),
         }
 
-    return {"PreCompact": [{"matcher": None, "hooks": [on_pre_compact], "timeout": None}]}
+    return {
+        "PreCompact": [{"matcher": None, "hooks": [on_pre_compact], "timeout": None}]
+    }
 
 
 class ZaiProvider:
@@ -75,8 +89,8 @@ class ZaiProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
-        context_limit: int = 110_000,
-        compact_threshold: float = 0.85,
+        context_limit: int = DEFAULT_CONTEXT_LIMIT,
+        compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
     ):
         """Run a turn using the Z.AI API via Claude Code agent loop.
 
@@ -93,42 +107,61 @@ class ZaiProvider:
 
         resolved_model = model or self.config.default_model
 
-        env = {
-            "ANTHROPIC_BASE_URL": _ZAI_BASE_URL,
-            "ANTHROPIC_AUTH_TOKEN": token,
-            "ANTHROPIC_MODEL": resolved_model,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": resolved_model,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": resolved_model,
-            "CLAUDE_HOME": os.path.expanduser(self.config.claude_home),
-            # Clear the nested-session guard so the subprocess starts cleanly.
-            # The SDK merges {**os.environ, **env}, so this overrides the
-            # CLAUDECODE var set by the parent tero/Claude Code session.
-            "CLAUDECODE": "",
-        }
+        # Isolate CLAUDE_CONFIG_DIR per run so parallel tero instances don't conflict.
+        # Two concurrent runs sharing the same ~/.claude-zai causes history.jsonl
+        # write conflicts and session state races.
+        base_claude_home = os.path.expanduser(self.config.claude_home)
+        tmp_claude_home = None
+        try:
+            tmp_claude_home = tempfile.mkdtemp(prefix="claude-zai-run-")
+            base_settings = Path(base_claude_home) / "settings.json"
+            if base_settings.exists():
+                shutil.copy2(base_settings, Path(tmp_claude_home) / "settings.json")
+            env = {
+                "ANTHROPIC_BASE_URL": _ZAI_BASE_URL,
+                "ANTHROPIC_AUTH_TOKEN": token,
+                "ANTHROPIC_MODEL": resolved_model,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": resolved_model,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": resolved_model,
+                "CLAUDE_CONFIG_DIR": tmp_claude_home,
+                # Clear the nested-session guard so the subprocess starts cleanly.
+                # The SDK merges {**os.environ, **env}, so this overrides the
+                # CLAUDECODE var set by the parent tero/Claude Code session.
+                "CLAUDECODE": "",
+            }
 
-        target_compact_tokens = int(context_limit * compact_threshold)
-        adjusted_threshold = max(
-            0.1, min(0.9, target_compact_tokens / _CLAUDE_CODE_ASSUMED_WINDOW)
-        )
-        settings = json.dumps({"autoCompactThreshold": round(adjusted_threshold, 3)})
+            model_window = get_context_window(resolved_model) or context_limit
+            target_compact_tokens = int(context_limit * compact_threshold)
+            adjusted_threshold = max(
+                0.1, min(0.9, target_compact_tokens / model_window)
+            )
+            settings = json.dumps(
+                {"autoCompactThreshold": round(adjusted_threshold, 3)}
+            )
 
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            cwd=working_dir,
-            env=env,
-            permission_mode="bypassPermissions",
-            max_turns=max_turns,
-            hooks=_make_compact_hooks(context_limit, compact_threshold),
-            settings=settings,
-        )
+            options = ClaudeAgentOptions(
+                system_prompt=system_prompt,
+                cwd=working_dir,
+                env=env,
+                permission_mode="bypassPermissions",
+                max_turns=max_turns,
+                hooks=_make_compact_hooks(context_limit, compact_threshold),
+                settings=settings,
+            )
 
-        async for message in query(prompt=prompt, options=options):
-            yield message
+            async for message in query(prompt=prompt, options=options):
+                yield message
+        finally:
+            if tmp_claude_home:
+                shutil.rmtree(tmp_claude_home, ignore_errors=True)
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if Z.AI provider is ready to use."""
         if not SDK_AVAILABLE:
-            return False, "claude-agent-sdk not installed. Run: pip install claude-agent-sdk"
+            return (
+                False,
+                "claude-agent-sdk not installed. Run: pip install claude-agent-sdk",
+            )
         token = _load_token(self.config.claude_home)
         if not token:
             return False, "No Z.AI auth token. Set ZAI_API_KEY env var."

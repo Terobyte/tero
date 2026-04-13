@@ -64,6 +64,7 @@ def _build_continuation_prompt(
 
 async def _compact_codex_context(provider, messages: list, config) -> str:
     """Generate a compact summary of previous Codex turn for use in next prompt."""
+    import inspect as _inspect
     summary = _build_compact_summary(messages)
     if not summary:
         return ""
@@ -72,15 +73,22 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
         "files changed, current state, pending work. Be brief.\n\n"
         f"{summary}"
     )
+    model = getattr(config, "player_model", "") or getattr(config, "coach_model", "") or ""
+    run_kwargs: dict = {
+        "prompt": compact_prompt,
+        "system_prompt": "You are a concise summarizer.",
+        "working_dir": config.working_dir,
+        "max_turns": 3,
+        "model": model,
+    }
+    params = _inspect.signature(provider.run).parameters
+    accepts_kwargs = any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values())
+    context_limit = getattr(config, "context_limit", 0)
+    if context_limit and ("context_limit" in params or accepts_kwargs):
+        run_kwargs["context_limit"] = context_limit
     result_parts = []
     try:
-        async for chunk in provider.run(
-            prompt=compact_prompt,
-            system_prompt="You are a concise summarizer.",
-            working_dir=config.working_dir,
-            max_turns=3,
-            model=getattr(config, "player_model", "") or getattr(config, "coach_model", "") or "",
-        ):
+        async for chunk in provider.run(**run_kwargs):
             text = getattr(chunk, "text", None) or ""
             if text:
                 result_parts.append(text)

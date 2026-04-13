@@ -1,7 +1,5 @@
 """OpenCode provider — MIMO, Kimi, and other free models via opencode CLI."""
 
-import asyncio
-import inspect
 import json
 import os
 import shutil
@@ -14,9 +12,14 @@ from .message_adapter import (
     ToolUseBlock,
     ToolResultBlock,
 )
+from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
+from src.constants import (
+    MAX_TOOL_OUTPUT_CHARS,
+    DEFAULT_PROVIDER_TIMEOUT_S,
+)
 
-MAX_TOOL_OUTPUT = 8000
+MAX_TOOL_OUTPUT = MAX_TOOL_OUTPUT_CHARS
 
 
 @dataclass
@@ -25,7 +28,7 @@ class OpenCodeConfig:
 
     command: str = "opencode"
     default_model: str = "opencode/mimo-v2-pro-free"
-    default_timeout: int = 900
+    default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
     display_name: str = "OpenCode"
 
 
@@ -53,6 +56,7 @@ class OpenCodeProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        context_limit: int = 0,
     ):
         """Run OpenCode agent via CLI and yield adapted messages.
 
@@ -70,75 +74,23 @@ class OpenCodeProvider:
         cmd = self._build_command(model, working_dir)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
 
-        proc = None
+        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=full_prompt.encode("utf-8"))
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-            )
-
-            await self._write_stdin(proc.stdin, full_prompt)
-
-            line_iter = self._iter_stdout_lines(proc.stdout)
-            try:
-                async for line in line_iter:
-                    decoded = line.decode("utf-8").strip()
-                    if not decoded:
-                        continue
-                    try:
-                        event = json.loads(decoded)
-                    except json.JSONDecodeError:
-                        continue
-
+            async for event in _gen:
+                if isinstance(event, SubprocessExit):
+                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
+                    if stderr_message is not None:
+                        yield stderr_message
+                    self._raise_for_returncode(event.returncode, event.stderr)
+                else:
                     adapted = self._adapt_opencode_event(event)
                     if adapted is None:
                         continue
                     messages = adapted if isinstance(adapted, list) else [adapted]
                     for message in messages:
                         yield message
-            finally:
-                await line_iter.aclose()
-
-            # Start reading stderr in background before waiting for process
-            # to avoid deadlock if subprocess writes >64KB to stderr
-            stderr_task = asyncio.create_task(self._stderr_message_read_task(proc.stderr))
-            await proc.wait()
-            stderr_bytes = await stderr_task
-
-            stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
-            if stderr_message is not None:
-                yield stderr_message
-            self._raise_for_returncode(proc.returncode, stderr_bytes)
-
         finally:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
-
-    async def _iter_stdout_lines(self, stdout):
-        """Yield stdout lines without relying on StreamReader.readline limits."""
-        if stdout is None:
-            return
-
-        if hasattr(stdout, "read"):
-            buffer = b""
-            while True:
-                chunk = await stdout.read(65_536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    yield line
-            if buffer:
-                yield buffer
-            return
-
-        async for line in stdout:
-            yield line
+            await _gen.aclose()
 
     def _build_command(self, model: str = "", working_dir: str = "") -> list[str]:
         """Build opencode run CLI command."""
@@ -174,42 +126,9 @@ class OpenCodeProvider:
             )
         return user_prompt
 
-    async def _write_stdin(self, stdin, text: str) -> None:
-        """Write stdin payload, tolerating sync and async test doubles."""
-        if stdin is None:
-            return
-
-        try:
-            write_result = stdin.write(text.encode("utf-8"))
-            if inspect.isawaitable(write_result):
-                await write_result
-
-            drain = getattr(stdin, "drain", None)
-            if drain is not None:
-                drain_result = drain()
-                if inspect.isawaitable(drain_result):
-                    await drain_result
-        except (BrokenPipeError, ConnectionResetError):
-            return
-        finally:
-            try:
-                close_result = stdin.close()
-                if inspect.isawaitable(close_result):
-                    await close_result
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    async def _stderr_message_read_task(self, stderr) -> bytes:
-        """Read stderr stream and return bytes (or empty bytes if None).
-
-        Used as a background task to avoid deadlock: starts reading stderr
-        BEFORE proc.wait(), so that large stderr writes don't block the process.
-        """
-        if stderr is None:
-            return b""
-        return await stderr.read()
-
-    async def _stderr_message_from_bytes(self, stderr_data: bytes) -> AdaptedMessage | None:
+    async def _stderr_message_from_bytes(
+        self, stderr_data: bytes
+    ) -> AdaptedMessage | None:
         """Convert stderr bytes into a non-fatal assistant message."""
         if isinstance(stderr_data, bytes):
             stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
@@ -224,15 +143,9 @@ class OpenCodeProvider:
             type="text",
         )
 
-    async def _stderr_message(self, stderr) -> AdaptedMessage | None:
-        """Convert stderr output into a non-fatal assistant message."""
-        if stderr is None:
-            return None
-
-        stderr_data = await stderr.read()
-        return await self._stderr_message_from_bytes(stderr_data)
-
-    def _raise_for_returncode(self, returncode: int | None, stderr_data: bytes | str) -> None:
+    def _raise_for_returncode(
+        self, returncode: int | None, stderr_data: bytes | str
+    ) -> None:
         """Raise when the OpenCode subprocess exits unsuccessfully."""
         if returncode in (None, 0):
             return
@@ -258,26 +171,32 @@ class OpenCodeProvider:
         return [
             AdaptedMessage(
                 role="assistant",
-                content=[ToolUseBlock(
-                    id=call_id,
-                    name=part.get("tool", "bash"),
-                    input={"command": cmd},
-                )],
+                content=[
+                    ToolUseBlock(
+                        id=call_id,
+                        name=part.get("tool", "bash"),
+                        input={"command": cmd},
+                    )
+                ],
                 stop_reason="tool_use",
                 type="tool_use",
             ),
             AdaptedMessage(
                 role="tool",
-                content=[ToolResultBlock(
-                    tool_use_id=call_id,
-                    content=result_text,
-                    is_error=(exit_code is not None and exit_code != 0),
-                )],
+                content=[
+                    ToolResultBlock(
+                        tool_use_id=call_id,
+                        content=result_text,
+                        is_error=(exit_code is not None and exit_code != 0),
+                    )
+                ],
                 type="tool_result",
             ),
         ]
 
-    def _adapt_opencode_event(self, event: dict) -> AdaptedMessage | list[AdaptedMessage] | None:
+    def _adapt_opencode_event(
+        self, event: dict
+    ) -> AdaptedMessage | list[AdaptedMessage] | None:
         """Convert OpenCode JSONL event to AdaptedMessage.
 
         Event types:
