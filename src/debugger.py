@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import subprocess
@@ -10,7 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import Config
+from src.config import Config, get_effective_context_limit
+from src.role_router import _provider_model
 from src.constants import (
     DEBUG_RETRY_BACKOFF_S,
     DEBUG_STALE_THRESHOLD_S,
@@ -26,7 +28,7 @@ from src.debugger_bugs import (
     write_bugs_md,
     write_final_report,
 )
-from src.debugger_context import build_context, plan_file_chunks
+from src.debugger_context import build_context, plan_file_chunks, ContextCache
 from src.debugger_prompts import INTENSITY_PROMPTS, TESTER_PROMPT, FIXER_PROMPT
 from src.errors import ProviderError
 from src.providers import create_provider
@@ -155,8 +157,11 @@ class Debugger:
         self._start_time = 0.0
         self._inconclusive_reason: str | None = None
 
+        # Context cache — avoids re-reading unchanged files between iterations
+        self._cache = ContextCache()
+
         # Chunk planning — split codebase into context-sized pieces
-        self._chunks = plan_file_chunks(self.working_dir)
+        self._chunks = plan_file_chunks(self.working_dir, cache=self._cache)
         self._chunk_cursor = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -224,8 +229,10 @@ class Debugger:
                 fixed_count = await self._run_fixer(confirmed)
                 if fixed_count is None:
                     break
+                self._cache.clear()  # files changed by fixer
                 if fixed_count > 0:
-                    self._git_commit(self._iteration, fixed_count)
+                    bug_files = sorted({b.file for b in confirmed})
+                    self._git_commit(self._iteration, fixed_count, bug_files)
 
             # Write once per iteration after all phases complete
             write_bugs_md(self._bugs, bugs_md_path, self._iteration)
@@ -263,7 +270,7 @@ class Debugger:
         self, chunk: list[str] | None = None
     ) -> list[BugEntry] | None:
         """Run the player (bug-finder) on the given file chunk."""
-        context = build_context(self.working_dir, file_subset=chunk)
+        context = build_context(self.working_dir, file_subset=chunk, cache=self._cache)
         prompts = INTENSITY_PROMPTS.get(
             self.config.debug_intensity, INTENSITY_PROMPTS["medium"]
         )
@@ -318,7 +325,9 @@ class Debugger:
         )
         # Targeted context: only files mentioned in bugs
         bug_files = sorted({b.file for b in bugs})
-        context = build_context(self.working_dir, file_subset=bug_files)
+        context = build_context(
+            self.working_dir, file_subset=bug_files, cache=self._cache
+        )
         user_prompt = (
             f"## Bug List to Verify\n\n{bug_list}\n\n## Code Context\n\n{context}"
         )
@@ -350,7 +359,11 @@ class Debugger:
         for bug in bugs:
             result = results.get(bug.id, {})
             status = result.get("status", "open")
-            if status in (BugStatus.CONFIRMED, BugStatus.FALSE_POSITIVE, BugStatus.INVALID_TEST):
+            if status in (
+                BugStatus.CONFIRMED,
+                BugStatus.FALSE_POSITIVE,
+                BugStatus.INVALID_TEST,
+            ):
                 transition_bug(bug, status)
                 bug.test_file = result.get("test_file")
                 # A "confirmed" bug with no test file can never be verified
@@ -375,7 +388,9 @@ class Debugger:
         )
         # Targeted context: only files with confirmed bugs
         bug_files = sorted({b.file for b in confirmed})
-        context = build_context(self.working_dir, file_subset=bug_files)
+        context = build_context(
+            self.working_dir, file_subset=bug_files, cache=self._cache
+        )
         user_prompt = (
             f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n## Code Context\n\n{context}"
         )
@@ -410,16 +425,41 @@ class Debugger:
         pulse: _Pulse | None = None,
     ) -> _CollectedTextResult:
         """Collect text from provider with retry and live pulse status."""
+        resolved_model = model or _provider_model(provider) or "unknown"
+        effective_limit = get_effective_context_limit(
+            resolved_model, self.config.context_limit, provider=provider
+        )
+
+        params = inspect.signature(provider.run).parameters
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        has_compaction = "context_limit" in params or accepts_kwargs
+
+        # Providers without compaction (e.g. OpenCode) need a tighter turn cap:
+        # without mid-run compaction, the context window fills up and the model
+        # hangs. Reserve 50% for initial prompt+context; 25% otherwise.
+        _TOKENS_PER_TOOL_TURN = 3_000
+        reserve = 0.25 if has_compaction else 0.50
+        safe_max_turns = max(5, int(effective_limit * (1 - reserve)) // _TOKENS_PER_TOOL_TURN)
+        actual_max_turns = min(max_turns, safe_max_turns)
+
+        run_kwargs: dict = {
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "working_dir": self.working_dir,
+            "max_turns": actual_max_turns,
+            "model": model,
+        }
+        if "context_limit" in params or accepts_kwargs:
+            run_kwargs["context_limit"] = effective_limit
+        if "compact_threshold" in params or accepts_kwargs:
+            run_kwargs["compact_threshold"] = self.config.compact_threshold
+
         for attempt in range(len(_RETRY_BACKOFF_S) + 1):
             parts: list[str] = []
             try:
-                async for message in provider.run(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    working_dir=self.working_dir,
-                    max_turns=max_turns,
-                    model=model,
-                ):
+                async for message in provider.run(**run_kwargs):
                     if pulse:
                         pulse.heartbeat()
                     self._extract_text(message, parts)
@@ -436,8 +476,6 @@ class Debugger:
                         await asyncio.sleep(1)
                 else:
                     await asyncio.sleep(wait)
-
-        return _CollectedTextResult(text="", completed=False)
 
     @staticmethod
     def _extract_text(message, parts: list[str]) -> None:
@@ -483,15 +521,25 @@ class Debugger:
         else:
             print(f"── Iteration {self._iteration} ──────────────────────────────────")
 
-    def _git_commit(self, iteration: int, count: int) -> None:
-        """Commit all changes after a fix iteration."""
+    def _git_commit(
+        self, iteration: int, count: int, files: list[str] | None = None
+    ) -> None:
+        """Commit changes after a fix iteration."""
         try:
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=self.working_dir,
-                check=True,
-                capture_output=True,
-            )
+            if files:
+                subprocess.run(
+                    ["git", "add", "--"] + files,
+                    cwd=self.working_dir,
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=self.working_dir,
+                    check=True,
+                    capture_output=True,
+                )
             msg = f"fix(debugger): iteration {iteration} — {count} bug(s) fixed"
             subprocess.run(
                 ["git", "commit", "-m", msg],
