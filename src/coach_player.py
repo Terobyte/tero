@@ -48,6 +48,10 @@ from src.prompts import (
 from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
 from src.providers.codex import CodexProvider
+from src.role_router import RoleRouter, format_provider_display, _provider_model
+from src.constants import BATCH_REVIEW_MAX_TURNS
+from src.process_guard import ProcessGuard
+from src.turn_runner import AgentTurnRunner
 
 from src import streaming as streaming_ui
 from src.streaming import BOLD, RESET, GREEN, RED, YELLOW
@@ -83,7 +87,6 @@ class SessionResult:
 class CoachPlayerSession:
     """Runs step-by-step coach-player feedback loop."""
 
-    BATCH_REVIEW_MAX_TURNS = 4
     REQUIRED_PLAYER_REPORT_HEADERS = ("what changed:", "evidence:", "verification:")
 
     def __init__(self, config: Config, requirements: str, plan_file_path: str = ""):
@@ -100,12 +103,20 @@ class CoachPlayerSession:
         self.player_provider = self._get_or_create_provider(config.player_provider)
         self.coach_provider = self._get_or_create_provider(config.coach_provider)
 
+        self.router = RoleRouter(
+            config=self.config,
+            get_or_create_provider=self._get_or_create_provider,
+            player_provider=self.player_provider,
+            coach_provider=self.coach_provider,
+        )
+
         self._runtime = RuntimeControls()
         self._last_turn_result: TurnResult | None = None
+        self._process_guard = ProcessGuard(verbose=config.verbose)
+        self._turn_runner = AgentTurnRunner(verbose=config.verbose)
 
-        # Resolve role labels using the actual runtime model/provider config.
-        self.player_model = self._build_role_display("player")
-        self.coach_model = self._build_role_display("coach")
+        self.player_model = self.router.display_label_for("player")
+        self.coach_model = self.router.display_label_for("coach")
 
         # Initialize review provider if code_review is enabled
         self.review_provider = None
@@ -123,44 +134,18 @@ class CoachPlayerSession:
 
     def _verify_providers_ready(self) -> None:
         """Verify all providers are ready, raise if not."""
-        providers_to_check = [
-            ("player", self.config.player_provider, self.player_provider),
-            ("coach", self.config.coach_provider, self.coach_provider),
-        ]
+        roles = ["player", "coach"]
 
         if self.config.tdd_mode:
-            providers_to_check.append(
-                (
-                    "test_writer",
-                    self.config.test_writer_provider or self.config.coach_provider,
-                    self._provider_for_role("test_writer"),
-                )
-            )
+            roles.append("test_writer")
 
         if self.config.preplan_mode:
-            providers_to_check.append(
-                (
-                    "preplanner",
-                    self.config.preplan_provider,
-                    self._provider_for_role("preplanner"),
-                )
-            )
+            roles.append("preplanner")
 
         if self.config.code_review and self.review_provider is not None:
-            providers_to_check.append(
-                (
-                    "review",
-                    self._resolve_review_provider_name(),
-                    self._resolve_review_provider(),
-                )
-            )
+            roles.append("reviewer")
 
-        for role, provider_name, prov in providers_to_check:
-            ok, reason = prov.check_ready()
-            if not ok:
-                raise RuntimeError(
-                    f"{role} provider ({provider_name}) not ready: {reason}"
-                )
+        self.router.check_roles_ready(roles)
 
     def _init_review_provider(self) -> None:
         """Initialize review provider for code review phase."""
@@ -181,11 +166,13 @@ class CoachPlayerSession:
 
     def _check_provider_ready_without_cache(self, provider_name: str) -> bool:
         """Probe provider readiness without caching a possibly unusable instance."""
+        from src.errors import ProviderError
+
         try:
             provider = self._create_provider_uncached(provider_name)
             ok, _ = provider.check_ready()
             return ok
-        except Exception:
+        except ProviderError:
             return False
 
     def _get_or_create_provider(self, provider_name: str):
@@ -196,213 +183,23 @@ class CoachPlayerSession:
             )
         return self._provider_cache[provider_name]
 
-    def _provider_name_for_role(self, role: str) -> str:
-        """Return the configured provider name backing a runtime role."""
-        if role == "player":
-            return self.config.player_provider
-        if role == "coach":
-            return self.config.coach_provider
-        if role == "test_writer":
-            return self.config.test_writer_provider or self.config.coach_provider
-        if role == "preplanner":
-            return self.config.preplan_provider
-        if role == "reviewer":
-            return self._resolve_review_provider_name()
-        if role == "coach_fallback":
-            return self.config.coach_fallback_provider or self.config.coach_provider
-        raise ValueError(f"Unknown role: {role}")
-
-    def _provider_for_role(self, role: str):
-        """Return the provider instance backing a role."""
-        if role == "player":
-            return self.player_provider
-        if role == "coach":
-            return self.coach_provider
-        if role == "test_writer":
-            return self._get_or_create_provider(
-                self.config.test_writer_provider or self.config.coach_provider
-            )
-        if role == "preplanner":
-            return self._get_or_create_provider(self.config.preplan_provider)
-        if role == "reviewer":
-            return self._resolve_review_provider()
-        if role == "coach_fallback":
-            return self._get_or_create_provider(
-                self.config.coach_fallback_provider or self.config.coach_provider
-            )
-        raise ValueError(f"Unknown role: {role}")
-
-    def _resolve_review_provider_name(self) -> str:
-        """Return the current provider name for code review.
-
-        When `review_provider` is not explicitly configured, review follows the
-        live coach provider so runtime coach switches stay consistent.
-        """
-        explicit_review = (self.config.review_provider or "").strip()
-        if explicit_review:
-            return explicit_review
-        return self.config.coach_provider
-
-    def _resolve_review_provider(self):
-        """Return the current provider instance for code review."""
-        review_provider_name = self._resolve_review_provider_name()
-        if review_provider_name == self.config.coach_provider:
-            return self.coach_provider
-        return self._get_or_create_provider(review_provider_name)
-
-    def _resolve_review_model(self) -> str:
-        """Return the model override for code review.
-
-        Explicit review models win. Otherwise, when review follows the live
-        coach provider, reuse the current coach model so runtime switches stay
-        consistent across implementation and review.
-        """
-        if self.config.review_model:
-            return self.config.review_model
-        if self._resolve_review_provider_name() == self.config.coach_provider:
-            return self.config.coach_model
-        return self.review_model
-
-    @staticmethod
-    def _provider_model(provider) -> str:
-        """Best-effort lookup of the model that provider will use by default."""
-        env = getattr(provider, "env", None)
-        if env is not None:
-            model = getattr(env, "model", "")
-            if model:
-                return model
-
-        provider_config = getattr(provider, "config", None)
-        if provider_config is not None:
-            for attr in ("default_model", "model"):
-                value = getattr(provider_config, attr, "")
-                if value:
-                    return value
-
-        return ""
-
-    @staticmethod
-    def _provider_account(provider) -> str:
-        """Best-effort lookup of an account label for display."""
-        env = getattr(provider, "env", None)
-        if env is not None:
-            return getattr(env, "account_label", "") or ""
-        return ""
-
-    def _build_role_display(self, role: str) -> str:
-        """Build a stable label showing provider, model, and account."""
-        provider_name = self._provider_name_for_role(role)
-        provider = self._provider_for_role(role)
-        return self._format_provider_display(
-            provider_name, provider, getattr(self.config, f"{role}_model", "")
-        )
-
-    def _format_provider_display(
-        self, provider_name: str, provider, model_override: str = ""
-    ) -> str:
-        """Build a display label for any provider/model combination."""
-        resolved_model = model_override or self._provider_model(provider) or "default"
-        account = self._provider_account(provider)
-
-        parts = [provider_name, f"model={resolved_model}"]
-        if account:
-            parts.append(f"account={account}")
-        return " | ".join(parts)
-
     def build_provider_display(
         self, provider_name: str, model_override: str = ""
     ) -> str:
         """Public helper for UI labels outside the main role pair."""
         provider = self._get_or_create_provider(provider_name)
-        return self._format_provider_display(provider_name, provider, model_override)
+        return format_provider_display(provider_name, provider, model_override)
 
     def switch_runtime_role(self, role: str, provider_name: str, model: str) -> str:
         """Apply a live provider/model switch safely and return the new label."""
-        if role not in {"coach", "player"}:
-            raise ValueError(f"Unsupported runtime role switch: {role}")
-
-        provider = self._get_or_create_provider(provider_name)
-        ok, reason = provider.check_ready()
-        if not ok:
-            raise RuntimeError(f"{role} provider ({provider_name}) not ready: {reason}")
-
-        snapshot = {
-            "coach_provider": self.config.coach_provider,
-            "coach_model": self.config.coach_model,
-            "player_provider": self.config.player_provider,
-            "player_model": self.config.player_model,
-            "batch_pre_provider": self.config.batch_pre_provider,
-            "batch_pre_model": self.config.batch_pre_model,
-            "batch_post_provider": self.config.batch_post_provider,
-            "batch_post_model": self.config.batch_post_model,
-            "coach_fallback_provider": getattr(self.config, "coach_fallback_provider", ""),
-            "coach_fallback_model": getattr(self.config, "coach_fallback_model", ""),
-            "review_provider": getattr(self.config, "review_provider", ""),
-            "review_model": getattr(self.config, "review_model", ""),
-            "test_writer_provider": getattr(self.config, "test_writer_provider", ""),
-            "test_writer_model": getattr(self.config, "test_writer_model", ""),
-            "coach_provider_obj": self.coach_provider,
-            "player_provider_obj": self.player_provider,
-            "coach_display": self.coach_model,
-            "player_display": self.player_model,
-        }
-
-        try:
-            if role == "coach":
-                sync_batch_pre = getattr(
-                    self.config, "batch_pre_provider", ""
-                ) == snapshot["coach_provider"] and getattr(
-                    self.config, "batch_pre_model", ""
-                ) == snapshot["coach_model"]
-                sync_batch_post = getattr(
-                    self.config, "batch_post_provider", ""
-                ) == snapshot["coach_provider"] and getattr(
-                    self.config, "batch_post_model", ""
-                ) == snapshot["coach_model"]
-
-                self.config.coach_provider = provider_name
-                self.config.coach_model = model
-                if sync_batch_pre:
-                    self.config.batch_pre_provider = provider_name
-                    self.config.batch_pre_model = model
-                if sync_batch_post:
-                    self.config.batch_post_provider = provider_name
-                    self.config.batch_post_model = model
-                self.coach_provider = provider
-                self.coach_model = self._build_role_display("coach")
-                return self.coach_model
-
-            self.config.player_provider = provider_name
-            self.config.player_model = model
-            self.player_provider = provider
-            self.player_model = self._build_role_display("player")
-            return self.player_model
-        except Exception:
-            self.config.coach_provider = snapshot["coach_provider"]
-            self.config.coach_model = snapshot["coach_model"]
-            self.config.player_provider = snapshot["player_provider"]
-            self.config.player_model = snapshot["player_model"]
-            self.config.batch_pre_provider = snapshot["batch_pre_provider"]
-            self.config.batch_pre_model = snapshot["batch_pre_model"]
-            self.config.batch_post_provider = snapshot["batch_post_provider"]
-            self.config.batch_post_model = snapshot["batch_post_model"]
-            if hasattr(self.config, "coach_fallback_provider"):
-                self.config.coach_fallback_provider = snapshot["coach_fallback_provider"]
-            if hasattr(self.config, "coach_fallback_model"):
-                self.config.coach_fallback_model = snapshot["coach_fallback_model"]
-            if hasattr(self.config, "review_provider"):
-                self.config.review_provider = snapshot["review_provider"]
-            if hasattr(self.config, "review_model"):
-                self.config.review_model = snapshot["review_model"]
-            if hasattr(self.config, "test_writer_provider"):
-                self.config.test_writer_provider = snapshot["test_writer_provider"]
-            if hasattr(self.config, "test_writer_model"):
-                self.config.test_writer_model = snapshot["test_writer_model"]
-            self.coach_provider = snapshot["coach_provider_obj"]
-            self.player_provider = snapshot["player_provider_obj"]
-            self.coach_model = snapshot["coach_display"]
-            self.player_model = snapshot["player_display"]
-            raise
+        display = self.router.switch_role(role, provider_name, model)
+        if role == "coach":
+            self.coach_provider = self.router.provider_for("coach")
+            self.coach_model = display
+        else:
+            self.player_provider = self.router.provider_for("player")
+            self.player_model = display
+        return display
 
     def _setup_interrupt_handler(self):
         def handler(signum, frame):
@@ -412,72 +209,10 @@ class CoachPlayerSession:
         signal.signal(signal.SIGINT, handler)
 
     def _snapshot_pids(self) -> set[int]:
-        """Snapshot current PIDs with cwd inside the working directory."""
-        working_dir = os.path.abspath(self.config.working_dir)
-        pids: set[int] = set()
-        try:
-            # Use /proc or lsof to find processes whose cwd is in working_dir.
-            # Fall back to pgrep only for processes that have working_dir as
-            # a command argument — but filter to direct child processes to
-            # avoid matching unrelated processes that merely reference the path.
-            result = subprocess.run(
-                ["lsof", "+c", "0", "-Fn", working_dir],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    # lsof -Fn outputs "p<pid>" lines
-                    if line.startswith("p"):
-                        pid_str = line[1:].strip()
-                        if pid_str.isdigit():
-                            pids.add(int(pid_str))
-                return pids
-        except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError):
-            pass
-
-        # Fallback: pgrep with stricter matching (child processes only)
-        try:
-            result = subprocess.run(
-                ["pgrep", "-P", str(os.getpid()), "-f", working_dir],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return {
-                    int(pid)
-                    for pid in result.stdout.strip().split("\n")
-                    if pid.strip().isdigit()
-                }
-        except (subprocess.TimeoutExpired, ValueError, OSError):
-            pass
-        return pids
+        return self._process_guard.snapshot_pids()
 
     def _kill_new_processes(self, before: set[int]) -> None:
-        """Kill processes that appeared since the snapshot, including children."""
-        try:
-            import psutil
-        except ImportError:
-            return
-
-        after = self._snapshot_pids()
-        new_pids = after - before - {os.getpid()}
-        for pid in new_pids:
-            try:
-                proc = psutil.Process(pid)
-                children = proc.children(recursive=True)
-                for child in children:
-                    try:
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
-                pass
-        if new_pids and self.config.verbose:
-            print(f"  [cleanup] убито процессов: {len(new_pids)}")
+        self._process_guard.kill_new_processes(before)
 
     @staticmethod
     def _build_step_fallback_feedback(
@@ -559,48 +294,6 @@ class CoachPlayerSession:
             return "PHASE_COMPLETE" in (text or "").upper()
         return True
 
-    async def _build_continuation_retry_prompt(
-        self,
-        role: str,
-        base_prompt: str,
-        last_result: TurnResult,
-        provider,
-    ) -> str:
-        """Build a continuation prompt, compacting aggressively when context is near the limit."""
-        from src.context_manager import (
-            _build_compact_summary,
-            _build_continuation_prompt,
-            _compact_codex_context,
-        )
-
-        prompt_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
-        compact_limit = int(self.config.context_limit * self.config.compact_threshold)
-
-        if prompt_tokens > compact_limit:
-            compact_summary = await _compact_codex_context(
-                provider, last_result.messages, self.config
-            )
-            if compact_summary:
-                streaming_ui.print_compact_triggered(
-                    prompt_tokens, self.config.context_limit
-                )
-                return (
-                    f"Context compacted. Summary of previous work:\n{compact_summary}\n\n"
-                    f"Original task:\n{base_prompt}"
-                )
-
-        summary = (
-            _build_compact_summary(last_result.messages)
-            or last_result.text
-            or base_prompt
-        )
-        continuation = _build_continuation_prompt(
-            summary,
-            role=role,
-            require_phase_complete=self._needs_phase_complete(base_prompt),
-        )
-        return f"{continuation}\n\nOriginal task:\n{base_prompt}"
-
     async def _run_with_continuation(
         self,
         role: str,
@@ -612,53 +305,18 @@ class CoachPlayerSession:
         provider_override=None,
     ) -> TurnResult:
         """Retry incomplete player outputs with a continuation prompt."""
-        result = await self._run_turn(
+        return await self._turn_runner.run_with_continuation(
             role=role,
             prompt=prompt,
             system_prompt=system_prompt,
             max_turns=max_turns,
             timeout_s=timeout_s,
+            provider=self.router.provider_for(role),
+            router=self.router,
+            config=self.config,
             model_override=model_override,
             provider_override=provider_override,
         )
-
-        if role != "player":
-            return result
-
-        max_attempts = max(
-            0, int(getattr(self.config, "max_continuation_attempts", 0) or 0)
-        )
-        current_prompt = prompt
-
-        for attempt in range(1, max_attempts + 1):
-            if self._player_output_complete(result.text, current_prompt):
-                return result
-
-            provider = provider_override
-            if provider is None:
-                try:
-                    provider = self._provider_for_role(role)
-                except Exception:
-                    provider = None
-
-            streaming_ui.print_continuation_started(role, attempt, max_attempts)
-            current_prompt = await self._build_continuation_retry_prompt(
-                role=role,
-                base_prompt=current_prompt,
-                last_result=result,
-                provider=provider,
-            )
-            result = await self._run_turn(
-                role=role,
-                prompt=current_prompt,
-                system_prompt=system_prompt,
-                max_turns=max_turns,
-                timeout_s=timeout_s,
-                model_override=model_override,
-                provider_override=provider_override,
-            )
-
-        return result
 
     @staticmethod
     def _build_missing_player_report_feedback(step_text: str) -> Feedback:
@@ -740,15 +398,17 @@ class CoachPlayerSession:
                 }
             ]
 
-        preplanner_provider = self._provider_for_role("preplanner")
-        preplanner_label = self._format_provider_display(
+        preplanner_provider = self.router.provider_for("preplanner")
+        preplanner_label = format_provider_display(
             self.config.preplan_provider,
             preplanner_provider,
             self.config.preplan_model,
         )
         streaming_ui.print_preplanner_header(preplanner_label)
 
-        def _finalize_enriched_plan(items: list, phases: list, raw_text: str) -> tuple[list, list]:
+        def _finalize_enriched_plan(
+            items: list, phases: list, raw_text: str
+        ) -> tuple[list, list]:
             if not phases:
                 phases = auto_group_phases(items)
 
@@ -954,9 +614,14 @@ class CoachPlayerSession:
                             )
                             if summary:
                                 if self._last_turn_result.tokens_used > 0:
+                                    _eff = getattr(
+                                        self,
+                                        "_last_effective_context_limit",
+                                        self.config.context_limit,
+                                    )
                                     streaming_ui.print_compact_triggered(
                                         self._last_turn_result.tokens_used,
-                                        self.config.context_limit,
+                                        _eff,
                                     )
                                 compact_prompt_override = (
                                     f"Context compacted. Summary of previous work:\n{summary}\n\n"
@@ -1138,9 +803,11 @@ class CoachPlayerSession:
                     if isinstance(verdict, Approved):
                         # --- Code Review phase (iterative until zero bugs) ---
                         if self.config.code_review:
-                            review_provider = self._resolve_review_provider()
-                            review_provider_name = self._resolve_review_provider_name()
-                            review_model = self._resolve_review_model()
+                            review_provider = self.router.provider_for("reviewer")
+                            review_provider_name = self.router.provider_name_for(
+                                "reviewer"
+                            )
+                            review_model = self.router._resolve_review_model()
                             max_iter = self.config.max_review_iterations
                             review_cleared = False
                             review_feedback = Feedback(
@@ -1268,7 +935,9 @@ class CoachPlayerSession:
 
         record = RunRecord(
             run_id=generate_run_id(),
-            timestamp=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
             requirements_file=self.config.plan_file,
             turns_used=turns_used,
             max_turns=self.config.max_turns,
@@ -1302,144 +971,24 @@ class CoachPlayerSession:
         disable_tools: bool = False,
     ) -> TurnResult:
         """Run a single agent turn using the appropriate provider."""
-        start = time.time()
-        messages = []
-        tools_used = 0
-        tokens_used = 0
-
-        provider = provider_override or self._provider_for_role(role)
-        model = model_override or ""
-
-        def _update_native_usage() -> None:
-            nonlocal tokens_used
-            if tokens_used > 0:
-                return
-            input_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
-            output_tokens = int(getattr(provider, "_last_output_tokens", 0) or 0)
-            native_total = input_tokens + output_tokens
-            if native_total > 0:
-                tokens_used = native_total
-
-        async def _collect() -> None:
-            nonlocal tools_used, tokens_used
-            if self._interrupted:
-                return
-
-            # For code review with CodexProvider, use native run_review() method
-            if role == "reviewer" and isinstance(provider, CodexProvider):
-                async for msg in provider.run_review(
-                    working_dir=self.config.working_dir,
-                    review_prompt=prompt,
-                    model=model,
-                    uncommitted=True,
-                ):
-                    if self._interrupted:
-                        return
-
-                    # Adapt message for streaming
-                    if isinstance(msg, AdaptedMessage):
-                        messages.append(msg)
-                        tools_used += streaming_ui.stream_messages(
-                            msg, verbose=self.config.verbose, role=role
-                        )
-                    else:
-                        messages.append(msg)
-                        tools_used += streaming_ui.stream_messages(
-                            msg, verbose=self.config.verbose, role=role
-                        )
-                _update_native_usage()
-                return
-
-            run_kwargs = {
-                "prompt": prompt,
-                "system_prompt": system_prompt,
-                "working_dir": self.config.working_dir,
-                "max_turns": max_turns,
-                "model": model,
-            }
-
-            # Pass context limits to providers that support them
-            params = inspect.signature(provider.run).parameters
-            accepts_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-            )
-            if "context_limit" in params or accepts_kwargs:
-                run_kwargs["context_limit"] = self.config.context_limit
-            if "compact_threshold" in params or accepts_kwargs:
-                run_kwargs["compact_threshold"] = self.config.compact_threshold
-            if "disable_tools" in params or accepts_kwargs:
-                run_kwargs["disable_tools"] = disable_tools
-
-            async for msg in provider.run(**run_kwargs):
-                if self._interrupted:
-                    return
-
-                # Extract token usage from ResultMessage before adapting
-                if not isinstance(msg, dict) and type(msg).__name__ == "ResultMessage":
-                    usage = getattr(msg, "usage", None) or {}
-                    if isinstance(usage, dict):
-                        tokens_used = usage.get("input_tokens", 0) + usage.get(
-                            "output_tokens", 0
-                        )
-
-                # Adapt message if needed (for native CLI JSON)
-                adapted = None
-                if isinstance(msg, dict):
-                    adapted = adapt_claude_event(msg)
-                else:
-                    adapted = adapt_sdk_message(msg)
-
-                if adapted:
-                    messages.append(adapted)
-                    tools_used += streaming_ui.stream_messages(
-                        adapted, verbose=self.config.verbose, role=role
-                    )
-                else:
-                    messages.append(msg)
-                    tools_used += streaming_ui.stream_messages(
-                        msg, verbose=self.config.verbose, role=role
-                    )
-            _update_native_usage()
-
-        try:
-            await asyncio.wait_for(_collect(), timeout=timeout_s)
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(f"{role} exceeded timeout of {timeout_s}s") from exc
-
-        duration = time.time() - start
-        resolved_model = model or self._provider_model(provider)
-        from src.config import get_context_window
-
-        context_window = get_context_window(resolved_model)
-        streaming_ui.print_turn_timing(
-            role, duration, tools_used, tokens_used, context_window
+        result = await self._turn_runner.run_turn(
+            role=role,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            timeout_s=timeout_s,
+            provider=self.router.provider_for(role),
+            router=self.router,
+            config=self.config,
+            model_override=model_override,
+            provider_override=provider_override,
+            disable_tools=disable_tools,
         )
         runtime = getattr(self, "_runtime", None)
         if runtime is not None:
-            runtime.update_context(tokens_used, context_window)
-
-        text_parts = [
-            msg.get_text_content()
-            for msg in messages
-            if isinstance(msg, AdaptedMessage) and msg.role == "assistant"
-        ]
-        result_text = "\n".join(p for p in text_parts if p)
-
-        # Fallback: if no text from AssistantMessages, use ResultMessage.result
-        if not result_text:
-            for msg in messages:
-                if type(msg).__name__ == "ResultMessage":
-                    result_text = getattr(msg, "result", "") or ""
-                    break
-
-        return TurnResult(
-            role=role,
-            duration_s=duration,
-            tools_used=tools_used,
-            messages=messages,
-            text=result_text,
-            tokens_used=tokens_used,
-        )
+            context_window = self._turn_runner._last_effective_context_limit
+            runtime.update_context(result.tokens_used, context_window)
+        return result
 
     async def _run_coach_turn_for_phase(
         self,
@@ -1466,7 +1015,7 @@ class CoachPlayerSession:
 
         review_turn_budget = min(
             self.config.max_turns,
-            CoachPlayerSession.BATCH_REVIEW_MAX_TURNS,
+            BATCH_REVIEW_MAX_TURNS,
         )
 
         verdict = NoVerdict()
@@ -1544,7 +1093,9 @@ class CoachPlayerSession:
                 verdict = parse_coach_output(fallback_result.messages)
 
         if isinstance(verdict, NoVerdict):
-            print(f"\n  {BOLD}{YELLOW}⚠ Reviewer silent - rejecting phase for retry{RESET}")
+            print(
+                f"\n  {BOLD}{YELLOW}⚠ Reviewer silent - rejecting phase for retry{RESET}"
+            )
             return CoachPlayerSession._build_phase_fallback_feedback(
                 phase,
                 completed_steps,
@@ -1595,7 +1146,10 @@ class CoachPlayerSession:
             # Exit code 5 = no tests collected. In TDD mode this must fail closed,
             # otherwise the run silently skips the entire testing gate.
             if result.returncode == 5:
-                return False, "No tests collected — TDD requires at least one runnable test"
+                return (
+                    False,
+                    "No tests collected — TDD requires at least one runnable test",
+                )
             return result.returncode == 0, output
         except subprocess.TimeoutExpired:
             return False, f"Test command timed out after {self.config.test_timeout_s}s"

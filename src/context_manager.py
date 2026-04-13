@@ -84,8 +84,9 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
             text = getattr(chunk, "text", None) or ""
             if text:
                 result_parts.append(text)
-    except Exception:
-        # Return empty string on provider failure; caller already handles empty summaries
+    except Exception as exc:
+        import sys
+        print(f"  [compact] Warning: context compaction failed: {exc}", file=sys.stderr)
         return ""
     return "\n".join(result_parts)
 

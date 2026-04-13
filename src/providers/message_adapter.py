@@ -260,4 +260,49 @@ def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
     if isinstance(msg, dict):
         return adapt_claude_event(msg)
 
+    # Fallback: any object with a .content attribute (handles legacy/test objects
+    # that have content blocks but no recognised type name or .role attribute).
+    if hasattr(msg, "content"):
+        raw_content = msg.content
+        if isinstance(raw_content, str):
+            content: list = [TextBlock(text=raw_content)]
+        elif isinstance(raw_content, list):
+            content = raw_content
+        else:
+            content = [TextBlock(text=str(raw_content))]
+        return AdaptedMessage(
+            role=getattr(msg, "role", "assistant"),
+            content=content,
+            stop_reason=getattr(msg, "stop_reason", ""),
+            model=getattr(msg, "model", ""),
+            type=getattr(msg, "type", "assistant"),
+        )
+
     return None
+
+
+def normalize_message(msg: Any) -> "AdaptedMessage | None":
+    """Normalize any provider message format to AdaptedMessage.
+
+    Single entry point for all message format conversion. Handles:
+    - AdaptedMessage — passthrough (already adapted)
+    - SDK objects (AssistantMessage, ResultMessage, role-bearing objects)
+    - Raw dicts from claude CLI (stream-json events)
+    - Raw dicts from codex JSONL
+    - Bare strings — wrapped in a text-only AdaptedMessage
+
+    Returns None for unknown or empty/terminal event types.
+    """
+    if msg is None:
+        return None
+
+    if isinstance(msg, str):
+        if not msg:
+            return None
+        return AdaptedMessage(
+            role="assistant",
+            content=[TextBlock(text=msg)],
+            type="text",
+        )
+
+    return adapt_sdk_message(msg)

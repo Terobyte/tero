@@ -12,6 +12,7 @@ from src.bug_detector import BugDetector
 from src.judge import JudgeRunner
 from src.duel import DuelRunner
 from src.state import SessionManager, SessionState
+from src.errors import StateTransitionError
 from src.learning.recorder import RunRecorder
 
 # Learning modules are optional — pipeline works without them
@@ -19,6 +20,7 @@ try:
     from src.learning.analyzer import InsightsAnalyzer
     from src.learning.classifier import classify_task
     from src.learning.recommender import ConfigRecommender
+
     _LEARNING_AVAILABLE = True
 except ImportError:
     InsightsAnalyzer = None  # type: ignore[assignment,misc]
@@ -74,6 +76,7 @@ class Orchestrator:
     def run(self) -> OrchestratorResult:
         """Execute the full duel pipeline."""
         start_time = time.time()
+        round_num = 0
 
         try:
             # Create session state
@@ -81,11 +84,15 @@ class Orchestrator:
             self.session.transition(SessionState.PREPARING_WORKSPACES)
 
             # Classify task (optional — skip if learning modules unavailable)
-            classification = classify_task(self.config.plan_file) if _LEARNING_AVAILABLE else None
+            classification = (
+                classify_task(self.config.plan_file) if _LEARNING_AVAILABLE else None
+            )
 
             # Show recommendation
             if classification and self.recommender:
-                rec = self.recommender.recommend(classification.type, classification.complexity)
+                rec = self.recommender.recommend(
+                    classification.type, classification.complexity
+                )
                 if rec.confidence != "none":
                     print(f"\n📊 Recommendation (confidence: {rec.confidence}):")
                     if rec.agent_a and rec.agent_b:
@@ -107,19 +114,21 @@ class Orchestrator:
             )
             judge = JudgeRunner(self.registry.get(self.config.judge))
             duel = DuelRunner(
-                self.registry, self.worktree, bug_detector, judge,
+                self.registry,
+                self.worktree,
+                bug_detector,
+                judge,
                 workspace_a_name=self.config.agent_a_workspace,
                 workspace_b_name=self.config.agent_b_workspace,
             )
-
-            # Run rounds
-            round_num = 0
 
             while round_num < self.config.max_rounds:
                 round_num += 1
                 print(f"\n━━━ Round {round_num}/{self.config.max_rounds} ━━━")
 
-                self.session.transition(SessionState.AGENTS_RUNNING, {"current_round": round_num})
+                self.session.transition(
+                    SessionState.AGENTS_RUNNING, {"current_round": round_num}
+                )
 
                 # Bug fix #9: Use config.timeout_s instead of hardcoded 600
                 result = duel.run_round_sync(
@@ -134,22 +143,34 @@ class Orchestrator:
 
                 # Check verdict
                 decision = result.decision
-                print(f"\n⚖️  Judge: {decision.action} (confidence: {decision.confidence})")
+                print(
+                    f"\n⚖️  Judge: {decision.action} (confidence: {decision.confidence})"
+                )
                 print(f"   {decision.reason}")
 
                 self.session.transition(SessionState.JUDGING)
-                self.session.add_round_result({
-                    "round": round_num,
-                    "decision": decision.action,
-                    "bugs_a": result.bugs_a.total,
-                    "bugs_b": result.bugs_b.total,
-                })
+                self.session.add_round_result(
+                    {
+                        "round": round_num,
+                        "decision": decision.action,
+                        "bugs_a": result.bugs_a.total,
+                        "bugs_b": result.bugs_b.total,
+                    }
+                )
 
                 # Handle decision
                 if decision.action in ("winner_a", "winner_b"):
                     self.session.transition(SessionState.WINNER_SELECTED)
-                    winner_workspace = result.workspace_a if decision.action == "winner_a" else result.workspace_b
-                    winner_bugs = result.bugs_a if decision.action == "winner_a" else result.bugs_b
+                    winner_workspace = (
+                        result.workspace_a
+                        if decision.action == "winner_a"
+                        else result.workspace_b
+                    )
+                    winner_bugs = (
+                        result.bugs_a
+                        if decision.action == "winner_a"
+                        else result.bugs_b
+                    )
 
                     # Promote
                     self.session.transition(SessionState.PROMOTING)
@@ -160,7 +181,9 @@ class Orchestrator:
                         session_id=self.session_id,
                         task_file=self.config.plan_file,
                         task_type=classification.type if classification else "unknown",
-                        task_complexity=classification.complexity if classification else "unknown",
+                        task_complexity=classification.complexity
+                        if classification
+                        else "unknown",
                         config=vars(self.config),
                         result_a=result.result_a,
                         result_b=result.result_b,
@@ -229,17 +252,19 @@ class Orchestrator:
             # Bug fix #4: Safe transition to FAILED - go through ROUND_FAILED if needed
             # Bug fix #7: Wrap SessionState construction to avoid ValueError masking original exception
             try:
-                current_state = SessionState(self.session._state.get("state", "created"))
+                current_state = SessionState(
+                    self.session._state.get("state", "created")
+                )
             except ValueError:
                 current_state = None
             if current_state == SessionState.AGENTS_RUNNING:
                 try:
                     self.session.transition(SessionState.ROUND_FAILED)
-                except Exception:
+                except StateTransitionError:
                     pass  # Already in a valid state
             try:
                 self.session.transition(SessionState.FAILED)
-            except Exception:
+            except StateTransitionError:
                 pass  # Already terminal
 
             duration = time.time() - start_time
@@ -313,7 +338,10 @@ class Orchestrator:
             )
             judge = JudgeRunner(self.registry.get(self.config.judge))
             duel = DuelRunner(
-                self.registry, self.worktree, bug_detector, judge,
+                self.registry,
+                self.worktree,
+                bug_detector,
+                judge,
                 workspace_a_name=self.config.agent_a_workspace,
                 workspace_b_name=self.config.agent_b_workspace,
             )
@@ -323,7 +351,9 @@ class Orchestrator:
                 round_num += 1
                 print(f"\n━━━ Round {round_num}/{self.config.max_rounds} ━━━")
 
-                self.session.transition(SessionState.AGENTS_RUNNING, {"current_round": round_num})
+                self.session.transition(
+                    SessionState.AGENTS_RUNNING, {"current_round": round_num}
+                )
 
                 result = duel.run_round_sync(
                     task=task,
@@ -336,21 +366,33 @@ class Orchestrator:
                 self.session.transition(SessionState.BUG_DETECTION)
 
                 decision = result.decision
-                print(f"\n⚖️  Judge: {decision.action} (confidence: {decision.confidence})")
+                print(
+                    f"\n⚖️  Judge: {decision.action} (confidence: {decision.confidence})"
+                )
                 print(f"   {decision.reason}")
 
                 self.session.transition(SessionState.JUDGING)
-                self.session.add_round_result({
-                    "round": round_num,
-                    "decision": decision.action,
-                    "bugs_a": result.bugs_a.total,
-                    "bugs_b": result.bugs_b.total,
-                })
+                self.session.add_round_result(
+                    {
+                        "round": round_num,
+                        "decision": decision.action,
+                        "bugs_a": result.bugs_a.total,
+                        "bugs_b": result.bugs_b.total,
+                    }
+                )
 
                 if decision.action in ("winner_a", "winner_b"):
                     self.session.transition(SessionState.WINNER_SELECTED)
-                    winner_workspace = result.workspace_a if decision.action == "winner_a" else result.workspace_b
-                    winner_bugs = result.bugs_a if decision.action == "winner_a" else result.bugs_b
+                    winner_workspace = (
+                        result.workspace_a
+                        if decision.action == "winner_a"
+                        else result.workspace_b
+                    )
+                    winner_bugs = (
+                        result.bugs_a
+                        if decision.action == "winner_a"
+                        else result.bugs_b
+                    )
 
                     self.session.transition(SessionState.PROMOTING)
                     self._promote(winner_workspace)
@@ -428,11 +470,11 @@ class Orchestrator:
             if current == SessionState.AGENTS_RUNNING:
                 try:
                     self.session.transition(SessionState.ROUND_FAILED)
-                except Exception:
+                except StateTransitionError:
                     pass
             try:
                 self.session.transition(SessionState.FAILED)
-            except Exception:
+            except StateTransitionError:
                 pass
 
             duration = time.time() - start_time
@@ -457,9 +499,16 @@ class Orchestrator:
         """
         ws = Path(winner_workspace)
         target = Path(self.config.working_dir)
-        _skip = {".git", "__pycache__", ".g3",
-                 self.config.agent_a_workspace, self.config.agent_b_workspace,
-                 "node_modules", ".venv", "venv"}
+        _skip = {
+            ".git",
+            "__pycache__",
+            ".g3",
+            self.config.agent_a_workspace,
+            self.config.agent_b_workspace,
+            "node_modules",
+            ".venv",
+            "venv",
+        }
 
         for item in ws.rglob("*"):
             if not item.is_file():
@@ -483,7 +532,9 @@ class Orchestrator:
         try:
             choice = input("  Choice: ").strip().upper()
             if choice in ("A", "R", "P", "S"):
-                rating = {"A": "approve", "R": "reject", "P": "partial", "S": "skip"}[choice]
+                rating = {"A": "approve", "R": "reject", "P": "partial", "S": "skip"}[
+                    choice
+                ]
                 self.recorder.update_feedback(run_id, rating)
                 print(f"  ✓ Feedback recorded: {rating}")
         except (EOFError, KeyboardInterrupt):
