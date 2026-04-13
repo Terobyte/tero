@@ -11,15 +11,31 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import Config
-from src.debugger_bugs import BugEntry, parse_bugs, merge_bugs, renumber_bugs, write_bugs_md, write_final_report
+from src.constants import (
+    DEBUG_RETRY_BACKOFF_S,
+    DEBUG_STALE_THRESHOLD_S,
+    ANIMATION_SLEEP_S,
+)
+from src.debugger_bugs import (
+    BugEntry,
+    BugStatus,
+    transition_bug,
+    parse_bugs,
+    merge_bugs,
+    renumber_bugs,
+    write_bugs_md,
+    write_final_report,
+)
 from src.debugger_context import build_context, plan_file_chunks
 from src.debugger_prompts import INTENSITY_PROMPTS, TESTER_PROMPT, FIXER_PROMPT
+from src.errors import ProviderError
 from src.providers import create_provider
+from src.providers.message_adapter import normalize_message
 
 
 # Retry schedule: 60s → 120s → 240s (7 min total before giving up)
-_RETRY_BACKOFF_S = [60, 120, 240]
-_STALE_THRESHOLD_S = 15  # switch dot to yellow after no data for this long
+_RETRY_BACKOFF_S = DEBUG_RETRY_BACKOFF_S
+_STALE_THRESHOLD_S = DEBUG_STALE_THRESHOLD_S
 
 
 class _Pulse:
@@ -71,22 +87,29 @@ class _Pulse:
         try:
             while True:
                 # Auto-transition to yellow if no heartbeat for a while
-                if self._state == "active" and time.time() - self._last_activity > _STALE_THRESHOLD_S:
+                if (
+                    self._state == "active"
+                    and time.time() - self._last_activity > _STALE_THRESHOLD_S
+                ):
                     self._state = "waiting"
 
                 color = {
-                    "active": "\033[32m",    # green
-                    "waiting": "\033[33m",   # yellow
+                    "active": "\033[32m",  # green
+                    "waiting": "\033[33m",  # yellow
                     "retrying": "\033[31m",  # red
                 }[self._state]
 
                 frame = self._FRAMES[idx % len(self._FRAMES)]
                 status = f" {self._status_fn()}" if self._status_fn else ""
                 suffix = f" {self._retry_label}" if self._retry_label else ""
-                print(f"\r{self._prefix}{color}{frame}\033[0m{status}{suffix}\033[K", end="", flush=True)
+                print(
+                    f"\r{self._prefix}{color}{frame}\033[0m{status}{suffix}\033[K",
+                    end="",
+                    flush=True,
+                )
 
                 idx += 1
-                await asyncio.sleep(0.12)
+                await asyncio.sleep(ANIMATION_SLEEP_S)
         except asyncio.CancelledError:
             pass
 
@@ -176,7 +199,9 @@ class Debugger:
 
             if not new_bugs:
                 self._clean_passes += 1
-                print(f"   No new bugs found. Clean passes: {self._clean_passes}/{self.config.debug_victory_threshold}")
+                print(
+                    f"   No new bugs found. Clean passes: {self._clean_passes}/{self.config.debug_victory_threshold}"
+                )
                 if self._clean_passes >= self.config.debug_victory_threshold:
                     break
                 continue
@@ -213,7 +238,14 @@ class Debugger:
         fixed = [b for b in self._bugs if b.status == "fixed"]
         confirmed = [b for b in self._bugs if b.status == "confirmed"]
 
-        write_final_report(self._bugs, bugs_md_path.replace("bugs.md", "bugs_final.md"), duration, victory)
+        final_path = str(Path(bugs_md_path).with_name("bugs_final.md"))
+        write_final_report(
+            self._bugs,
+            final_path,
+            duration,
+            victory,
+            victory_threshold=self.config.debug_victory_threshold,
+        )
         self._display_final(victory, duration)
 
         return DebuggerResult(
@@ -227,24 +259,29 @@ class Debugger:
 
     # ── Player ────────────────────────────────────────────────────────────────
 
-    async def _run_player(self, chunk: list[str] | None = None) -> list[BugEntry] | None:
+    async def _run_player(
+        self, chunk: list[str] | None = None
+    ) -> list[BugEntry] | None:
         """Run the player (bug-finder) on the given file chunk."""
         context = build_context(self.working_dir, file_subset=chunk)
-        prompts = INTENSITY_PROMPTS.get(self.config.debug_intensity, INTENSITY_PROMPTS["medium"])
+        prompts = INTENSITY_PROMPTS.get(
+            self.config.debug_intensity, INTENSITY_PROMPTS["medium"]
+        )
 
         all_raw: list[BugEntry] = []
         start_id = max((b.id for b in self._bugs), default=0) + 1
 
         for i, system_prompt in enumerate(prompts):
-            prompt_label = ["main", "anchor", "red_team", "boundary", "completeness"][i] if i < 5 else f"prompt_{i}"
+            prompt_label = (
+                ["main", "anchor", "red_team", "boundary", "completeness"][i]
+                if i < 5
+                else f"prompt_{i}"
+            )
             prefix = f"   Player [{prompt_label}] "
             pulse = _Pulse(prefix)
             await pulse.start()
 
-            user_prompt = (
-                f"Analyze the following code for bugs.\n\n"
-                f"{context}"
-            )
+            user_prompt = f"Analyze the following code for bugs.\n\n{context}"
 
             collected = await self._collect_text(
                 self._player,
@@ -277,15 +314,13 @@ class Debugger:
         await pulse.start()
 
         bug_list = "\n".join(
-            f"{b.id}. [{b.severity}] {b.file}:{b.line} — {b.description}"
-            for b in bugs
+            f"{b.id}. [{b.severity}] {b.file}:{b.line} — {b.description}" for b in bugs
         )
         # Targeted context: only files mentioned in bugs
         bug_files = sorted({b.file for b in bugs})
         context = build_context(self.working_dir, file_subset=bug_files)
         user_prompt = (
-            f"## Bug List to Verify\n\n{bug_list}\n\n"
-            f"## Code Context\n\n{context}"
+            f"## Bug List to Verify\n\n{bug_list}\n\n## Code Context\n\n{context}"
         )
 
         collected = await self._collect_text(
@@ -308,23 +343,21 @@ class Debugger:
             return False
 
         confirmed = sum(
-            1
-            for bug in bugs
-            if results.get(bug.id, {}).get("status") == "confirmed"
+            1 for bug in bugs if results.get(bug.id, {}).get("status") == "confirmed"
         )
         print(f"{prefix}confirmed={confirmed}/{len(bugs)}")
 
         for bug in bugs:
             result = results.get(bug.id, {})
             status = result.get("status", "open")
-            if status in ("confirmed", "false_positive", "invalid_test"):
-                bug.status = status
+            if status in (BugStatus.CONFIRMED, BugStatus.FALSE_POSITIVE, BugStatus.INVALID_TEST):
+                transition_bug(bug, status)
                 bug.test_file = result.get("test_file")
                 # A "confirmed" bug with no test file can never be verified
                 # by _verify_confirmed_fixes — treat it as invalid_test to
                 # prevent it from looping in the fixer indefinitely.
-                if bug.status == "confirmed" and not bug.test_file:
-                    bug.status = "invalid_test"
+                if bug.status == BugStatus.CONFIRMED and not bug.test_file:
+                    transition_bug(bug, BugStatus.INVALID_TEST)
         return True
 
     # ── Fixer ─────────────────────────────────────────────────────────────────
@@ -344,8 +377,7 @@ class Debugger:
         bug_files = sorted({b.file for b in confirmed})
         context = build_context(self.working_dir, file_subset=bug_files)
         user_prompt = (
-            f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n"
-            f"## Code Context\n\n{context}"
+            f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n## Code Context\n\n{context}"
         )
 
         collected = await self._collect_text(
@@ -392,7 +424,7 @@ class Debugger:
                         pulse.heartbeat()
                     self._extract_text(message, parts)
                 return _CollectedTextResult(text="\n".join(parts), completed=True)
-            except Exception:
+            except ProviderError:
                 if attempt >= len(_RETRY_BACKOFF_S):
                     return _CollectedTextResult(text="\n".join(parts), completed=False)
 
@@ -409,46 +441,12 @@ class Debugger:
 
     @staticmethod
     def _extract_text(message, parts: list[str]) -> None:
-        """Extract text from any provider message format into parts list.
-
-        Handles: SDK objects (.content), AdaptedMessage, raw dicts from
-        claude_native CLI events, and bare strings.
-        """
-        if isinstance(message, str):
-            parts.append(message)
-            return
-
-        # Objects with .content (SDK messages, AdaptedMessage)
-        if hasattr(message, "content") and not isinstance(message, dict):
-            content = message.content
-            if isinstance(content, str):
-                parts.append(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if hasattr(block, "text"):
-                        parts.append(block.text)
-                    elif isinstance(block, dict) and block.get("type") == "text":
-                        parts.append(block.get("text", ""))
-            return
-
-        # Dicts from claude_native provider (raw Claude CLI JSON events)
-        if isinstance(message, dict):
-            # {"type": "text", "text": "..."} — non-JSON line fallback
-            if message.get("type") == "text" and "text" in message:
-                parts.append(message["text"])
-            # {"result": "full text"} — result event
-            if "result" in message and isinstance(message.get("result"), str):
-                parts.append(message["result"])
-            # {"message": {"content": [{"type": "text", "text": "..."}]}}
-            msg_data = message.get("message")
-            if isinstance(msg_data, dict):
-                content = msg_data.get("content")
-                if isinstance(content, str):
-                    parts.append(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            parts.append(block.get("text", ""))
+        """Extract text from any provider message format into parts list."""
+        adapted = normalize_message(message)
+        if adapted:
+            text = adapted.get_text_content()
+            if text:
+                parts.append(text)
 
     def _should_stop(self) -> bool:
         """Check whether to stop the loop based on limit_mode."""
@@ -479,7 +477,9 @@ class Debugger:
             summary = ", ".join(names)
             if len(chunk) > 4:
                 summary += f" +{len(chunk) - 4}"
-            print(f"── Iteration {self._iteration} ── chunk {idx}/{total} [{summary}] ──")
+            print(
+                f"── Iteration {self._iteration} ── chunk {idx}/{total} [{summary}] ──"
+            )
         else:
             print(f"── Iteration {self._iteration} ──────────────────────────────────")
 
@@ -543,11 +543,15 @@ class Debugger:
                 status = entry.get("status", "")
                 test_file = entry.get("test_file")
                 if isinstance(bug_id, int) and status in (
-                    "confirmed", "false_positive", "invalid_test"
+                    "confirmed",
+                    "false_positive",
+                    "invalid_test",
                 ):
                     results[bug_id] = {
                         "status": status,
-                        "test_file": test_file if isinstance(test_file, str) and test_file else None,
+                        "test_file": test_file
+                        if isinstance(test_file, str) and test_file
+                        else None,
                     }
             if results:
                 break
@@ -581,9 +585,9 @@ class Debugger:
                     verification_results[test_key] = False
 
             if verification_results[test_key]:
-                bug.status = "fixed"
+                transition_bug(bug, BugStatus.FIXED)
 
-        return sum(1 for bug in bugs if bug.status == "fixed")
+        return sum(1 for bug in bugs if bug.status == BugStatus.FIXED)
 
     def _mark_inconclusive(self, reason: str) -> None:
         """Record why the debugger could not safely continue."""
@@ -624,7 +628,9 @@ class Debugger:
         fixed = sum(1 for b in self._bugs if b.status == "fixed")
         confirmed = sum(1 for b in self._bugs if b.status == "confirmed")
         open_count = sum(1 for b in self._bugs if b.status == "open")
-        fp_count = sum(1 for b in self._bugs if b.status in ("false_positive", "invalid_test"))
+        fp_count = sum(
+            1 for b in self._bugs if b.status in ("false_positive", "invalid_test")
+        )
         total = len(self._bugs)
         print()
         print(f"{icon} Debugger finished in {mins}m {secs}s")
@@ -638,4 +644,6 @@ class Debugger:
         if self._inconclusive_reason:
             print(f"   Inconclusive: {self._inconclusive_reason}")
         if victory:
-            print(f"   \033[32mVictory!\033[0m No bugs found in {self.config.debug_victory_threshold} consecutive passes.")
+            print(
+                f"   \033[32mVictory!\033[0m No bugs found in {self.config.debug_victory_threshold} consecutive passes."
+            )

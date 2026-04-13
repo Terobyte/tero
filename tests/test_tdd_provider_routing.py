@@ -48,7 +48,7 @@ class TestTestWriterProviderRouting:
         session.player_provider = mock_player
         session.coach_provider = mock_coach
 
-        assert session._provider_for_role("test_writer") is mock_tw, (
+        assert session.router.provider_for("test_writer") is mock_tw, (
             "test_writer should use test_writer_provider, not coach"
         )
 
@@ -70,7 +70,7 @@ class TestTestWriterProviderRouting:
         session = CoachPlayerSession(cfg, "1. Step")
         session.coach_provider = mock_provider
 
-        assert session._provider_name_for_role("test_writer") == "tw_prov"
+        assert session.router.provider_name_for("test_writer") == "tw_prov"
 
     def test_writer_falls_back_to_coach_when_test_writer_provider_empty(
         self, tmp_path, monkeypatch
@@ -90,7 +90,7 @@ class TestTestWriterProviderRouting:
         session = CoachPlayerSession(cfg, "1. Step")
         session.coach_provider = mock_coach
 
-        assert session._provider_name_for_role("test_writer") == "coach_prov"
+        assert session.router.provider_name_for("test_writer") == "coach_prov"
 
     def test_writer_not_same_as_coach_when_test_writer_provider_differs(
         self, tmp_path, monkeypatch
@@ -114,8 +114,8 @@ class TestTestWriterProviderRouting:
         session = CoachPlayerSession(cfg, "1. Step")
         session.coach_provider = mock_coach
 
-        tw_provider = session._provider_for_role("test_writer")
-        coach_provider = session._provider_for_role("coach")
+        tw_provider = session.router.provider_for("test_writer")
+        coach_provider = session.router.provider_for("coach")
         assert tw_provider is not coach_provider, (
             "test_writer should use a different provider than coach when test_writer_provider is set"
         )

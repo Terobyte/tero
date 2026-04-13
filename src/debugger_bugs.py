@@ -4,7 +4,41 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
+
+from src.errors import DebuggerError
+
+
+class BugStatus(str, Enum):
+    """Valid lifecycle states for a BugEntry."""
+
+    OPEN = "open"
+    CONFIRMED = "confirmed"
+    FALSE_POSITIVE = "false_positive"
+    INVALID_TEST = "invalid_test"
+    FIXED = "fixed"
+
+
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    BugStatus.OPEN: {BugStatus.CONFIRMED, BugStatus.FALSE_POSITIVE, BugStatus.INVALID_TEST},
+    BugStatus.CONFIRMED: {BugStatus.INVALID_TEST, BugStatus.FIXED},
+    BugStatus.FALSE_POSITIVE: set(),
+    BugStatus.INVALID_TEST: set(),
+    BugStatus.FIXED: set(),
+}
+
+
+def transition_bug(bug: "BugEntry", new_status: str) -> None:
+    """Transition a bug to a new status, raising DebuggerError on invalid moves."""
+    current = bug.status
+    allowed = _VALID_TRANSITIONS.get(current, set())
+    if new_status not in allowed:
+        raise DebuggerError(
+            f"Invalid bug transition: {current!r} → {new_status!r} "
+            f"(bug #{bug.id}). Allowed: {sorted(allowed)}"
+        )
+    bug.status = new_status
 
 
 @dataclass
@@ -16,7 +50,7 @@ class BugEntry:
     line: int
     description: str
     severity: str
-    status: str = "open"  # open | confirmed | false_positive | invalid_test | fixed
+    status: str = BugStatus.OPEN  # use BugStatus values
     test_file: str | None = None
 
 
@@ -271,6 +305,8 @@ def write_final_report(
     path: str,
     duration_s: float,
     victory: bool,
+    *,
+    victory_threshold: int = 3,
 ) -> None:
     """Write the final summary report."""
     p = Path(path)
@@ -281,7 +317,7 @@ def write_final_report(
     false_positive = [b for b in bugs if b.status in ("false_positive", "invalid_test")]
     open_bugs = [b for b in bugs if b.status == "open"]
 
-    outcome = "VICTORY — no bugs in 3 consecutive clean passes" if victory else "STOPPED"
+    outcome = f"VICTORY — no bugs in {victory_threshold} consecutive clean passes" if victory else "STOPPED"
     mins = int(duration_s // 60)
     secs = int(duration_s % 60)
 

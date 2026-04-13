@@ -3,6 +3,8 @@
 import re
 from dataclasses import dataclass
 
+from src.providers.message_adapter import normalize_message
+
 
 @dataclass
 class Approved:
@@ -137,36 +139,9 @@ def _latest_assistant_text(messages: list) -> str:
 
 
 def _extract_text_from_message(msg) -> str:
-    """Extract all text from TextBlocks in a message."""
-    texts = []
-
-    # Try content attribute (list of blocks)
-    content = getattr(msg, "content", None)
-    if content is None:
-        # Try text attribute directly
-        text = getattr(msg, "text", None)
-        if text:
-            return text
-        return ""
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        for block in content:
-            block_type = type(block).__name__
-            # TextBlock
-            if block_type == "TextBlock":
-                if hasattr(block, "text"):
-                    texts.append(block.text)
-            elif hasattr(block, "type") and block.type == "text":
-                if hasattr(block, "text"):
-                    texts.append(block.text)
-            # Fallback: any block with text attribute
-            elif hasattr(block, "text"):
-                texts.append(block.text)
-
-    return "\n".join(texts)
+    """Extract all text from a message in any provider format."""
+    adapted = normalize_message(msg)
+    return adapted.get_text_content() if adapted else ""
 
 
 def _extract_numbered_issues(text: str) -> list[str]:
@@ -228,7 +203,7 @@ _FREE_TEXT_CONCERN_RE = re.compile(
 )
 
 # Words that negate a security keyword when they appear immediately before it.
-_NEGATIVE_PREFIX_RE = re.compile(r"\b(?:no|not|without|zero|any)\b", re.IGNORECASE)
+_NEGATIVE_PREFIX_RE = re.compile(r"\b(?:no|not|without|zero)\b", re.IGNORECASE)
 
 _EXPLICIT_CODE_REVIEW_PASSED_RE = re.compile(r"CODE_REVIEW_PASSED\b", re.IGNORECASE)
 
@@ -239,11 +214,14 @@ def _has_real_security_concern(text: str) -> bool:
     Phrases like "No XSS vulnerabilities detected" or "no potential issue" contain
     security keywords but express the *absence* of a problem.  We suppress those
     false positives by checking whether a negative word ("no", "not", "without",
-    "zero", "any") appears within 40 characters before each match.
+    "zero") appears within the *same sentence* before each match.
     """
     for match in _FREE_TEXT_CONCERN_RE.finditer(text):
         start = max(0, match.start() - 40)
         prefix = text[start : match.start()]
+        sentence_boundary = max(prefix.rfind("."), prefix.rfind("!"), prefix.rfind("?"))
+        if sentence_boundary != -1:
+            prefix = prefix[sentence_boundary + 1 :]
         if not _NEGATIVE_PREFIX_RE.search(prefix):
             return True
     return False

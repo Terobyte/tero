@@ -648,8 +648,9 @@ class TestBugA_PsutilImportCrash(unittest.TestCase):
         deps_text = pyproject.read_text()
         psutil_in_deps = "psutil" in deps_text
 
-        from src.coach_player import CoachPlayerSession
-        source = inspect.getsource(CoachPlayerSession._kill_new_processes)
+        # After Phase 3B, psutil guarding moved to ProcessGuard
+        from src.process_guard import ProcessGuard
+        source = inspect.getsource(ProcessGuard.kill_new_processes)
         lines_before = source.split("import psutil")[0].split("\n")
         import_guarded = any("try" in ln for ln in lines_before[-5:])
 
@@ -661,10 +662,9 @@ class TestBugA_PsutilImportCrash(unittest.TestCase):
         )
 
     def test_kill_new_processes_crashes_without_psutil(self):
-        """_kill_new_processes MUST NOT crash when psutil is unavailable."""
+        """kill_new_processes MUST NOT crash when psutil is unavailable."""
         import builtins
         import sys as _sys
-        from src.config import Config
 
         real_import = builtins.__import__
 
@@ -675,15 +675,12 @@ class TestBugA_PsutilImportCrash(unittest.TestCase):
 
         saved_psutil = _sys.modules.pop("psutil", None)
         try:
-            from src.coach_player import CoachPlayerSession
+            from src.process_guard import ProcessGuard
 
-            config = Config(working_dir="/tmp")
-            session = CoachPlayerSession.__new__(CoachPlayerSession)
-            session.config = config
-
+            guard = ProcessGuard()
             with patch("builtins.__import__", side_effect=block_psutil):
                 # CORRECT: should not crash.  FAIL (ModuleNotFoundError) → bug confirmed.
-                session._kill_new_processes(set())
+                guard.kill_new_processes(set())
         finally:
             if saved_psutil is not None:
                 _sys.modules["psutil"] = saved_psutil
