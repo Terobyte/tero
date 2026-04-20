@@ -819,3 +819,77 @@ def test_sync_batch_roles_with_coach_preserves_custom_overrides():
     assert synced.batch_pre_model == "sonnet"
     assert synced.batch_post_provider == "codex"
     assert synced.batch_post_model == "o3"
+
+
+def test_run_turn_with_provider_override_skips_router(tmp_path):
+    """When provider_override is set, router.provider_for must not be called."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    override_provider = MagicMock()
+    fake_result = MagicMock()
+
+    turn_runner_mock = MagicMock()
+    turn_runner_mock.run_turn = AsyncMock(return_value=fake_result)
+    turn_runner_mock._last_effective_context_limit = 200_000
+
+    router_mock = MagicMock()
+    router_mock.provider_for.side_effect = ValueError("Must not be called")
+
+    cfg = Config(working_dir=str(tmp_path))
+    session = object.__new__(CoachPlayerSession)
+    session.config = cfg
+    session._turn_runner = turn_runner_mock
+    session.router = router_mock
+    session._runtime = None
+
+    result = asyncio.run(
+        session._run_turn(
+            role="judge",
+            prompt="judge this",
+            system_prompt="sys",
+            max_turns=1,
+            timeout_s=30,
+            provider_override=override_provider,
+        )
+    )
+
+    assert result == fake_result
+    router_mock.provider_for.assert_not_called()
+    _, call_kwargs = turn_runner_mock.run_turn.call_args
+    assert call_kwargs["provider"] is override_provider
+
+
+def test_run_with_continuation_with_provider_override_skips_router(tmp_path):
+    """When provider_override is set, run_with_continuation must not call router.provider_for."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    override_provider = MagicMock()
+    fake_result = MagicMock()
+
+    turn_runner_mock = MagicMock()
+    turn_runner_mock.run_with_continuation = AsyncMock(return_value=fake_result)
+
+    router_mock = MagicMock()
+    router_mock.provider_for.side_effect = ValueError("Must not be called")
+
+    cfg = Config(working_dir=str(tmp_path))
+    session = object.__new__(CoachPlayerSession)
+    session.config = cfg
+    session._turn_runner = turn_runner_mock
+    session.router = router_mock
+
+    result = asyncio.run(
+        session._run_with_continuation(
+            role="judge",
+            prompt="continue",
+            system_prompt="sys",
+            max_turns=1,
+            timeout_s=30,
+            provider_override=override_provider,
+        )
+    )
+
+    assert result == fake_result
+    router_mock.provider_for.assert_not_called()
+    _, call_kwargs = turn_runner_mock.run_with_continuation.call_args
+    assert call_kwargs["provider"] is override_provider
