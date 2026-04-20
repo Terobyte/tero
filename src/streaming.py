@@ -256,6 +256,13 @@ def print_step_rejected(issues_text: str):
             print(f"    {RED}{line}{RESET}")
 
 
+def print_phase_skipped(phase_name: str, attempts: int) -> None:
+    print(
+        f"\n  {BOLD}{YELLOW}⏭ Phase '{phase_name}' skipped after {attempts} attempts "
+        f"— continuing to next phase{RESET}\n"
+    )
+
+
 def print_turn_timing(
     role: str,
     duration_s: float,

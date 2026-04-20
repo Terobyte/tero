@@ -33,6 +33,8 @@ class FakeConfig:
     batch_pre_model: str = ""
     batch_post_provider: str = "zai"
     batch_post_model: str = ""
+    batch_judge_provider: str = "codex"
+    batch_judge_model: str = ""
 
 
 def _mock_provider(name: str = "mock", ready: bool = True):
@@ -281,3 +283,23 @@ class TestUpdatePreResolved:
         new = _mock_provider("new-coach")
         router.update_pre_resolved(coach_provider=new)
         assert router._coach_provider is new
+
+
+class TestJudgeRole:
+    def test_provider_for_judge_returns_batch_judge_provider(self):
+        router, _ = _make_router(batch_judge_provider="codex")
+        provider = router.provider_for("judge")
+        assert provider is not None  # _get_or_create_provider("codex") called
+
+    def test_provider_name_for_judge_with_configured_name_returns_it(self):
+        router, _ = _make_router(batch_judge_provider="codex")
+        assert router.provider_name_for("judge") == "codex"
+
+    def test_provider_name_for_judge_with_empty_returns_codex_fallback(self):
+        router, _ = _make_router(batch_judge_provider="")
+        assert router.provider_name_for("judge") == "codex"
+
+    def test_display_label_for_judge_does_not_raise(self):
+        router, _ = _make_router(batch_judge_provider="codex")
+        label = router.display_label_for("judge")
+        assert "codex" in label

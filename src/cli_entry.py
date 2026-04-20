@@ -7,7 +7,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.batch_executor import BatchExecutor, PhaseFailedError
+from src.batch_executor import BatchExecutor
 from src.config import resolve_config
 from src.coach_player import CoachPlayerSession
 from src.learning.recorder import RunRecorder
@@ -314,12 +314,8 @@ async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
             if phases:
                 tracker.phases = phases
             executor = BatchExecutor(session, tracker)
-            try:
-                await executor.run()
-                sys.exit(0)
-            except PhaseFailedError as exc:
-                print(f"\n❌ {exc}")
-                sys.exit(1)
+            await executor.run()
+            sys.exit(0)
 
         result = await session.run()
         sys.exit(0 if result.approved else 1)

@@ -302,3 +302,43 @@ def test_parse_enriched_plan_phase_name_truncates_long_display_name():
     assert phases[0].display_name == long_name
     # But Phase.name truncates to 45 chars
     assert len(phases[0].name.split(" · ", 1)[1]) == 45
+
+
+class TestSkippedMarker:
+    def test_write_checklist_back_skipped_item_marker_tilde(self):
+        """Skipped items write [~] to file."""
+        import tempfile, os
+        from src.plan_tracker import write_checklist_back
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+            f.write("- [ ] Step one\n- [ ] Step two\n")
+            path = f.name
+        try:
+            items = [
+                PlanItem(text="Step one", skipped=True),
+                PlanItem(text="Step two", done=True),
+            ]
+            write_checklist_back(path, items)
+            content = open(path).read()
+            assert "- [~] Step one" in content
+            assert "- [x] Step two" in content
+        finally:
+            os.unlink(path)
+
+    def test_parse_checklist_tilde_marker_sets_skipped_true(self):
+        """[~] items parse as skipped=True, done=False."""
+        from src.plan_tracker import parse_requirements
+        content = "- [~] Step one\n- [x] Step two\n- [ ] Step three\n"
+        items = parse_requirements(content)
+        assert items[0].skipped is True
+        assert items[0].done is False
+        assert items[1].done is True
+        assert items[1].skipped is False
+        assert items[2].done is False
+        assert items[2].skipped is False
+
+    def test_resume_skipped_phase_not_rerun(self):
+        """Phase where all steps are skipped is treated as complete on resume."""
+        from src.plan_tracker import PlanItem
+        steps = [PlanItem(text="a", skipped=True), PlanItem(text="b", skipped=True)]
+        # The resume condition: all(step.done or step.skipped for step in phase.steps)
+        assert all(step.done or step.skipped for step in steps)

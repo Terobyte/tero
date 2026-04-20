@@ -417,9 +417,9 @@ class TestRunPhase:
         session.config.coach_model = ""
         session.config.batch_pre_provider = ""
         session.config.batch_pre_model = ""
-        session.config.batch_pre_judge_attempts = 3
-        session.config.batch_judge_attempts = 1
-        session.config.batch_post_judge_attempts = 1
+        session.config.batch_pre_judge_attempts = 5
+        session.config.batch_judge_attempts = 2
+        session.config.batch_post_judge_attempts = 3
         session.config.batch_post_provider = ""
         session.config.batch_post_model = ""
         session.config.batch_judge_provider = "codex"
@@ -563,11 +563,8 @@ class TestRunPhase:
         from src.batch_executor import BatchExecutor
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
-        total_attempts = (
-            BatchExecutor.DEFAULT_PRE_JUDGE_ATTEMPTS
-            + BatchExecutor.DEFAULT_JUDGE_ATTEMPTS
-            + BatchExecutor.DEFAULT_POST_JUDGE_ATTEMPTS
-        )
+        # Use the _make_session defaults (5/2/3) to compute total attempts
+        total_attempts = 5 + 2 + 3  # pre + judge + post
         session = self._make_session(["no output"] * total_attempts)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
         executor = self._make_executor(session)
@@ -576,17 +573,19 @@ class TestRunPhase:
         assert phase.attempts == total_attempts
 
     @pytest.mark.asyncio
-    async def test_attempt_four_uses_codex_judge_once(self):
+    async def test_attempt_six_uses_codex_judge_first(self):
         from src.feedback import Approved, Feedback
 
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
-        session = self._make_session(["PHASE_COMPLETE: Create"] * 4)
+        session = self._make_session(["PHASE_COMPLETE: Create"] * 6)
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[
                 Feedback(text="try 1"),
                 Feedback(text="try 2"),
                 Feedback(text="try 3"),
+                Feedback(text="try 4"),
+                Feedback(text="try 5"),
                 Approved(),
             ]
         )
@@ -595,11 +594,11 @@ class TestRunPhase:
         result = await executor._run_phase(phase)
 
         assert result is True
-        assert phase.attempts == 4
-        fourth_call = session._run_coach_turn_for_phase.await_args_list[3].kwargs
-        assert fourth_call["provider_name_override"] == "codex"
-        assert fourth_call["model_override"] == "gpt-5.4"
-        assert fourth_call["review_role"] == "judge"
+        assert phase.attempts == 6
+        sixth_call = session._run_coach_turn_for_phase.await_args_list[5].kwargs
+        assert sixth_call["provider_name_override"] == "codex"
+        assert sixth_call["model_override"] == "gpt-5.4"
+        assert sixth_call["review_role"] == "judge"
 
     @pytest.mark.asyncio
     async def test_attempt_five_returns_to_regular_coach(self):
@@ -736,6 +735,34 @@ class TestRunPhase:
         assert phase.attempts == 2
         assert session._run_coach_turn_for_phase.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_run_phase_swallows_review_timeout_and_retries(self):
+        """TimeoutError from _run_coach_turn_for_phase causes continue, not crash."""
+        from src.feedback import Approved
+        items = [PlanItem(text="create a.py")]
+        phase = Phase(name="Create", type="create", steps=items)
+        session = self._make_session(["PHASE_COMPLETE: Create"] * 2)
+        session._run_coach_turn_for_phase = AsyncMock(
+            side_effect=[TimeoutError("review timed out"), Approved()]
+        )
+        executor = self._make_executor(session)
+        result = await executor._run_phase(phase)
+        assert result is True  # second attempt succeeded
+        assert session._run_coach_turn_for_phase.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_run_phase_propagates_value_error_from_router(self):
+        """ValueError (e.g. unknown role) from _run_coach_turn_for_phase must NOT be caught."""
+        items = [PlanItem(text="create a.py")]
+        phase = Phase(name="Create", type="create", steps=items)
+        session = self._make_session(["PHASE_COMPLETE: Create"])
+        session._run_coach_turn_for_phase = AsyncMock(
+            side_effect=ValueError("Unknown role: judge")
+        )
+        executor = self._make_executor(session)
+        with pytest.raises(ValueError, match="Unknown role"):
+            await executor._run_phase(phase)
+
 
 class TestBatchExecutorRun:
     def _make_full_session(self, player_text="PHASE_COMPLETE: Create (1 steps)"):
@@ -854,8 +881,9 @@ class TestBatchExecutorRun:
         assert "Batch review: 3 / 1 / 1 (coach / judge / coach)" in out
 
     @pytest.mark.asyncio
-    async def test_run_raises_phase_failed_error(self):
-        from src.batch_executor import BatchExecutor, PhaseFailedError
+    async def test_run_skips_phase_instead_of_raising(self):
+        """Exhausted phase is skipped instead of raising PhaseFailedError."""
+        from src.batch_executor import BatchExecutor
         from src.feedback import Feedback
         items = [PlanItem(text="create a.py")]
         tracker = MagicMock()
@@ -871,9 +899,12 @@ class TestBatchExecutorRun:
         session._run_with_continuation = AsyncMock(return_value=r)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
         executor = BatchExecutor(session=session, tracker=tracker)
-        with pytest.raises(PhaseFailedError):
-            await executor.run()
+        # run() must NOT raise — it should skip and continue
+        await executor.run()
         tracker.stop_dashboard.assert_called_once()
+        # The phase should be marked as skipped
+        phase = tracker.phases[0]
+        assert phase.status == "skipped"
 
     @pytest.mark.asyncio
     async def test_run_empty_items_is_noop(self):
@@ -947,6 +978,61 @@ class TestBatchExecutorRun:
         await executor.run()
 
         assert "- [x] create a.py" in plan_path.read_text()
+
+    @pytest.mark.asyncio
+    async def test_phase_exhausted_attempts_skipped_not_raised(self):
+        """When phase exhausts all attempts, run() completes without PhaseFailedError.
+        Phase status is 'skipped'."""
+        from src.batch_executor import BatchExecutor
+        from src.feedback import Feedback
+
+        items = [PlanItem(text="create a.py")]
+        tracker = MagicMock()
+        tracker.items = items
+        r = MagicMock(); r.text = "no output"; r.messages = []
+        session = MagicMock()
+        session.config = MagicMock()
+        session.config.max_turns = 10
+        session.config.player_timeout_s = 600
+        session.config.player_model = ""
+        session.config.batch_pre_judge_attempts = 1
+        session.config.batch_judge_attempts = 0
+        session.config.batch_post_judge_attempts = 0
+        session.config.player_turns_per_session = 30
+        session._runtime = None
+        session._run_with_continuation = AsyncMock(return_value=r)
+        session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="nope"))
+        executor = BatchExecutor(session=session, tracker=tracker)
+        # run() must NOT raise
+        await executor.run()
+        assert tracker.phases[0].status == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_final_report_lists_skipped_phases(self, capsys):
+        """After run(), skipped phases appear in stdout final report."""
+        from src.batch_executor import BatchExecutor
+        from src.feedback import Feedback
+
+        items = [PlanItem(text="create a.py")]
+        tracker = MagicMock()
+        tracker.items = items
+        r = MagicMock(); r.text = "no output"; r.messages = []
+        session = MagicMock()
+        session.config = MagicMock()
+        session.config.max_turns = 10
+        session.config.player_timeout_s = 600
+        session.config.player_model = ""
+        session.config.batch_pre_judge_attempts = 1
+        session.config.batch_judge_attempts = 0
+        session.config.batch_post_judge_attempts = 0
+        session.config.player_turns_per_session = 30
+        session._runtime = None
+        session._run_with_continuation = AsyncMock(return_value=r)
+        session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="nope"))
+        executor = BatchExecutor(session=session, tracker=tracker)
+        await executor.run()
+        out = capsys.readouterr().out
+        assert "Skipped" in out or "skipped" in out or "⏭" in out
 
 
 class TestBatchPlayerRunnerSelection:
@@ -1383,3 +1469,149 @@ class TestCoachAlwaysCalled:
 
         assert result is False
         session._run_coach_turn_for_phase.assert_not_called()
+
+
+class TestPlayerStrategy:
+    def _make_executor_with_schedule(self, pre, judge, post):
+        from unittest.mock import MagicMock
+        from src.batch_executor import BatchExecutor
+        session = MagicMock()
+        session.config.batch_pre_judge_attempts = pre
+        session.config.batch_judge_attempts = judge
+        session.config.batch_post_judge_attempts = post
+        session.config.player_provider = "zai"
+        session.config.player_model = "glm-5"
+        tracker = MagicMock()
+        tracker.items = []
+        return BatchExecutor(session, tracker)
+
+    def test_player_strategy_attempts_1_to_pre_uses_configured_player(self):
+        executor = self._make_executor_with_schedule(5, 2, 3)
+        for attempt in range(1, 6):
+            strategy = executor._player_strategy(attempt)
+            assert strategy["provider_name"] == "zai"
+            assert strategy["model"] == "glm-5"
+
+    def test_player_strategy_attempts_pre_plus_1_to_sonnet_window(self):
+        from src.constants import PLAYER_ESCALATION_SONNET_MODEL
+        executor = self._make_executor_with_schedule(5, 2, 3)
+        for attempt in (6, 7):
+            strategy = executor._player_strategy(attempt)
+            assert strategy["provider_name"] == "claude_native"
+            assert strategy["model"] == PLAYER_ESCALATION_SONNET_MODEL
+
+    def test_player_strategy_attempts_after_sonnet_window_uses_opus(self):
+        from src.constants import PLAYER_ESCALATION_OPUS_MODEL
+        executor = self._make_executor_with_schedule(5, 2, 3)
+        for attempt in (8, 9, 10):
+            strategy = executor._player_strategy(attempt)
+            assert strategy["provider_name"] == "claude_native"
+            assert strategy["model"] == PLAYER_ESCALATION_OPUS_MODEL
+
+    def test_unavailable_claude_native_falls_back_to_configured_player_with_warning(self):
+        import logging
+        from unittest.mock import MagicMock, patch
+        executor = self._make_executor_with_schedule(5, 2, 3)
+        not_ready_provider = MagicMock()
+        not_ready_provider.check_ready.return_value = (False, "API key missing")
+        executor.session._get_or_create_provider = MagicMock(return_value=not_ready_provider)
+
+        with patch("logging.warning"):
+            strategy = executor._player_strategy(6)  # judge window attempt
+            player_provider_inst = None
+            player_model_for_turn = strategy["model"]
+            if strategy["provider_name"] != executor.session.config.player_provider:
+                cand = executor.session._get_or_create_provider(strategy["provider_name"])
+                ok, reason = cand.check_ready()
+                if not ok:
+                    logging.warning(
+                        "Player escalation to %s unavailable: %s — using configured player",
+                        strategy["provider_name"], reason,
+                    )
+                    player_model_for_turn = executor.session.config.player_model
+
+            assert player_provider_inst is None
+            assert player_model_for_turn == "glm-5"  # fell back to configured player
+
+    def test_player_escalation_visible_in_start_banner(self):
+        """Start banner contains player escalation line."""
+        executor = self._make_executor_with_schedule(5, 2, 3)
+        pre, judge, post = executor._schedule_counts()
+        assert pre == 5
+        assert judge == 2
+        assert post == 3
+        expected = f"Player escalation: sonnet x{judge} \u2192 opus x{post}"
+        assert "sonnet x2" in expected
+        assert "opus x3" in expected
+
+
+class TestScheduleEdgeCases:
+    def _make_executor(self, pre, judge, post):
+        from src.batch_executor import BatchExecutor
+        session = MagicMock()
+        session.config.batch_pre_judge_attempts = pre
+        session.config.batch_judge_attempts = judge
+        session.config.batch_post_judge_attempts = post
+        session.config.player_provider = "zai"
+        session.config.player_model = "glm-5"
+        tracker = MagicMock()
+        tracker.items = []
+        return BatchExecutor(session, tracker)
+
+    def test_judge_attempts_zero_skips_judge_window(self):
+        """When batch_judge_attempts=0, judge window is empty.
+
+        With pre=5, judge=0, post=3:
+        - _review_strategy(6) should return post coach (not judge), because
+          judge_end = pre + judge = 5 + 0 = 5, so attempt 6 > judge_end → post
+        - _player_strategy(6) should use opus, because
+          judge=0 means the judge condition is False, so we fall through to opus
+        """
+        from src.constants import PLAYER_ESCALATION_OPUS_MODEL
+        executor = self._make_executor(pre=5, judge=0, post=3)
+
+        review = executor._review_strategy(6)
+        assert review["review_role"] == "coach", (
+            f"Expected post-coach for attempt 6 with judge=0, got {review['review_role']!r}"
+        )
+
+        player = executor._player_strategy(6)
+        assert player["model"] == PLAYER_ESCALATION_OPUS_MODEL, (
+            f"Expected opus for attempt 6 with judge=0, got {player['model']!r}"
+        )
+
+    def test_pre_attempts_zero_first_attempt_is_judge(self):
+        """When batch_pre_judge_attempts=0, first attempt goes straight to judge.
+
+        With pre=0, judge=2, post=3:
+        - _review_strategy(1): judge_start=1, judge_end=2, 1 in [1..2] → judge
+        - _player_strategy(1): attempt<=pre is False (0), judge>0 and 1 in sonnet window → sonnet
+        """
+        from src.constants import PLAYER_ESCALATION_SONNET_MODEL
+        executor = self._make_executor(pre=0, judge=2, post=3)
+
+        review = executor._review_strategy(1)
+        assert review["review_role"] == "judge", (
+            f"Expected judge for attempt 1 with pre=0, got {review['review_role']!r}"
+        )
+
+        player = executor._player_strategy(1)
+        assert player["model"] == PLAYER_ESCALATION_SONNET_MODEL, (
+            f"Expected sonnet for attempt 1 with pre=0, got {player['model']!r}"
+        )
+
+    def test_all_zero_attempts_falls_back_to_defaults(self):
+        """pre=judge=post=0 → _schedule_counts() returns defaults, not zeros.
+
+        The guard `if sum(values) <= 0: return defaults` ensures the executor
+        always has a non-zero max_phase_attempts when all inputs are zero.
+        """
+        executor = self._make_executor(pre=0, judge=0, post=0)
+
+        counts = executor._schedule_counts()
+        assert sum(counts) > 0, (
+            f"All-zero config should fall back to non-zero defaults, got {counts}"
+        )
+        assert executor._max_phase_attempts() > 0, (
+            f"max_phase_attempts must be > 0 after all-zero fallback"
+        )

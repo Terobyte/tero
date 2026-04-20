@@ -18,6 +18,7 @@ class PlanItem:
     text: str
     done: bool = False
     roles: tuple[str, ...] = field(default_factory=tuple)
+    skipped: bool = False
 
 
 # --- Batch execution types ---
@@ -63,6 +64,7 @@ class PlanLineMatch:
     text: str
     done: bool
     indent: str
+    skipped: bool = False
 
 
 def _parse_fence_marker(line: str) -> tuple[str, int] | None:
@@ -110,13 +112,15 @@ def _iter_plan_line_matches(lines: list[str]) -> list[PlanLineMatch]:
         if stripped.startswith("#"):
             continue
 
-        checkbox = re.match(r"^-\s+\[([ xX])\]\s+(.+)$", stripped)
+        checkbox = re.match(r"^-\s+\[([ xX~])\]\s+(.+)$", stripped)
         if checkbox:
+            marker = checkbox.group(1)
             matches.append(
                 PlanLineMatch(
                     line_index=line_index,
                     text=checkbox.group(2),
-                    done=checkbox.group(1).lower() == "x",
+                    done=marker.lower() == "x",
+                    skipped=marker == "~",
                     indent=indent,
                 )
             )
@@ -188,7 +192,7 @@ def parse_requirements(content: str) -> list[PlanItem]:
     """
     lines = content.split("\n")
     return [
-        PlanItem(text=match.text, done=match.done)
+        PlanItem(text=match.text, done=match.done, skipped=match.skipped)
         for match in _iter_plan_line_matches(lines)
     ]
 
@@ -381,7 +385,7 @@ class PlanTracker:
             bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
             icon = {
                 "pending": "⏳", "in_progress": "🔄",
-                "done": "✅", "failed": "❌",
+                "done": "✅", "failed": "❌", "skipped": "⏭",
             }.get(phase.status, "❓")
             attempts_str = f" (attempt {phase.attempts})" if phase.attempts > 1 else ""
             label = phase.display_name or phase.name
@@ -508,12 +512,18 @@ def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
     for item_index, match in enumerate(matches):
         if item_index >= len(items):
             break
-        mark = "x" if items[item_index].done else " "
-        new_lines[match.line_index] = f"{match.indent}- [{mark}] {items[item_index].text}"
+        item = items[item_index]
+        if item.done:
+            mark = "x"
+        elif item.skipped:
+            mark = "~"
+        else:
+            mark = " "
+        new_lines[match.line_index] = f"{match.indent}- [{mark}] {item.text}"
 
     if len(items) > len(matches):
         extra_lines = [
-            f"- [{'x' if item.done else ' '}] {item.text}"
+            f"- [{'x' if item.done else ('~' if item.skipped else ' ')}] {item.text}"
             for item in items[len(matches):]
         ]
         insert_at = len(new_lines) - 1 if new_lines and new_lines[-1] == "" else len(new_lines)

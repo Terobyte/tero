@@ -4,6 +4,7 @@ import inspect
 import re
 from dataclasses import dataclass, replace
 
+from src.errors import ProviderError
 from src.feedback import Approved, Feedback
 from src.plan_tracker import PlanItem, Phase
 
@@ -474,6 +475,28 @@ class BatchExecutor:
             "review_role": "coach",
         }
 
+    def _player_strategy(self, attempt_num: int) -> dict[str, str]:
+        """Return player provider/model escalation for a 1-based attempt."""
+        from src.constants import PLAYER_ESCALATION_SONNET_MODEL, PLAYER_ESCALATION_OPUS_MODEL
+        pre, judge, _post = self._schedule_counts()
+        sonnet_start = pre + 1
+        sonnet_end = pre + judge
+
+        if attempt_num <= pre:
+            return {
+                "provider_name": self.session.config.player_provider,
+                "model": self.session.config.player_model,
+            }
+        if judge > 0 and sonnet_start <= attempt_num <= sonnet_end:
+            return {
+                "provider_name": "claude_native",
+                "model": PLAYER_ESCALATION_SONNET_MODEL,
+            }
+        return {
+            "provider_name": "claude_native",
+            "model": PLAYER_ESCALATION_OPUS_MODEL,
+        }
+
     async def run(self) -> None:
         """Execute all phases. Raises PhaseFailedError on unrecoverable failure."""
         import logging
@@ -493,6 +516,9 @@ class BatchExecutor:
         print(f"\n{BOLD}--- tero batch ---{RESET}")
         print(f"  Фаз: {len(phases)}  |  Выполнено: {done_count}  |  Макс. попыток на фазу: {max_phase_attempts}")
         print(f"  Player: {self._role_label('player')}")
+        print(
+            f"  Player escalation: sonnet x{judge_attempts} → opus x{post_attempts}"
+        )
         print(f"  Coach: {self._role_label('coach')}")
         print(
             f"  Pre-Coach: {self._review_slot_label('batch_pre_provider', 'batch_pre_model')}"
@@ -520,8 +546,8 @@ class BatchExecutor:
             phase_index = 0
             while phase_index < len(phases):
                 phase = phases[phase_index]
-                # Resume: skip phases already fully completed in the plan file
-                if all(step.done for step in phase.steps):
+                # Resume: skip phases already fully completed or skipped in the plan file
+                if all(step.done or step.skipped for step in phase.steps):
                     phase.status = "done"
                     self.tracker.render_dashboard()
                     phase_index += 1
@@ -552,10 +578,27 @@ class BatchExecutor:
                         write_checklist_back(self.session.plan_file_path, self.tracker.items)
                     phase_index += 1
                 else:
-                    phase.status = "failed"
+                    import logging
+                    from src import streaming as streaming_ui
+                    phase.status = "skipped"
+                    phase.steps = [replace(step, skipped=True) for step in phase.steps]
                     self.tracker.render_dashboard()
-                    raise PhaseFailedError(phase=phase, attempts=phase.attempts)
+                    if getattr(self.session, "plan_file_path", ""):
+                        write_checklist_back(self.session.plan_file_path, self.tracker.items)
+                    logging.warning(
+                        "Phase %r exhausted %d attempts — skipping and continuing",
+                        phase.name, phase.attempts,
+                    )
+                    streaming_ui.print_phase_skipped(phase.name, phase.attempts)
+                    phase_index += 1
         finally:
+            from src.streaming import BOLD, YELLOW, RESET
+            skipped = [p for p in phases if p.status == "skipped"]
+            if skipped:
+                print(f"\n{BOLD}{YELLOW}--- Skipped phases ({len(skipped)}) ---{RESET}")
+                for p in skipped:
+                    print(f"  ⏭ {p.display_name or p.name} — {p.attempts} attempts")
+                print()
             self.tracker.stop_dashboard()
             if runtime is not None:
                 runtime.resume_render()
@@ -616,6 +659,27 @@ class BatchExecutor:
                     overlay = persona_registry.build_overlay(phase_roles)
                     if overlay:
                         player_system = f"{PLAYER_BATCH_SYSTEM_PROMPT}\n\n{overlay}"
+            player_strategy = self._player_strategy(attempt_num)
+            player_provider_inst = None
+            player_model_for_turn = player_strategy["model"]
+            if player_strategy["provider_name"] != self.session.config.player_provider:
+                get_or_create = getattr(self.session, "_get_or_create_provider", None)
+                if callable(get_or_create):
+                    cand = get_or_create(player_strategy["provider_name"])
+                    try:
+                        ok, reason = cand.check_ready()
+                    except (TypeError, ValueError):
+                        ok, reason = False, "provider check unavailable"
+                    if ok:
+                        player_provider_inst = cand
+                    else:
+                        import logging
+                        logging.warning(
+                            "Player escalation to %s unavailable: %s — using configured player",
+                            player_strategy["provider_name"], reason,
+                        )
+                        player_model_for_turn = self.session.config.player_model
+
             try:
                 result = await self._run_player_turn(
                     role="player",
@@ -623,7 +687,8 @@ class BatchExecutor:
                     system_prompt=player_system,
                     max_turns=self.session.config.max_turns,
                     timeout_s=self.session.config.player_timeout_s,
-                    model_override=self.session.config.player_model,
+                    model_override=player_model_for_turn,
+                    provider_override=player_provider_inst,
                 )
             except TimeoutError as exc:
                 if callable(cleanup_processes):
@@ -674,6 +739,12 @@ class BatchExecutor:
                 )
             except PlanResetRequested:
                 raise
+            except (TimeoutError, ProviderError) as exc:
+                # Expected provider failures — log the attempt and retry.
+                coach_feedback = f"Review provider failed: {exc}. Continuing with next attempt."
+                streaming_ui.print_step_rejected(coach_feedback)
+                continue
+            # ValueError / AttributeError intentionally NOT caught — those indicate bugs (wrong role, missing config)
 
             if isinstance(verdict, Approved):
                 return True
