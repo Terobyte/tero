@@ -95,3 +95,18 @@ class TestIterTargets:
         t = targets[0]
         with pytest.raises(AttributeError):
             t.name = "changed"
+
+    def test_finds_methods_of_inner_classes(self, tmp_path):
+        """iter_targets should discover methods on nested (inner) classes."""
+        (tmp_path / "mod.py").write_text(
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        def inner_method(self):\n"
+            "            pass\n"
+            "    def outer_method(self):\n"
+            "        pass\n"
+        )
+        targets = list(iter_targets(tmp_path))
+        names = [t.name for t in targets]
+        assert "Outer.outer_method" in names
+        assert "Outer.Inner.inner_method" in names

@@ -42,6 +42,32 @@ class LdbTarget:
     end_lineno: int
 
 
+def _collect_class_targets(
+    cls_node: ast.ClassDef,
+    rel: str,
+    targets: list[LdbTarget],
+    prefix: str = "",
+) -> None:
+    """Recursively collect public methods from *cls_node*, appending to *targets*."""
+    qualified = f"{prefix}.{cls_node.name}" if prefix else cls_node.name
+    if cls_node.name.startswith("_"):
+        return
+    for child in cls_node.body:
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if child.name.startswith("_"):
+                continue
+            targets.append(
+                LdbTarget(
+                    file=rel,
+                    name=f"{qualified}.{child.name}",
+                    lineno=child.lineno,
+                    end_lineno=getattr(child, "end_lineno", child.lineno),
+                )
+            )
+        elif isinstance(child, ast.ClassDef):
+            _collect_class_targets(child, rel, targets, prefix=qualified)
+
+
 def iter_targets(working_dir: str | Path) -> Iterator[LdbTarget]:
     """Yield every public function/method found in Python files under *working_dir*.
 
@@ -49,8 +75,8 @@ def iter_targets(working_dir: str | Path) -> Iterator[LdbTarget]:
 
     Scope:
       - Top-level functions (``def foo``) in each module.
-      - Methods on top-level classes (``class Foo: def bar``).
-      - Nested functions and methods of inner classes are excluded.
+      - Methods on top-level and nested classes (``class Foo: def bar``,
+        ``class Outer: class Inner: def baz``).
 
     Yields:
         LdbTarget instances sorted by (file, lineno).
@@ -85,21 +111,7 @@ def iter_targets(working_dir: str | Path) -> Iterator[LdbTarget]:
                     )
                 )
             elif isinstance(node, ast.ClassDef):
-                if node.name.startswith("_"):
-                    continue
-                for child in node.body:
-                    if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        continue
-                    if child.name.startswith("_"):
-                        continue
-                    targets.append(
-                        LdbTarget(
-                            file=rel,
-                            name=f"{node.name}.{child.name}",
-                            lineno=child.lineno,
-                            end_lineno=getattr(child, "end_lineno", child.lineno),
-                        )
-                    )
+                _collect_class_targets(node, rel, targets)
 
     targets.sort(key=lambda t: (t.file, t.lineno))
     yield from targets
