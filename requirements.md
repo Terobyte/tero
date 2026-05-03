@@ -860,7 +860,7 @@ tero ldb --working-dir .
 
 Проверить все пункты меню работают, переключение Mode 2/3 видно.
 
-- [ ] **5.5 Коммит**
+- [x] **5.5 Коммит**
 
 ```bash
 git add src/config.py src/cli_entry.py src/menu.py src/constants.py
@@ -871,7 +871,7 @@ git commit -m "ldb: cli, menu, config wiring"
 
 ## Phase 5b: Whole-project scope (`--all`)
 
-- [ ] **5b.1 Failing test для `iter_targets()`**
+- [x] **5b.1 Failing test для `iter_targets()`**
 
 `tests/test_ldb_scope.py`:
 
@@ -889,7 +889,7 @@ def test_iter_targets_finds_public_functions(tmp_path):
     assert not any("_hidden" in t.entry or "skipped" in t.entry for t in targets)
 ```
 
-- [ ] **5b.2 Имплементировать `src/ldb/scope.py`**
+- [x] **5b.2 Имплементировать `src/ldb/scope.py`**
 
 ```python
 """Walk all public functions in working_dir for `--all` mode."""
@@ -932,7 +932,7 @@ def iter_targets(working_dir: str) -> Iterator[LdbTarget]:
                 yield LdbTarget(file=str(py), entry=node.name)
 ```
 
-- [ ] **5b.3 Запустить тест 5b.1** → проходит.
+- [x] **5b.3 Запустить тест 5b.1** → проходит.
 
 - [ ] **5b.4 Коммит**
 
