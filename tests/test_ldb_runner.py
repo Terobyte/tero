@@ -146,6 +146,46 @@ class TestLdbRunnerRun:
             mock_commit.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_mode2_bugs_confirmed_is_success(self, tmp_path):
+        """Mode 2 pipeline: player finds a bug, tester confirms it.
+
+        In Mode 2 (read-only), successfully finding and testing bugs should
+        report ``success=True`` — the pipeline completed its job even though
+        no fixes were applied.
+        """
+        cfg = _make_config(working_dir=str(tmp_path), ldb_mode=2)
+        runner = LdbRunner(cfg)
+
+        call_count = 0
+
+        async def fake_player(source, entry):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [_LdbBug(id=1, file="foo.py", line=10, description="off-by-one")]
+            return []
+
+        async def fake_tester(bugs):
+            for b in bugs:
+                b.status = "confirmed"
+                b.test_file = "test_foo.py"
+            return 1
+
+        with (
+            patch.object(runner, "_run_player", side_effect=fake_player),
+            patch.object(runner, "_run_tester", side_effect=fake_tester),
+            patch.object(runner, "_run_fixer") as mock_fixer,
+            patch.object(runner, "_git_commit") as mock_commit,
+        ):
+            result = await runner.run()
+            assert result.bugs_found == 1
+            assert result.tests_written == 1
+            assert result.bugs_fixed == 0
+            assert result.success is True  # <-- currently fails
+            mock_fixer.assert_not_called()
+            mock_commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_player_returns_none_stops_pipeline(self, tmp_path):
         cfg = _make_config(working_dir=str(tmp_path), ldb_mode=3)
         runner = LdbRunner(cfg)

@@ -318,6 +318,7 @@ class CoachPlayerSession:
             config=self.config,
             model_override=model_override,
             provider_override=provider,
+            interrupted_fn=lambda: self._interrupted,
         )
 
     @staticmethod
@@ -838,6 +839,7 @@ class CoachPlayerSession:
             model_override=model_override,
             provider_override=provider_override,
             disable_tools=disable_tools,
+            interrupted_fn=lambda: self._interrupted,
         )
         runtime = getattr(self, "_runtime", None)
         if runtime is not None:

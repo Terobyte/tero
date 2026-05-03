@@ -40,6 +40,7 @@ class AgentTurnRunner:
         model_override: str = "",
         provider_override=None,
         disable_tools: bool = False,
+        interrupted_fn=None,
     ):
         """Run a single agent turn using the appropriate provider.
 
@@ -120,6 +121,9 @@ class AgentTurnRunner:
                 run_kwargs["disable_tools"] = disable_tools
 
             async for msg in resolved_provider.run(**run_kwargs):
+                if interrupted_fn and interrupted_fn():
+                    break
+
                 if not isinstance(msg, dict) and type(msg).__name__ == "ResultMessage":
                     usage = getattr(msg, "usage", None) or {}
                     if isinstance(usage, dict):
@@ -193,6 +197,7 @@ class AgentTurnRunner:
         config,
         model_override: str = "",
         provider_override=None,
+        interrupted_fn=None,
     ):
         """Retry incomplete player outputs with a continuation prompt."""
         result = await self.run_turn(
@@ -206,6 +211,7 @@ class AgentTurnRunner:
             config=config,
             model_override=model_override,
             provider_override=provider_override,
+            interrupted_fn=interrupted_fn,
         )
 
         if role != "player":
@@ -222,6 +228,8 @@ class AgentTurnRunner:
                 pass
 
         for attempt in range(1, max_attempts + 1):
+            if interrupted_fn and interrupted_fn():
+                return result
             if self._player_output_complete(result.text, current_prompt):
                 return result
 
@@ -244,6 +252,7 @@ class AgentTurnRunner:
                 config=config,
                 model_override=model_override,
                 provider_override=resolved_provider,
+                interrupted_fn=interrupted_fn,
             )
 
         return result

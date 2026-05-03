@@ -286,10 +286,7 @@ def get_context_window(model: str) -> int:
     """Return the context window size for a model, or 0 if unknown."""
     lower = model.lower()
     for pattern, size in _MODEL_CONTEXT_WINDOWS:
-        if pattern == "codex":
-            if lower == "codex":
-                return size
-        elif pattern in lower:
+        if pattern in lower:
             return size
     return 0
 

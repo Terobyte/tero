@@ -15,6 +15,7 @@ from src.feedback import Approved, Feedback, parse_coach_output
 from src.judge import JudgeDecision, JudgeRunner
 from src.providers.base import AgentResult
 from src.providers.codex import CodexConfig, CodexProvider
+from src.errors import ProviderError
 from src.providers.opencode import OpenCodeConfig, OpenCodeProvider
 
 
@@ -83,7 +84,7 @@ async def test_codex_nonzero_exit_raises_failure(monkeypatch):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _create_subprocess)
 
-    with pytest.raises(RuntimeError, match="codex exited with code 23"):
+    with pytest.raises((RuntimeError, ProviderError), match="codex exited with code 23"):
         async for _ in provider.run("prompt", "", ".", 10):
             pass
 
@@ -102,7 +103,7 @@ async def test_opencode_nonzero_exit_raises_failure(monkeypatch):
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _create_subprocess)
 
-    with pytest.raises(RuntimeError, match="opencode exited with code 17"):
+    with pytest.raises((RuntimeError, ProviderError), match="opencode exited with code 17"):
         async for _ in provider.run("prompt", "", ".", 10):
             pass
 
