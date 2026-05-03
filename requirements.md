@@ -479,7 +479,7 @@ async def synthesize_inputs_llm(
 
 - [x] **3.4 Запустить inputs-тесты** → проходят.
 
-- [ ] **3.5 Коммит**
+- [x] **3.5 Коммит**
 
 ```bash
 git add src/ldb/inputs.py src/ldb/prompts.py tests/test_ldb_inputs.py
@@ -490,7 +490,7 @@ git commit -m "ldb: llm-driven input synthesizer agent"
 
 ## Phase 4: Prompts (Player, Tester, Fixer-arch)
 
-- [ ] **4.1 Дополнить `src/ldb/prompts.py`** (файл уже создан в Phase 3.2 с `INPUT_PROMPT_LDB` — ИСПОЛЬЗОВАТЬ append, не overwrite)
+- [x] **4.1 Дополнить `src/ldb/prompts.py`** (файл уже создан в Phase 3.2 с `INPUT_PROMPT_LDB` — ИСПОЛЬЗОВАТЬ append, не overwrite)
 
 Базируется на `programming/generators/py_generate.py:check_block_correctness` (там msg.content собирается с примерами JSON), но адаптирован под наш формат и под отсутствие failing-test.
 
@@ -569,7 +569,7 @@ For each bug, output the Phase A comment block + the new code, in the exact form
 '''
 ```
 
-- [ ] **4.2 Тест на парсинг ответа Player'а**
+- [x] **4.2 Тест на парсинг ответа Player'а**
 
 `tests/test_ldb_runner.py` (заглушка пока). Тест проверяет, что **только первый** `correct: false` возвращается (правило промта Player: «If multiple blocks have the same root cause, mark only the FIRST one as the bug»):
 
@@ -598,11 +598,11 @@ def test_parse_player_response_all_correct():
     assert parse_player_response(raw, []) is None
 ```
 
-- [ ] **4.3 Имплементировать `parse_player_response()` в runner.py**
+- [x] **4.3 Имплементировать `parse_player_response()` в runner.py**
 
 Адаптация `programming/generators/py_generate.py:parse_explanation`. Возвращает первый блок с `correct=false` или `None`.
 
-- [ ] **4.4 Коммит**
+- [x] **4.4 Коммит**
 
 ```bash
 git add src/ldb/prompts.py src/ldb/runner.py tests/test_ldb_runner.py
@@ -613,7 +613,7 @@ git commit -m "ldb: prompts (player/tester/arch-fixer) + response parser"
 
 ## Phase 5: Config + CLI + Menu
 
-- [ ] **5.1 Поля в `src/config.py:Config`**
+- [x] **5.1 Поля в `src/config.py:Config`**
 
 После `debug_*` полей добавить (заметь — **4 агента**, у Input-Synthesizer тоже свой провайдер/модель):
 
@@ -662,7 +662,7 @@ for key in (
 ):
 ```
 
-- [ ] **5.2 Subparser `ldb` в `src/cli_entry.py`**
+- [x] **5.2 Subparser `ldb` в `src/cli_entry.py`**
 
 После `debug_parser` добавить:
 
@@ -740,7 +740,7 @@ elif args.command == "ldb":
     run_ldb(args)
 ```
 
-- [ ] **5.3 Меню `run_ldb_menu()` в `src/menu.py`**
+- [x] **5.3 Меню `run_ldb_menu()` в `src/menu.py`**
 
 **Добавить `import dataclasses`** в верх `src/menu.py` (если ещё нет).
 
@@ -852,7 +852,7 @@ def _fallback_ldb_menu(config: "Config") -> "Config":
             )
 ```
 
-- [ ] **5.4 Smoke-тест меню**
+- [x] **5.4 Smoke-тест меню**
 
 ```bash
 tero ldb --working-dir .

@@ -1,5 +1,6 @@
 """Interactive TUI settings menu for tero go."""
 
+import dataclasses
 from pathlib import Path
 import yaml
 
@@ -774,210 +775,108 @@ def _fallback_debugger_menu(config: "Config") -> "Config":
 # ── LDB menu ──────────────────────────────────────────────────────────────────
 
 LDB_MODE_PRESETS = {
-    "Mode 2 (input+find+test — read-only)": 2,
-    "Mode 3 (+fix +auto-commit)": 3,
+    "Mode 2 — Find bugs + Write tests (no fix)": 2,
+    "Mode 3 — Find + Test + Fix (architectural-first)": 3,
 }
 
 
 def run_ldb_menu(config: "Config") -> "Config":
-    """Interactive menu for the ldb command.
-
-    Returns updated config with ldb_* fields set.
-    """
+    """Interactive LDB settings menu (issue #5: also requires _fallback_ldb_menu below)."""
     if not QUESTIONARY_AVAILABLE:
         return _fallback_ldb_menu(config)
 
     import questionary
 
     while True:
-        input_display = _provider_model_label(
-            config.ldb_input_provider, config.ldb_input_model
-        )
-        player_display = _provider_model_label(
-            config.ldb_player_provider, config.ldb_player_model
-        )
-        tester_display = _provider_model_label(
-            config.ldb_tester_provider, config.ldb_tester_model
-        )
-        fixer_display = _provider_model_label(
-            config.ldb_fixer_provider, config.ldb_fixer_model
-        )
-
-        mode_label = next(
-            (k for k, v in LDB_MODE_PRESETS.items() if v == config.ldb_mode),
-            f"Mode {config.ldb_mode}",
-        )
-
+        scope_label = "ALL public functions" if config.ldb_scope_all else f"{config.ldb_target_file}::{config.ldb_target_entry}"
         choices = [
-            questionary.Choice("▶   Запустить LDB", value="start"),
-            questionary.Separator("─── агенты ──────────────────────────────"),
-            questionary.Choice(
-                f"    Input  (синтез входов):  {input_display}", value="input"
-            ),
-            questionary.Choice(
-                f"    Player (ищет баги):      {player_display}", value="player"
-            ),
-            questionary.Choice(
-                f"    Tester (пишет тесты):    {tester_display}", value="tester"
-            ),
-            questionary.Choice(
-                f"    Fixer  (чинит баги):     {fixer_display}", value="fixer"
-            ),
-            questionary.Separator("─── параметры ───────────────────────────"),
-            questionary.Choice(f"    Режим:               {mode_label}", value="mode"),
-            questionary.Choice(
-                f"    Max итераций:        {config.ldb_max_iterations}",
-                value="max_iterations",
-            ),
-            questionary.Choice(
-                f"    Target файл:         {config.ldb_target_file or '(не задан)'}",
-                value="target_file",
-            ),
-            questionary.Choice(
-                f"    Target функция:      {config.ldb_target_entry or '(не задана)'}",
-                value="target_entry",
-            ),
-            questionary.Choice(
-                f"    Scope all:           {'да' if config.ldb_scope_all else 'нет'}",
-                value="scope_all",
-            ),
-            questionary.Separator("─────────────────────────────────────────"),
-            questionary.Choice("←   Назад", value="back"),
+            questionary.Choice("▶   Run LDB", value="start"),
+            questionary.Separator("─── Target ─────────────────────"),
+            questionary.Choice(f"    Scope:  {scope_label}", value="scope"),
+            questionary.Choice(f"    Test:   {config.ldb_test_input or '(LLM-synthesized)'}", value="test"),
+            questionary.Separator("─── Pipeline ───────────────────"),
+            questionary.Choice(f"    Mode:   {config.ldb_mode}", value="mode"),
+            questionary.Separator("─── Agents (each its own provider/model) ─────"),
+            questionary.Choice(f"    Input:  {_provider_model_label(config.ldb_input_provider, config.ldb_input_model)}", value="input"),
+            questionary.Choice(f"    Player: {_provider_model_label(config.ldb_player_provider, config.ldb_player_model)}", value="player"),
+            questionary.Choice(f"    Tester: {_provider_model_label(config.ldb_tester_provider, config.ldb_tester_model)}", value="tester"),
+            questionary.Choice(f"    Fixer:  {_provider_model_label(config.ldb_fixer_provider, config.ldb_fixer_model)}", value="fixer"),
+            questionary.Separator("───────────────────────────────"),
+            questionary.Choice("←   Back", value="back"),
         ]
-
-        answer = questionary.select(
-            "🔬 LDB — настройка  (↑↓ выбор, Enter)",
-            choices=choices,
-            use_shortcuts=False,
-        ).ask()
-
-        if answer is None or answer == "back":
+        ans = questionary.select("🧪 LDB — settings", choices=choices).ask()
+        if ans in (None, "back"):
+            return None
+        if ans == "start":
             return config
-        if answer == "start":
-            return config
-
-        if answer == "input":
-            config = _questionary_select_provider_model(
-                config, "ldb_input_provider", "ldb_input_model", "Input"
-            )
-        elif answer == "player":
-            config = _questionary_select_provider_model(
-                config, "ldb_player_provider", "ldb_player_model", "Player"
-            )
-        elif answer == "tester":
-            config = _questionary_select_provider_model(
-                config, "ldb_tester_provider", "ldb_tester_model", "Tester"
-            )
-        elif answer == "fixer":
-            config = _questionary_select_provider_model(
-                config, "ldb_fixer_provider", "ldb_fixer_model", "Fixer"
-            )
-        elif answer == "mode":
-            choice = questionary.select(
-                "Режим LDB:",
-                choices=list(LDB_MODE_PRESETS.keys()),
+        if ans == "scope":
+            scope_choice = questionary.select(
+                "Scope:",
+                choices=["Single function (--file --entry)", "All public functions (--all)"],
             ).ask()
-            if choice:
-                config = Config(
-                    **{
-                        **config.__dict__,
-                        "ldb_mode": LDB_MODE_PRESETS[choice],
-                    }
-                )
-        elif answer == "max_iterations":
-            val = questionary.text(
-                f"Max итераций (текущее: {config.ldb_max_iterations}):"
-            ).ask()
-            if val and val.isdigit():
-                config = Config(**{**config.__dict__, "ldb_max_iterations": int(val)})
-        elif answer == "target_file":
-            val = questionary.text(
-                f"Target файл (текущий: {config.ldb_target_file}):"
-            ).ask()
-            if val is not None:
-                config = Config(**{**config.__dict__, "ldb_target_file": val.strip()})
-        elif answer == "target_entry":
-            val = questionary.text(
-                f"Target функция (текущая: {config.ldb_target_entry}):"
-            ).ask()
-            if val is not None:
-                config = Config(**{**config.__dict__, "ldb_target_entry": val.strip()})
-        elif answer == "scope_all":
-            config = Config(
-                **{**config.__dict__, "ldb_scope_all": not config.ldb_scope_all}
-            )
+            if scope_choice and scope_choice.startswith("All"):
+                config = dataclasses.replace(config, ldb_scope_all=True)
+            elif scope_choice:
+                f = questionary.text("Path to .py file:", default=config.ldb_target_file).ask() or ""
+                e = questionary.text("Function name:", default=config.ldb_target_entry).ask() or ""
+                config = dataclasses.replace(config,
+                                   ldb_scope_all=False,
+                                   ldb_target_file=f, ldb_target_entry=e)
+        elif ans == "test":
+            v = questionary.text("Explicit assert (empty = LLM synthesize):", default=config.ldb_test_input).ask()
+            config = dataclasses.replace(config, ldb_test_input=v or "")
+        elif ans == "mode":
+            v = questionary.select("Pipeline mode:", choices=list(LDB_MODE_PRESETS.keys())).ask()
+            if v: config = dataclasses.replace(config, ldb_mode=LDB_MODE_PRESETS[v])
+        elif ans in ("input", "player", "tester", "fixer"):
+            field = f"ldb_{ans}_provider"
+            mfield = f"ldb_{ans}_model"
+            config = _questionary_select_provider_model(config, field, mfield, ans.capitalize())
 
 
 def _fallback_ldb_menu(config: "Config") -> "Config":
-    """Plain-text fallback for LDB menu when questionary is not available."""
+    """Plain-text menu when questionary is unavailable (issue #5).
+
+    Mirrors `_fallback_debugger_menu` pattern in src/menu.py.
+    """
+    print("\n🧪 LDB — settings (questionary not installed, plain text mode)")
     while True:
-        input_display = _provider_model_label(
-            config.ldb_input_provider, config.ldb_input_model
-        )
-        player_display = _provider_model_label(
-            config.ldb_player_provider, config.ldb_player_model
-        )
-        tester_display = _provider_model_label(
-            config.ldb_tester_provider, config.ldb_tester_model
-        )
-        fixer_display = _provider_model_label(
-            config.ldb_fixer_provider, config.ldb_fixer_model
-        )
-
-        print("\n🔬 LDB — настройка")
-        print(f"  [i] Input:        {input_display}")
-        print(f"  [p] Player:       {player_display}")
-        print(f"  [t] Tester:       {tester_display}")
-        print(f"  [f] Fixer:        {fixer_display}")
-        print(f"  [m] Режим:        {config.ldb_mode}")
-        print(f"  [1] Max итераций: {config.ldb_max_iterations}")
-        print(f"  [2] Target файл:  {config.ldb_target_file or '(не задан)'}")
-        print(f"  [3] Target ф-я:   {config.ldb_target_entry or '(не задана)'}")
-        print(f"  [4] Scope all:    {'да' if config.ldb_scope_all else 'нет'}")
-        print(f"  [Enter] Запустить")
-        print(f"  [q] Назад\n")
-
-        answer = input("  › ").strip().lower()
-
-        if answer == "":
+        scope = "ALL" if config.ldb_scope_all else f"{config.ldb_target_file}::{config.ldb_target_entry}"
+        print(f"  [1] Scope:    {scope}")
+        print(f"  [2] Test:     {config.ldb_test_input or '(LLM-synthesized)'}")
+        print(f"  [3] Mode:     {config.ldb_mode}")
+        print(f"  [4] Input  agent: {config.ldb_input_provider}/{config.ldb_input_model or 'default'}")
+        print(f"  [5] Player agent: {config.ldb_player_provider}/{config.ldb_player_model or 'default'}")
+        print(f"  [6] Tester agent: {config.ldb_tester_provider}/{config.ldb_tester_model or 'default'}")
+        print(f"  [7] Fixer  agent: {config.ldb_fixer_provider}/{config.ldb_fixer_model or 'default'}")
+        print(f"  [Enter] Run    [q] Quit")
+        ans = input("  › ").strip().lower()
+        if ans == "":
             return config
-        if answer == "q":
-            return config
-        elif answer == "i":
+        if ans == "q":
+            return None
+        if ans == "1":
+            mode = input("  Scope (s=single / a=all): ").strip().lower()
+            if mode == "a":
+                config = dataclasses.replace(config, ldb_scope_all=True)
+            elif mode == "s":
+                f = input("  File path: ").strip()
+                e = input("  Entry function: ").strip()
+                config = dataclasses.replace(
+                    config, ldb_scope_all=False,
+                    ldb_target_file=f, ldb_target_entry=e,
+                )
+        elif ans == "2":
+            v = input("  Explicit assert (empty = synthesize): ").strip()
+            config = dataclasses.replace(config, ldb_test_input=v)
+        elif ans == "3":
+            v = input("  Mode (2 or 3): ").strip()
+            if v in ("2", "3"):
+                config = dataclasses.replace(config, ldb_mode=int(v))
+        elif ans in ("4", "5", "6", "7"):
+            role = {"4": "input", "5": "player", "6": "tester", "7": "fixer"}[ans]
             config = _fallback_select_provider_model(
-                config, "ldb_input_provider", "ldb_input_model", "Input"
-            )
-        elif answer == "p":
-            config = _fallback_select_provider_model(
-                config, "ldb_player_provider", "ldb_player_model", "Player"
-            )
-        elif answer == "t":
-            config = _fallback_select_provider_model(
-                config, "ldb_tester_provider", "ldb_tester_model", "Tester"
-            )
-        elif answer == "f":
-            config = _fallback_select_provider_model(
-                config, "ldb_fixer_provider", "ldb_fixer_model", "Fixer"
-            )
-        elif answer == "m":
-            raw = input(f"  Режим (2 или 3) [{config.ldb_mode}]: ").strip()
-            if raw in ("2", "3"):
-                config = Config(**{**config.__dict__, "ldb_mode": int(raw)})
-        elif answer == "1":
-            val = input(f"  Max итераций [{config.ldb_max_iterations}]: ").strip()
-            if val.isdigit():
-                config = Config(**{**config.__dict__, "ldb_max_iterations": int(val)})
-        elif answer == "2":
-            val = input(f"  Target файл [{config.ldb_target_file}]: ").strip()
-            if val is not None:
-                config = Config(**{**config.__dict__, "ldb_target_file": val})
-        elif answer == "3":
-            val = input(f"  Target функция [{config.ldb_target_entry}]: ").strip()
-            if val is not None:
-                config = Config(**{**config.__dict__, "ldb_target_entry": val})
-        elif answer == "4":
-            config = Config(
-                **{**config.__dict__, "ldb_scope_all": not config.ldb_scope_all}
+                config, f"ldb_{role}_provider", f"ldb_{role}_model", role.capitalize()
             )
 
         print()
