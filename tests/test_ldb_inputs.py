@@ -1,14 +1,17 @@
-"""Tests for src/ldb/inputs.py — _extract_signature, _extract_surrounding_code, _parse_entry_lines."""
+"""Tests for src/ldb/inputs.py — _extract_signature, _extract_surrounding_code, _parse_entry_lines, synthesize_inputs_llm."""
 
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock
 
 from src.ldb.inputs import (
     _extract_signature,
     _extract_surrounding_code,
     _parse_entry_lines,
     _dotted_parts,
+    synthesize_inputs_llm,
+    parse_inputs_response,
 )
 
 
@@ -108,3 +111,57 @@ class TestParseEntryLines:
         raw = "entry(x=1, y=2)\nentry(a=3)"
         lines = _parse_entry_lines(raw)
         assert len(lines) == 2
+
+
+# ── Phase 3.1: failing tests for parse_inputs_response & synthesize_inputs_llm ──
+
+
+class TestParseInputsResponse:
+    """Tests for parse_inputs_response(raw, entry) — extracts call expressions."""
+
+    def test_extracts_backtick_calls(self):
+        raw = (
+            "Here are the inputs:\n"
+            "1. `add(2, 3)` — basic positives\n"
+            "2. `add(-1, 1)` — boundary\n"
+            "3. `add(0, 0)` — zero\n"
+        )
+        inputs = parse_inputs_response(raw, entry="add")
+        assert "add(2, 3)" in inputs[0]
+        assert "add(-1, 1)" in inputs[1]
+        assert len(inputs) == 3
+
+    def test_fallback_extracts_from_plain_text(self):
+        raw = "I don't know, maybe try add(1, 2)?"
+        inputs = parse_inputs_response(raw, entry="add")
+        assert any("add(1, 2)" in i for i in inputs)
+
+
+class TestSynthesizeInputsLlm:
+    """Tests for synthesize_inputs_llm — the top-level LLM input synthesis."""
+
+    @pytest.mark.asyncio
+    async def test_calls_provider_and_returns_inputs(self):
+        from types import SimpleNamespace
+
+        fake_provider = AsyncMock()
+        fake_provider.config = SimpleNamespace(default_model="test-model")
+
+        async def fake_run(*a, **kw):
+            from src.providers import AdaptedMessage, TextBlock
+
+            yield AdaptedMessage(
+                role="assistant",
+                content=[TextBlock(text="1. `add(1, 2)`\n2. `add(0, 0)`")],
+            )
+
+        fake_provider.run = fake_run
+        inputs = await synthesize_inputs_llm(
+            provider=fake_provider,
+            source="def add(a, b): return a+b",
+            entry="add",
+            model="",
+            n=2,
+        )
+        assert len(inputs) == 2
+        assert "add(1, 2)" in inputs[0]
