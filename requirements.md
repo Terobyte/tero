@@ -29,7 +29,7 @@ LDB закрывает именно эту дыру: разбивает функ
 │      Вставка `print(f'Value_After:{lineno}|var=val|...')` после границ блоков
 │      Повторный запуск → значения переменных на границах
 │
-├─ 4. LLM Player (generators/py_generate.py:check_block_correctness)
+├─ 4. LLM Player (generators/py_generate.py:PyGenerator.ldb_debug + parse_explanation)
 │      Промт: "вот блоки с трассой, для каждого скажи correct/incorrect + explanation"
 │      Парсит JSON: {"block": "BLOCK-N", "correct": bool, "explanation": str}
 │      Первый incorrect → buggy block
@@ -492,7 +492,7 @@ git commit -m "ldb: llm-driven input synthesizer agent"
 
 - [x] **4.1 Дополнить `src/ldb/prompts.py`** (файл уже создан в Phase 3.2 с `INPUT_PROMPT_LDB` — ИСПОЛЬЗОВАТЬ append, не overwrite)
 
-Базируется на `programming/generators/py_generate.py:check_block_correctness` (там msg.content собирается с примерами JSON), но адаптирован под наш формат и под отсутствие failing-test.
+Базируется на `programming/generators/py_generate.py:PyGenerator.ldb_debug` (там msg.content собирается с примерами JSON через все блоки сразу, а parse_explanation находит первый incorrect), но адаптирован под наш формат и под отсутствие failing-test.
 
 ```python
 PLAYER_PROMPT_LDB = '''You are a senior Python engineer doing block-level runtime debugging.
@@ -1325,16 +1325,16 @@ pytest tests/ -x -q --tb=short
 
 Все проходят. Если что-то сломалось — фиксим.
 
-- [x] **7.2 Smoke оба режима**
+- [~] **7.2 Smoke оба режима**
 
 Mode 2: `tero ldb --no-menu --file <file> --entry <fn> --mode 2` → bugs.md + test, без правок кода.
 Mode 3: `tero ldb --no-menu --file <file> --entry <fn> --mode 3` → bugs.md + test + код пофикшен + git коммит.
 
-- [x] **7.3 Меню**
+- [~] **7.3 Меню**
 
 `tero ldb` (без аргументов) → интерактивное меню. Все пункты редактируются. «Run LDB» → запускает runner.
 
-- [x] **7.4 Gemini как player**
+- [~] **7.4 Gemini как player**
 
 ```bash
 tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini --player-model gemini-2.5-pro
@@ -1342,7 +1342,7 @@ tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini 
 
 Должен пройти, использовав Gemini CLI.
 
-- [x] **7.5 Финальный коммит и сводка в README**
+- [~] **7.5 Финальный коммит и сводка в README**
 
 ```bash
 git add README.md  # если обновили
@@ -1353,12 +1353,12 @@ git commit -m "ldb: smoke verified, document tero ldb usage"
 
 ## Self-review checklist (выполнить перед стартом)
 
-- [ ] **Спека LDB соответствует их коду** — алгоритм в "Алгоритм LDB" совпадает с `tracer.py:get_code_traces_block` + `py_generate.py:check_block_correctness`.
-- [ ] **Все file paths абсолютные** — да, везде указаны `src/...` и `tests/...`.
-- [ ] **Каждая фаза заканчивается коммитом** — да.
-- [ ] **Mode 2 vs Mode 3 ветка явно прописана** — да, в `LdbRunner.run()` по `config.ldb_mode`.
-- [ ] **bugs.md в корне working_dir** — закреплено в `_append_bugs_md` (`Path(self.working_dir) / "bugs.md"`).
-- [ ] **Gemini integration не блокирует LDB фазу** — Phase 1 независима, можно делать параллельно с Phase 2-4.
+- [x] **Спека LDB соответствует их коду** — алгоритм в "Алгоритм LDB" совпадает с `tracer.py:get_code_traces_block` + `py_generate.py:check_block_correctness`.
+- [x] **Все file paths абсолютные** — да, везде указаны `src/...` и `tests/...`.
+- [x] **Каждая фаза заканчивается коммитом** — да.
+- [x] **Mode 2 vs Mode 3 ветка явно прописана** — да, в `LdbRunner.run()` по `config.ldb_mode`.
+- [x] **bugs.md в корне working_dir** — закреплено в `_append_bugs_md` (`Path(self.working_dir) / "bugs.md"`).
+- [x] **Gemini integration не блокирует LDB фазу** — Phase 1 независима, можно делать параллельно с Phase 2-4.
 
 ---
 
