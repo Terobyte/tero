@@ -1,7 +1,5 @@
 """Codex provider — Native Codex CLI via subprocess."""
 
-import asyncio
-import inspect
 import json
 import os
 import shutil
@@ -10,17 +8,20 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
+from src.constants import (
+    DEFAULT_PROVIDER_TIMEOUT_S,
+    LARGE_PROMPT_THRESHOLD_BYTES,
+    MAX_TOOL_OUTPUT_CHARS,
+)
 from .message_adapter import (
     AdaptedMessage,
     TextBlock,
     ToolUseBlock,
     ToolResultBlock,
 )
+from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 
-# Maximum output length for tool results to prevent memory issues
-MAX_TOOL_OUTPUT = 8000
-_LARGE_PROMPT_THRESHOLD = 64_000  # bytes; above this, write to temp file
 TEXT_ONLY_DISABLED_FEATURES = ("shell_tool", "multi_agent", "apps")
 
 
@@ -30,8 +31,10 @@ class CodexConfig:
 
     command: str = "codex"  # Path to codex binary
     default_model: str = ""  # Empty string = default from ~/.codex/config.toml
-    default_timeout: int = 900  # Subprocess timeout in seconds
-    sandbox_mode: str = "workspace-write"  # read-only | workspace-write | danger-full-access
+    default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
+    sandbox_mode: str = (
+        "workspace-write"  # read-only | workspace-write | danger-full-access
+    )
     approval_policy: str = "never"  # For exec: never | on-request | untrusted
     ephemeral: bool = True  # --ephemeral (no persistent sessions)
     full_auto: bool = False  # --full-auto (sandbox + on-request)
@@ -39,8 +42,12 @@ class CodexConfig:
     config_overrides: dict[str, str] = field(default_factory=dict)
     extra_args: list[str] = field(default_factory=list)
     # Feature flags (passed via --enable/--disable or -c features.<name>=true/false)
-    enabled_features: list[str] = field(default_factory=list)  # e.g. ["shell_tool", "multi_agent", "fast_mode"]
-    disabled_features: list[str] = field(default_factory=list)  # e.g. ["undo", "web_search_request"]
+    enabled_features: list[str] = field(
+        default_factory=list
+    )  # e.g. ["shell_tool", "multi_agent", "fast_mode"]
+    disabled_features: list[str] = field(
+        default_factory=list
+    )  # e.g. ["undo", "web_search_request"]
     # MCP servers are managed via `codex mcp` commands and ~/.codex/config.toml
     # No api_url or api_key needed - native CLI uses its own auth
 
@@ -98,56 +105,22 @@ class CodexProvider:
         )
         env = self._build_env(system_prompt)
 
-        proc = None
+        _gen = run_subprocess_jsonl(
+            cmd, working_dir, env=env, stdin_data=prompt.encode("utf-8")
+        )
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-                env=env,
-            )
-
-            # Send prompt via stdin ("-" argument means read from stdin)
-            await self._write_stdin(proc.stdin, prompt)
-
-            line_iter = self._iter_stdout_lines(proc.stdout)
-            try:
-                async for line in line_iter:
-                    decoded = line.decode("utf-8").strip()
-                    if not decoded:
-                        continue
-                    try:
-                        event = json.loads(decoded)
-                    except json.JSONDecodeError:
-                        continue
-
+            async for event in _gen:
+                if isinstance(event, SubprocessExit):
+                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
+                    if stderr_message is not None:
+                        yield stderr_message
+                    self._raise_for_returncode(event.returncode, event.stderr)
+                else:
                     adapted = self._adapt_codex_event(event)
                     if adapted is not None:
                         yield adapted
-            finally:
-                await line_iter.aclose()
-
-            # Critical: start reading stderr in background before waiting for process.
-            # If subprocess writes >64KB to stderr, the OS pipe fills and blocks.
-            # Calling proc.wait() first = deadlock: proc.wait() blocks waiting for
-            # process exit, but process is blocked trying to write stderr.
-            # Solution: drain stderr concurrently. The _stderr_message protocol
-            # requires reading the stream before proc.wait() returns.
-            stderr_task = asyncio.create_task(self._stderr_message_read_task(proc.stderr))
-            await proc.wait()
-            stderr_bytes = await stderr_task
-
-            stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
-            if stderr_message is not None:
-                yield stderr_message
-            self._raise_for_returncode(proc.returncode, stderr_bytes)
-
         finally:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            await _gen.aclose()
             self._cleanup_temp_instructions()
 
     def _build_command(
@@ -222,7 +195,7 @@ class CodexProvider:
             return env
 
         encoded = system_prompt.encode("utf-8")
-        if len(encoded) <= _LARGE_PROMPT_THRESHOLD:
+        if len(encoded) <= LARGE_PROMPT_THRESHOLD_BYTES:
             env["CODEX_INSTRUCTIONS"] = system_prompt
             return env
 
@@ -249,64 +222,9 @@ class CodexProvider:
             except OSError:
                 pass
 
-    async def _iter_stdout_lines(self, stdout) -> AsyncIterator[bytes]:
-        """Yield stdout lines without relying on StreamReader.readline limits."""
-        if stdout is None:
-            return
-
-        if hasattr(stdout, "read"):
-            buffer = b""
-            while True:
-                chunk = await stdout.read(65_536)
-                if not chunk:
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    yield line
-            if buffer:
-                yield buffer
-            return
-
-        async for line in stdout:
-            yield line
-
-    async def _write_stdin(self, stdin, text: str) -> None:
-        """Write stdin payload, tolerating sync and async test doubles."""
-        if stdin is None:
-            return
-
-        try:
-            write_result = stdin.write(text.encode("utf-8"))
-            if inspect.isawaitable(write_result):
-                await write_result
-
-            drain = getattr(stdin, "drain", None)
-            if drain is not None:
-                drain_result = drain()
-                if inspect.isawaitable(drain_result):
-                    await drain_result
-        except (BrokenPipeError, ConnectionResetError):
-            return
-        finally:
-            try:
-                close_result = stdin.close()
-                if inspect.isawaitable(close_result):
-                    await close_result
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    async def _stderr_message_read_task(self, stderr) -> bytes:
-        """Read stderr stream and return bytes (or empty bytes if None).
-
-        Used as a background task to avoid deadlock: starts reading stderr
-        BEFORE proc.wait(), so that large stderr writes don't block the process.
-        """
-        if stderr is None:
-            return b""
-        return await stderr.read()
-
-    async def _stderr_message_from_bytes(self, stderr_data: bytes) -> AdaptedMessage | None:
+    async def _stderr_message_from_bytes(
+        self, stderr_data: bytes
+    ) -> AdaptedMessage | None:
         """Convert stderr bytes into a non-fatal assistant message."""
         if isinstance(stderr_data, bytes):
             stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
@@ -323,15 +241,9 @@ class CodexProvider:
             type="text",
         )
 
-    async def _stderr_message(self, stderr) -> AdaptedMessage | None:
-        """Convert stderr output into a non-fatal assistant message."""
-        if stderr is None:
-            return None
-
-        stderr_data = await stderr.read()
-        return await self._stderr_message_from_bytes(stderr_data)
-
-    def _raise_for_returncode(self, returncode: int | None, stderr_data: bytes | str) -> None:
+    def _raise_for_returncode(
+        self, returncode: int | None, stderr_data: bytes | str
+    ) -> None:
         """Raise when the Codex subprocess exits unsuccessfully."""
         if returncode in (None, 0):
             return
@@ -397,7 +309,11 @@ class CodexProvider:
 
         if etype == "turn.failed":
             error = event.get("error", {})
-            msg = error.get("message", "Turn failed") if isinstance(error, dict) else str(error)
+            msg = (
+                error.get("message", "Turn failed")
+                if isinstance(error, dict)
+                else str(error)
+            )
             return AdaptedMessage(
                 role="assistant",
                 content=[TextBlock(text=f"⚠ Codex turn failed: {msg}")],
@@ -432,11 +348,13 @@ class CodexProvider:
                 # Tool use started
                 return AdaptedMessage(
                     role="assistant",
-                    content=[ToolUseBlock(
-                        name="shell",
-                        input={"command": command},
-                        id=item.get("id", ""),
-                    )],
+                    content=[
+                        ToolUseBlock(
+                            name="shell",
+                            input={"command": command},
+                            id=item.get("id", ""),
+                        )
+                    ],
                     stop_reason="tool_use",
                     type="tool_use",
                 )
@@ -449,16 +367,20 @@ class CodexProvider:
                     result_text = f"[exit code: {exit_code}]\n{result_text}"
 
                 # Truncate long output
-                if len(result_text) > MAX_TOOL_OUTPUT:
-                    result_text = result_text[:MAX_TOOL_OUTPUT] + "\n... (truncated)"
+                if len(result_text) > MAX_TOOL_OUTPUT_CHARS:
+                    result_text = (
+                        result_text[:MAX_TOOL_OUTPUT_CHARS] + "\n... (truncated)"
+                    )
 
                 return AdaptedMessage(
                     role="tool",
-                    content=[ToolResultBlock(
-                        tool_use_id=item.get("id", ""),
-                        content=result_text,
-                        is_error=is_error,
-                    )],
+                    content=[
+                        ToolResultBlock(
+                            tool_use_id=item.get("id", ""),
+                            content=result_text,
+                            is_error=is_error,
+                        )
+                    ],
                     type="tool_result",
                 )
 
@@ -470,11 +392,13 @@ class CodexProvider:
             if event_type == "item.started":
                 return AdaptedMessage(
                     role="assistant",
-                    content=[ToolUseBlock(
-                        name=item_type,
-                        input={"path": path},
-                        id=item.get("id", ""),
-                    )],
+                    content=[
+                        ToolUseBlock(
+                            name=item_type,
+                            input={"path": path},
+                            id=item.get("id", ""),
+                        )
+                    ],
                     stop_reason="tool_use",
                     type="tool_use",
                 )
@@ -482,11 +406,13 @@ class CodexProvider:
             if event_type == "item.completed":
                 return AdaptedMessage(
                     role="tool",
-                    content=[ToolResultBlock(
-                        tool_use_id=item.get("id", ""),
-                        content=content or f"[{item_type}: {path}]",
-                        is_error=False,
-                    )],
+                    content=[
+                        ToolResultBlock(
+                            tool_use_id=item.get("id", ""),
+                            content=content or f"[{item_type}: {path}]",
+                            is_error=False,
+                        )
+                    ],
                     type="tool_result",
                 )
 
@@ -527,7 +453,8 @@ class CodexProvider:
 
         cmd = [
             self.config.command,
-            "exec", "review",
+            "exec",
+            "review",
             "--json",
         ]
 
@@ -550,60 +477,29 @@ class CodexProvider:
         if review_prompt:
             cmd.append("-")  # Read from stdin
 
-        proc = None
+        stdin_data = review_prompt.encode("utf-8") if review_prompt else None
+        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=stdin_data)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE if review_prompt else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-            )
-
-            if review_prompt:
-                await self._write_stdin(proc.stdin, review_prompt)
-
-            line_iter = self._iter_stdout_lines(proc.stdout)
-            try:
-                async for line in line_iter:
-                    decoded = line.decode("utf-8").strip()
-                    if not decoded:
-                        continue
-                    try:
-                        event = json.loads(decoded)
-                    except json.JSONDecodeError:
-                        continue
-
+            async for event in _gen:
+                if isinstance(event, SubprocessExit):
+                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
+                    if stderr_message is not None:
+                        yield stderr_message
+                    self._raise_for_returncode(event.returncode, event.stderr)
+                else:
                     adapted = self._adapt_codex_event(event)
                     if adapted is not None:
                         yield adapted
-            finally:
-                await line_iter.aclose()
-
-            # Critical: start reading stderr in background before waiting for process.
-            # If subprocess writes >64KB to stderr, the OS pipe fills and blocks.
-            # Calling proc.wait() first = deadlock: proc.wait() blocks waiting for
-            # process exit, but process is blocked trying to write stderr.
-            # Solution: drain stderr concurrently. The _stderr_message protocol
-            # requires reading the stream before proc.wait() returns.
-            stderr_task = asyncio.create_task(self._stderr_message_read_task(proc.stderr))
-            await proc.wait()
-            stderr_bytes = await stderr_task
-
-            stderr_message = await self._stderr_message_from_bytes(stderr_bytes)
-            if stderr_message is not None:
-                yield stderr_message
-            self._raise_for_returncode(proc.returncode, stderr_bytes)
-
         finally:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            await _gen.aclose()
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if Codex CLI is installed and available."""
         if not shutil.which(self.config.command):
-            return False, f"'{self.config.command}' not found in PATH. Install: npm i -g @openai/codex"
+            return (
+                False,
+                f"'{self.config.command}' not found in PATH. Install: npm i -g @openai/codex",
+            )
 
         try:
             result = subprocess.run(

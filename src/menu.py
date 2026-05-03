@@ -3,7 +3,9 @@
 from pathlib import Path
 import yaml
 
-from src.config import Config, short_model_name
+from src.config import Config, short_model_name, _DEFAULT_CONTEXT_LIMIT
+
+from src.constants import CLAUDE_CODE_ASSUMED_WINDOW
 
 try:
     import questionary
@@ -21,12 +23,26 @@ CODEX_MODEL_PRESETS = {
 # OpenCode model IDs
 OPENCODE_MODEL_PRESETS = {
     "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
+    "Z.AI GLM-5.1 (direct)": "zai/glm-5.1",
+    "Z.AI GLM-5 Turbo (openrouter)": "openrouter/z-ai/glm-5-turbo",
 }
 
 KILO_MODEL_PRESETS = {
     "MIMO Pro  (free)": "kilo/xiaomi/mimo-v2-pro:free",
     "MiniMax M2.5 (free)": "kilo/minimax/minimax-m2.5:free",
 }
+
+
+def _format_context_limit(limit: int) -> str:
+    """Format context limit for menu display."""
+    if limit == _DEFAULT_CONTEXT_LIMIT:
+        return "авто (по модели)"
+    if limit < 1000:
+        return f"{limit}"
+    if limit >= 1_000_000 and limit % 1_000_000 == 0:
+        return f"{limit // 1_000_000}M"
+    return f"{limit // 1000}K"
+
 
 # Provider choices
 PROVIDER_PRESETS = {
@@ -62,7 +78,9 @@ BATCH_ROLE_LABELS = {
 }
 
 
-def _provider_model_label(provider: str, model: str, default_text: str = "по умолчанию") -> str:
+def _provider_model_label(
+    provider: str, model: str, default_text: str = "по умолчанию"
+) -> str:
     """Render provider/model pair for compact menu display."""
     if not provider:
         return "выкл"
@@ -220,7 +238,9 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         print(
             "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2, kimi-k2.5, glm-5.1, nemotron-3-super"
         )
-        model = input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        model = (
+            input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        )
         model_map = {
             "mimo-pro": "opencode/mimo-v2-pro-free",
             "mimo-omni": "opencode/mimo-v2-omni-free",
@@ -235,7 +255,9 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
 
     if provider == "kilo":
         print("  Модели: mimo-pro, minimax-m2.5")
-        model = input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        model = (
+            input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+        )
         model_map = {
             "mimo-pro": "kilo/xiaomi/mimo-v2-pro:free",
             "minimax-m2.5": "kilo/minimax/minimax-m2.5:free",
@@ -412,7 +434,9 @@ def _questionary_menu(config: Config) -> Config | None:
         )
         choices = [
             questionary.Choice(f"▶   Запустить", value="start"),
-            questionary.Choice(f"🔍  Debugger:       {debug_display}", value="start_debug"),
+            questionary.Choice(
+                f"🔍  Debugger:       {debug_display}", value="start_debug"
+            ),
             questionary.Separator("─── провайдеры ──────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
@@ -481,6 +505,10 @@ def _questionary_menu(config: Config) -> Config | None:
                 f"    Batch Review:   {batch_retry_display}",
                 value="batch_review_schedule",
             ),
+            questionary.Choice(
+                f"    Context Limit:  {_format_context_limit(config.context_limit)}",
+                value="context_limit",
+            ),
             questionary.Separator("─────────────────────────────────────────"),
             questionary.Choice("💾  Сохранить как default", value="save_default"),
             questionary.Choice("✗   Выход", value="quit"),
@@ -497,7 +525,9 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer == "start":
             return config
         if answer == "start_debug":
-            config = run_debugger_menu(config)  # launches internally, or returns on "back"
+            config = run_debugger_menu(
+                config
+            )  # launches internally, or returns on "back"
         if answer == "save_default":
             _save_global_default(config)
             continue
@@ -518,9 +548,7 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
         config = _questionary_select_provider_model(
             config, "coach_provider", "coach_model", "coach"
         )
-        config = _sync_batch_roles_with_coach(
-            config, previous_provider, previous_model
-        )
+        config = _sync_batch_roles_with_coach(config, previous_provider, previous_model)
 
     elif setting == "coach_fallback":
         config = _questionary_select_provider_model(
@@ -634,6 +662,29 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             BATCH_ROLE_LABELS[setting],
         )
 
+    elif setting == "context_limit":
+        choices = [
+            questionary.Choice("Авто (по модели) — рекомендуется", value="auto"),
+            questionary.Choice("200K", value="200000"),
+            questionary.Choice("500K", value="500000"),
+            questionary.Choice("1M (максимум Claude/Codex)", value="1000000"),
+            questionary.Choice("Ввести вручную", value="custom"),
+        ]
+        val = questionary.select(
+            f"Context limit (текущий: {_format_context_limit(config.context_limit)}):",
+            choices=choices,
+        ).ask()
+        if val == "auto":
+            config = Config(
+                **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
+            )
+        elif val == "custom":
+            raw = questionary.text("Лимит в токенах:").ask()
+            if raw and raw.isdigit():
+                config = Config(**{**config.__dict__, "context_limit": int(raw)})
+        elif val and val.isdigit():
+            config = Config(**{**config.__dict__, "context_limit": int(val)})
+
     return config
 
 
@@ -707,7 +758,10 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [9] Judge:         {judge_display}")
         print(f"  [0] Post-Coach:    {batch_post_display}")
         print(f"  [w] TestWriter:    {test_writer_display}")
-        print(f"  [d] Debugger:      {config.debug_player_provider}/{config.debug_tester_provider}/{config.debug_fixer_provider} [{config.debug_intensity}]")
+        print(
+            f"  [d] Debugger:      {config.debug_player_provider}/{config.debug_tester_provider}/{config.debug_fixer_provider} [{config.debug_intensity}]"
+        )
+        print(f"  [x] Context Limit: {_format_context_limit(config.context_limit)}")
         print(f"  [s] Сохранить как default")
         print(f"  [Enter] Запустить")
         print(f"  [q] Выход\n")
@@ -777,7 +831,9 @@ def _fallback_menu(config: Config) -> Config | None:
                 **{**config.__dict__, "code_review": not config.code_review}
             )
         elif answer == "g":
-            config = Config(**{**config.__dict__, "preplan_mode": not config.preplan_mode})
+            config = Config(
+                **{**config.__dict__, "preplan_mode": not config.preplan_mode}
+            )
         elif answer == "h":
             config = _fallback_select_provider_model(
                 config, "preplan_provider", "preplan_model", "Plan Polisher"
@@ -815,6 +871,30 @@ def _fallback_menu(config: Config) -> Config | None:
             config = _fallback_select_provider_model(
                 config, "test_writer_provider", "test_writer_model", "TestWriter"
             )
+        elif answer == "x":
+            print("  Выберите context limit:")
+            print("  [a] Авто (по модели)")
+            print("  [1] 200K")
+            print("  [2] 500K")
+            print("  [3] 1M")
+            print("  [4] Ввести вручную")
+            choice = input("  › ").strip().lower()
+            if choice == "a":
+                config = Config(
+                    **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
+                )
+            elif choice == "1":
+                config = Config(
+                    **{**config.__dict__, "context_limit": CLAUDE_CODE_ASSUMED_WINDOW}
+                )
+            elif choice == "2":
+                config = Config(**{**config.__dict__, "context_limit": 500_000})
+            elif choice == "3":
+                config = Config(**{**config.__dict__, "context_limit": 1_000_000})
+            elif choice == "4":
+                raw = input("  Лимит в токенах: ").strip()
+                if raw.isdigit():
+                    config = Config(**{**config.__dict__, "context_limit": int(raw)})
 
         print()
 
@@ -847,28 +927,52 @@ def run_debugger_menu(config: "Config") -> "Config":
         return _fallback_debugger_menu(config)
 
     while True:
-        player_display = _provider_model_label(config.debug_player_provider, config.debug_player_model)
-        tester_display = _provider_model_label(config.debug_tester_provider, config.debug_tester_model)
-        fixer_display = _provider_model_label(config.debug_fixer_provider, config.debug_fixer_model)
+        player_display = _provider_model_label(
+            config.debug_player_provider, config.debug_player_model
+        )
+        tester_display = _provider_model_label(
+            config.debug_tester_provider, config.debug_tester_model
+        )
+        fixer_display = _provider_model_label(
+            config.debug_fixer_provider, config.debug_fixer_model
+        )
 
         intensity_label = next(
-            (k for k, v in DEBUG_INTENSITY_PRESETS.items() if v == config.debug_intensity),
+            (
+                k
+                for k, v in DEBUG_INTENSITY_PRESETS.items()
+                if v == config.debug_intensity
+            ),
             config.debug_intensity,
         )
         limit_label = next(
-            (k for k, (m, v) in DEBUG_LIMIT_PRESETS.items() if m == config.debug_limit_mode and v == config.debug_limit_value),
+            (
+                k
+                for k, (m, v) in DEBUG_LIMIT_PRESETS.items()
+                if m == config.debug_limit_mode and v == config.debug_limit_value
+            ),
             f"{config.debug_limit_mode}/{config.debug_limit_value}",
         )
 
         choices = [
             questionary.Choice("▶   Запустить Debugger", value="start"),
             questionary.Separator("─── агенты ──────────────────────────────"),
-            questionary.Choice(f"    Player (ищет баги):   {player_display}", value="player"),
-            questionary.Choice(f"    Tester (пишет тесты): {tester_display}", value="tester"),
-            questionary.Choice(f"    Fixer (чинит баги):   {fixer_display}", value="fixer"),
+            questionary.Choice(
+                f"    Player (ищет баги):   {player_display}", value="player"
+            ),
+            questionary.Choice(
+                f"    Tester (пишет тесты): {tester_display}", value="tester"
+            ),
+            questionary.Choice(
+                f"    Fixer (чинит баги):   {fixer_display}", value="fixer"
+            ),
             questionary.Separator("─── параметры ───────────────────────────"),
-            questionary.Choice(f"    Интенсивность:        {intensity_label}", value="intensity"),
-            questionary.Choice(f"    Лимит:                {limit_label}", value="limit"),
+            questionary.Choice(
+                f"    Интенсивность:        {intensity_label}", value="intensity"
+            ),
+            questionary.Choice(
+                f"    Лимит:                {limit_label}", value="limit"
+            ),
             questionary.Separator("─────────────────────────────────────────"),
             questionary.Choice("←   Назад", value="back"),
         ]
@@ -902,7 +1006,12 @@ def run_debugger_menu(config: "Config") -> "Config":
                 choices=list(DEBUG_INTENSITY_PRESETS.keys()),
             ).ask()
             if choice:
-                config = Config(**{**config.__dict__, "debug_intensity": DEBUG_INTENSITY_PRESETS[choice]})
+                config = Config(
+                    **{
+                        **config.__dict__,
+                        "debug_intensity": DEBUG_INTENSITY_PRESETS[choice],
+                    }
+                )
         elif answer == "limit":
             choice = questionary.select(
                 "Лимит:",
@@ -910,7 +1019,13 @@ def run_debugger_menu(config: "Config") -> "Config":
             ).ask()
             if choice:
                 mode, value = DEBUG_LIMIT_PRESETS[choice]
-                config = Config(**{**config.__dict__, "debug_limit_mode": mode, "debug_limit_value": value})
+                config = Config(
+                    **{
+                        **config.__dict__,
+                        "debug_limit_mode": mode,
+                        "debug_limit_value": value,
+                    }
+                )
 
 
 def _fallback_debugger_menu(config: "Config") -> "Config":
@@ -926,5 +1041,6 @@ def _fallback_debugger_menu(config: "Config") -> "Config":
     answer = input("  › ").strip().lower()
     if answer == "q":
         import sys
+
         sys.exit(0)
     return config

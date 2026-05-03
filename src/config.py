@@ -7,12 +7,36 @@ from pathlib import Path
 
 import yaml
 
+from src.constants import (
+    DEFAULT_MAX_TURNS,
+    DEFAULT_MAX_ROUNDS,
+    DEFAULT_PLAYER_TIMEOUT_S,
+    DEFAULT_COACH_TIMEOUT_S,
+    DEFAULT_DUEL_TIMEOUT_S,
+    DEFAULT_TEST_TIMEOUT_S,
+    DEFAULT_PREPLAN_TIMEOUT_S,
+    DEFAULT_CHAIN_RETRY_WAIT_S,
+    DEFAULT_CHAIN_MAX_RETRIES,
+    DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS,
+    DEFAULT_BATCH_JUDGE_ATTEMPTS,
+    DEFAULT_BATCH_POST_JUDGE_ATTEMPTS,
+    DEFAULT_COACH_RETRY_MAX,
+    DEFAULT_MAX_CONTINUATION_ATTEMPTS,
+    DEFAULT_MAX_REVIEW_ITERATIONS,
+    DEFAULT_COMPACT_THRESHOLD,
+    DEFAULT_CONTEXT_LIMIT,
+    DEFAULT_DEBUG_LIMIT_VALUE,
+    DEFAULT_DEBUG_VICTORY_THRESHOLD,
+    EXIT_AGENT_TIMEOUT,
+)
+
 
 _UNSAFE_GLOBAL_DEFAULT_KEYS = {
     "batch_mode",
     "tdd_mode",
     "code_review",
     "preplan_mode",
+    "claude_home",
 }
 
 
@@ -50,13 +74,13 @@ def _read_export_from_zshrc(env_name: str) -> str:
 class Config:
     """Resolved configuration."""
 
-    max_turns: int = 10
+    max_turns: int = DEFAULT_MAX_TURNS
     autonomous: bool = False
     verbose: bool = False
     plan_file: str = "requirements.md"
     working_dir: str = "."
-    player_timeout_s: int = 600
-    coach_timeout_s: int = 300
+    player_timeout_s: int = DEFAULT_PLAYER_TIMEOUT_S
+    coach_timeout_s: int = DEFAULT_COACH_TIMEOUT_S
     claude_home: str = "~/.claude-zai"
     coach_model: str = ""  # empty = use default model from env
 
@@ -65,14 +89,14 @@ class Config:
     coach_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
     player_model: str = ""  # model for player (empty = provider default)
     batch_mode: bool = False  # --batch / G3_BATCH_MODE
-    batch_pre_judge_attempts: int = 3
-    batch_judge_attempts: int = 1
-    batch_post_judge_attempts: int = 1
+    batch_pre_judge_attempts: int = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
+    batch_judge_attempts: int = DEFAULT_BATCH_JUDGE_ATTEMPTS
+    batch_post_judge_attempts: int = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
     agent_a_workspace: str = "g"
     agent_b_workspace: str = "g1"
     worktree_mode: str = "auto"
-    max_rounds: int = 3
-    timeout_s: int = 600
+    max_rounds: int = DEFAULT_MAX_ROUNDS
+    timeout_s: int = DEFAULT_DUEL_TIMEOUT_S
     run_tests: bool = True
     run_bug_detection: bool = True
     run_lint: bool = True
@@ -86,7 +110,7 @@ class Config:
     # TDD Mode (Phase 2)
     tdd_mode: bool = False
     test_command: str = ""  # empty = auto-detect
-    test_timeout_s: int = 60
+    test_timeout_s: int = DEFAULT_TEST_TIMEOUT_S
 
     # Code Review (Phase 3)
     code_review: bool = False
@@ -94,14 +118,14 @@ class Config:
     review_model: str = ""
 
     # Coach fallback (Phase 7)
-    coach_retry_max: int = 2
+    coach_retry_max: int = DEFAULT_COACH_RETRY_MAX
     coach_fallback_provider: str = "claude"
     coach_fallback_model: str = ""
 
     # Context Management
-    context_limit: int = 110_000
-    compact_threshold: float = 0.85
-    max_continuation_attempts: int = 2
+    context_limit: int = DEFAULT_CONTEXT_LIMIT
+    compact_threshold: float = DEFAULT_COMPACT_THRESHOLD
+    max_continuation_attempts: int = DEFAULT_MAX_CONTINUATION_ATTEMPTS
 
     # Batch role providers + models (configurable per slot)
     batch_pre_provider: str = "zai"
@@ -116,16 +140,16 @@ class Config:
     preplan_mode: bool = False
     preplan_provider: str = "zai"
     preplan_model: str = ""  # empty = provider default
-    preplan_timeout_s: int = 120
+    preplan_timeout_s: int = DEFAULT_PREPLAN_TIMEOUT_S
 
     # Code review loop
-    max_review_iterations: int = 3
+    max_review_iterations: int = DEFAULT_MAX_REVIEW_ITERATIONS
 
     # Provider fallback chain
-    player_fallback_chain: str = ""   # comma-separated: "codex,zai"
-    coach_fallback_chain: str = ""    # comma-separated: "codex,zai"
-    chain_retry_wait_s: float = 60.0
-    chain_max_retries: int = 2
+    player_fallback_chain: str = ""  # comma-separated: "codex,zai"
+    coach_fallback_chain: str = ""  # comma-separated: "codex,zai"
+    chain_retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S
+    chain_max_retries: int = DEFAULT_CHAIN_MAX_RETRIES
     debug_player_provider: str = "zai"
     debug_tester_provider: str = "claude"
     debug_fixer_provider: str = "codex"
@@ -134,14 +158,15 @@ class Config:
     debug_fixer_model: str = ""
     debug_intensity: str = "medium"
     debug_limit_mode: str = "infinite"
-    debug_limit_value: int = 10
-    debug_victory_threshold: int = 3
+    debug_limit_value: int = DEFAULT_DEBUG_LIMIT_VALUE
+    debug_victory_threshold: int = DEFAULT_DEBUG_VICTORY_THRESHOLD
 
 
 @dataclass
 class ProviderConfig:
     """Compatibility shim for orchestrator/provider configuration."""
 
+    name: str = ""
     type: str = ""
     config: dict | None = None
 
@@ -199,6 +224,9 @@ _ENV_MAP = {
     "G3_DEBUG_PLAYER_PROVIDER": ("debug_player_provider", str),
     "G3_DEBUG_TESTER_PROVIDER": ("debug_tester_provider", str),
     "G3_DEBUG_FIXER_PROVIDER": ("debug_fixer_provider", str),
+    "G3_DEBUG_PLAYER_MODEL": ("debug_player_model", str),
+    "G3_DEBUG_TESTER_MODEL": ("debug_tester_model", str),
+    "G3_DEBUG_FIXER_MODEL": ("debug_fixer_model", str),
     "G3_DEBUG_INTENSITY": ("debug_intensity", str),
     "G3_DEBUG_LIMIT_MODE": ("debug_limit_mode", str),
     "G3_DEBUG_LIMIT_VALUE": ("debug_limit_value", int),
@@ -209,9 +237,9 @@ _ENV_MAP = {
 # Known context window sizes (tokens) by model name pattern.
 # Matched in order — first substring hit wins.
 _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
-    ("claude-opus-4", 200_000),
-    ("claude-sonnet-4", 200_000),
-    ("claude-haiku-4", 200_000),
+    ("claude-opus-4", 1_000_000),
+    ("claude-sonnet-4", 1_000_000),
+    ("claude-haiku-4", 1_000_000),
     ("claude-3-5", 200_000),
     ("claude-3", 200_000),
     ("glm-5.1", 204_800),
@@ -225,13 +253,17 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("o4-mini", 128_000),
     ("gpt-4o", 128_000),
     ("gpt-4", 128_000),
-    ("codex", 128_000),
+    ("codex", 1_000_000),
     ("xiaomi/mimo-v2-pro:free", 1_048_576),
     ("mimo", 131_072),
     ("minimax/minimax-m2.5:free", 262_144),
     ("minimax-m2", 1_000_000),
     ("nemotron", 131_072),
     ("minimax", 40_960),
+    # Short aliases used by _MODEL_ALIASES in claude_native.py
+    ("opus", 1_000_000),
+    ("sonnet", 1_000_000),
+    ("haiku", 1_000_000),
 ]
 
 
@@ -239,9 +271,39 @@ def get_context_window(model: str) -> int:
     """Return the context window size for a model, or 0 if unknown."""
     lower = model.lower()
     for pattern, size in _MODEL_CONTEXT_WINDOWS:
-        if pattern in lower:
+        if pattern == "codex":
+            if lower == "codex":
+                return size
+        elif pattern in lower:
             return size
     return 0
+
+
+# Sentinel: context_limit == this value means "auto-detect from model window"
+_DEFAULT_CONTEXT_LIMIT = DEFAULT_CONTEXT_LIMIT
+
+
+def get_effective_context_limit(
+    model: str, configured_limit: int, provider=None
+) -> int:
+    """Derive context limit from model window, unless user explicitly overrode."""
+    window = get_context_window(model)
+    if configured_limit != _DEFAULT_CONTEXT_LIMIT:
+        # User/menu set it — respect, but cap to model's actual window when known.
+        # Prevents e.g. "1M" setting from being used with a 204K z.ai model.
+        if window > 0:
+            return min(configured_limit, window)
+        return configured_limit
+    if window > 0:
+        return window  # full window — compact_threshold handles the reduction
+    # Fallback: derive from provider class name (e.g. CodexProvider → "codexprovider"
+    # contains "codex" as substring → 1M). Handles providers with empty default_model.
+    if provider is not None:
+        cls_hint = type(provider).__name__.lower()
+        window = get_context_window(cls_hint)
+        if window > 0:
+            return window
+    return _DEFAULT_CONTEXT_LIMIT  # unknown model and no provider hint — safe fallback
 
 
 def _normalize_provider_name(value: str) -> str:
@@ -293,7 +355,10 @@ def short_model_name(model: str) -> str:
     if "minimax" in m:
         return "MINIMAX"
     if "glm" in m:
-        return "GLM-5"
+        glm_pos = m.find("glm")
+        rest = m[glm_pos + 3:].lstrip("-")
+        ver = rest.split("-")[0]
+        return f"GLM-{ver}" if ver else "GLM"
     if "kimi" in m:
         return "KIMI"
     return model.split("/")[-1].upper()[:10]
@@ -418,6 +483,9 @@ def resolve_config(cli_args: dict) -> Config:
         "coach_fallback_provider",
         "review_provider",
         "preplan_provider",
+        "debug_player_provider",
+        "debug_tester_provider",
+        "debug_fixer_provider",
     ):
         if key in defaults and defaults[key]:
             defaults[key] = _normalize_provider_name(str(defaults[key]))
@@ -425,9 +493,6 @@ def resolve_config(cli_args: dict) -> Config:
     # Provider config
     project = load_merged_settings(working_dir, include_global=True)
     provider = project.get("provider", {})
-    if claude_home := provider.get("claude_home"):
-        defaults["claude_home"] = claude_home
-
     # Any top-level key in the project config that is NOT a known section header
     # is a candidate for a user typo (e.g. "runn_tests" instead of "run_tests").
     # Collect them into defaults so the unknown-key warning can catch them.
@@ -436,10 +501,11 @@ def resolve_config(cli_args: dict) -> Config:
         if key not in _KNOWN_SECTIONS and key not in defaults:
             defaults[key] = val
 
-    valid_fields = Config.__dataclass_fields__
-    unknown = set(defaults) - set(valid_fields)
+    valid_fields = set(Config.__dataclass_fields__)
+    unknown = set(defaults) - valid_fields
     if unknown:
         import warnings
+
         warnings.warn(
             f"Unknown config keys (possible typos): {sorted(unknown)}",
             UserWarning,

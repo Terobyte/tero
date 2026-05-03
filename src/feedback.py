@@ -122,7 +122,9 @@ def _latest_assistant_text(messages: list) -> str:
     for msg in reversed(messages):
         if not _is_assistant_message(msg):
             if seen_text:
-                break
+                role = getattr(msg, "role", "") or ""
+                if role not in ("tool", "tool_result", "tool_use"):
+                    break
             continue
 
         text = _extract_text_from_message(msg).strip()

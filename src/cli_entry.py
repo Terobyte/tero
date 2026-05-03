@@ -30,10 +30,6 @@ def resolve_go_config(args):
             "player_provider": getattr(args, "player_provider", None),
             "coach_provider": getattr(args, "coach_provider", None),
             "player_model": getattr(args, "player_model", None),
-            "batch_mode": getattr(args, "batch_mode", None),
-            "tdd_mode": getattr(args, "tdd_mode", None),
-            "test_command": getattr(args, "test_command", None),
-            "test_timeout_s": getattr(args, "test_timeout_s", None),
             "code_review": getattr(args, "code_review", None),
             "review_provider": getattr(args, "review_provider", None),
             "review_model": getattr(args, "review_model", None),
@@ -42,7 +38,9 @@ def resolve_go_config(args):
             "coach_fallback_model": getattr(args, "coach_fallback_model", None),
             "context_limit": getattr(args, "context_limit", None),
             "compact_threshold": getattr(args, "compact_threshold", None),
-            "max_continuation_attempts": getattr(args, "max_continuation_attempts", None),
+            "max_continuation_attempts": getattr(
+                args, "max_continuation_attempts", None
+            ),
             "batch_judge_provider": getattr(args, "batch_judge_provider", None),
             "batch_judge_model": getattr(args, "batch_judge_model", None),
             "batch_pre_provider": getattr(args, "batch_pre_provider", None),
@@ -50,10 +48,6 @@ def resolve_go_config(args):
             "batch_post_provider": getattr(args, "batch_post_provider", None),
             "batch_post_model": getattr(args, "batch_post_model", None),
             "max_review_iterations": getattr(args, "max_review_iterations", None),
-            # Pre-Planner (Phase 0)
-            "preplan_provider": getattr(args, "preplan_provider", None) or None,
-            "preplan_model": getattr(args, "preplan_model", None) or None,
-            "preplan_mode": getattr(args, "preplan_mode", None),
             # Provider fallback chain
             "player_fallback_chain": getattr(args, "player_fallback_chain", None),
             "coach_fallback_chain": getattr(args, "coach_fallback_chain", None),
@@ -112,13 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PROVIDER_CHOICES,
     )
     go_parser.add_argument("--player-model", "-pm", type=str, default=None)
-    go_parser.add_argument("--coach-model", "-cm", type=str, default=None, dest="coach_model")
-    go_parser.add_argument("--batch", action="store_true", dest="batch_mode", default=None)
-
-    go_parser.add_argument("--tdd", dest="tdd_mode", action="store_true", default=None)
-    go_parser.add_argument("--test-command", type=str, default=None)
-    go_parser.add_argument("--test-timeout-s", type=int, default=None, dest="test_timeout_s")
-
+    go_parser.add_argument(
+        "--coach-model", "-cm", type=str, default=None, dest="coach_model"
+    )
     go_parser.add_argument("--code-review", action="store_true", default=None)
     go_parser.add_argument(
         "--review-provider",
@@ -192,35 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_review_iterations",
     )
 
-    # Pre-Planner (Phase 0)
-    go_parser.add_argument(
-        "--preplan-provider",
-        type=str,
-        default="",
-        help="Provider for Phase 0 Pre-Planner (default: same as player)",
-    )
-    go_parser.add_argument(
-        "--preplan-model",
-        type=str,
-        default="",
-        help="Model override for Phase 0 Pre-Planner",
-    )
-    preplan_group = go_parser.add_mutually_exclusive_group()
-    preplan_group.add_argument(
-        "--preplan",
-        dest="preplan_mode",
-        action="store_true",
-        default=None,
-        help="Enable Phase 0 plan enrichment",
-    )
-    preplan_group.add_argument(
-        "--no-preplan",
-        dest="preplan_mode",
-        action="store_false",
-        default=None,
-        help="Disable Phase 0 plan enrichment",
-    )
-
     # Provider fallback chain
     go_parser.add_argument(
         "--player-fallback-chain",
@@ -251,38 +212,64 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
 
-    debug_parser = subparsers.add_parser("debug", help="Run automated bug-find-test-fix loop")
+    debug_parser = subparsers.add_parser(
+        "debug", help="Run automated bug-find-test-fix loop"
+    )
     debug_parser.add_argument(
-        "--working-dir", "-w", type=str, default=".",
+        "--working-dir",
+        "-w",
+        type=str,
+        default=".",
         dest="working_dir",
     )
     debug_parser.add_argument(
-        "--player-provider", type=str, choices=PROVIDER_CHOICES,
-        default=None, dest="debug_player_provider",
+        "--player-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="debug_player_provider",
     )
     debug_parser.add_argument(
-        "--tester-provider", type=str, choices=PROVIDER_CHOICES,
-        default=None, dest="debug_tester_provider",
+        "--tester-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="debug_tester_provider",
     )
     debug_parser.add_argument(
-        "--fixer-provider", type=str, choices=PROVIDER_CHOICES,
-        default=None, dest="debug_fixer_provider",
+        "--fixer-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="debug_fixer_provider",
     )
     debug_parser.add_argument(
-        "--intensity", type=str, choices=["low", "medium", "high"],
-        default=None, dest="debug_intensity",
+        "--intensity",
+        type=str,
+        choices=["low", "medium", "high"],
+        default=None,
+        dest="debug_intensity",
     )
     debug_parser.add_argument(
-        "--limit", type=int, default=None, dest="debug_limit_value",
+        "--limit",
+        type=int,
+        default=None,
+        dest="debug_limit_value",
     )
     debug_parser.add_argument(
-        "--time", type=int, default=None,
+        "--time",
+        type=int,
+        default=None,
     )
     debug_parser.add_argument(
-        "--infinite", action="store_true", default=False,
+        "--infinite",
+        action="store_true",
+        default=False,
     )
     debug_parser.add_argument(
-        "--no-menu", action="store_true", default=False,
+        "--no-menu",
+        action="store_true",
+        default=False,
     )
 
     return parser
@@ -303,22 +290,11 @@ async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
 
     try:
         session = session_cls(config, requirements, str(plan_path))
-        if config.batch_mode:
-            items = parse_requirements(requirements)
-            phases = []
-            if config.preplan_mode and hasattr(session, "_run_phase_zero"):
-                enriched_items, phases = await session._run_phase_zero(requirements)
-                if enriched_items:
-                    items = enriched_items
-            tracker = PlanTracker(items)
-            if phases:
-                tracker.phases = phases
-            executor = BatchExecutor(session, tracker)
-            await executor.run()
-            sys.exit(0)
-
-        result = await session.run()
-        sys.exit(0 if result.approved else 1)
+        items = parse_requirements(requirements)
+        tracker = PlanTracker(items)
+        executor = BatchExecutor(session, tracker, session.router)
+        await executor.run()
+        sys.exit(0)
     except RuntimeError as exc:
         print(f"\nОшибка: {exc}")
         sys.exit(1)
@@ -348,7 +324,7 @@ def run_debug(args) -> None:
     elif getattr(args, "time", None):
         cli_overrides["debug_limit_mode"] = "time"
         cli_overrides["debug_limit_value"] = args.time
-    elif getattr(args, "debug_limit_value", None):
+    elif getattr(args, "debug_limit_value", None) is not None:
         cli_overrides["debug_limit_mode"] = "iterations"
         cli_overrides["debug_limit_value"] = args.debug_limit_value
 

@@ -36,10 +36,13 @@ class TestBug_ClaudeNativeSubprocessLeak:
         because there is no try/finally that calls proc.kill() / proc.terminate().
         EXPECTED: source contains try/finally or equivalent cleanup
         ACTUAL:   no try/finally around the subprocess lifetime
-        """
-        from src.providers.claude_native import ClaudeNativeProvider
 
-        source = inspect.getsource(ClaudeNativeProvider.run)
+        After Phase 6B refactor: cleanup lives in subprocess_runner.run_subprocess_jsonl()
+        which all subprocess-based providers delegate to.
+        """
+        from src.providers import subprocess_runner
+
+        source = inspect.getsource(subprocess_runner.run_subprocess_jsonl)
 
         # The process must be cleaned up even on exception
         has_cleanup = (
@@ -49,7 +52,7 @@ class TestBug_ClaudeNativeSubprocessLeak:
         )
 
         assert has_cleanup, (
-            "BUG CONFIRMED: ClaudeNativeProvider.run() creates a subprocess but has no "
+            "BUG CONFIRMED: run_subprocess_jsonl() creates a subprocess but has no "
             "try/finally to call proc.kill() or proc.terminate() on exception. "
             "If the caller raises during iteration, the child process is orphaned."
         )
@@ -334,25 +337,24 @@ class TestBug_OpencodeStderrTypeMismatch:
     async def test_stderr_message_handles_str_stderr_data(self):
         """
         BUG: await stderr.read() returns str in some contexts; .decode() fails.
-        EXPECTED: _stderr_message() handles str gracefully (no AttributeError)
+        EXPECTED: _stderr_message_from_bytes() handles str gracefully (no AttributeError)
         ACTUAL:   AttributeError: 'str' object has no attribute 'decode'
+
+        After Phase 6B refactor: _stderr_message() was replaced by
+        _stderr_message_from_bytes() which takes already-read bytes/str.
+        The guard is isinstance(stderr_data, bytes) in _stderr_message_from_bytes().
         """
         from src.providers.opencode import OpenCodeProvider
-
-        class StrStderr:
-            """Simulates a stream whose read() returns str instead of bytes."""
-            async def read(self):
-                return "connection refused"  # str, not bytes
 
         provider = object.__new__(OpenCodeProvider)
 
         try:
-            await provider._stderr_message(StrStderr())
+            result = await provider._stderr_message_from_bytes("connection refused")
             # If we get here without error, the bug is fixed
         except AttributeError as e:
             pytest.fail(
-                f"BUG CONFIRMED: _stderr_message() crashed with AttributeError: {e}. "
-                f"stderr.read() returned str but code calls .decode() unconditionally. "
+                f"BUG CONFIRMED: _stderr_message_from_bytes() crashed with AttributeError: {e}. "
+                f"str data passed but code calls .decode() unconditionally. "
                 f"Fix: check isinstance(stderr_data, bytes) before calling .decode()."
             )
 

@@ -12,11 +12,14 @@ The chain exposes the same duck-typed interface as individual providers:
 
 import asyncio
 
-_MAX_BUFFER_MSGS = 10_000
+from src.errors import RateLimitError
+from src.constants import (
+    MAX_BUFFER_MSGS,
+    DEFAULT_CHAIN_RETRY_WAIT_S,
+    DEFAULT_CHAIN_MAX_RETRIES,
+)
 
-
-class RateLimitError(Exception):
-    """Raised when all providers in the chain are exhausted."""
+_MAX_BUFFER_MSGS = MAX_BUFFER_MSGS
 
 
 def _is_recoverable_error(exc: Exception) -> bool:
@@ -40,7 +43,7 @@ def _is_recoverable_error(exc: Exception) -> bool:
             "unavailable",
             "overloaded",
             "gateway",
-            "eof",
+            "unexpected eof",
             "broken pipe",
         )
     )
@@ -57,8 +60,8 @@ class ProviderChain:
     def __init__(
         self,
         providers: list,
-        retry_wait_s: float = 60.0,
-        max_retries: int = 2,
+        retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S,
+        max_retries: int = DEFAULT_CHAIN_MAX_RETRIES,
         on_fallback=None,
     ):
         if not providers:

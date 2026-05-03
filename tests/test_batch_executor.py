@@ -45,7 +45,10 @@ class TestDetectStepType:
         assert detect_step_type(PlanItem(text="Create providers/base.py")) == "create"
 
     def test_update_keyword(self):
-        assert detect_step_type(PlanItem(text="Update config.py with new fields")) == "update"
+        assert (
+            detect_step_type(PlanItem(text="Update config.py with new fields"))
+            == "update"
+        )
 
     def test_test_keyword(self):
         assert detect_step_type(PlanItem(text="Write tests for provider")) == "test"
@@ -57,7 +60,10 @@ class TestDetectStepType:
         assert detect_step_type(PlanItem(text="CREATE the module")) == "create"
 
     def test_unknown_keyword_returns_default(self):
-        assert detect_step_type(PlanItem(text="Do something completely unknown")) == DEFAULT_STEP_TYPE
+        assert (
+            detect_step_type(PlanItem(text="Do something completely unknown"))
+            == DEFAULT_STEP_TYPE
+        )
 
     def test_first_match_wins(self):
         assert detect_step_type(PlanItem(text="implement and refactor")) == "create"
@@ -119,6 +125,7 @@ class TestAutoGroupPhases:
 class TestPlanTracker:
     def test_init_stores_items(self):
         from src.plan_tracker import PlanTracker
+
         items = [PlanItem(text="create a.py"), PlanItem(text="update b.py")]
         tracker = PlanTracker(items)
         assert tracker.items == items
@@ -126,6 +133,7 @@ class TestPlanTracker:
 
     def test_phase_done_marks_all_steps(self):
         from src.plan_tracker import PlanTracker
+
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         tracker = PlanTracker(items)
         phase = Phase(name="Create", type="create", steps=items, status="done")
@@ -135,6 +143,7 @@ class TestPlanTracker:
 
     def test_phase_done_does_not_require_live(self):
         from src.plan_tracker import PlanTracker
+
         items = [PlanItem(text="create a.py")]
         tracker = PlanTracker(items)
         phase = Phase(name="Create", type="create", steps=items)
@@ -165,11 +174,13 @@ class TestPlanTracker:
 
     def test_render_dashboard_noop_when_not_started(self):
         from src.plan_tracker import PlanTracker
+
         tracker = PlanTracker([])
         tracker.render_dashboard()  # should not raise
 
     def test_stop_dashboard_noop_when_not_started(self):
         from src.plan_tracker import PlanTracker
+
         tracker = PlanTracker([])
         tracker.stop_dashboard()  # should not raise
 
@@ -181,6 +192,7 @@ class TestBuildBatchPrompt:
 
     def test_first_attempt_no_extra_sections(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py", "create b.py"])
         prompt = build_batch_prompt(phase, [], "")
         assert "REJECTED" not in prompt
@@ -191,6 +203,7 @@ class TestBuildBatchPrompt:
 
     def test_with_done_steps_shows_already_completed(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py", "create b.py"])
         prompt = build_batch_prompt(phase, ["create a.py"], "")
         assert "Already completed" in prompt
@@ -201,6 +214,7 @@ class TestBuildBatchPrompt:
 
     def test_with_coach_feedback_shows_rejection(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, [], "Missing error handling")
         assert "STRUCTURED REVIEW FEEDBACK" in prompt
@@ -208,12 +222,14 @@ class TestBuildBatchPrompt:
 
     def test_step_confirmation_instructions_present(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, [], "")
         assert "Step 1 done:" in prompt
 
     def test_prompt_requires_verifying_existing_implementation_first(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, [], "")
         assert "verify whether each planned step is already satisfied" in prompt
@@ -221,6 +237,7 @@ class TestBuildBatchPrompt:
 
     def test_prompt_forbids_pasted_shell_transcripts(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, [], "")
         assert "Use the available tools" in prompt
@@ -231,6 +248,7 @@ class TestBuildBatchPrompt:
 class TestReviewStrategy:
     def test_uses_post_provider_after_judge_window(self):
         from src.batch_executor import BatchExecutor
+        from src.role_router import RoleRouter
 
         session = MagicMock()
         session.config.batch_pre_judge_attempts = 1
@@ -242,17 +260,26 @@ class TestReviewStrategy:
         session.config.batch_judge_model = "gpt-5.4"
         session.config.batch_post_provider = "zai"
         session.config.batch_post_model = "glm-5"
-        session.build_provider_display = MagicMock(
-            side_effect=lambda provider, model="": f"{provider}:{model or 'default'}"
+
+        mock_provider = MagicMock()
+        mock_provider.env = None
+        mock_provider.config = MagicMock()
+        mock_provider.config.default_model = ""
+        mock_provider.config.model = ""
+        router = RoleRouter(
+            config=session.config,
+            get_or_create_provider=MagicMock(return_value=mock_provider),
+            player_provider=MagicMock(),
+            coach_provider=MagicMock(),
         )
 
-        executor = BatchExecutor(session, MagicMock())
+        executor = BatchExecutor(session, MagicMock(), router)
 
         strategy = executor._review_strategy(3)
 
         assert strategy["provider_name_override"] == "zai"
         assert strategy["model_override"] == "glm-5"
-        assert strategy["label"] == "zai:glm-5"
+        assert strategy["label"] == "zai | model=glm-5"
 
 
 class TestPlayerToolAvailabilityDetection:
@@ -262,6 +289,7 @@ class TestPlayerToolAvailabilityDetection:
 
     def test_detects_tool_unavailable_excuse_without_tool_use(self):
         from src.batch_executor import player_claimed_tools_unavailable
+
         result = MagicMock()
         result.tools_used = 0
         result.text = "Не удалось проверить: в этой сессии не доступны инструменты доступа к файловой системе."
@@ -269,6 +297,7 @@ class TestPlayerToolAvailabilityDetection:
 
     def test_ignores_tool_unavailable_text_when_tools_were_used(self):
         from src.batch_executor import player_claimed_tools_unavailable
+
         result = MagicMock()
         result.tools_used = 2
         result.text = "tools are unavailable"
@@ -276,6 +305,7 @@ class TestPlayerToolAvailabilityDetection:
 
     def test_phase_complete_marker_present(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, [], "")
         assert f"PHASE_COMPLETE: {phase.name}" in prompt
@@ -285,6 +315,7 @@ class TestPlayerToolAvailabilityDetection:
 
     def test_prompt_for_report_only_when_all_steps_already_done(self):
         from src.batch_executor import build_batch_prompt
+
         phase = self._phase(["create a.py"])
         prompt = build_batch_prompt(phase, ["create a.py"], "Need the report")
         assert "All planned steps for phase" in prompt
@@ -304,6 +335,7 @@ class TestParseCompletedSteps:
 
     def test_phase_complete_returns_all(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py", "create b.py"])
         result = self._result("I did stuff\nPHASE_COMPLETE: P")
         completed = parse_completed_steps(result, phase)
@@ -311,6 +343,7 @@ class TestParseCompletedSteps:
 
     def test_step_done_by_index(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py", "create b.py", "create c.py"])
         result = self._result("Step 1 done: created it")
         completed = parse_completed_steps(result, phase)
@@ -318,6 +351,7 @@ class TestParseCompletedSteps:
 
     def test_partial_completion(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py", "create b.py", "create c.py"])
         result = self._result("Step 1 done: x\nStep 3 done: y")
         completed = parse_completed_steps(result, phase)
@@ -325,6 +359,7 @@ class TestParseCompletedSteps:
 
     def test_empty_output_returns_empty(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py"])
         result = self._result("I tried but got confused")
         completed = parse_completed_steps(result, phase)
@@ -332,6 +367,7 @@ class TestParseCompletedSteps:
 
     def test_out_of_range_index_ignored(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py"])
         result = self._result("Step 99 done: whatever")
         completed = parse_completed_steps(result, phase)
@@ -339,6 +375,7 @@ class TestParseCompletedSteps:
 
     def test_case_insensitive_step_done(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py"])
         result = self._result("STEP 1 DONE: created")
         completed = parse_completed_steps(result, phase)
@@ -346,6 +383,7 @@ class TestParseCompletedSteps:
 
     def test_retry_keeps_original_step_numbers(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py", "create b.py"])
         result = self._result("Step 2 done: created b.py")
         completed = parse_completed_steps(result, phase)
@@ -353,6 +391,7 @@ class TestParseCompletedSteps:
 
     def test_phase_complete_unconditional(self):
         from src.batch_executor import parse_completed_steps
+
         phase = self._phase(["create a.py", "create b.py"])
         result = self._result("PHASE_COMPLETE: P\n(forgot to write step confirmations)")
         completed = parse_completed_steps(result, phase)
@@ -362,6 +401,7 @@ class TestParseCompletedSteps:
 class TestPhaseFailedError:
     def test_str_contains_phase_name(self):
         from src.batch_executor import PhaseFailedError
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create (1 steps)", type="create", steps=items)
         err = PhaseFailedError(phase=phase, attempts=3)
@@ -369,6 +409,7 @@ class TestPhaseFailedError:
 
     def test_str_contains_attempt_count(self):
         from src.batch_executor import PhaseFailedError
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         err = PhaseFailedError(phase=phase, attempts=3)
@@ -376,6 +417,7 @@ class TestPhaseFailedError:
 
     def test_is_exception(self):
         from src.batch_executor import PhaseFailedError
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         err = PhaseFailedError(phase=phase, attempts=1)
@@ -383,6 +425,7 @@ class TestPhaseFailedError:
 
     def test_args_populated(self):
         from src.batch_executor import PhaseFailedError
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         err = PhaseFailedError(phase=phase, attempts=2)
@@ -407,6 +450,7 @@ class TestRunPhase:
     def _make_session(self, player_texts, coach_verdict=None):
         from src.feedback import Approved
         from src.batch_executor import BatchExecutor
+
         session = MagicMock()
         session.config = MagicMock()
         session.config.max_turns = 10
@@ -447,6 +491,7 @@ class TestRunPhase:
 
     def _make_executor(self, session):
         from src.batch_executor import BatchExecutor
+
         tracker = MagicMock()
         tracker.render_dashboard = MagicMock()
         return BatchExecutor(session=session, tracker=tracker)
@@ -464,10 +509,15 @@ class TestRunPhase:
     @pytest.mark.asyncio
     async def test_retry_on_incomplete_then_success(self):
         from src.feedback import Approved, Feedback
+
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
-            ["Step 1 done: created a.py", "PHASE_COMPLETE: Create", "PHASE_COMPLETE: Create"]
+            [
+                "Step 1 done: created a.py",
+                "PHASE_COMPLETE: Create",
+                "PHASE_COMPLETE: Create",
+            ]
         )
         # First coach call rejects (incomplete), second approves
         session._run_coach_turn_for_phase = AsyncMock(
@@ -527,7 +577,9 @@ class TestRunPhase:
         result_three = MagicMock()
         result_three.text = result_two.text
         result_three.messages = []
-        session._run_with_continuation = AsyncMock(side_effect=[result_one, result_two, result_three])
+        session._run_with_continuation = AsyncMock(
+            side_effect=[result_one, result_two, result_three]
+        )
         # First coach call rejects (missing report), second approves
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[Feedback(text="Missing report"), Approved()]
@@ -544,6 +596,7 @@ class TestRunPhase:
     async def test_retry_on_coach_rejection_then_success(self):
         from src.feedback import Approved, Feedback
         from src.batch_executor import BatchExecutor
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
@@ -561,12 +614,15 @@ class TestRunPhase:
     async def test_exhausts_attempts_returns_false(self):
         from src.feedback import Feedback
         from src.batch_executor import BatchExecutor
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         # Use the _make_session defaults (5/2/3) to compute total attempts
         total_attempts = 5 + 2 + 3  # pre + judge + post
         session = self._make_session(["no output"] * total_attempts)
-        session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
+        session._run_coach_turn_for_phase = AsyncMock(
+            return_value=Feedback(text="Incomplete")
+        )
         executor = self._make_executor(session)
         result = await executor._run_phase(phase)
         assert result is False
@@ -665,7 +721,10 @@ class TestRunPhase:
 
         await executor._run_phase(phase)
 
-        assert session._run_with_continuation.await_args.kwargs["system_prompt"] == PLAYER_BATCH_SYSTEM_PROMPT
+        assert (
+            session._run_with_continuation.await_args.kwargs["system_prompt"]
+            == PLAYER_BATCH_SYSTEM_PROMPT
+        )
 
     @pytest.mark.asyncio
     async def test_batch_persona_overlay_appended_to_player_prompt(self):
@@ -684,7 +743,9 @@ class TestRunPhase:
 
         await executor._run_phase(phase)
 
-        system_prompt = session._run_with_continuation.await_args.kwargs["system_prompt"]
+        system_prompt = session._run_with_continuation.await_args.kwargs[
+            "system_prompt"
+        ]
         assert "## Specialist Context: Security" in system_prompt
         session._persona_registry.build_overlay.assert_called_once_with(
             ["security", "architect"]
@@ -698,7 +759,11 @@ class TestRunPhase:
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         session = self._make_session(
-            ["did work but no markers", "PHASE_COMPLETE: Create", "PHASE_COMPLETE: Create"]
+            [
+                "did work but no markers",
+                "PHASE_COMPLETE: Create",
+                "PHASE_COMPLETE: Create",
+            ]
         )
         session._run_coach_turn_for_phase = AsyncMock(
             side_effect=[Feedback(text="Missing implementation details"), Approved()]
@@ -708,7 +773,9 @@ class TestRunPhase:
         result = await executor._run_phase(phase)
 
         assert result is True
-        third_prompt = session._run_with_continuation.await_args_list[2].kwargs["prompt"]
+        third_prompt = session._run_with_continuation.await_args_list[2].kwargs[
+            "prompt"
+        ]
         assert "Missing implementation details" in third_prompt
 
     @pytest.mark.asyncio
@@ -725,7 +792,9 @@ class TestRunPhase:
         success_result = MagicMock()
         success_result.text = self._with_batch_report("PHASE_COMPLETE: Create")
         success_result.messages = []
-        session._run_with_continuation = AsyncMock(side_effect=[timeout_exc, success_result])
+        session._run_with_continuation = AsyncMock(
+            side_effect=[timeout_exc, success_result]
+        )
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         executor = self._make_executor(session)
 
@@ -768,6 +837,7 @@ class TestBatchExecutorRun:
     def _make_full_session(self, player_text="PHASE_COMPLETE: Create (1 steps)"):
         from src.feedback import Approved
         from src.batch_executor import BatchExecutor
+
         session = MagicMock()
         session.config = MagicMock()
         session.config.max_turns = 10
@@ -801,7 +871,9 @@ class TestBatchExecutorRun:
                 "Verification:\n"
                 "- pytest\n"
             )
-        r = MagicMock(); r.text = player_text; r.messages = []
+        r = MagicMock()
+        r.text = player_text
+        r.messages = []
         session._run_with_continuation = AsyncMock(return_value=r)
         session._run_coach_turn_for_phase = AsyncMock(return_value=Approved())
         return session
@@ -809,6 +881,7 @@ class TestBatchExecutorRun:
     @pytest.mark.asyncio
     async def test_run_assigns_phases_to_tracker(self):
         from src.batch_executor import BatchExecutor
+
         items = [PlanItem(text="create a.py")]
         tracker = MagicMock()
         tracker.items = items
@@ -851,6 +924,7 @@ class TestBatchExecutorRun:
     @pytest.mark.asyncio
     async def test_run_calls_start_and_stop_dashboard(self):
         from src.batch_executor import BatchExecutor
+
         items = [PlanItem(text="create a.py")]
         tracker = MagicMock()
         tracker.items = items
@@ -885,10 +959,13 @@ class TestBatchExecutorRun:
         """Exhausted phase is skipped instead of raising PhaseFailedError."""
         from src.batch_executor import BatchExecutor
         from src.feedback import Feedback
+
         items = [PlanItem(text="create a.py")]
         tracker = MagicMock()
         tracker.items = items
-        r = MagicMock(); r.text = "no output"; r.messages = []
+        r = MagicMock()
+        r.text = "no output"
+        r.messages = []
         session = MagicMock()
         session.config = MagicMock()
         session.config.max_turns = 10
@@ -897,7 +974,9 @@ class TestBatchExecutorRun:
         session.config.player_turns_per_session = 30
         session._runtime = None
         session._run_with_continuation = AsyncMock(return_value=r)
-        session._run_coach_turn_for_phase = AsyncMock(return_value=Feedback(text="Incomplete"))
+        session._run_coach_turn_for_phase = AsyncMock(
+            return_value=Feedback(text="Incomplete")
+        )
         executor = BatchExecutor(session=session, tracker=tracker)
         # run() must NOT raise — it should skip and continue
         await executor.run()
@@ -909,6 +988,7 @@ class TestBatchExecutorRun:
     @pytest.mark.asyncio
     async def test_run_empty_items_is_noop(self):
         from src.batch_executor import BatchExecutor
+
         tracker = MagicMock()
         tracker.items = []
         session = MagicMock()
@@ -1041,7 +1121,9 @@ class TestBatchPlayerRunnerSelection:
         from src.batch_executor import BatchExecutor
         from src.feedback import Approved
 
-        phase = Phase(name="Create", type="create", steps=[PlanItem(text="create a.py")])
+        phase = Phase(
+            name="Create", type="create", steps=[PlanItem(text="create a.py")]
+        )
         player_result = MagicMock()
         player_result.text = (
             "PHASE_COMPLETE: Create\n"
@@ -1104,8 +1186,11 @@ class TestRunCoachTurnForPhase:
             content=[TextBlock(text="IMPLEMENTATION_APPROVED")],
         )
         turn_result = TurnResult(
-            role="coach", duration_s=1.0, tools_used=0,
-            messages=[approved_msg], text="IMPLEMENTATION_APPROVED"
+            role="coach",
+            duration_s=1.0,
+            tools_used=0,
+            messages=[approved_msg],
+            text="IMPLEMENTATION_APPROVED",
         )
         session._run_turn = AsyncMock(return_value=turn_result)
 
@@ -1113,6 +1198,7 @@ class TestRunCoachTurnForPhase:
             session, phase, MagicMock(text="player output")
         )
         from src.feedback import Approved
+
         assert isinstance(result, Approved)
 
     @pytest.mark.asyncio
@@ -1130,7 +1216,9 @@ class TestRunCoachTurnForPhase:
         session.config.coach_model = ""
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
-        session._run_turn = AsyncMock(side_effect=TimeoutError("coach exceeded timeout of 300s"))
+        session._run_turn = AsyncMock(
+            side_effect=TimeoutError("coach exceeded timeout of 300s")
+        )
 
         result = await CoachPlayerSession._run_coach_turn_for_phase(
             session, phase, MagicMock(text="player output")
@@ -1156,8 +1244,11 @@ class TestRunCoachTurnForPhase:
         session.config.coach_model = ""
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
-        session.BATCH_REVIEW_MAX_TURNS = CoachPlayerSession.BATCH_REVIEW_MAX_TURNS
-        session._build_phase_fallback_feedback = CoachPlayerSession._build_phase_fallback_feedback
+        from src.constants import BATCH_REVIEW_MAX_TURNS
+        session.BATCH_REVIEW_MAX_TURNS = BATCH_REVIEW_MAX_TURNS
+        session._build_phase_fallback_feedback = (
+            CoachPlayerSession._build_phase_fallback_feedback
+        )
 
         invalid_msg = AdaptedMessage(
             role="assistant",
@@ -1305,8 +1396,11 @@ class TestRunCoachTurnForPhase:
         session.config.coach_fallback_provider = ""
         session._snapshot_pids = MagicMock(return_value=set())
         session._kill_new_processes = MagicMock()
-        session.BATCH_REVIEW_MAX_TURNS = CoachPlayerSession.BATCH_REVIEW_MAX_TURNS
-        session._build_phase_fallback_feedback = CoachPlayerSession._build_phase_fallback_feedback
+        from src.constants import BATCH_REVIEW_MAX_TURNS
+        session.BATCH_REVIEW_MAX_TURNS = BATCH_REVIEW_MAX_TURNS
+        session._build_phase_fallback_feedback = (
+            CoachPlayerSession._build_phase_fallback_feedback
+        )
 
         empty_result = TurnResult(
             role="coach",
@@ -1331,36 +1425,44 @@ class TestRunCoachTurnForPhase:
 class TestBuildPhaseCoachPrompt:
     def test_contains_phase_name(self):
         from src.prompts import build_phase_coach_prompt
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create (1 steps)", type="create", steps=items)
-        result = MagicMock(); result.text = "I created a.py"
+        result = MagicMock()
+        result.text = "I created a.py"
         prompt = build_phase_coach_prompt(phase, result)
         assert "Create (1 steps)" in prompt
 
     def test_contains_step_texts(self):
         from src.prompts import build_phase_coach_prompt
+
         items = [PlanItem(text="create a.py"), PlanItem(text="create b.py")]
         phase = Phase(name="Create", type="create", steps=items)
-        result = MagicMock(); result.text = "done"
+        result = MagicMock()
+        result.text = "done"
         prompt = build_phase_coach_prompt(phase, result)
         assert "create a.py" in prompt
         assert "create b.py" in prompt
 
     def test_contains_player_output_truncated(self):
         from src.prompts import build_phase_coach_prompt
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
         long_text = "x" * 3000
-        result = MagicMock(); result.text = long_text
+        result = MagicMock()
+        result.text = long_text
         prompt = build_phase_coach_prompt(phase, result)
         assert "x" * 2000 in prompt
         assert "x" * 2001 not in prompt
 
     def test_asks_for_implementation_approved(self):
         from src.prompts import build_phase_coach_prompt
+
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
-        result = MagicMock(); result.text = "done"
+        result = MagicMock()
+        result.text = "done"
         prompt = build_phase_coach_prompt(phase, result)
         assert "IMPLEMENTATION_APPROVED" in prompt
         assert "Do not end your turn with a tool call." in prompt
@@ -1369,6 +1471,7 @@ class TestBuildPhaseCoachPrompt:
 class TestTurnResultText:
     def test_turn_result_has_text_field(self):
         from src.coach_player import TurnResult
+
         r = TurnResult(role="player", duration_s=1.0, tools_used=0, messages=[])
         assert hasattr(r, "text")
         assert isinstance(r.text, str)

@@ -28,67 +28,19 @@ import pytest
 
 
 class TestBatchValidatorInvertedDuplicateDetection:
-    """Duplicate detection should warn on MATCHING answers, not different ones."""
+    """Duplicate detection should warn on MATCHING answers, not different ones.
 
+    NOTE: batch_validator module was removed (belonged to careerbot, not tero).
+    Tests are skipped because the module no longer exists.
+    """
+
+    @pytest.mark.skip(reason="batch_validator module removed (careerbot code)")
     def test_duplicate_answers_should_trigger_warning(self):
-        """Submitting the same answer twice should produce a WARNING.
+        pass
 
-        BUG: The code returns WARNING when hashes DIFFER (!=),
-        but silently accepts when they MATCH (==).
-        """
-        from src.applier.universal_screening.batch_validator import (
-            BatchStepValidator,
-            ValidationSeverity,
-        )
-
-        validator = BatchStepValidator(check_duplicates=True)
-
-        # First submission — should be accepted
-        result1 = validator.validate_answer("q1", "Same answer text", required=True)
-        assert result1.passed is True
-
-        # Second submission with SAME answer — should trigger WARNING
-        result2 = validator.validate_answer("q1", "Same answer text", required=True)
-
-        # CORRECT behavior: duplicate should be flagged with WARNING
-        assert result2.severity == ValidationSeverity.WARNING, (
-            f"BUG CONFIRMED: duplicate answer was silently accepted "
-            f"(severity={result2.severity}, message='{result2.message}') — "
-            f"duplicate detection logic is inverted"
-        )
-        assert (
-            result2.passed is False
-            or "duplicate" in result2.message.lower()
-            or "same" in result2.message.lower()
-        ), f"BUG CONFIRMED: duplicate answer message is wrong: '{result2.message}'"
-
+    @pytest.mark.skip(reason="batch_validator module removed (careerbot code)")
     def test_different_answers_should_not_trigger_warning(self):
-        """Submitting different answers should NOT produce a WARNING.
-
-        BUG: The code returns WARNING when hashes DIFFER,
-        which is the normal/expected case.
-        """
-        from src.applier.universal_screening.batch_validator import (
-            BatchStepValidator,
-            ValidationSeverity,
-        )
-
-        validator = BatchStepValidator(check_duplicates=True)
-
-        # First submission
-        result1 = validator.validate_answer("q1", "First answer", required=True)
-        assert result1.passed is True
-
-        # Second submission with DIFFERENT answer — should be INFO, not WARNING
-        result2 = validator.validate_answer(
-            "q1", "Second different answer", required=True
-        )
-
-        # CORRECT behavior: different answer should be accepted without warning
-        assert result2.severity != ValidationSeverity.WARNING, (
-            f"BUG CONFIRMED: different answer incorrectly flagged as WARNING "
-            f"(message='{result2.message}') — duplicate detection logic is inverted"
-        )
+        pass
 
 
 # ============================================================================
@@ -113,7 +65,9 @@ class TestBatchValidatorNonDeterministicHash:
         import sys
 
         # Use the same hashing logic as the fixed validator (hashlib.sha256)
-        code = "import hashlib; print(hashlib.sha256('test answer'.encode()).hexdigest())"
+        code = (
+            "import hashlib; print(hashlib.sha256('test answer'.encode()).hexdigest())"
+        )
         result1 = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True,
@@ -136,23 +90,9 @@ class TestBatchValidatorNonDeterministicHash:
             f"but {hash2} with PYTHONHASHSEED=42 — deterministic hashing broken"
         )
 
+    @pytest.mark.skip(reason="batch_validator module removed (careerbot code)")
     def test_validator_should_use_hashlib_not_builtin_hash(self):
-        """Validator should use hashlib for deterministic hashing.
-
-        BUG: Uses Python's built-in hash() which is non-deterministic.
-        """
-        import inspect
-        from src.applier.universal_screening.batch_validator import BatchStepValidator
-
-        source = inspect.getsource(BatchStepValidator.validate_answer)
-
-        uses_hashlib = "hashlib" in source
-        uses_builtin_hash = "= hash(" in source or "hash(answer" in source
-
-        assert uses_hashlib or not uses_builtin_hash, (
-            f"BUG CONFIRMED: validator uses Python's built-in hash() "
-            f"which is non-deterministic across processes (PYTHONHASHSEED)"
-        )
+        pass
 
 
 # ============================================================================

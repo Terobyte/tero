@@ -82,8 +82,16 @@ class TestSwitchRuntimeRoleIncompleteRollback(unittest.TestCase):
         session._persona_registry = {"a": MagicMock()}
         session._interrupted = False
 
-        # Make _get_or_create_provider raise during the switch
         session._get_or_create_provider = MagicMock(side_effect=RuntimeError("boom"))
+
+        from src.role_router import RoleRouter
+
+        session.router = RoleRouter(
+            config=config,
+            get_or_create_provider=session._get_or_create_provider,
+            player_provider=session.player_provider,
+            coach_provider=session.coach_provider,
+        )
 
         original_review_provider = config.review_provider
         original_review_model = config.review_model
@@ -232,6 +240,7 @@ class TestCoachFallbackProviderEmpty(unittest.TestCase):
         """Empty coach_fallback_provider should not crash with ValueError."""
         from src.coach_player import CoachPlayerSession
         from src.config import Config
+        from src.role_router import RoleRouter
 
         config = Config(
             working_dir="/tmp",
@@ -244,9 +253,18 @@ class TestCoachFallbackProviderEmpty(unittest.TestCase):
         session.config = config
         session._provider_cache = {}
         session.provider_configs = {}
+        session._get_or_create_provider = MagicMock(return_value=MagicMock())
+        session.player_provider = MagicMock()
+        session.coach_provider = MagicMock()
+        session.router = RoleRouter(
+            config=config,
+            get_or_create_provider=session._get_or_create_provider,
+            player_provider=session.player_provider,
+            coach_provider=session.coach_provider,
+        )
 
         try:
-            session._provider_for_role("coach_fallback")
+            session.router.provider_for("coach_fallback")
         except ValueError as e:
             self.fail(
                 f"ValueError when coach_fallback_provider is empty — bug confirmed: {e}"

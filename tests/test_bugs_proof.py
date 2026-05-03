@@ -185,12 +185,11 @@ def test_switch_runtime_role_should_rollback_all_fields():
     If this test PASSES → false positive.
     """
     import inspect
-    from src.coach_player import CoachPlayerSession
+    from src.role_router import RoleRouter
 
-    source = inspect.getsource(CoachPlayerSession.switch_runtime_role)
+    source = inspect.getsource(RoleRouter.switch_role)
     snapshot_block = source.split("snapshot = {")[1].split("}")[0]
 
-    # CORRECT behavior: all mutable fields should be in the snapshot
     assert "coach_fallback_provider" in snapshot_block, (
         "BUG CONFIRMED: coach_fallback_provider not in rollback snapshot"
     )
@@ -249,19 +248,23 @@ def test_snapshot_pids_should_not_match_unrelated_processes():
     If this test FAILS → bug confirmed (too broad matching).
     If this test PASSES → false positive.
     """
-    from src.coach_player import CoachPlayerSession
+    from src.process_guard import ProcessGuard
 
-    # The fix uses lsof first (matches by cwd), then pgrep -P (child only).
-    # Verify the method exists and uses stricter matching than raw pgrep -f.
+    # The actual implementation lives in ProcessGuard.snapshot_pids;
+    # CoachPlayerSession._snapshot_pids is just a thin wrapper that delegates.
+    # The fix uses psutil.children(recursive=True) or pgrep -P (child PIDs only)
+    # instead of the old broad pgrep -f that matched unrelated processes.
     import inspect
-    source = inspect.getsource(CoachPlayerSession._snapshot_pids)
 
-    # The fix should use lsof or pgrep -P (child processes) instead of pgrep -f
+    source = inspect.getsource(ProcessGuard.snapshot_pids)
+
+    # The fix should use psutil children or pgrep -P (child processes)
+    uses_psutil = "psutil" in source and "children" in source
     uses_lsof = "lsof" in source
     uses_child_only = "-P" in source and "pgrep" in source
 
-    assert uses_lsof or uses_child_only, (
-        "BUG CONFIRMED: _snapshot_pids uses broad pgrep -f matching"
+    assert uses_psutil or uses_lsof or uses_child_only, (
+        "BUG CONFIRMED: snapshot_pids uses broad pgrep -f matching"
     )
 
 
@@ -496,11 +499,10 @@ def test_promote_should_have_protected_files_whitelist():
 
     source = inspect.getsource(Orchestrator._promote)
 
-    protected_files = [".env", ".gitignore", ".git/config", "config.yaml"]
+    protected_patterns = [".git", ".env", ".gitignore", "config.yaml"]
 
-    # CORRECT behavior: at least some protected files should be in the skip list
-    found_any = any(f in source for f in protected_files)
+    found_any = any(f in source for f in protected_patterns)
 
     assert found_any, (
-        f"BUG CONFIRMED: no protected files whitelist found (checked: {protected_files})"
+        f"BUG CONFIRMED: no protected files whitelist found (checked: {protected_patterns})"
     )

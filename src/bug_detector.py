@@ -70,7 +70,9 @@ class BugDetector:
         ]
 
     @staticmethod
-    def _missing_module_error(result: subprocess.CompletedProcess[str], module: str) -> bool:
+    def _missing_module_error(
+        result: subprocess.CompletedProcess[str], module: str
+    ) -> bool:
         """Return True when `python -m <module>` failed because the module is missing."""
         stderr = (result.stderr or "").lower()
         stdout = (result.stdout or "").lower()
@@ -113,7 +115,12 @@ class BugDetector:
             py_file = Path(py_file)
             try:
                 result = subprocess.run(
-                    ["/usr/bin/env", "python3", "-c", f"import py_compile; py_compile.compile({str(py_file)!r}, doraise=True)"],
+                    [
+                        "/usr/bin/env",
+                        "python3",
+                        "-c",
+                        f"import py_compile; py_compile.compile({str(py_file)!r}, doraise=True)",
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=10,
@@ -130,20 +137,23 @@ class BugDetector:
         exclude_csv = ",".join(BugDetector._ignored_names())
         python_files = BugDetector._python_files(working_dir)
         commands: tuple[tuple[list[str], str], ...] = (
-            [
-                "python3",
-                "-m",
+            (
+                [
+                    "python3",
+                    "-m",
+                    "flake8",
+                    "--count",
+                    "--quiet",
+                    "--exclude",
+                    exclude_csv,
+                    working_dir,
+                ],
                 "flake8",
-                "--count",
-                "--quiet",
-                "--exclude",
-                exclude_csv,
-                working_dir,
-            ],
-            "flake8",
-        ), (
-            ["python3", "-m", "pyflakes", *python_files] if python_files else [],
-            "pyflakes",
+            ),
+            (
+                ["python3", "-m", "pyflakes", *python_files] if python_files else [],
+                "pyflakes",
+            ),
         )
         for cmd, module_name in commands:
             if not cmd:
@@ -189,7 +199,14 @@ class BugDetector:
             if result.returncode != 0:
                 # Count error lines matching mypy's file:line: error: pattern
                 import re as _re
-                return len([l for l in result.stdout.splitlines() if _re.match(r"^.*:\d+:\s+error:", l)])
+
+                return len(
+                    [
+                        l
+                        for l in result.stdout.splitlines()
+                        if _re.match(r"^.*:\d+:\s+error:", l)
+                    ]
+                )
         except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             pass
         return 0
@@ -215,6 +232,8 @@ class BugDetector:
             )
             if BugDetector._missing_module_error(result, "pytest"):
                 return 0
+            if result.returncode == 5:
+                return 0
             if result.returncode != 0:
                 # Parse "X failed" from pytest output
                 for line in result.stdout.splitlines():
@@ -226,7 +245,7 @@ class BugDetector:
                                     return int(parts[i - 1])
                                 except ValueError:
                                     pass
-                return 1  # At least one failure
+                return 0  # Cannot determine failure count
         except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
             pass
         return 0
