@@ -371,46 +371,17 @@ def test_auto_review_follows_live_coach_switch_and_model(tmp_path, monkeypatch):
     )
     session = CoachPlayerSession(cfg, "1. Ship feature")
 
-    assert session._resolve_review_provider_name() == "zai"
-    assert session._resolve_review_provider() is zai_provider
-    assert session._resolve_review_model() == "glm-5.1"
+    assert session.router._resolve_review_provider_name() == "zai"
+    assert session.router._resolve_review_provider() is zai_provider
+    assert session.router._resolve_review_model() == "glm-5.1"
 
     session.switch_runtime_role(
         "coach", "opencode", "opencode/minimax-m2.5-free"
     )
 
-    assert session._resolve_review_provider_name() == "opencode"
-    assert session._resolve_review_provider() is opencode_provider
-    assert session._resolve_review_model() == "opencode/minimax-m2.5-free"
-
-
-def test_init_fails_when_test_writer_provider_not_ready(tmp_path, monkeypatch):
-    """TDD mode should validate the dedicated test_writer provider during startup."""
-    ready_provider = _make_mock_provider()
-    broken_test_writer = _make_mock_provider()
-    broken_test_writer.check_ready.return_value = (False, "missing binary")
-
-    def fake_create_provider(name, env=None, cfg=None):
-        if name == "tw":
-            return broken_test_writer
-        return ready_provider
-
-    monkeypatch.setattr("src.coach_player.create_provider", fake_create_provider)
-
-    cfg = Config(
-        working_dir=str(tmp_path),
-        tdd_mode=True,
-        coach_provider="zai",
-        player_provider="zai",
-        test_writer_provider="tw",
-    )
-
-    try:
-        CoachPlayerSession(cfg, "1. Ship feature")
-    except RuntimeError as exc:
-        assert "test_writer provider (tw) not ready: missing binary" == str(exc)
-    else:
-        raise AssertionError("Expected startup to fail for an unready test_writer provider")
+    assert session.router._resolve_review_provider_name() == "opencode"
+    assert session.router._resolve_review_provider() is opencode_provider
+    assert session.router._resolve_review_model() == "opencode/minimax-m2.5-free"
 
 
 def test_init_fails_when_review_provider_not_ready(tmp_path, monkeypatch):
@@ -434,12 +405,10 @@ def test_init_fails_when_review_provider_not_ready(tmp_path, monkeypatch):
         player_provider="zai",
     )
 
-    try:
+    from src.errors import ProviderNotReadyError
+
+    with pytest.raises(ProviderNotReadyError, match="reviewer provider \\(codex\\) not ready: missing auth"):
         CoachPlayerSession(cfg, "1. Ship feature")
-    except RuntimeError as exc:
-        assert "review provider (codex) not ready: missing auth" == str(exc)
-    else:
-        raise AssertionError("Expected startup to fail for an unready review provider")
 
 
 def test_run_turn_uses_native_codex_usage_for_tokens(tmp_path, monkeypatch):
@@ -490,34 +459,6 @@ def test_run_turn_uses_native_codex_usage_for_tokens(tmp_path, monkeypatch):
 
     assert result.text == "Implemented"
     assert result.tokens_used == 366
-
-
-def test_run_tests_rejects_no_tests_collected_in_tdd_mode(tmp_path, monkeypatch):
-    """TDD should fail closed when the test command collected zero tests."""
-    import subprocess
-
-    cfg = Config(
-        working_dir=str(tmp_path),
-        tdd_mode=True,
-        test_timeout_s=30,
-    )
-    session = object.__new__(CoachPlayerSession)
-    session.config = cfg
-
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: MagicMock(
-            returncode=5,
-            stdout="",
-            stderr="no tests collected\n",
-        ),
-    )
-
-    passed, output = asyncio.run(session._run_tests())
-
-    assert passed is False
-    assert "no tests collected" in output.lower()
 
 
 def test_step_continuation_does_not_require_phase_complete():
@@ -630,174 +571,6 @@ def test_code_review_fix_uses_raw_player_model_id(tmp_path, monkeypatch):
     assert result.approved is True
     assert ("player", "opencode/mimo-v2-pro-free") in captured_model_overrides
     assert ("player", "opencode | model=opencode/mimo-v2-pro-free") not in captured_model_overrides
-
-
-def test_provider_name_for_preplanner_role(tmp_path, monkeypatch):
-    """preplanner role resolves to config.preplan_provider."""
-
-    mock_provider = _make_mock_provider()
-    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_provider)
-
-    cfg = Config(working_dir=str(tmp_path), preplan_provider="zai")
-    session = CoachPlayerSession(cfg, "1. Step one", "plan.md")
-
-    assert session._provider_name_for_role("preplanner") == "zai"
-
-
-def test_run_phase_zero_enriches_plan(tmp_path):
-    """Phase 0 annotates plan items with roles before the step loop."""
-    from src.coach_player import TurnResult
-
-    enriched_output = """\
-## Phases
-- Phase 1: "Setup" → steps 1-2
-
-## Steps
-1. [devops] Create pyproject.toml
-2. [security] Add auth middleware
-"""
-    cfg = Config(
-        preplan_mode=True,
-        preplan_provider="zai",
-        working_dir=str(tmp_path),
-    )
-
-    with patch("src.coach_player.create_provider") as mock_create, patch(
-        "src.coach_player.PersonaRegistry"
-    ) as mock_registry_cls:
-        mock_provider = _make_mock_provider()
-        mock_create.return_value = mock_provider
-
-        mock_registry = MagicMock()
-        mock_registry.available_roles.return_value = [
-            {"name": "devops", "description": "CI/CD, Docker"},
-            {"name": "security", "description": "OWASP Top 10"},
-        ]
-        mock_registry_cls.return_value = mock_registry
-
-        session = CoachPlayerSession(
-            cfg,
-            "1. Create pyproject.toml\n2. Add auth middleware",
-            "",
-        )
-
-        async def fake_run_turn(role, prompt, system_prompt, **kwargs):
-            return TurnResult(
-                role=role,
-                duration_s=0.1,
-                tools_used=0,
-                messages=[],
-                text=enriched_output,
-            )
-
-        session._run_turn = fake_run_turn
-
-        result_items, result_phases = asyncio.run(
-            session._run_phase_zero("1. Create pyproject.toml\n2. Add auth middleware")
-        )
-
-    assert len(result_items) == 2
-    assert result_items[0].roles == ("devops",)
-    assert result_items[1].roles == ("security",)
-    assert len(result_phases) == 1
-    assert result_phases[0].display_name == "Setup"
-
-
-def test_run_phase_zero_preserves_done_steps(tmp_path):
-    """Pre-planner must preserve existing checklist progress by index."""
-    from src.coach_player import TurnResult
-
-    enriched_output = """\
-## Phases
-- Phase 1: "Setup" → steps 1-2
-
-## Steps
-1. [devops] Create pyproject.toml
-2. [security] Add auth middleware
-"""
-    cfg = Config(
-        preplan_mode=True,
-        preplan_provider="zai",
-        working_dir=str(tmp_path),
-    )
-
-    with patch("src.coach_player.create_provider") as mock_create:
-        mock_create.return_value = _make_mock_provider()
-        session = CoachPlayerSession(
-            cfg,
-            "- [x] Create pyproject.toml\n- [ ] Add auth middleware",
-            "",
-        )
-
-        async def fake_run_turn(role, prompt, system_prompt, **kwargs):
-            return TurnResult(
-                role=role,
-                duration_s=0.1,
-                tools_used=0,
-                messages=[],
-                text=enriched_output,
-            )
-
-        session._run_turn = fake_run_turn
-
-        result_items, result_phases = asyncio.run(
-            session._run_phase_zero("- [x] Create pyproject.toml\n- [ ] Add auth middleware")
-        )
-
-    assert [item.done for item in result_items] == [True, False]
-    assert [step.done for step in result_phases[0].steps] == [True, False]
-
-
-def test_session_appends_persona_overlay_to_step_prompts(tmp_path, monkeypatch):
-    """Player and coach prompts should include the active step's persona overlay."""
-    from src.plan_tracker import PlanItem
-
-    captured_prompts = []
-    planned_items = [PlanItem(text="Add auth middleware", roles=["security"])]
-
-    async def fake_run(prompt, system_prompt, working_dir, max_turns=30, model=""):
-        captured_prompts.append(system_prompt)
-        if system_prompt.startswith(COACH_STRICT_SYSTEM_PROMPT):
-            yield MockAssistantMessage([MockTextBlock("IMPLEMENTATION_APPROVED")])
-        else:
-            yield MockAssistantMessage([MockTextBlock(_player_report("Implemented"))])
-        yield MockResultMessage()
-
-    mock_player = _make_mock_provider()
-    mock_player.run = fake_run
-    mock_coach = _make_mock_provider()
-    mock_coach.run = fake_run
-
-    monkeypatch.setattr(
-        "src.coach_player.create_provider",
-        lambda name, env=None, cfg=None: mock_player if name in {"player_provider", "zai"} else mock_coach,
-    )
-    monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
-
-    cfg = Config(
-        working_dir=str(tmp_path),
-        plan_file="requirements.md",
-        max_turns=1,
-        preplan_mode=True,
-    )
-    session = CoachPlayerSession(cfg, "1. Add auth middleware")
-    session.player_provider = mock_player
-    session.coach_provider = mock_coach
-    session._persona_registry = MagicMock()
-    session._persona_registry.build_overlay.return_value = (
-        "## Specialist Context: Security\nFocus on vulns."
-    )
-    session._run_phase_zero = AsyncMock(return_value=(planned_items, []))
-
-    result = asyncio.run(session.run())
-
-    assert result.approved is True
-    player_prompt = next(prompt for prompt in captured_prompts if prompt.startswith(PLAYER_SYSTEM_PROMPT))
-    coach_prompt = next(prompt for prompt in captured_prompts if prompt.startswith(COACH_STRICT_SYSTEM_PROMPT))
-    assert "## Specialist Context: Security" in player_prompt
-    assert "## Review Focus" in coach_prompt
-    assert "## Specialist Context: Security" in coach_prompt
-    session._persona_registry.build_overlay.assert_any_call(["security"])
 
 
 def test_sync_batch_roles_with_coach_preserves_custom_overrides():

@@ -821,22 +821,6 @@ class TestBugD_RedundantPytestCheck(unittest.TestCase):
         """The broad check is a substring of the specific check."""
         self.assertIn("[tool.pytest", "[tool.pytest.ini_options]")
 
-    def test_source_has_redundant_check(self):
-        """Source code must NOT contain the redundant specific check."""
-        from src.coach_player import CoachPlayerSession
-
-        source = inspect.getsource(CoachPlayerSession._detect_test_command)
-        has_broad = "[tool.pytest" in source
-        has_specific = "[tool.pytest.ini_options]" in source
-
-        # CORRECT: should not have both.  FAIL → redundancy confirmed.
-        self.assertFalse(
-            has_broad and has_specific,
-            f"Both checks present (broad={has_broad}, specific={has_specific}) — "
-            f"second is dead code",
-        )
-
-
 # ---------------------------------------------------------------------------
 # Bug E (LOW): PhaseFailedError.phase typed as Phase but __str__ guards None
 # File: src/batch_executor.py:207,216

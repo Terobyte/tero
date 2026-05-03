@@ -5,8 +5,6 @@ import yaml
 
 from src.config import Config, short_model_name, _DEFAULT_CONTEXT_LIMIT
 
-from src.constants import CLAUDE_CODE_ASSUMED_WINDOW
-
 try:
     import questionary
 
@@ -14,10 +12,13 @@ try:
 except ImportError:
     QUESTIONARY_AVAILABLE = False
 
-# Codex model IDs
+# Codex model IDs.
+# Reasoning effort is forced to "medium" by the codex provider factory
+# (see providers/registry.py), so users can't accidentally inherit a global
+# `xhigh` from ~/.codex/config.toml when picking a coach/judge model here.
 CODEX_MODEL_PRESETS = {
-    "Medium (default)": "",
-    "High": "gpt-5.4",
+    "GPT-5.4 (medium)": "gpt-5.4",
+    "Default (~/.codex/config.toml)": "",
 }
 
 # OpenCode model IDs
@@ -30,6 +31,12 @@ OPENCODE_MODEL_PRESETS = {
 KILO_MODEL_PRESETS = {
     "MIMO Pro  (free)": "kilo/xiaomi/mimo-v2-pro:free",
     "MiniMax M2.5 (free)": "kilo/minimax/minimax-m2.5:free",
+}
+
+GEMINI_MODEL_PRESETS = {
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
+    "Gemini 2.5 Pro": "gemini-2.5-pro",
+    "Gemini 2.0 Flash": "gemini-2.0-flash",
 }
 
 
@@ -51,6 +58,7 @@ PROVIDER_PRESETS = {
     "Codex (native CLI)": "codex",
     "OpenCode (MIMO/Kimi/Z.AI)": "opencode",
     "Kilo (MIMO/MiniMax)": "kilo",
+    "Gemini (Google CLI)": "gemini",
 }
 
 # Claude model choices (for native provider)
@@ -63,18 +71,6 @@ CLAUDE_MODEL_PRESETS = {
 FALLBACK_PROVIDER_PRESETS = {
     "Отключить escalation": "",
     **PROVIDER_PRESETS,
-}
-
-REVIEW_PROVIDER_PRESETS = {
-    "Следовать Coach": "",
-    **PROVIDER_PRESETS,
-}
-
-BATCH_ROLE_LABELS = {
-    "batch_pre": "Pre-Coach",
-    "batch_judge": "Judge",
-    "batch_post": "Post-Coach",
-    "test_writer": "TestWriter",
 }
 
 
@@ -124,6 +120,8 @@ def _model_presets_for_provider(provider: str) -> dict[str, str]:
         return OPENCODE_MODEL_PRESETS
     if provider == "kilo":
         return KILO_MODEL_PRESETS
+    if provider == "gemini":
+        return GEMINI_MODEL_PRESETS
     return {}
 
 
@@ -264,6 +262,14 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         }
         return model_map.get(model, model)
 
+    if provider == "gemini":
+        print("  Модели: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash")
+        model = (
+            input(f"  {prompt_label} model [gemini-2.5-flash]: ").strip().lower()
+            or "gemini-2.5-flash"
+        )
+        return model
+
     return ""
 
 
@@ -318,57 +324,6 @@ def _fallback_effective_slot_label(
     return _provider_model_label(provider, model)
 
 
-def _review_effective_label(config: Config) -> str:
-    """Render the effective review provider/model, including coach fallback."""
-    provider, model = _effective_provider_model(
-        config.review_provider,
-        config.review_model,
-        fallback_provider=config.coach_provider,
-        fallback_model=config.coach_model,
-    )
-    label = _provider_model_label(provider, model)
-    if not config.review_provider:
-        return f"{label} [следует coach]"
-    return label
-
-
-def _format_batch_retry_counts(config: Config) -> str:
-    """Format batch retry schedule as pre/judge/post."""
-    return (
-        f"{config.batch_pre_judge_attempts} / "
-        f"{config.batch_judge_attempts} / "
-        f"{config.batch_post_judge_attempts}"
-    )
-
-
-def _parse_batch_retry_counts(raw: str) -> tuple[int, int, int] | None:
-    """Parse `pre judge post` or `pre/judge/post` retry schedule."""
-    normalized = raw.replace("/", " ").replace(",", " ")
-    parts = [part for part in normalized.split() if part]
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        return None
-
-    counts = tuple(int(part) for part in parts)
-    if sum(counts) <= 0:
-        return None
-
-    return counts
-
-
-def _launch_debugger(config: "Config") -> None:
-    """Launch the debugger loop and exit when done."""
-    import sys
-    from src.debugger import Debugger
-
-    debugger = Debugger(config)
-    try:
-        result = debugger.run_sync()
-    except KeyboardInterrupt:
-        print("\n\nПрервано.")
-        sys.exit(130)
-    sys.exit(0 if result.victory else 1)
-
-
 def run_settings_menu(config: Config) -> Config | None:
     """Show interactive settings menu. Returns updated config or None if user quit.
 
@@ -398,45 +353,13 @@ def _questionary_menu(config: Config) -> Config | None:
             config.coach_fallback_provider,
             config.coach_fallback_model,
         )
-        review_provider_display = _review_effective_label(config)
-        verbose_display = "вкл" if config.verbose else "выкл"
-        autonomous_display = "вкл" if config.autonomous else "выкл"
-        batch_display = "вкл" if config.batch_mode else "выкл"
-        batch_retry_display = _format_batch_retry_counts(config)
-        tdd_display = "вкл" if config.tdd_mode else "выкл"
-        review_display = "вкл" if config.code_review else "выкл"
-        preplan_display = "вкл" if config.preplan_mode else "выкл"
-        batch_pre_display = _fallback_effective_slot_label(
-            config, "batch_pre_provider", "batch_pre_model"
-        )
         judge_provider, judge_model = _effective_provider_model(
             config.batch_judge_provider,
             config.batch_judge_model,
         )
         judge_display = _provider_model_label(judge_provider, judge_model)
-        batch_post_display = _fallback_effective_slot_label(
-            config, "batch_post_provider", "batch_post_model"
-        )
-        test_writer_display = _fallback_effective_slot_label(
-            config, "test_writer_provider", "test_writer_model"
-        )
-        preplanner_display = _provider_model_label(
-            config.preplan_provider,
-            config.preplan_model,
-        )
-
-        wd_display = config.working_dir.replace(str(Path.home()), "~")
-        debug_display = (
-            f"{config.debug_player_provider}/"
-            f"{config.debug_tester_provider}/"
-            f"{config.debug_fixer_provider} "
-            f"[{config.debug_intensity}]"
-        )
         choices = [
-            questionary.Choice(f"▶   Запустить", value="start"),
-            questionary.Choice(
-                f"🔍  Debugger:       {debug_display}", value="start_debug"
-            ),
+            questionary.Choice("▶   Запустить", value="start"),
             questionary.Separator("─── провайдеры ──────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
@@ -451,59 +374,15 @@ def _questionary_menu(config: Config) -> Config | None:
                 value="coach_fallback",
             ),
             questionary.Choice(
-                f"    Review Agent:   {review_provider_display}",
-                value="review_provider",
-            ),
-            questionary.Separator("─── batch роли ──────────────────────────"),
-            questionary.Choice(
-                f"    Pre-Coach:      {batch_pre_display} [{config.batch_pre_judge_attempts}x]",
-                value="batch_pre",
-            ),
-            questionary.Choice(
-                f"    Judge:          {judge_display} [{config.batch_judge_attempts}x]",
+                f"    Judge:          {judge_display}",
                 value="batch_judge",
             ),
-            questionary.Choice(
-                f"    Post-Coach:     {batch_post_display} [{config.batch_post_judge_attempts}x]",
-                value="batch_post",
-            ),
-            questionary.Choice(
-                f"    TestWriter:     {test_writer_display}",
-                value="test_writer",
-            ),
-            questionary.Separator("─── режимы ──────────────────────────────"),
-            questionary.Choice(f"    TDD Mode:       {tdd_display}", value="tdd_mode"),
-            questionary.Choice(
-                f"    Code Review:    {review_display}", value="code_review"
-            ),
-            questionary.Choice(
-                f"    Pre-Plan:       {preplan_display}", value="preplan_mode"
-            ),
-            questionary.Choice(
-                f"    Plan Polisher:  {preplanner_display}", value="preplan_provider"
-            ),
             questionary.Separator("─── настройки ───────────────────────────"),
-            questionary.Choice(
-                f"    Рабочая папка:  {wd_display}", value="working_dir"
-            ),
             questionary.Choice(
                 f"    Файл плана:     {config.plan_file}", value="plan_file"
             ),
             questionary.Choice(
                 f"    Макс. попыток:  {config.max_turns} (на шаг)", value="max_turns"
-            ),
-            questionary.Choice(
-                f"    Verbose:        {verbose_display}", value="verbose"
-            ),
-            questionary.Choice(
-                f"    Автономный:     {autonomous_display}", value="autonomous"
-            ),
-            questionary.Choice(
-                f"    Batch Mode:     {batch_display}", value="batch_mode"
-            ),
-            questionary.Choice(
-                f"    Batch Review:   {batch_retry_display}",
-                value="batch_review_schedule",
             ),
             questionary.Choice(
                 f"    Context Limit:  {_format_context_limit(config.context_limit)}",
@@ -523,13 +402,13 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer is None or answer == "quit":
             return None
         if answer == "start":
+            try:
+                _save_global_default(config)
+            except OSError:
+                pass
             return config
         if answer == "start_debug":
-            config = run_debugger_menu(
-                config
-            )  # launches internally, or returns on "back"
-        if answer == "save_default":
-            _save_global_default(config)
+            config = run_debugger_menu(config)
             continue
 
         config = _edit_setting_questionary(config, answer)
@@ -559,25 +438,6 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             provider_choices=FALLBACK_PROVIDER_PRESETS,
         )
 
-    elif setting == "review_provider":
-        config = _questionary_select_provider_model(
-            config,
-            "review_provider",
-            "review_model",
-            "code review",
-            provider_choices=REVIEW_PROVIDER_PRESETS,
-        )
-
-    elif setting == "working_dir":
-        wd_display = config.working_dir.replace(str(Path.home()), "~")
-        val = questionary.text(
-            f"Рабочая папка (текущая: {wd_display}):",
-            default=wd_display,
-        ).ask()
-        if val:
-            resolved = str(Path(val).expanduser().resolve())
-            config = Config(**{**config.__dict__, "working_dir": resolved})
-
     elif setting == "coach_model":
         _, current_model = _effective_provider_model(
             config.coach_provider,
@@ -606,60 +466,12 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
         if val:
             config = Config(**{**config.__dict__, "plan_file": val})
 
-    elif setting == "verbose":
-        config = Config(**{**config.__dict__, "verbose": not config.verbose})
-
-    elif setting == "autonomous":
-        config = Config(**{**config.__dict__, "autonomous": not config.autonomous})
-
-    elif setting == "batch_mode":
-        config = Config(**{**config.__dict__, "batch_mode": not config.batch_mode})
-
-    elif setting == "tdd_mode":
-        config = Config(**{**config.__dict__, "tdd_mode": not config.tdd_mode})
-
-    elif setting == "code_review":
-        config = Config(**{**config.__dict__, "code_review": not config.code_review})
-
-    elif setting == "preplan_mode":
-        config = Config(**{**config.__dict__, "preplan_mode": not config.preplan_mode})
-
-    elif setting == "preplan_provider":
-        config = _questionary_select_provider_model(
-            config, "preplan_provider", "preplan_model", "plan polisher"
-        )
-
-    elif setting == "batch_review_schedule":
-        current = _format_batch_retry_counts(config)
-        val = questionary.text(
-            "Batch review retries в формате `до / судья / после` (например: 3 / 1 / 1):",
-            default=current,
-        ).ask()
-        if val:
-            counts = _parse_batch_retry_counts(val)
-            if counts is not None:
-                config = Config(
-                    **{
-                        **config.__dict__,
-                        "batch_pre_judge_attempts": counts[0],
-                        "batch_judge_attempts": counts[1],
-                        "batch_post_judge_attempts": counts[2],
-                    }
-                )
-
-    elif setting in ("batch_pre", "batch_judge", "batch_post", "test_writer"):
-        prefix_map = {
-            "batch_pre": ("batch_pre_provider", "batch_pre_model"),
-            "batch_judge": ("batch_judge_provider", "batch_judge_model"),
-            "batch_post": ("batch_post_provider", "batch_post_model"),
-            "test_writer": ("test_writer_provider", "test_writer_model"),
-        }
-        prov_field, model_field = prefix_map[setting]
+    elif setting == "batch_judge":
         config = _questionary_select_provider_model(
             config,
-            prov_field,
-            model_field,
-            BATCH_ROLE_LABELS[setting],
+            "batch_judge_provider",
+            "batch_judge_model",
+            "Judge",
         )
 
     elif setting == "context_limit":
@@ -715,68 +527,34 @@ def _fallback_menu(config: Config) -> Config | None:
             if config.player_model
             else "по умолчанию"
         )
-        wd_display = config.working_dir.replace(str(Path.home()), "~")
-        batch_retry_display = _format_batch_retry_counts(config)
         fallback_display = _provider_model_label(
             config.coach_fallback_provider,
             config.coach_fallback_model,
-        )
-        review_provider_display = _review_effective_label(config)
-        batch_pre_display = _fallback_effective_slot_label(
-            config, "batch_pre_provider", "batch_pre_model"
-        )
-        batch_post_display = _fallback_effective_slot_label(
-            config, "batch_post_provider", "batch_post_model"
         )
         judge_display = _provider_model_label(
             config.batch_judge_provider,
             config.batch_judge_model,
         )
-        test_writer_display = _fallback_effective_slot_label(
-            config, "test_writer_provider", "test_writer_model"
-        )
-        preplanner_display = _provider_model_label(
-            config.preplan_provider,
-            config.preplan_model,
-        )
         print(f"  [p] Player:        {config.player_provider} ({player_display})")
         print(f"  [c] Coach:         {config.coach_provider} ({coach_display})")
         print(f"  [f] Escalation:    {fallback_display}")
-        print(f"  [v] Review Agent:  {review_provider_display}")
-        print(f"  [t] TDD Mode:      {'вкл' if config.tdd_mode else 'выкл'}")
-        print(f"  [r] Code Review:   {'вкл' if config.code_review else 'выкл'}")
-        print(f"  [g] Pre-Plan:      {'вкл' if config.preplan_mode else 'выкл'}")
-        print(f"  [h] Plan Polisher: {preplanner_display}")
-        print(f"  [1] Рабочая папка: {wd_display}")
-        print(f"  [2] Файл плана:    {config.plan_file}")
-        print(f"  [3] Макс. попыток: {config.max_turns}")
-        print(f"  [4] Verbose:       {'вкл' if config.verbose else 'выкл'}")
-        print(f"  [5] Автономный:    {'вкл' if config.autonomous else 'выкл'}")
-        print(f"  [6] Batch Mode:    {'вкл' if config.batch_mode else 'выкл'}")
-        print(f"  [7] Batch Review:  {batch_retry_display}")
-        print(f"  [8] Pre-Coach:     {batch_pre_display}")
-        print(f"  [9] Judge:         {judge_display}")
-        print(f"  [0] Post-Coach:    {batch_post_display}")
-        print(f"  [w] TestWriter:    {test_writer_display}")
-        print(
-            f"  [d] Debugger:      {config.debug_player_provider}/{config.debug_tester_provider}/{config.debug_fixer_provider} [{config.debug_intensity}]"
-        )
-        print(f"  [x] Context Limit: {_format_context_limit(config.context_limit)}")
-        print(f"  [s] Сохранить как default")
-        print(f"  [Enter] Запустить")
+        print(f"  [j] Judge:         {judge_display}")
+        print(f"  [1] Файл плана:    {config.plan_file}")
+        print(f"  [2] Макс. попыток: {config.max_turns}")
+        print(f"  [3] Context Limit: {_format_context_limit(config.context_limit)}")
+        print(f"  [Enter] Запустить (сохраняет настройки)")
         print(f"  [q] Выход\n")
 
         answer = input("  › ").strip().lower()
 
         if answer == "":
+            try:
+                _save_global_default(config)
+            except OSError:
+                pass
             return config
         if answer == "q":
             return None
-        if answer == "d":
-            config = _fallback_debugger_menu(config)
-            _launch_debugger(config)
-        if answer == "s":
-            _save_global_default(config)
         elif answer == "p":
             config = _fallback_select_provider_model(
                 config, "player_provider", "player_model", "Player"
@@ -798,95 +576,27 @@ def _fallback_menu(config: Config) -> Config | None:
                 "Fallback",
                 provider_choices=FALLBACK_PROVIDER_PRESETS,
             )
-        elif answer == "v":
-            config = _fallback_select_provider_model(
-                config,
-                "review_provider",
-                "review_model",
-                "Review",
-                provider_choices=REVIEW_PROVIDER_PRESETS,
-                empty_value_label="coach",
-            )
-        elif answer == "1":
-            val = input(f"  Рабочая папка [{wd_display}]: ").strip()
-            if val:
-                resolved = str(Path(val).expanduser().resolve())
-                config = Config(**{**config.__dict__, "working_dir": resolved})
-        elif answer == "2":
-            val = input(f"  Файл [{config.plan_file}]: ").strip()
-            if val:
-                config = Config(**{**config.__dict__, "plan_file": val})
-        elif answer == "3":
-            val = input(f"  Макс. попыток [{config.max_turns}]: ").strip()
-            if val.isdigit():
-                config = Config(**{**config.__dict__, "max_turns": int(val)})
-        elif answer == "4":
-            config = Config(**{**config.__dict__, "verbose": not config.verbose})
-        elif answer == "5":
-            config = Config(**{**config.__dict__, "autonomous": not config.autonomous})
-        elif answer == "t":
-            config = Config(**{**config.__dict__, "tdd_mode": not config.tdd_mode})
-        elif answer == "r":
-            config = Config(
-                **{**config.__dict__, "code_review": not config.code_review}
-            )
-        elif answer == "g":
-            config = Config(
-                **{**config.__dict__, "preplan_mode": not config.preplan_mode}
-            )
-        elif answer == "h":
-            config = _fallback_select_provider_model(
-                config, "preplan_provider", "preplan_model", "Plan Polisher"
-            )
-        elif answer == "6":
-            config = Config(**{**config.__dict__, "batch_mode": not config.batch_mode})
-        elif answer == "7":
-            val = input(
-                f"  Batch review retries [{batch_retry_display}] (до / судья / после): "
-            ).strip()
-            if val:
-                counts = _parse_batch_retry_counts(val)
-                if counts is not None:
-                    config = Config(
-                        **{
-                            **config.__dict__,
-                            "batch_pre_judge_attempts": counts[0],
-                            "batch_judge_attempts": counts[1],
-                            "batch_post_judge_attempts": counts[2],
-                        }
-                    )
-        elif answer == "8":
-            config = _fallback_select_provider_model(
-                config, "batch_pre_provider", "batch_pre_model", "Pre-Coach"
-            )
-        elif answer == "9":
+        elif answer == "j":
             config = _fallback_select_provider_model(
                 config, "batch_judge_provider", "batch_judge_model", "Judge"
             )
-        elif answer == "0":
-            config = _fallback_select_provider_model(
-                config, "batch_post_provider", "batch_post_model", "Post-Coach"
-            )
-        elif answer == "w":
-            config = _fallback_select_provider_model(
-                config, "test_writer_provider", "test_writer_model", "TestWriter"
-            )
-        elif answer == "x":
-            print("  Выберите context limit:")
-            print("  [a] Авто (по модели)")
-            print("  [1] 200K")
-            print("  [2] 500K")
-            print("  [3] 1M")
-            print("  [4] Ввести вручную")
+        elif answer == "1":
+            val = input(f"  Файл [{config.plan_file}]: ").strip()
+            if val:
+                config = Config(**{**config.__dict__, "plan_file": val})
+        elif answer == "2":
+            val = input(f"  Макс. попыток [{config.max_turns}]: ").strip()
+            if val.isdigit():
+                config = Config(**{**config.__dict__, "max_turns": int(val)})
+        elif answer == "3":
+            print("  [a] Авто  [1] 200K  [2] 500K  [3] 1M  [4] Вручную")
             choice = input("  › ").strip().lower()
             if choice == "a":
                 config = Config(
                     **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
                 )
             elif choice == "1":
-                config = Config(
-                    **{**config.__dict__, "context_limit": CLAUDE_CODE_ASSUMED_WINDOW}
-                )
+                config = Config(**{**config.__dict__, "context_limit": 200_000})
             elif choice == "2":
                 config = Config(**{**config.__dict__, "context_limit": 500_000})
             elif choice == "3":
@@ -936,6 +646,9 @@ def run_debugger_menu(config: "Config") -> "Config":
         fixer_display = _provider_model_label(
             config.debug_fixer_provider, config.debug_fixer_model
         )
+        synthesizer_display = _provider_model_label(
+            config.debug_synthesizer_provider, config.debug_synthesizer_model
+        )
 
         intensity_label = next(
             (
@@ -958,13 +671,17 @@ def run_debugger_menu(config: "Config") -> "Config":
             questionary.Choice("▶   Запустить Debugger", value="start"),
             questionary.Separator("─── агенты ──────────────────────────────"),
             questionary.Choice(
-                f"    Player (ищет баги):   {player_display}", value="player"
+                f"    Player (ищет баги):       {player_display}", value="player"
             ),
             questionary.Choice(
-                f"    Tester (пишет тесты): {tester_display}", value="tester"
+                f"    Tester (пишет тесты):     {tester_display}", value="tester"
             ),
             questionary.Choice(
-                f"    Fixer (чинит баги):   {fixer_display}", value="fixer"
+                f"    Fixer (чинит баги):       {fixer_display}", value="fixer"
+            ),
+            questionary.Choice(
+                f"    Synthesizer (входы):      {synthesizer_display}",
+                value="synthesizer",
             ),
             questionary.Separator("─── параметры ───────────────────────────"),
             questionary.Choice(
@@ -986,7 +703,7 @@ def run_debugger_menu(config: "Config") -> "Config":
         if answer is None or answer == "back":
             return config
         if answer == "start":
-            _launch_debugger(config)  # exits via sys.exit()
+            return config
 
         if answer == "player":
             config = _questionary_select_provider_model(
@@ -999,6 +716,13 @@ def run_debugger_menu(config: "Config") -> "Config":
         elif answer == "fixer":
             config = _questionary_select_provider_model(
                 config, "debug_fixer_provider", "debug_fixer_model", "Fixer"
+            )
+        elif answer == "synthesizer":
+            config = _questionary_select_provider_model(
+                config,
+                "debug_synthesizer_provider",
+                "debug_synthesizer_model",
+                "Synthesizer",
             )
         elif answer == "intensity":
             choice = questionary.select(
@@ -1031,9 +755,10 @@ def run_debugger_menu(config: "Config") -> "Config":
 def _fallback_debugger_menu(config: "Config") -> "Config":
     """Plain-text fallback for debugger menu when questionary is not available."""
     print("\n🔍 Debugger — настройка")
-    print(f"  Player:    {config.debug_player_provider}")
-    print(f"  Tester:    {config.debug_tester_provider}")
-    print(f"  Fixer:     {config.debug_fixer_provider}")
+    print(f"  Player:       {config.debug_player_provider}")
+    print(f"  Tester:       {config.debug_tester_provider}")
+    print(f"  Fixer:        {config.debug_fixer_provider}")
+    print(f"  Synthesizer:  {config.debug_synthesizer_provider}")
     print(f"  Intensity: {config.debug_intensity}")
     print(f"  Limit:     {config.debug_limit_mode}/{config.debug_limit_value}")
     print("\n  (установи questionary для интерактивного меню: pip install questionary)")
@@ -1044,3 +769,215 @@ def _fallback_debugger_menu(config: "Config") -> "Config":
 
         sys.exit(0)
     return config
+
+
+# ── LDB menu ──────────────────────────────────────────────────────────────────
+
+LDB_MODE_PRESETS = {
+    "Mode 2 (input+find+test — read-only)": 2,
+    "Mode 3 (+fix +auto-commit)": 3,
+}
+
+
+def run_ldb_menu(config: "Config") -> "Config":
+    """Interactive menu for the ldb command.
+
+    Returns updated config with ldb_* fields set.
+    """
+    if not QUESTIONARY_AVAILABLE:
+        return _fallback_ldb_menu(config)
+
+    import questionary
+
+    while True:
+        input_display = _provider_model_label(
+            config.ldb_input_provider, config.ldb_input_model
+        )
+        player_display = _provider_model_label(
+            config.ldb_player_provider, config.ldb_player_model
+        )
+        tester_display = _provider_model_label(
+            config.ldb_tester_provider, config.ldb_tester_model
+        )
+        fixer_display = _provider_model_label(
+            config.ldb_fixer_provider, config.ldb_fixer_model
+        )
+
+        mode_label = next(
+            (k for k, v in LDB_MODE_PRESETS.items() if v == config.ldb_mode),
+            f"Mode {config.ldb_mode}",
+        )
+
+        choices = [
+            questionary.Choice("▶   Запустить LDB", value="start"),
+            questionary.Separator("─── агенты ──────────────────────────────"),
+            questionary.Choice(
+                f"    Input  (синтез входов):  {input_display}", value="input"
+            ),
+            questionary.Choice(
+                f"    Player (ищет баги):      {player_display}", value="player"
+            ),
+            questionary.Choice(
+                f"    Tester (пишет тесты):    {tester_display}", value="tester"
+            ),
+            questionary.Choice(
+                f"    Fixer  (чинит баги):     {fixer_display}", value="fixer"
+            ),
+            questionary.Separator("─── параметры ───────────────────────────"),
+            questionary.Choice(f"    Режим:               {mode_label}", value="mode"),
+            questionary.Choice(
+                f"    Max итераций:        {config.ldb_max_iterations}",
+                value="max_iterations",
+            ),
+            questionary.Choice(
+                f"    Target файл:         {config.ldb_target_file or '(не задан)'}",
+                value="target_file",
+            ),
+            questionary.Choice(
+                f"    Target функция:      {config.ldb_target_entry or '(не задана)'}",
+                value="target_entry",
+            ),
+            questionary.Choice(
+                f"    Scope all:           {'да' if config.ldb_scope_all else 'нет'}",
+                value="scope_all",
+            ),
+            questionary.Separator("─────────────────────────────────────────"),
+            questionary.Choice("←   Назад", value="back"),
+        ]
+
+        answer = questionary.select(
+            "🔬 LDB — настройка  (↑↓ выбор, Enter)",
+            choices=choices,
+            use_shortcuts=False,
+        ).ask()
+
+        if answer is None or answer == "back":
+            return config
+        if answer == "start":
+            return config
+
+        if answer == "input":
+            config = _questionary_select_provider_model(
+                config, "ldb_input_provider", "ldb_input_model", "Input"
+            )
+        elif answer == "player":
+            config = _questionary_select_provider_model(
+                config, "ldb_player_provider", "ldb_player_model", "Player"
+            )
+        elif answer == "tester":
+            config = _questionary_select_provider_model(
+                config, "ldb_tester_provider", "ldb_tester_model", "Tester"
+            )
+        elif answer == "fixer":
+            config = _questionary_select_provider_model(
+                config, "ldb_fixer_provider", "ldb_fixer_model", "Fixer"
+            )
+        elif answer == "mode":
+            choice = questionary.select(
+                "Режим LDB:",
+                choices=list(LDB_MODE_PRESETS.keys()),
+            ).ask()
+            if choice:
+                config = Config(
+                    **{
+                        **config.__dict__,
+                        "ldb_mode": LDB_MODE_PRESETS[choice],
+                    }
+                )
+        elif answer == "max_iterations":
+            val = questionary.text(
+                f"Max итераций (текущее: {config.ldb_max_iterations}):"
+            ).ask()
+            if val and val.isdigit():
+                config = Config(**{**config.__dict__, "ldb_max_iterations": int(val)})
+        elif answer == "target_file":
+            val = questionary.text(
+                f"Target файл (текущий: {config.ldb_target_file}):"
+            ).ask()
+            if val is not None:
+                config = Config(**{**config.__dict__, "ldb_target_file": val.strip()})
+        elif answer == "target_entry":
+            val = questionary.text(
+                f"Target функция (текущая: {config.ldb_target_entry}):"
+            ).ask()
+            if val is not None:
+                config = Config(**{**config.__dict__, "ldb_target_entry": val.strip()})
+        elif answer == "scope_all":
+            config = Config(
+                **{**config.__dict__, "ldb_scope_all": not config.ldb_scope_all}
+            )
+
+
+def _fallback_ldb_menu(config: "Config") -> "Config":
+    """Plain-text fallback for LDB menu when questionary is not available."""
+    while True:
+        input_display = _provider_model_label(
+            config.ldb_input_provider, config.ldb_input_model
+        )
+        player_display = _provider_model_label(
+            config.ldb_player_provider, config.ldb_player_model
+        )
+        tester_display = _provider_model_label(
+            config.ldb_tester_provider, config.ldb_tester_model
+        )
+        fixer_display = _provider_model_label(
+            config.ldb_fixer_provider, config.ldb_fixer_model
+        )
+
+        print("\n🔬 LDB — настройка")
+        print(f"  [i] Input:        {input_display}")
+        print(f"  [p] Player:       {player_display}")
+        print(f"  [t] Tester:       {tester_display}")
+        print(f"  [f] Fixer:        {fixer_display}")
+        print(f"  [m] Режим:        {config.ldb_mode}")
+        print(f"  [1] Max итераций: {config.ldb_max_iterations}")
+        print(f"  [2] Target файл:  {config.ldb_target_file or '(не задан)'}")
+        print(f"  [3] Target ф-я:   {config.ldb_target_entry or '(не задана)'}")
+        print(f"  [4] Scope all:    {'да' if config.ldb_scope_all else 'нет'}")
+        print(f"  [Enter] Запустить")
+        print(f"  [q] Назад\n")
+
+        answer = input("  › ").strip().lower()
+
+        if answer == "":
+            return config
+        if answer == "q":
+            return config
+        elif answer == "i":
+            config = _fallback_select_provider_model(
+                config, "ldb_input_provider", "ldb_input_model", "Input"
+            )
+        elif answer == "p":
+            config = _fallback_select_provider_model(
+                config, "ldb_player_provider", "ldb_player_model", "Player"
+            )
+        elif answer == "t":
+            config = _fallback_select_provider_model(
+                config, "ldb_tester_provider", "ldb_tester_model", "Tester"
+            )
+        elif answer == "f":
+            config = _fallback_select_provider_model(
+                config, "ldb_fixer_provider", "ldb_fixer_model", "Fixer"
+            )
+        elif answer == "m":
+            raw = input(f"  Режим (2 или 3) [{config.ldb_mode}]: ").strip()
+            if raw in ("2", "3"):
+                config = Config(**{**config.__dict__, "ldb_mode": int(raw)})
+        elif answer == "1":
+            val = input(f"  Max итераций [{config.ldb_max_iterations}]: ").strip()
+            if val.isdigit():
+                config = Config(**{**config.__dict__, "ldb_max_iterations": int(val)})
+        elif answer == "2":
+            val = input(f"  Target файл [{config.ldb_target_file}]: ").strip()
+            if val is not None:
+                config = Config(**{**config.__dict__, "ldb_target_file": val})
+        elif answer == "3":
+            val = input(f"  Target функция [{config.ldb_target_entry}]: ").strip()
+            if val is not None:
+                config = Config(**{**config.__dict__, "ldb_target_entry": val})
+        elif answer == "4":
+            config = Config(
+                **{**config.__dict__, "ldb_scope_all": not config.ldb_scope_all}
+            )
+
+        print()

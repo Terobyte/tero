@@ -114,49 +114,51 @@ class DuelRunner:
         ws_a = self.worktree.create(self.workspace_a_name)
         ws_b = self.worktree.create(self.workspace_b_name)
 
-        agent_a = self.registry.get(agent_a_name)
-        agent_b = self.registry.get(agent_b_name)
+        try:
+            agent_a = self.registry.get(agent_a_name)
+            agent_b = self.registry.get(agent_b_name)
 
-        # 2. Parallel agent launch — agents are async generators, not sync functions,
-        #    so they must be awaited directly via _collect_agent_result
-        #    (not asyncio.to_thread).
-        result_a, result_b = await asyncio.gather(
-            _collect_agent_result_with_timeout(agent_a, task, ws_a, timeout_s),
-            _collect_agent_result_with_timeout(agent_b, task, ws_b, timeout_s),
-        )
+            # 2. Parallel agent launch
+            result_a, result_b = await asyncio.gather(
+                _collect_agent_result_with_timeout(agent_a, task, ws_a, timeout_s),
+                _collect_agent_result_with_timeout(agent_b, task, ws_b, timeout_s),
+            )
 
-        # 3. Parallel Bug Detection
-        bugs_a, bugs_b = await asyncio.gather(
-            asyncio.to_thread(self.bug_detector.run, ws_a),
-            asyncio.to_thread(self.bug_detector.run, ws_b),
-        )
+            # 3. Parallel Bug Detection
+            bugs_a, bugs_b = await asyncio.gather(
+                asyncio.to_thread(self.bug_detector.run, ws_a),
+                asyncio.to_thread(self.bug_detector.run, ws_b),
+            )
 
-        # 4. Diff extraction
-        diff_a = self.worktree.get_diff(self.workspace_a_name)
-        diff_b = self.worktree.get_diff(self.workspace_b_name)
+            # 4. Diff extraction
+            diff_a = self.worktree.get_diff(self.workspace_a_name)
+            diff_b = self.worktree.get_diff(self.workspace_b_name)
 
-        # 5. Judge
-        decision = self.judge.compare(
-            task=task,
-            result_a=result_a,
-            result_b=result_b,
-            bugs_a=bugs_a,
-            bugs_b=bugs_b,
-            diff_a=diff_a,
-            diff_b=diff_b,
-        )
+            # 5. Judge
+            decision = self.judge.compare(
+                task=task,
+                result_a=result_a,
+                result_b=result_b,
+                bugs_a=bugs_a,
+                bugs_b=bugs_b,
+                diff_a=diff_a,
+                diff_b=diff_b,
+            )
 
-        return RoundResult(
-            result_a=result_a,
-            result_b=result_b,
-            bugs_a=bugs_a,
-            bugs_b=bugs_b,
-            diff_a=diff_a,
-            diff_b=diff_b,
-            decision=decision,
-            workspace_a=ws_a,
-            workspace_b=ws_b,
-        )
+            return RoundResult(
+                result_a=result_a,
+                result_b=result_b,
+                bugs_a=bugs_a,
+                bugs_b=bugs_b,
+                diff_a=diff_a,
+                diff_b=diff_b,
+                decision=decision,
+                workspace_a=ws_a,
+                workspace_b=ws_b,
+            )
+        finally:
+            self.worktree.cleanup(self.workspace_a_name)
+            self.worktree.cleanup(self.workspace_b_name)
 
     def run_round_sync(
         self,

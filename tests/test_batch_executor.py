@@ -400,7 +400,7 @@ class TestParseCompletedSteps:
 
 class TestPhaseFailedError:
     def test_str_contains_phase_name(self):
-        from src.batch_executor import PhaseFailedError
+        from src.errors import PhaseFailedError
 
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create (1 steps)", type="create", steps=items)
@@ -408,7 +408,7 @@ class TestPhaseFailedError:
         assert "Create (1 steps)" in str(err)
 
     def test_str_contains_attempt_count(self):
-        from src.batch_executor import PhaseFailedError
+        from src.errors import PhaseFailedError
 
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
@@ -416,7 +416,7 @@ class TestPhaseFailedError:
         assert "3" in str(err)
 
     def test_is_exception(self):
-        from src.batch_executor import PhaseFailedError
+        from src.errors import PhaseFailedError
 
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)
@@ -424,7 +424,7 @@ class TestPhaseFailedError:
         assert isinstance(err, Exception)
 
     def test_args_populated(self):
-        from src.batch_executor import PhaseFailedError
+        from src.errors import PhaseFailedError
 
         items = [PlanItem(text="create a.py")]
         phase = Phase(name="Create", type="create", steps=items)

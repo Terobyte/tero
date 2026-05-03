@@ -90,31 +90,6 @@ class TestShortModelName:
         assert short_model_name("") == "DEFAULT"
 
 
-class TestReviewProviderMenu:
-    def test_review_provider_configurable_in_questionary_menu(self):
-        from src.config import Config
-        from src.menu import _edit_setting_questionary
-
-        prompts = iter(["Codex (native CLI)", "High"])
-
-        def mock_select(*args, **kwargs):
-            return DummyPrompt(next(prompts))
-
-        with patch("src.menu.questionary", MagicMock(select=mock_select)):
-            updated = _edit_setting_questionary(
-                Config(
-                    coach_provider="zai",
-                    coach_model="glm-5.1",
-                    review_provider="",
-                    review_model="",
-                ),
-                "review_provider",
-            )
-
-        assert updated.review_provider == "codex"
-        assert updated.review_model == "gpt-5.4"
-
-
 class TestSaveDefault:
     def test_save_default_includes_fallback_chains(self, tmp_path, monkeypatch):
         from src.config import Config
@@ -165,8 +140,8 @@ class TestBatchRolePrompts:
         from src.menu import _edit_setting_questionary
 
         config = Config(
-            batch_pre_provider="opencode",
-            batch_pre_model="",
+            batch_judge_provider="opencode",
+            batch_judge_model="",
         )
 
         captured_labels = []
@@ -177,10 +152,10 @@ class TestBatchRolePrompts:
             return DummyPrompt(next(prompts))
 
         with patch("src.menu.questionary", MagicMock(select=mock_select)):
-            _edit_setting_questionary(config, "batch_pre")
+            _edit_setting_questionary(config, "batch_judge")
 
-        assert any("Pre-Coach" in label for label in captured_labels)
-        assert all("batch_pre" not in label.lower() for label in captured_labels)
+        assert any("Judge" in label for label in captured_labels)
+        assert all("batch_judge" not in label.lower() for label in captured_labels)
 
     def test_questionary_batch_display_shows_effective_fallback(self, monkeypatch):
         import src.menu as menu
@@ -204,21 +179,12 @@ class TestBatchRolePrompts:
         monkeypatch.setitem(sys.modules, "questionary", dummy_questionary)
         monkeypatch.setattr(menu, "QUESTIONARY_AVAILABLE", True)
 
-        menu._questionary_menu(
-            Config(
-                batch_pre_provider="",
-                batch_pre_model="",
-                coach_provider="zai",
-                coach_model="glm-5.1",
-            )
-        )
+        menu._questionary_menu(Config(batch_judge_provider="codex", batch_judge_model="gpt-5.4"))
 
-        pre_coach_lines = [title for title in captured_titles if "Pre-Coach:" in title]
-        review_lines = [title for title in captured_titles if "Review Agent:" in title]
+        judge_lines = [title for title in captured_titles if "Judge:" in title]
 
-        assert pre_coach_lines
-        assert "zai (GLM-5.1)" in pre_coach_lines[0]
-        assert review_lines
+        assert judge_lines
+        assert "codex (GPT-5.4)" in judge_lines[0]
 
 
 class TestZaiFixedModel:

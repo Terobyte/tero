@@ -13,8 +13,6 @@ from src.constants import (
     DEFAULT_PLAYER_TIMEOUT_S,
     DEFAULT_COACH_TIMEOUT_S,
     DEFAULT_DUEL_TIMEOUT_S,
-    DEFAULT_TEST_TIMEOUT_S,
-    DEFAULT_PREPLAN_TIMEOUT_S,
     DEFAULT_CHAIN_RETRY_WAIT_S,
     DEFAULT_CHAIN_MAX_RETRIES,
     DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS,
@@ -27,15 +25,14 @@ from src.constants import (
     DEFAULT_CONTEXT_LIMIT,
     DEFAULT_DEBUG_LIMIT_VALUE,
     DEFAULT_DEBUG_VICTORY_THRESHOLD,
+    DEFAULT_LDB_LIMIT_VALUE,
+    DEFAULT_LDB_TIMEOUT_S,
     EXIT_AGENT_TIMEOUT,
 )
 
 
 _UNSAFE_GLOBAL_DEFAULT_KEYS = {
-    "batch_mode",
-    "tdd_mode",
     "code_review",
-    "preplan_mode",
     "claude_home",
 }
 
@@ -88,7 +85,6 @@ class Config:
     player_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
     coach_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
     player_model: str = ""  # model for player (empty = provider default)
-    batch_mode: bool = False  # --batch / G3_BATCH_MODE
     batch_pre_judge_attempts: int = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
     batch_judge_attempts: int = DEFAULT_BATCH_JUDGE_ATTEMPTS
     batch_post_judge_attempts: int = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
@@ -106,11 +102,6 @@ class Config:
     agent_a: str = "zai"
     agent_b: str = "zai"
     ask_feedback: bool = False
-
-    # TDD Mode (Phase 2)
-    tdd_mode: bool = False
-    test_command: str = ""  # empty = auto-detect
-    test_timeout_s: int = DEFAULT_TEST_TIMEOUT_S
 
     # Code Review (Phase 3)
     code_review: bool = False
@@ -131,16 +122,10 @@ class Config:
     batch_pre_provider: str = "zai"
     batch_pre_model: str = ""  # fixed provider default
     batch_judge_provider: str = "codex"  # native Codex CLI judge by default
-    batch_judge_model: str = ""  # default model from ~/.codex/config.toml
+    batch_judge_model: str = "gpt-5.4"  # pin judge to gpt-5.4; reasoning effort
+    # is forced to "medium" by the codex provider factory (see providers/registry.py)
     batch_post_provider: str = "zai"
     batch_post_model: str = ""  # fixed provider default
-    test_writer_provider: str = "zai"
-    test_writer_model: str = ""
-    # Pre-plan provider
-    preplan_mode: bool = False
-    preplan_provider: str = "zai"
-    preplan_model: str = ""  # empty = provider default
-    preplan_timeout_s: int = DEFAULT_PREPLAN_TIMEOUT_S
 
     # Code review loop
     max_review_iterations: int = DEFAULT_MAX_REVIEW_ITERATIONS
@@ -153,13 +138,36 @@ class Config:
     debug_player_provider: str = "zai"
     debug_tester_provider: str = "claude"
     debug_fixer_provider: str = "codex"
+    debug_synthesizer_provider: str = "opencode"
     debug_player_model: str = ""
     debug_tester_model: str = ""
     debug_fixer_model: str = ""
+    debug_synthesizer_model: str = ""
     debug_intensity: str = "medium"
     debug_limit_mode: str = "infinite"
     debug_limit_value: int = DEFAULT_DEBUG_LIMIT_VALUE
     debug_victory_threshold: int = DEFAULT_DEBUG_VICTORY_THRESHOLD
+    debug_failing_test: str = ""
+    debug_level: str = "block"
+    debug_file: str = ""
+    debug_entry: str = ""
+    debug_all: bool = False
+
+    ldb_input_provider: str = "claude"
+    ldb_player_provider: str = "claude"
+    ldb_tester_provider: str = "claude"
+    ldb_fixer_provider: str = "codex"
+    ldb_input_model: str = ""
+    ldb_player_model: str = ""
+    ldb_tester_model: str = ""
+    ldb_fixer_model: str = ""
+    ldb_mode: int = 2
+    ldb_target_file: str = ""
+    ldb_target_entry: str = ""
+    ldb_test_input: str = ""
+    ldb_scope_all: bool = False
+    ldb_max_iterations: int = DEFAULT_LDB_LIMIT_VALUE
+    ldb_timeout_s: int = DEFAULT_LDB_TIMEOUT_S
 
 
 @dataclass
@@ -181,14 +189,9 @@ _ENV_MAP = {
     "G3_COACH_PROVIDER": ("coach_provider", str),
     "G3_PLAYER_MODEL": ("player_model", str),
     "G3_COACH_MODEL": ("coach_model", str),
-    "G3_BATCH_MODE": ("batch_mode", lambda x: x.lower() in ("true", "1", "yes")),
     "G3_BATCH_PRE_JUDGE_ATTEMPTS": ("batch_pre_judge_attempts", int),
     "G3_BATCH_JUDGE_ATTEMPTS": ("batch_judge_attempts", int),
     "G3_BATCH_POST_JUDGE_ATTEMPTS": ("batch_post_judge_attempts", int),
-    # TDD Mode
-    "G3_TDD_MODE": ("tdd_mode", lambda x: x.lower() in ("true", "1", "yes")),
-    "G3_TEST_COMMAND": ("test_command", str),
-    "G3_TEST_TIMEOUT_S": ("test_timeout_s", int),
     # Code Review
     "G3_CODE_REVIEW": ("code_review", lambda x: x.lower() in ("true", "1", "yes")),
     "G3_REVIEW_PROVIDER": ("review_provider", str),
@@ -204,13 +207,7 @@ _ENV_MAP = {
     "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
     "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
     "G3_BATCH_POST_MODEL": ("batch_post_model", str),
-    "G3_TEST_WRITER_PROVIDER": ("test_writer_provider", str),
-    "G3_TEST_WRITER_MODEL": ("test_writer_model", str),
     "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
-    # Pre-plan
-    "G3_PREPLAN_MODE": ("preplan_mode", lambda x: x.lower() in ("true", "1", "yes")),
-    "G3_PREPLAN_PROVIDER": ("preplan_provider", str),
-    "G3_PREPLAN_MODEL": ("preplan_model", str),
     # Context management
     "G3_CONTEXT_LIMIT": ("context_limit", int),
     "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
@@ -224,13 +221,31 @@ _ENV_MAP = {
     "G3_DEBUG_PLAYER_PROVIDER": ("debug_player_provider", str),
     "G3_DEBUG_TESTER_PROVIDER": ("debug_tester_provider", str),
     "G3_DEBUG_FIXER_PROVIDER": ("debug_fixer_provider", str),
+    "G3_DEBUG_SYNTHESIZER_PROVIDER": ("debug_synthesizer_provider", str),
     "G3_DEBUG_PLAYER_MODEL": ("debug_player_model", str),
     "G3_DEBUG_TESTER_MODEL": ("debug_tester_model", str),
     "G3_DEBUG_FIXER_MODEL": ("debug_fixer_model", str),
+    "G3_DEBUG_SYNTHESIZER_MODEL": ("debug_synthesizer_model", str),
     "G3_DEBUG_INTENSITY": ("debug_intensity", str),
     "G3_DEBUG_LIMIT_MODE": ("debug_limit_mode", str),
     "G3_DEBUG_LIMIT_VALUE": ("debug_limit_value", int),
     "G3_DEBUG_VICTORY_THRESHOLD": ("debug_victory_threshold", int),
+    "G3_DEBUG_LEVEL": ("debug_level", str),
+    "G3_LDB_INPUT_PROVIDER": ("ldb_input_provider", str),
+    "G3_LDB_PLAYER_PROVIDER": ("ldb_player_provider", str),
+    "G3_LDB_TESTER_PROVIDER": ("ldb_tester_provider", str),
+    "G3_LDB_FIXER_PROVIDER": ("ldb_fixer_provider", str),
+    "G3_LDB_INPUT_MODEL": ("ldb_input_model", str),
+    "G3_LDB_PLAYER_MODEL": ("ldb_player_model", str),
+    "G3_LDB_TESTER_MODEL": ("ldb_tester_model", str),
+    "G3_LDB_FIXER_MODEL": ("ldb_fixer_model", str),
+    "G3_LDB_MODE": ("ldb_mode", int),
+    "G3_LDB_TARGET_FILE": ("ldb_target_file", str),
+    "G3_LDB_TARGET_ENTRY": ("ldb_target_entry", str),
+    "G3_LDB_TEST_INPUT": ("ldb_test_input", str),
+    "G3_LDB_SCOPE_ALL": ("ldb_scope_all", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_LDB_MAX_ITERATIONS": ("ldb_max_iterations", int),
+    "G3_LDB_TIMEOUT_S": ("ldb_timeout_s", int),
 }
 
 
@@ -356,7 +371,7 @@ def short_model_name(model: str) -> str:
         return "MINIMAX"
     if "glm" in m:
         glm_pos = m.find("glm")
-        rest = m[glm_pos + 3:].lstrip("-")
+        rest = m[glm_pos + 3 :].lstrip("-")
         ver = rest.split("-")[0]
         return f"GLM-{ver}" if ver else "GLM"
     if "kimi" in m:
@@ -479,13 +494,16 @@ def resolve_config(cli_args: dict) -> Config:
         "batch_pre_provider",
         "batch_judge_provider",
         "batch_post_provider",
-        "test_writer_provider",
         "coach_fallback_provider",
         "review_provider",
-        "preplan_provider",
         "debug_player_provider",
         "debug_tester_provider",
         "debug_fixer_provider",
+        "debug_synthesizer_provider",
+        "ldb_input_provider",
+        "ldb_player_provider",
+        "ldb_tester_provider",
+        "ldb_fixer_provider",
     ):
         if key in defaults and defaults[key]:
             defaults[key] = _normalize_provider_name(str(defaults[key]))

@@ -21,10 +21,6 @@ class FakeConfig:
     player_model: str = "glm-5"
     coach_provider: str = "zai"
     coach_model: str = "glm-5"
-    test_writer_provider: str = ""
-    test_writer_model: str = ""
-    preplan_provider: str = "zai"
-    preplan_model: str = ""
     review_provider: str = ""
     review_model: str = ""
     coach_fallback_provider: str = ""
@@ -94,10 +90,6 @@ class TestProviderNameFor:
         router, _ = _make_router(cfg=FakeConfig(review_provider="claude"))
         assert router.provider_name_for("reviewer") == "claude"
 
-    def test_test_writer_falls_back_to_coach_when_empty(self):
-        router, _ = _make_router()
-        assert router.provider_name_for("test_writer") == "zai"
-
     def test_coach_fallback_falls_back_to_coach_when_empty(self):
         router, _ = _make_router()
         assert router.provider_name_for("coach_fallback") == "zai"
@@ -113,11 +105,6 @@ class TestProviderFor:
         router, cache = _make_router()
         result = router.provider_for("coach")
         assert result is cache["zai"]
-
-    def test_test_writer_returns_coach_provider_when_empty(self):
-        router, cache = _make_router()
-        result = router.provider_for("test_writer")
-        assert result is not None
 
     def test_unknown_role_raises(self):
         router, _ = _make_router()

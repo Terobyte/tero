@@ -1,6 +1,6 @@
 """Debugger prompt bundles for the debugger workflow."""
 
-PLAYER_PROMPT_MAIN = '''You are a senior Python engineer doing a focused bug hunt. You will be shown one or more source files from a Python project. Your job is to find real behavioral bugs — not style issues or speculative edge cases.
+PLAYER_PROMPT_MAIN = """You are a senior Python engineer doing a focused bug hunt. You will be shown one or more source files from a Python project. Your job is to find real behavioral bugs — not style issues or speculative edge cases.
 
 ## What bugs look like
 
@@ -128,9 +128,9 @@ Rules:
 - Do NOT pad with guesses — only report bugs you are confident about.
 - Severity is almost always `"high"` for behavioral failures.
 - **MANDATORY LAST STEP:** Your final message MUST be the complete JSON array in a ```json code block — even if you previously edited files, ran tests, or used other tools. Without this final JSON array your findings will not be recorded.
-'''
+"""
 
-PLAYER_PROMPT_ANCHOR = '''You are a SEARCH ENGINE executing a targeted cross-function audit.
+PLAYER_PROMPT_ANCHOR = """You are a SEARCH ENGINE executing a targeted cross-function audit.
 The code below was already reviewed by a first pass that found VISIBLE bugs
 (wrong operators, missing returns, discarded values, wrong formulas, wrong
 fields). Your job is to find the SUBTLER bugs that first pass MISSED — bugs
@@ -259,9 +259,9 @@ STEP 2: For EACH candidate, translate the method name/docstring literally
 Execute ALL 6 checks on the source code. Output a JSON array of all confirmed bugs:
 [{"file": "path.py", "line": 42, "description": "what is wrong", "severity": "high"}]
 If no check finds a bug, output [].
-'''
+"""
 
-PLAYER_PROMPT_RED_TEAM = '''You are a security researcher trying to EXPLOIT this Python code. Your goal: find inputs that cause incorrect behavior, data corruption, or bypassed validation.
+PLAYER_PROMPT_RED_TEAM = """You are a security researcher trying to EXPLOIT this Python code. Your goal: find inputs that cause incorrect behavior, data corruption, or bypassed validation.
 
 CRITICAL: You must verify EVERY function. Skipping a function is not allowed.
 
@@ -299,9 +299,9 @@ END_FUNCTION
 ```
 
 MANDATORY: You MUST output VERIFICATION PER FUNCTION for EVERY function listed. If you skip a function, your output is invalid. A function can have MULTIPLE vulnerabilities — find ALL of them.
-'''
+"""
 
-PLAYER_PROMPT_BOUNDARY = '''You are an edge-case tester. Your job is EXHAUSTIVE verification.
+PLAYER_PROMPT_BOUNDARY = """You are an edge-case tester. Your job is EXHAUSTIVE verification.
 
 CRITICAL: You must verify EVERY function. Skipping a function is not allowed.
 
@@ -335,9 +335,9 @@ KEY VERIFICATION RULES:
 ```
 
 MANDATORY: You MUST output VERIFICATION PER FUNCTION for EVERY function. If you skip a function, your output is invalid. A function can have MULTIPLE boundary bugs — find ALL of them.
-'''
+"""
 
-PLAYER_PROMPT_COMPLETENESS = '''You find MISSING code — things that should exist but don't. Other auditors find wrong code; you find absent code.
+PLAYER_PROMPT_COMPLETENESS = """You find MISSING code — things that should exist but don't. Other auditors find wrong code; you find absent code.
 
 For EVERY class and EVERY method, check these 3 patterns:
 
@@ -362,7 +362,7 @@ For each class, list checks:
 ```
 
 MANDATORY: Check ALL classes and ALL methods. A class with 5 fields needs 5 field-usage checks.
-'''
+"""
 
 INTENSITY_PROMPTS = {
     "low": [PLAYER_PROMPT_MAIN],
@@ -376,7 +376,7 @@ INTENSITY_PROMPTS = {
     ],
 }
 
-TESTER_PROMPT = '''You are a test engineer. For each bug in the list below, write a pytest test that confirms the bug exists.
+TESTER_PROMPT = """You are a test engineer. For each bug in the list below, write a pytest test that confirms the bug exists.
 
 ## Rules for each test
 
@@ -409,9 +409,9 @@ Status values:
 - `confirmed` — test written, test fails (bug is real), test file path provided
 - `false_positive` — bug description is wrong, code is actually correct
 - `invalid_test` — could not write a reliable test (e.g. external dependency, non-deterministic)
-'''
+"""
 
-FIXER_PROMPT = '''You are a senior engineer fixing confirmed bugs.
+FIXER_PROMPT = """You are a senior engineer fixing confirmed bugs.
 
 ## For each confirmed bug
 
@@ -432,4 +432,37 @@ FIXER_PROMPT = '''You are a senior engineer fixing confirmed bugs.
 ## Commit
 
 After all fixes pass, run: `git add -A && git commit -m "fix: <short description of bugs fixed>"`
-'''
+"""
+
+INPUT_SYNTHESIZER_PROMPT = """You are an input-synthesis engine for a Python testing agent.
+You will receive a function signature, type annotations, docstring, and surrounding
+call-site context. Your task: produce 2–3 **diverse, valid** call entries that exercise
+the function's main paths and edge cases.
+
+## Rules
+
+1. Every output line must be a valid Python call in the form `entry(<args>)`.
+2. Use concrete literal values (ints, strings, lists, dicts) — no variables.
+3. String values should be realistic but short (max 30 chars).
+4. Include at least one entry that tests a boundary / edge case described in the
+   docstring or implied by type annotations (e.g. empty collection, zero, negative).
+5. If the function accepts optional keyword arguments, include at least one entry
+   that passes them.
+6. Do NOT output anything except the `entry(...)` lines — no prose, no comments.
+
+## Output format (exactly)
+
+```
+entry(<positional args>, <keyword args>)
+entry(<positional args>, <keyword args>)
+entry(<positional args>, <keyword args>)
+```
+
+Example for `def add(a: int, b: int = 0) -> int`:
+
+```
+entry(1, 2)
+entry(0, 0)
+entry(-5, 3)
+```
+"""

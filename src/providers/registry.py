@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
+from src.errors import ProviderError
 from .base import AgentProvider
 from .claude_native import ClaudeNativeProvider, ClaudeNativeConfig
 from .zai import ZaiProvider, ZaiConfig
@@ -80,6 +81,20 @@ class ProviderRegistry:
             )
             return ClaudeNativeProvider(native_cfg)
 
+        if provider_type == "gemini":
+            from .gemini import GeminiProvider, GeminiConfig
+
+            gemini_cfg = GeminiConfig(
+                command=provider_config.get("command", "gemini"),
+                default_model=provider_config.get("default_model", "gemini-2.5-pro"),
+                display_name=provider_config.get("display_name", "Gemini"),
+                default_timeout=provider_config.get(
+                    "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+                ),
+                yolo=provider_config.get("yolo", True),
+            )
+            return GeminiProvider(gemini_cfg)
+
         if provider_type == "codex":
             # Import here to avoid circular dependency
             from .codex import CodexProvider, CodexConfig
@@ -87,7 +102,7 @@ class ProviderRegistry:
             codex_cfg = CodexConfig(
                 command=provider_config.get("command", "codex"),
                 default_model=provider_config.get(
-                    "default_model", provider_config.get("model", "")
+                    "default_model", provider_config.get("model", "gpt-5.4")
                 ),
                 default_timeout=provider_config.get(
                     "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -101,6 +116,9 @@ class ProviderRegistry:
                 extra_args=provider_config.get("extra_args", []),
                 enabled_features=provider_config.get("enabled_features", []),
                 disabled_features=provider_config.get("disabled_features", []),
+                model_reasoning_effort=provider_config.get(
+                    "model_reasoning_effort", "medium"
+                ),
             )
             return CodexProvider(codex_cfg)
 
@@ -130,7 +148,7 @@ class ProviderRegistry:
             )
             return OpenCodeProvider(opencode_cfg)
 
-        raise ValueError(
+        raise ProviderError(
             f"Unknown provider type: {provider_type} (name: {provider_name})"
         )
 

@@ -30,7 +30,7 @@ class ProcessGuard:
                 return {
                     c.pid for c in psutil.Process(os.getpid()).children(recursive=True)
                 }
-            except psutil.NoSuchProcess:
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, PermissionError):
                 return set()
         except ImportError:
             pass

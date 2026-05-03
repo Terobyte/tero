@@ -214,23 +214,23 @@ class AgentTurnRunner:
         max_attempts = max(0, int(getattr(config, "max_continuation_attempts", 0) or 0))
         current_prompt = prompt
 
+        resolved_provider = provider_override or provider
+        if resolved_provider is None:
+            try:
+                resolved_provider = router.provider_for(role)
+            except (ProviderError, ValueError):
+                pass
+
         for attempt in range(1, max_attempts + 1):
             if self._player_output_complete(result.text, current_prompt):
                 return result
-
-            provider = provider_override
-            if provider is None:
-                try:
-                    provider = router.provider_for(role)
-                except ProviderError:
-                    provider = None
 
             streaming_ui.print_continuation_started(role, attempt, max_attempts)
             current_prompt = await self._build_continuation_retry_prompt(
                 role=role,
                 base_prompt=current_prompt,
                 last_result=result,
-                provider=provider,
+                provider=resolved_provider,
                 config=config,
             )
             result = await self.run_turn(
@@ -239,11 +239,11 @@ class AgentTurnRunner:
                 system_prompt=system_prompt,
                 max_turns=max_turns,
                 timeout_s=timeout_s,
-                provider=provider,
+                provider=resolved_provider,
                 router=router,
                 config=config,
                 model_override=model_override,
-                provider_override=provider_override,
+                provider_override=resolved_provider,
             )
 
         return result

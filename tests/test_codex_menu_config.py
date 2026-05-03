@@ -16,8 +16,8 @@ from src.runtime_controls import MODEL_PRESETS
 
 def test_codex_menu_presets_match_native_cli_models():
     assert CODEX_MODEL_PRESETS == {
-        "Medium (default)": "",
-        "High": "gpt-5.4",
+        "GPT-5.4 (medium)": "gpt-5.4",
+        "Default (~/.codex/config.toml)": "",
     }
     assert PROVIDER_PRESETS["Codex (native CLI)"] == "codex"
 
@@ -34,7 +34,7 @@ def test_codex_config_defaults_and_names_use_native_models():
     cfg = Config()
 
     assert cfg.batch_judge_provider == "codex"
-    assert cfg.batch_judge_model == ""
+    assert cfg.batch_judge_model == "gpt-5.4"
     assert short_model_name("") == "DEFAULT"
     assert short_model_name("gpt-5.4") == "GPT-5.4"
     assert short_model_name("o3") == "o3"
@@ -69,19 +69,17 @@ def test_opencode_presets_are_correct():
     assert OPENCODE_MODEL_PRESETS["MiniMax M2.5 (free)"] == "opencode/minimax-m2.5-free"
 
 
-def test_save_global_default_persists_preplan_settings(tmp_path, monkeypatch):
+def test_save_global_default_persists_core_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     cfg = Config(
         working_dir=str(tmp_path / "workspace"),
-        preplan_mode=True,
-        preplan_provider="codex",
-        preplan_model="o3",
+        player_provider="codex",
+        player_model="gpt-5.4",
     )
 
     _save_global_default(cfg)
 
     saved = (Path(tmp_path) / ".g3" / "config.yaml").read_text()
-    assert "preplan_mode: true" in saved
-    assert "preplan_provider: codex" in saved
-    assert "preplan_model: o3" in saved
+    assert "player_provider: codex" in saved
+    assert "player_model: gpt-5.4" in saved

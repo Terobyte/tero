@@ -44,13 +44,19 @@ def test_run_go_respects_project_config_defaults_when_flags_omitted(tmp_path, mo
             captured["config"] = config
             captured["requirements"] = requirements
             self.plan_file_path = plan_file_path
+            self.router = object()
+
+    class FakeBatchExecutor:
+        def __init__(self, session, tracker, router):
+            captured["tracker"] = tracker
 
         async def run(self):
-            return SimpleNamespace(approved=True)
+            captured["batch_ran"] = True
 
     exit_codes = []
 
     monkeypatch.setattr(g3, "CoachPlayerSession", FakeSession)
+    monkeypatch.setattr("src.cli_entry.BatchExecutor", FakeBatchExecutor)
     monkeypatch.setattr(g3.sys, "exit", exit_codes.append)
 
     args = SimpleNamespace(
@@ -88,13 +94,19 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
             self.config = config
             self.requirements = requirements
             self.plan_file_path = plan_file_path
+            self.router = object()
+
+    class FakeBatchExecutor:
+        def __init__(self, session, tracker, router):
+            pass
 
         async def run(self):
-            return SimpleNamespace(approved=True)
+            pass
 
     exit_codes = []
 
     monkeypatch.setattr(g3, "CoachPlayerSession", FakeSession)
+    monkeypatch.setattr("src.cli_entry.BatchExecutor", FakeBatchExecutor)
     monkeypatch.setattr(g3.sys, "exit", exit_codes.append)
     monkeypatch.setattr(
         "src.menu.run_settings_menu",
@@ -140,9 +152,6 @@ def test_prepare_go_config_still_opens_menu_when_autonomous_comes_from_defaults(
         coach_provider=None,
         player_model=None,
         coach_model=None,
-        tdd_mode=None,
-        test_command=None,
-        test_timeout_s=None,
         code_review=None,
         review_provider=None,
         review_model=None,
@@ -221,10 +230,7 @@ def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
         "  player_model: glm-5.1\n"
         "  coach_provider: zai\n"
         "  coach_model: glm-5.1\n"
-        "  tdd_mode: true\n"
         "  code_review: true\n"
-        "  preplan_mode: true\n"
-        "  test_writer_provider: codex\n"
         "  review_provider: codex\n"
     )
 
@@ -251,9 +257,9 @@ def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
     assert cfg.player_model == "glm-5.1"
     assert cfg.coach_provider == "zai"
     assert cfg.coach_model == "glm-5.1"
-    assert cfg.tdd_mode is False
     assert cfg.code_review is False
-    assert cfg.preplan_mode is False
+    assert not hasattr(cfg, "tdd_mode")
+    assert not hasattr(cfg, "preplan_mode")
 
 
 @pytest.mark.parametrize(
@@ -272,7 +278,6 @@ def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            batch_mode=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -329,7 +334,6 @@ def test_main_accepts_zai_provider_for_coach_and_player(monkeypatch, module, mod
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            batch_mode=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -384,7 +388,6 @@ def test_main_accepts_kilo_provider_for_coach_and_player(monkeypatch, module, mo
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            batch_mode=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -452,8 +455,6 @@ def test_smoke_build_parser_and_parse_go_without_error():
     assert args.coach_provider is None
     assert args.player_model is None
     assert args.coach_model is None
-    assert args.batch_mode is None
-    assert args.tdd_mode is None
 
 
 def test_smoke_parse_go_with_common_flags():
@@ -472,10 +473,6 @@ def test_smoke_parse_go_with_common_flags():
         "--player-provider", "claude",
         "--coach-provider", "zai",
         "--player-model", "claude-sonnet",
-        "--batch",
-        "--tdd",
-        "--test-command", "pytest -x",
-        "--test-timeout-s", "120",
         "--code-review",
         "--context-limit", "8000",
     ])
@@ -490,10 +487,6 @@ def test_smoke_parse_go_with_common_flags():
     assert args.player_provider == "claude"
     assert args.coach_provider == "zai"
     assert args.player_model == "claude-sonnet"
-    assert args.batch_mode is True
-    assert args.tdd_mode is True
-    assert args.test_command == "pytest -x"
-    assert args.test_timeout_s == 120
     assert args.code_review is True
     assert args.context_limit == 8000
 
@@ -547,7 +540,7 @@ def test_smoke_parse_history_with_flags():
 
 
 def test_smoke_parse_go_with_fallback_chain_flags():
-    """build_parser() must parse fallback-chain and explicit preplan flags."""
+    """build_parser() must parse fallback-chain flags."""
     from src.cli_entry import build_parser
 
     parser = build_parser()
@@ -557,9 +550,6 @@ def test_smoke_parse_go_with_fallback_chain_flags():
         "--coach-fallback-chain", "zai,claude",
         "--chain-retry-wait", "2.5",
         "--chain-max-retries", "3",
-        "--preplan-provider", "claude",
-        "--preplan-model", "gpt-4",
-        "--preplan",
         "--compact-threshold", "0.8",
         "--max-continuation", "5",
         "--max-review-iterations", "2",
@@ -569,22 +559,19 @@ def test_smoke_parse_go_with_fallback_chain_flags():
     assert args.coach_fallback_chain == "zai,claude"
     assert args.chain_retry_wait_s == 2.5
     assert args.chain_max_retries == 3
-    assert args.preplan_provider == "claude"
-    assert args.preplan_model == "gpt-4"
-    assert args.preplan_mode is True
     assert args.compact_threshold == 0.8
     assert args.max_continuation_attempts == 5
     assert args.max_review_iterations == 2
 
 
-def test_smoke_parse_go_with_no_preplan_flag():
-    """build_parser() must still allow explicit preplan disable."""
+def test_removed_go_mode_flags_are_rejected():
+    """Removed simplification flags should no longer parse."""
     from src.cli_entry import build_parser
 
     parser = build_parser()
-    args = parser.parse_args(["go", "--no-preplan"])
-
-    assert args.preplan_mode is False
+    for flag in ("--batch", "--tdd", "--preplan", "--no-preplan"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["go", flag])
 
 
 def test_smoke_parse_requires_subcommand():
@@ -594,3 +581,30 @@ def test_smoke_parse_requires_subcommand():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args([])
+
+
+def test_run_debug_rejects_file_without_entry(tmp_path, monkeypatch, capsys):
+    """debug --file <path> without --entry must exit(1) with a clear message."""
+    from src.cli_entry import run_debug
+
+    dummy_file = tmp_path / "mymodule.py"
+    dummy_file.write_text("def foo(): pass\n")
+
+    args = SimpleNamespace(
+        working_dir=str(tmp_path),
+        debug_file=str(dummy_file),
+        debug_entry=None,
+        debug_all=False,
+        debug_failing_test=None,
+        debug_level=None,
+        debug_limit=None,
+        debug_limit_value=None,
+        no_menu=True,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_debug(args)
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "--entry" in captured.out

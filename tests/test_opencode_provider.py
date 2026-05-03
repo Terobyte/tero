@@ -885,35 +885,6 @@ def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
     assert config.coach_fallback_model == "openrouter/moonshotai/kimi-k2:free"
 
 
-def test_fallback_menu_can_toggle_preplan_mode(monkeypatch):
-    """Plain-text menu should expose the Phase 0 preplan toggle."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["g", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config(preplan_mode=False))
-
-    assert config is not None
-    assert config.preplan_mode is True
-
-
-def test_fallback_menu_can_edit_preplan_provider(monkeypatch):
-    """Plain-text menu should let users pick the plan-polisher provider/model."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["h", "codex", "o3", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config(preplan_provider="zai"))
-
-    assert config is not None
-    assert config.preplan_provider == "codex"
-    assert config.preplan_model == "o3"
-
-
 def test_questionary_fallback_can_disable_escalation(monkeypatch):
     """Questionary fallback flow should support disabling escalation."""
     from src.menu import _edit_setting_questionary
@@ -949,50 +920,6 @@ def test_questionary_fallback_can_disable_escalation(monkeypatch):
 
     assert updated.coach_fallback_provider == ""
     assert updated.coach_fallback_model == ""
-
-
-def test_questionary_can_toggle_preplan_mode():
-    """Questionary settings editor should toggle the preplan mode flag."""
-    from src.menu import _edit_setting_questionary
-    from src.config import Config
-
-    updated = _edit_setting_questionary(Config(preplan_mode=False), "preplan_mode")
-
-    assert updated.preplan_mode is True
-
-
-def test_questionary_preplan_provider_uses_provider_picker(monkeypatch):
-    """Questionary flow should support picking the plan-polisher provider/model."""
-    from src.menu import _edit_setting_questionary
-    from src.config import Config
-
-    prompts = iter(["Codex (native CLI)", "High"])
-
-    class DummyPrompt:
-        def __init__(self, value):
-            self._value = value
-
-        def ask(self):
-            return self._value
-
-    class DummyQuestionary:
-        @staticmethod
-        def select(*args, **kwargs):
-            return DummyPrompt(next(prompts))
-
-        @staticmethod
-        def text(*args, **kwargs):
-            raise AssertionError("custom model prompt should not be used")
-
-    monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
-
-    updated = _edit_setting_questionary(
-        Config(preplan_provider="zai", preplan_model="glm-5.1"),
-        "preplan_provider",
-    )
-
-    assert updated.preplan_provider == "codex"
-    assert updated.preplan_model == "gpt-5.4"
 
 
 def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coach(monkeypatch):
@@ -1068,28 +995,12 @@ def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
     assert config.batch_post_model == "openrouter/moonshotai/kimi-k2:free"
 
 
-def test_fallback_menu_can_edit_batch_pre_provider(monkeypatch):
-    """Plain-text menu should expose the batch pre-coach slot directly."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["8", "opencode", "kimi-k2", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config(coach_provider="zai", coach_model="glm-5.1"))
-
-    assert config is not None
-    assert config.coach_provider == "zai"
-    assert config.batch_pre_provider == "opencode"
-    assert config.batch_pre_model == "openrouter/moonshotai/kimi-k2:free"
-
-
 def test_fallback_menu_can_edit_batch_judge_provider(monkeypatch):
     """Plain-text menu should expose the batch judge slot directly."""
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["9", "claude", "opus", ""])
+    answers = iter(["j", "claude", "opus", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config(batch_judge_provider="codex", batch_judge_model=""))

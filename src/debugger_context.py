@@ -78,9 +78,7 @@ class ContextCache:
             return None
         return self._store.get((str(path), mtime_ns))
 
-    def put(
-        self, path: Path, content: str, rendered: str, render_mode: str
-    ) -> None:
+    def put(self, path: Path, content: str, rendered: str, render_mode: str) -> None:
         """Store an entry for *path* keyed by its current mtime."""
         try:
             mtime_ns = path.stat().st_mtime_ns
@@ -93,6 +91,133 @@ class ContextCache:
     def clear(self) -> None:
         """Wipe all cached entries (call after fixer modifies files)."""
         self._store.clear()
+
+
+def discover_public_functions(working_dir: str) -> list[dict[str, str | int]]:
+    """Walk working_dir ASTs and return every public function/method.
+
+    Returns list of dicts with keys: file, name, lineno, end_lineno.
+    Public = not starting with '_'.
+
+    Scope is the public API surface only: top-level functions in a module
+    plus methods defined directly on top-level classes. Nested functions
+    (helpers defined inside other functions) and methods of nested classes
+    are intentionally excluded.
+    """
+    import ast as _ast
+
+    root = Path(working_dir).expanduser().resolve()
+    results: list[dict[str, str | int]] = []
+    for path in sorted(root.rglob("*.py")):
+        parts = set(path.relative_to(root).parts)
+        if parts & _SKIP_DIRS:
+            continue
+        rel = str(path.relative_to(root))
+        try:
+            source = path.read_text(errors="replace")
+        except OSError:
+            continue
+        try:
+            tree = _ast.parse(source, filename=str(path))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                if node.name.startswith("_"):
+                    continue
+                results.append(
+                    {
+                        "file": rel,
+                        "name": node.name,
+                        "lineno": node.lineno,
+                        "end_lineno": getattr(node, "end_lineno", node.lineno),
+                    }
+                )
+            elif isinstance(node, _ast.ClassDef):
+                if node.name.startswith("_"):
+                    continue
+                for child in node.body:
+                    if not isinstance(
+                        child, (_ast.FunctionDef, _ast.AsyncFunctionDef)
+                    ):
+                        continue
+                    if child.name.startswith("_"):
+                        continue
+                    results.append(
+                        {
+                            "file": rel,
+                            "name": child.name,
+                            "lineno": child.lineno,
+                            "end_lineno": getattr(child, "end_lineno", child.lineno),
+                        }
+                    )
+    return results
+
+
+def build_block_context(
+    working_dir: str,
+    file_name: str,
+    entry_name: str | None = None,
+    cache: ContextCache | None = None,
+    entry_lineno: int | None = None,
+) -> str:
+    """Build code context at block level for a specific file/entry.
+
+    When entry_name is given, returns only the blocks belonging to that
+    function/method.  When None, returns all top-level blocks in the file.
+    """
+    import ast as _ast
+
+    root = Path(working_dir)
+    file_path = root / file_name
+    if not file_path.exists():
+        return ""
+
+    try:
+        content = file_path.read_text(errors="replace")
+    except OSError:
+        return ""
+
+    lines = content.splitlines()
+
+    if entry_name:
+        target_lines: set[int] = set()
+        try:
+            tree = _ast.parse(content, filename=str(file_path))
+        except SyntaxError:
+            return _render_section(file_name, content)
+
+        matched_node = None
+        for node in _ast.walk(tree):
+            if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                continue
+            if node.name != entry_name:
+                continue
+            if entry_lineno is not None and node.lineno != entry_lineno:
+                continue
+            matched_node = node
+            break
+
+        if matched_node is not None:
+            start = matched_node.lineno
+            end = getattr(matched_node, "end_lineno", matched_node.lineno)
+            for ln in range(start, end + 1):
+                target_lines.add(ln)
+            for child in _ast.walk(matched_node):
+                if isinstance(child, _ast.AST) and hasattr(child, "lineno"):
+                    child_end = getattr(child, "end_lineno", child.lineno)
+                    for ln in range(child.lineno, child_end + 1):
+                        target_lines.add(ln)
+
+        if not target_lines:
+            return _render_section(file_name, content)
+
+        min_line = min(target_lines)
+        max_line = max(target_lines)
+        snippet = _format_line_slice(content, min_line, max_line)
+        return f"### File: {file_name}\n```python\n{snippet}\n```\n"
+
+    return _render_section(file_name, content)
 
 
 def discover_py_files(working_dir: str) -> list[str]:
@@ -504,15 +629,24 @@ def _build_structure_overview(rel_paths: list[str], working_dir: str) -> str:
 
 
 def plan_file_chunks(
-    working_dir: str, cache: ContextCache | None = None
+    working_dir: str,
+    cache: ContextCache | None = None,
+    level: str = "block",
+    file_subset: list[str] | None = None,
+    entry_name: str | None = None,
 ) -> list[list[str]]:
     """Split discovered files into context-budget-sized chunks.
 
     Each chunk fits within MAX_CONTEXT_CHARS when fully rendered, so the player
     sees complete function bodies instead of truncated fragments.  The debugger
     rotates through chunks across iterations for full codebase coverage.
+
+    When level="block", the chunking targets logical code blocks (functions,
+    methods) rather than arbitrary file boundaries.
     """
-    rel_paths = discover_py_files(working_dir)
+    rel_paths = (
+        file_subset if file_subset is not None else discover_py_files(working_dir)
+    )
     if not rel_paths:
         return []
 
@@ -521,6 +655,12 @@ def plan_file_chunks(
 
     for rel_path in rel_paths:
         file_path = root / rel_path
+
+        if entry_name:
+            ctx = build_block_context(working_dir, rel_path, entry_name=entry_name)
+            if ctx:
+                measured.append((rel_path, len(ctx)))
+            continue
 
         # Try cache first
         if cache is not None:
@@ -603,7 +743,9 @@ def build_context(
         if cache is not None:
             entry = cache.get(file_path)
             if entry is not None:
-                files.append((rel_path, entry.content, entry.rendered, entry.render_mode))
+                files.append(
+                    (rel_path, entry.content, entry.rendered, entry.render_mode)
+                )
                 continue
 
         try:

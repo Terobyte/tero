@@ -28,8 +28,19 @@ from src.debugger_bugs import (
     write_bugs_md,
     write_final_report,
 )
-from src.debugger_context import build_context, plan_file_chunks, ContextCache
-from src.debugger_prompts import INTENSITY_PROMPTS, TESTER_PROMPT, FIXER_PROMPT
+from src.debugger_context import (
+    build_context,
+    build_block_context,
+    plan_file_chunks,
+    discover_public_functions,
+    ContextCache,
+)
+from src.debugger_prompts import (
+    INTENSITY_PROMPTS,
+    TESTER_PROMPT,
+    FIXER_PROMPT,
+    INPUT_SYNTHESIZER_PROMPT,
+)
 from src.errors import ProviderError
 from src.providers import create_provider
 from src.providers.message_adapter import normalize_message
@@ -146,23 +157,47 @@ class Debugger:
         player_cfg = {}
         tester_cfg = {}
         fixer_cfg = {}
+        synthesizer_cfg = {}
 
         self._player = create_provider(config.debug_player_provider, player_cfg)
         self._tester = create_provider(config.debug_tester_provider, tester_cfg)
         self._fixer = create_provider(config.debug_fixer_provider, fixer_cfg)
+        self._synthesizer = create_provider(
+            config.debug_synthesizer_provider, synthesizer_cfg
+        )
 
         self._bugs: list[BugEntry] = []
         self._iteration = 0
         self._clean_passes = 0
         self._start_time = 0.0
         self._inconclusive_reason: str | None = None
+        self._current_target: str = ""
 
-        # Context cache — avoids re-reading unchanged files between iterations
         self._cache = ContextCache()
 
-        # Chunk planning — split codebase into context-sized pieces
-        self._chunks = plan_file_chunks(self.working_dir, cache=self._cache)
-        self._chunk_cursor = 0
+        if config.debug_all:
+            self._targets = discover_public_functions(self.working_dir)
+            self._chunks = []
+            self._chunk_cursor = 0
+        elif config.debug_file:
+            entry = config.debug_entry
+            if not entry:
+                raise ValueError(
+                    f"--entry is required when --file is specified. "
+                    f"Use: debug --file {config.debug_file} --entry <function_name>"
+                )
+            file_list = [config.debug_file]
+            self._chunks = plan_file_chunks(
+                self.working_dir,
+                cache=self._cache,
+                level=config.debug_level,
+                file_subset=file_list,
+                entry_name=entry,
+            )
+            self._chunk_cursor = 0
+            self._targets = []
+        else:
+            raise ValueError("Scope required: pass --all or --file [--entry <name>]")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -175,29 +210,42 @@ class Debugger:
         self._start_time = time.time()
         bugs_md_path = f"{self.working_dir}/bugs.md"
 
-        total_chunks = len(self._chunks)
-        total_files = sum(len(c) for c in self._chunks)
-
         print(f"\n🔍 Debugger started")
-        print(f"   Player:  {self.config.debug_player_provider}")
-        print(f"   Tester:  {self.config.debug_tester_provider}")
-        print(f"   Fixer:   {self.config.debug_fixer_provider}")
+        print(f"   Player:       {self.config.debug_player_provider}")
+        print(f"   Tester:       {self.config.debug_tester_provider}")
+        print(f"   Fixer:        {self.config.debug_fixer_provider}")
+        print(f"   Synthesizer:  {self.config.debug_synthesizer_provider}")
         print(f"   Mode:    {self.config.debug_intensity} intensity")
+        print(f"   Level:   {self.config.debug_level}")
         print(f"   Limit:   {self.config.debug_limit_mode}")
-        print(f"   Files:   {total_files} across {total_chunks} chunk(s)")
+        if self.config.debug_all:
+            print(f"   Scope:   --all ({len(self._targets)} public functions)")
+        elif self.config.debug_file:
+            entry_info = (
+                f"::{self.config.debug_entry}" if self.config.debug_entry else ""
+            )
+            print(f"   Scope:   --file {self.config.debug_file}{entry_info}")
+        else:
+            total_files = sum(len(c) for c in self._chunks)
+            print(f"   Files:   {total_files} across {len(self._chunks)} chunk(s)")
         print()
 
         while True:
             self._iteration += 1
 
+            if self._targets:
+                if self._should_stop():
+                    break
+                if not await self._run_next_target(bugs_md_path):
+                    break
+                continue
+
             if self._should_stop():
                 break
 
-            # Select file chunk for this iteration
             chunk = self._next_chunk()
             self._display_iteration_header(chunk)
 
-            # Player: find bugs
             new_bugs = await self._run_player(chunk)
             if new_bugs is None:
                 break
@@ -216,10 +264,18 @@ class Debugger:
             self._bugs = merge_bugs(self._bugs, new_bugs)
             renumber_bugs(self._bugs)
 
-            # Tester: confirm bugs
             open_bugs = [b for b in self._bugs if b.status == "open"]
+
+            synth_entries: list[dict[str, str]] = []
+            if open_bugs and not self.config.debug_failing_test:
+                synth_entries = await self._run_synthesizer(open_bugs)
+
             if open_bugs:
-                tester_ok = await self._run_tester(open_bugs)
+                tester_ok = await self._run_tester(
+                    open_bugs,
+                    synth_entries=synth_entries,
+                    failing_test=self.config.debug_failing_test or None,
+                )
                 if not tester_ok:
                     break
 
@@ -264,13 +320,144 @@ class Debugger:
             duration_s=duration,
         )
 
+    # ── Whole-project target runner ──────────────────────────────────────────
+
+    async def _run_next_target(self, bugs_md_path: str) -> bool:
+        """Pop the next public function target and run the full LDB pipeline."""
+        if not self._targets:
+            return False
+
+        target = self._targets.pop(0)
+        file_name = str(target["file"])
+        func_name = str(target["name"])
+        lineno_raw = target.get("lineno")
+        try:
+            func_lineno = int(lineno_raw) if lineno_raw is not None else None
+        except (TypeError, ValueError):
+            func_lineno = None
+        self._current_target = (
+            f"{file_name}::{func_name}@{func_lineno}"
+            if func_lineno is not None
+            else f"{file_name}::{func_name}"
+        )
+
+        print(
+            f"── Iteration {self._iteration} ── "
+            f"{self._current_target} "
+            f"({len(self._targets)} remaining) ──"
+        )
+
+        context = build_block_context(
+            self.working_dir,
+            file_name,
+            entry_name=func_name,
+            cache=self._cache,
+            entry_lineno=func_lineno,
+        )
+        if not context:
+            return bool(self._targets)
+
+        prompts = INTENSITY_PROMPTS.get(
+            self.config.debug_intensity, INTENSITY_PROMPTS["medium"]
+        )
+
+        all_raw: list[BugEntry] = []
+        start_id = max((b.id for b in self._bugs), default=0) + 1
+
+        for i, system_prompt in enumerate(prompts):
+            prompt_label = (
+                ["main", "anchor", "red_team", "boundary", "completeness"][i]
+                if i < 5
+                else f"prompt_{i}"
+            )
+            prefix = f"   Player [{self._current_target}:{prompt_label}] "
+            pulse = _Pulse(prefix)
+            await pulse.start()
+
+            user_prompt = f"Analyze the following code for bugs.\n\n{context}"
+
+            collected = await self._collect_text(
+                self._player,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_turns=1,
+                model=self.config.debug_player_model,
+                pulse=pulse,
+            )
+
+            await pulse.stop()
+            if not collected.completed or not collected.text.strip():
+                print(
+                    f"   Warning: player incomplete for '{self._current_target}:{prompt_label}', skipping"
+                )
+                return bool(self._targets)
+
+            found = parse_bugs(collected.text, start_id=start_id + len(all_raw))
+            print(f"{prefix}{len(found)} bugs")
+            all_raw.extend(found)
+
+        if not all_raw:
+            self._clean_passes += 1
+            print(f"   No new bugs found. Clean passes: {self._clean_passes}")
+            write_bugs_md(self._bugs, bugs_md_path, self._iteration)
+            return bool(self._targets)
+
+        self._clean_passes = 0
+        self._bugs = merge_bugs(self._bugs, all_raw)
+        renumber_bugs(self._bugs)
+
+        open_bugs = [b for b in self._bugs if b.status == "open"]
+        synth_entries: list[dict[str, str]] = []
+        if open_bugs and not self.config.debug_failing_test:
+            synth_entries = await self._run_synthesizer(open_bugs)
+
+        if open_bugs:
+            tester_ok = await self._run_tester(
+                open_bugs,
+                synth_entries=synth_entries,
+                failing_test=self.config.debug_failing_test or None,
+            )
+            if not tester_ok:
+                print(
+                    f"   Warning: tester failed for '{self._current_target}', skipping"
+                )
+                write_bugs_md(self._bugs, bugs_md_path, self._iteration)
+                return bool(self._targets)
+
+        confirmed = [b for b in self._bugs if b.status == "confirmed"]
+        if confirmed:
+            fixed_count = await self._run_fixer(confirmed)
+            if fixed_count is None:
+                print(
+                    f"   Warning: fixer failed for '{self._current_target}', skipping"
+                )
+                write_bugs_md(self._bugs, bugs_md_path, self._iteration)
+                return bool(self._targets)
+            self._cache.clear()
+            if fixed_count > 0:
+                bug_files = sorted({b.file for b in confirmed})
+                self._git_commit(self._iteration, fixed_count, bug_files)
+
+        write_bugs_md(self._bugs, bugs_md_path, self._iteration)
+        return bool(self._targets)
+
     # ── Player ────────────────────────────────────────────────────────────────
 
     async def _run_player(
         self, chunk: list[str] | None = None
     ) -> list[BugEntry] | None:
         """Run the player (bug-finder) on the given file chunk."""
-        context = build_context(self.working_dir, file_subset=chunk, cache=self._cache)
+        if self.config.debug_file:
+            context = build_block_context(
+                self.working_dir,
+                self.config.debug_file,
+                entry_name=self.config.debug_entry,
+                cache=self._cache,
+            )
+        else:
+            context = build_context(
+                self.working_dir, file_subset=chunk, cache=self._cache
+            )
         prompts = INTENSITY_PROMPTS.get(
             self.config.debug_intensity, INTENSITY_PROMPTS["medium"]
         )
@@ -314,7 +501,12 @@ class Debugger:
 
     # ── Tester ────────────────────────────────────────────────────────────────
 
-    async def _run_tester(self, bugs: list[BugEntry]) -> bool:
+    async def _run_tester(
+        self,
+        bugs: list[BugEntry],
+        synth_entries: list[dict[str, str]] | None = None,
+        failing_test: str | None = None,
+    ) -> bool:
         """Run the tester agent to confirm or refute bugs."""
         prefix = f"   Tester [{self.config.debug_tester_provider}] "
         pulse = _Pulse(prefix, status_fn=self._compact_status)
@@ -323,13 +515,39 @@ class Debugger:
         bug_list = "\n".join(
             f"{b.id}. [{b.severity}] {b.file}:{b.line} — {b.description}" for b in bugs
         )
-        # Targeted context: only files mentioned in bugs
         bug_files = sorted({b.file for b in bugs})
         context = build_context(
             self.working_dir, file_subset=bug_files, cache=self._cache
         )
+
+        synth_block = ""
+        if synth_entries:
+            lines: list[str] = []
+            for se in synth_entries:
+                bid = se.get("bug_id", "?")
+                ent = se.get("entries", "")
+                if ent:
+                    lines.append(f"Bug {bid}:\n{ent}")
+            if lines:
+                synth_block = (
+                    "\n\n## Synthesized Test Inputs\n\n"
+                    "Use these entry(...) lines as starting points for your tests:\n\n"
+                    + "\n\n".join(lines)
+                )
+
+        failing_test_block = ""
+        if failing_test:
+            failing_test_block = (
+                "\n\n## Failing Test\n\n"
+                "The user provided a failing test that reproduces one or more of "
+                "the bugs below. Run this test first, then verify the remaining "
+                "bugs:\n\n"
+                f"```\n{failing_test}\n```"
+            )
+
         user_prompt = (
             f"## Bug List to Verify\n\n{bug_list}\n\n## Code Context\n\n{context}"
+            f"{synth_block}{failing_test_block}"
         )
 
         collected = await self._collect_text(
@@ -413,6 +631,153 @@ class Debugger:
         print(f"{prefix}done")
         return fixed_count
 
+    # ── Input Synthesizer ─────────────────────────────────────────────────────
+
+    async def _run_synthesizer(self, bugs: list[BugEntry]) -> list[dict[str, str]]:
+        """Run the input-synthesizer agent to generate test entries for confirmed bugs.
+
+        For each confirmed bug, the synthesizer receives the function signature,
+        type annotations, docstring, and surrounding call-site context, then
+        produces 2–3 ``entry(...)`` lines that the tester can use as a starting
+        point.
+
+        Returns a list of dicts ``{"bug_id": int, "entries": str}`` where
+        *entries* is a newline-separated block of ``entry(...)`` lines.
+        """
+        results: list[dict[str, str]] = []
+        bug_files = sorted({b.file for b in bugs})
+        context = build_context(
+            self.working_dir, file_subset=bug_files, cache=self._cache
+        )
+
+        for bug in bugs:
+            prefix = f"   Synthesizer [bug {bug.id}] "
+            pulse = _Pulse(prefix)
+            await pulse.start()
+
+            bug_context = self._extract_bug_context(bug, context)
+            user_prompt = (
+                f"## Target function (bug {bug.id})\n\n"
+                f"File: {bug.file}:{bug.line}\n"
+                f"Description: {bug.description}\n\n"
+                f"## Surrounding code\n\n{bug_context}"
+            )
+
+            collected = await self._collect_text(
+                self._synthesizer,
+                prompt=user_prompt,
+                system_prompt=INPUT_SYNTHESIZER_PROMPT,
+                max_turns=1,
+                model=self.config.debug_synthesizer_model,
+                pulse=pulse,
+            )
+
+            await pulse.stop()
+            if collected.completed and collected.text.strip():
+                entries = self._parse_entry_lines(collected.text)
+                if entries:
+                    results.append({"bug_id": str(bug.id), "entries": entries})
+                    print(f"{prefix}{len(entries.splitlines())} entries")
+                else:
+                    print(f"{prefix}no valid entries")
+            else:
+                print(f"{prefix}no output")
+
+        return results
+
+    def _extract_bug_context(self, bug: BugEntry, full_context: str) -> str:
+        """Extract the code context around a specific bug's file and line."""
+        file_path = Path(self.working_dir) / bug.file
+        if not file_path.exists():
+            return full_context[:2000]
+
+        try:
+            content = file_path.read_text(errors="replace")
+        except OSError:
+            return full_context[:2000]
+
+        lines = content.splitlines()
+        start = max(0, bug.line - 30)
+        end = min(len(lines), bug.line + 30)
+        snippet = "\n".join(f"{i + 1:>4}: {lines[i]}" for i in range(start, end))
+
+        import ast as _ast
+
+        func_name: str | None = None
+        sig_lines: list[str] = []
+        docstring_text = ""
+        try:
+            tree = _ast.parse(content)
+            for node in _ast.walk(tree):
+                if not isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    continue
+                if not (
+                    node.lineno <= bug.line <= getattr(node, "end_lineno", node.lineno)
+                ):
+                    continue
+                func_name = node.name
+                sig_lines.append(
+                    content.splitlines()[node.lineno - 1].strip().rstrip(":")
+                )
+                ds = _ast.get_docstring(node, clean=True)
+                if ds:
+                    docstring_text = ds
+                break
+        except SyntaxError:
+            pass
+
+        call_sites = ""
+        if func_name:
+            call_sites = self._find_call_sites(func_name, bug.file)
+
+        parts: list[str] = []
+        if sig_lines:
+            parts.append(f"Signature: `{sig_lines[0]}`")
+        if docstring_text:
+            parts.append(f"Docstring: {docstring_text}")
+        if call_sites:
+            parts.append(f"Neighboring call sites:\n{call_sites}")
+        parts.append(f"```python\n{snippet}\n```")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _parse_entry_lines(raw: str) -> str:
+        """Extract entry(...) lines from synthesizer output."""
+        import re as _re
+
+        matches = _re.findall(r"^entry\(.*\)\s*$", raw, _re.MULTILINE)
+        return "\n".join(matches) if matches else ""
+
+    def _find_call_sites(
+        self, func_name: str, bug_file: str, max_sites: int = 6
+    ) -> str:
+        """Search the working tree for neighboring call sites of *func_name*.
+
+        Scans Python files under ``self.working_dir`` for lines containing
+        ``func_name(`` or ``func_name (``.  Returns up to *max_sites* snippets
+        formatted as ``file:line  code``.
+        """
+        import re as _re
+
+        pattern = _re.compile(rf"(?<!\w){_re.escape(func_name)}\s*\(", _re.UNICODE)
+        hits: list[str] = []
+        working = Path(self.working_dir)
+        for py_file in sorted(working.rglob("*.py")):
+            rel = py_file.relative_to(working)
+            try:
+                file_lines = py_file.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            for idx, line_text in enumerate(file_lines):
+                stripped = line_text.lstrip()
+                if stripped.startswith("def ") or stripped.startswith("async def "):
+                    continue
+                if pattern.search(line_text):
+                    hits.append(f"  {rel}:{idx + 1}  {line_text.strip()}")
+                    if len(hits) >= max_sites:
+                        return "\n".join(hits)
+        return "\n".join(hits)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     async def _collect_text(
@@ -441,7 +806,9 @@ class Debugger:
         # hangs. Reserve 50% for initial prompt+context; 25% otherwise.
         _TOKENS_PER_TOOL_TURN = 3_000
         reserve = 0.25 if has_compaction else 0.50
-        safe_max_turns = max(5, int(effective_limit * (1 - reserve)) // _TOKENS_PER_TOOL_TURN)
+        safe_max_turns = max(
+            5, int(effective_limit * (1 - reserve)) // _TOKENS_PER_TOOL_TURN
+        )
         actual_max_turns = min(max_turns, safe_max_turns)
 
         run_kwargs: dict = {
@@ -508,7 +875,14 @@ class Debugger:
 
     def _display_iteration_header(self, chunk: list[str] | None) -> None:
         """Print iteration header with chunk info."""
-        if chunk and self._chunks:
+        if self.config.debug_file:
+            entry_info = (
+                f"::{self.config.debug_entry}" if self.config.debug_entry else ""
+            )
+            print(
+                f"── Iteration {self._iteration} ── file {self.config.debug_file}{entry_info} ──"
+            )
+        elif chunk and self._chunks:
             idx = ((self._chunk_cursor - 1) % len(self._chunks)) + 1
             total = len(self._chunks)
             names = [f.rsplit("/", 1)[-1] for f in chunk[:4]]

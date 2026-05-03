@@ -6,6 +6,8 @@ import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.config import get_effective_context_limit
+
 if TYPE_CHECKING:
     from src.providers.message_adapter import AdaptedMessage
 
@@ -129,7 +131,8 @@ async def _compact_codex_context(provider, messages: list, config) -> str:
     }
     params = _inspect.signature(provider.run).parameters
     accepts_kwargs = any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values())
-    context_limit = getattr(config, "context_limit", 0)
+    raw_limit = getattr(config, "context_limit", 0)
+    context_limit = get_effective_context_limit(model, raw_limit) if raw_limit else 0
     if context_limit and ("context_limit" in params or accepts_kwargs):
         run_kwargs["context_limit"] = context_limit
     result_parts = []

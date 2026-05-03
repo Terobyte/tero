@@ -14,7 +14,7 @@ from src.learning.recorder import RunRecorder
 from src.plan_tracker import PlanTracker, parse_requirements
 
 
-PROVIDER_CHOICES = ["zai", "claude", "codex", "opencode", "kilo"]
+PROVIDER_CHOICES = ["zai", "claude", "codex", "opencode", "kilo", "gemini"]
 
 
 def resolve_go_config(args):
@@ -244,6 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="debug_fixer_provider",
     )
     debug_parser.add_argument(
+        "--synthesizer-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="debug_synthesizer_provider",
+    )
+    debug_parser.add_argument(
         "--intensity",
         type=str,
         choices=["low", "medium", "high"],
@@ -271,6 +278,90 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
     )
+    debug_parser.add_argument(
+        "--test",
+        type=str,
+        default=None,
+        dest="debug_failing_test",
+    )
+    debug_parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        dest="debug_all",
+        help="Analyze every public function in working_dir (whole-project mode)",
+    )
+    debug_parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        dest="debug_file",
+        help="Target a specific file for analysis",
+    )
+    debug_parser.add_argument(
+        "--entry",
+        type=str,
+        default=None,
+        dest="debug_entry",
+        help="Target a specific function/method name within --file",
+    )
+
+    ldb_parser = subparsers.add_parser("ldb", help="Run ldb bug-finder")
+    ldb_parser.add_argument(
+        "--working-dir", "-w", type=str, default=".", dest="working_dir"
+    )
+    ldb_parser.add_argument(
+        "--input-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="ldb_input_provider",
+    )
+    ldb_parser.add_argument(
+        "--player-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="ldb_player_provider",
+    )
+    ldb_parser.add_argument(
+        "--tester-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="ldb_tester_provider",
+    )
+    ldb_parser.add_argument(
+        "--fixer-provider",
+        type=str,
+        choices=PROVIDER_CHOICES,
+        default=None,
+        dest="ldb_fixer_provider",
+    )
+    ldb_parser.add_argument(
+        "--input-model", type=str, default=None, dest="ldb_input_model"
+    )
+    ldb_parser.add_argument(
+        "--player-model", type=str, default=None, dest="ldb_player_model"
+    )
+    ldb_parser.add_argument(
+        "--tester-model", type=str, default=None, dest="ldb_tester_model"
+    )
+    ldb_parser.add_argument(
+        "--fixer-model", type=str, default=None, dest="ldb_fixer_model"
+    )
+    ldb_parser.add_argument(
+        "--mode", type=int, choices=[2, 3], default=None, dest="ldb_mode"
+    )
+    ldb_parser.add_argument("--file", type=str, default=None, dest="ldb_target_file")
+    ldb_parser.add_argument("--entry", type=str, default=None, dest="ldb_target_entry")
+    ldb_parser.add_argument(
+        "--all", action="store_true", default=False, dest="ldb_scope_all"
+    )
+    ldb_parser.add_argument(
+        "--max-iterations", type=int, default=None, dest="ldb_max_iterations"
+    )
+    ldb_parser.add_argument("--timeout", type=int, default=None, dest="ldb_timeout_s")
 
     return parser
 
@@ -314,8 +405,20 @@ def run_debug(args) -> None:
         cli_overrides["debug_tester_provider"] = args.debug_tester_provider
     if getattr(args, "debug_fixer_provider", None):
         cli_overrides["debug_fixer_provider"] = args.debug_fixer_provider
+    if getattr(args, "debug_synthesizer_provider", None):
+        cli_overrides["debug_synthesizer_provider"] = args.debug_synthesizer_provider
     if getattr(args, "debug_intensity", None):
         cli_overrides["debug_intensity"] = args.debug_intensity
+
+    if getattr(args, "debug_failing_test", None):
+        cli_overrides["debug_failing_test"] = args.debug_failing_test
+
+    if getattr(args, "debug_all", False):
+        cli_overrides["debug_all"] = True
+    if getattr(args, "debug_file", None):
+        cli_overrides["debug_file"] = args.debug_file
+    if getattr(args, "debug_entry", None):
+        cli_overrides["debug_entry"] = args.debug_entry
 
     # Limit mode resolution: --infinite > --time > --limit
     if getattr(args, "infinite", False):
@@ -333,9 +436,62 @@ def run_debug(args) -> None:
     if not getattr(args, "no_menu", False):
         config = run_debugger_menu(config)
 
+    if not config.debug_all and not config.debug_file:
+        print("Error: specify --all or --file --entry <name>")
+        sys.exit(1)
+    if config.debug_file and not config.debug_entry:
+        print("Error: --file requires --entry <function_name>")
+        sys.exit(1)
+
     debugger = Debugger(config)
     result = debugger.run_sync()
     sys.exit(0 if result.victory else 1)
+
+
+def run_ldb(args) -> None:
+    from src.config import resolve_config
+    from src.ldb import LdbRunner
+
+    cli_overrides: dict = {"working_dir": args.working_dir}
+
+    _LDB_FIELDS = [
+        "ldb_input_provider",
+        "ldb_player_provider",
+        "ldb_tester_provider",
+        "ldb_fixer_provider",
+        "ldb_input_model",
+        "ldb_player_model",
+        "ldb_tester_model",
+        "ldb_fixer_model",
+        "ldb_mode",
+        "ldb_target_file",
+        "ldb_target_entry",
+        "ldb_scope_all",
+        "ldb_max_iterations",
+        "ldb_timeout_s",
+    ]
+    for field in _LDB_FIELDS:
+        val = getattr(args, field, None)
+        if val is not None and not (isinstance(val, bool) and not val):
+            cli_overrides[field] = val
+
+    config = resolve_config(cli_overrides)
+
+    if not config.ldb_scope_all and not config.ldb_target_file:
+        print("Error: specify --all or --file --entry <name>")
+        sys.exit(1)
+    if config.ldb_target_file and not config.ldb_target_entry:
+        print("Error: --file requires --entry <function_name>")
+        sys.exit(1)
+
+    runner = LdbRunner(config)
+    result = runner.run_sync()
+    print(
+        f"ldb done: bugs_found={result.bugs_found} "
+        f"tests_written={result.tests_written} "
+        f"bugs_fixed={result.bugs_fixed}"
+    )
+    sys.exit(0 if result.success else 1)
 
 
 def run_history(args):
@@ -375,6 +531,12 @@ def main():
     elif args.command == "debug":
         try:
             run_debug(args)
+        except KeyboardInterrupt:
+            print("\nПрервано.")
+            sys.exit(130)
+    elif args.command == "ldb":
+        try:
+            run_ldb(args)
         except KeyboardInterrupt:
             print("\nПрервано.")
             sys.exit(130)
