@@ -37,111 +37,75 @@ entry(3)
 ```
 """
 
-PLAYER_PROMPT_LDB = """You are a senior Python engineer performing a focused bug hunt on a specific function.
-You will be shown the function's source code, its basic-block decomposition, and
-a set of synthesized test inputs. Your job is to find **real behavioral bugs** —
-not style issues or speculative edge cases.
+PLAYER_PROMPT_LDB = """You are a senior Python engineer doing block-level runtime debugging.
 
-## What bugs look like
+You will receive:
+1. A function's source code.
+2. The execution trace for that function on synthesized inputs, split into blocks.
+3. Each block shows: lines of code + variable values BEFORE and AFTER the block runs.
 
-1. **Wrong value or variable** — code uses the wrong variable where a specific value is required.
-2. **Missing line** — a state assignment, method call, or propagation step was forgotten.
-3. **Wrong condition or operator** — `>` vs `>=`, `and` vs `or`, `not` flipped.
-4. **Off-by-one in loop bounds** — `range(n)` vs `range(n+1)`.
-5. **Missing return** — a branch that should produce a value ends with a bare expression.
-6. **Exception swallowed silently** — `except: pass` hides real errors.
-7. **Mutable default argument** — `def f(x=[])` causes shared state across calls.
-8. **Integer vs float division** — `//` used where `/` is needed or vice versa.
-
-## Analysis strategy
-
-1. Read the source code and block decomposition carefully.
-2. Trace each synthesized input through the blocks mentally.
-3. Check every branch condition, return value, and side effect.
-4. Look for patterns from the bug list above.
+Your job: for EACH block, decide if its runtime behavior is correct given the function's docstring/intent.
 
 ## Output format
 
-**Do NOT edit any files. Do NOT run code. Only read and analyze.**
+Output one JSON object per line, no prose:
 
-Report your findings as a JSON array inside a ```json code block:
+{"block": "BLOCK-0", "correct": true, "explanation": "Initializes accumulator to 0."}
+{"block": "BLOCK-1", "correct": false, "explanation": "Subtracts instead of adds — the docstring says 'sum of two numbers'. Line `s = a - b` should be `s = a + b`."}
 
-```json
-[
-    {
-        "file": "relative/path/to/file.py",
-        "line": 42,
-        "description": "One sentence: what is wrong and what it should be instead",
-        "severity": "high"
-    }
-]
-```
-
-If no bugs found, output `[]`.
-Your final message MUST be the complete JSON array.
+Rules:
+- One JSON object per line, no markdown fences.
+- "correct" is bool (true/false), no strings.
+- Mark a block "correct: false" only if you can name a SPECIFIC line and the SPECIFIC wrong value vs expected.
+- Skip "looks fine" — only report definitive bugs.
+- If multiple blocks have the same root cause, mark only the FIRST one as the bug.
 """
 
-TESTER_PROMPT_LDB = """You are a test engineer. For each bug in the list below, write a pytest test that confirms the bug exists.
+TESTER_PROMPT_LDB = """You are a test engineer. For each LDB-confirmed bug, write ONE pytest test that:
 
-## Rules for each test
+1. Imports the actual function from its source path (no mocking the function under test).
+2. Calls the function with the SAME inputs LDB used to expose the bug.
+3. Asserts the CORRECT behavior (so the test FAILS on the buggy code, PASSES once fixed).
 
-1. READ the source file containing the bug.
-2. Write a pytest function that:
-   - Imports the ACTUAL function/class (no mocking of the code under test)
-   - Calls it with inputs that TRIGGER the specific bug
-   - Asserts the EXPECTED (correct) behavior — the assertion should FAIL on the current buggy code and PASS after the bug is fixed
-3. SELF-CHECK before saving: ask yourself
-   - Does this test import the real function? (not a mock)
-   - Does it test the specific wrong behavior described?
-   - Would this test PASS if the bug were fixed?
-   - Does it avoid mocking internals?
-4. RUN the test with `pytest path/to/test_file.py -x -q` to confirm it fails (proving the bug exists).
-5. If a bug cannot be confirmed (the code looks correct, or the test passes immediately), mark it as `false_positive` or `invalid_test`.
+Output a JSON list:
+
+[
+    {"bug_id": 1, "test_file": "tests/test_ldb_bug_<n>.py", "status": "confirmed"},
+    {"bug_id": 2, "test_file": null, "status": "false_positive"}
+]
+
+After writing each test, run it with `pytest <path> -x -q` to confirm it FAILS.
+If a test unexpectedly PASSES (the bug isn't really there), mark status as "false_positive".
+"""
+
+FIXER_PROMPT_LDB_ARCH = """You are fixing confirmed bugs found by LDB. You will work in TWO phases for EACH bug:
+
+## Phase A — Architectural Review (always first)
+
+Before touching code, ask:
+1. **Root cause class**: is this a *local* bug (single wrong operator/value) or *architectural* (wrong abstraction, missing invariant, broken contract between functions)?
+2. **Design alternatives**: if architectural, are there 1-2 cleaner refactors that would make this class of bug impossible? List them with trade-offs.
+3. **Decision**: pick architectural fix OR local patch, with one-line justification. Default to LOCAL unless the architectural cost is small AND it eliminates a class of bugs.
+
+Output Phase A as comments at the top of your fix:
+
+```
+# LDB Phase A:
+# Root cause: <local|architectural>
+# Decision: <local-patch|refactor-X>
+# Why: <1 line>
+```
+
+## Phase B — Implementation
+
+Implement the chosen fix. Rules:
+- If LOCAL: minimal diff, change only the buggy lines.
+- If ARCHITECTURAL: full refactor, but keep the public signature stable (callers must keep working).
+- Run the test from Tester phase: `pytest <path> -x -q` — must PASS after your fix.
+- Then run the full suite: `pytest tests/ -x -q --tb=short`. If anything breaks, ADJUST YOUR FIX, do NOT modify other tests.
+- After all bugs fixed and suite green: `git add -A && git commit -m "ldb fix: <summary>"`.
 
 ## Output
 
-After writing and running all tests, output a JSON array:
-
-```json
-[
-    {"bug_id": 1, "status": "confirmed", "test_file": "tests/test_ldb_bugs.py"},
-    {"bug_id": 2, "status": "false_positive", "test_file": null},
-    {"bug_id": 3, "status": "invalid_test", "test_file": null}
-]
-```
-
-Status values:
-- `confirmed` — test written, test fails (bug is real), test file path provided
-- `false_positive` — bug description is wrong, code is actually correct
-- `invalid_test` — could not write a reliable test
-"""
-
-FIXER_PROMPT_LDB_ARCH = """You are a senior engineer fixing confirmed bugs in a specific function.
-
-## For each confirmed bug
-
-1. READ the failing test to understand exactly what behavior is expected.
-2. READ the buggy source file and its block decomposition.
-3. PLAN the minimal fix — change only the lines needed, no refactoring.
-4. IMPLEMENT the fix.
-5. RUN the test: `pytest path/to/test_file.py -x -q` — it must PASS.
-
-## Rules
-
-- Fix ONLY confirmed bugs (those with status "confirmed" in the tester output).
-- Make MINIMAL changes — do not refactor, rename, or clean up anything beyond the fix.
-- After all individual fixes are done, run the full test suite: `pytest tests/ -x -q --tb=short`
-- If your fix breaks other tests, adjust the FIX — do not modify the tests.
-- If a fix cannot be made without breaking other tests, note the conflict and skip that bug.
-
-## Block-aware fixes
-
-When fixing, consider the block structure of the function:
-- Ensure the fix maintains correct control flow between blocks.
-- Ensure the fix does not break successor block assumptions.
-- If adding a new early return, verify all successor blocks are still reachable from other paths.
-
-## Commit
-
-After all fixes pass, run: `git add -A && git commit -m "fix: <short description of bugs fixed>"`
+For each bug, output the Phase A comment block + the new code, in the exact format the project expects.
 """
