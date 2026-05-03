@@ -287,6 +287,7 @@ class LdbRunner:
                 break
 
             self._bugs.extend(new_bugs)
+            self._append_bugs_md(self.config.ldb_target_file, entry, new_bugs)
 
             open_bugs = [b for b in self._bugs if b.status == "open"]
             if open_bugs:
@@ -350,6 +351,7 @@ class LdbRunner:
                 if not new_bugs:
                     break
                 self._bugs.extend(new_bugs)
+                self._append_bugs_md(target.file, target.name, new_bugs)
 
                 open_bugs = [b for b in self._bugs if b.status == "open"]
                 if open_bugs:
@@ -563,3 +565,27 @@ class LdbRunner:
             )
         except subprocess.CalledProcessError:
             pass
+
+    def _append_bugs_md(self, file: str, entry: str, bugs: list[_LdbBug]) -> None:
+        """Append found bugs to ``{working_dir}/bugs.md`` (feedback memory).
+
+        ALWAYS writes to the root of *working_dir* — same location as
+        ``tero debug`` so there is a single source of truth.
+
+        Format: ``## <file>::<entry> — Bug <n>`` headings (compatible with
+        the ``## <file> — Bug <n>`` format that ``tero debug`` writes).
+
+        Guards (#R10, #R16): if *bugs* is empty the method returns
+        immediately — never writes a heading without content.
+        """
+        if not bugs:
+            return  # Guard: don't write empty headings (#R10, #R16)
+
+        path = Path(self.working_dir) / "bugs.md"
+        existing = path.read_text() if path.exists() else "# Bugs\n\n"
+        body = [existing.rstrip(), "\n"]
+        for i, b in enumerate(bugs, 1):
+            body.append(f"## {file}::{entry} — Bug {i}\n")
+            body.append(f"**Line {b.line}:** {b.description}\n")
+            body.append(f"Severity: {b.severity}\n")
+        path.write_text("\n".join(body))
