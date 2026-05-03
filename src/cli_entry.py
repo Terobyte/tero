@@ -362,6 +362,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-iterations", type=int, default=None, dest="ldb_max_iterations"
     )
     ldb_parser.add_argument("--timeout", type=int, default=None, dest="ldb_timeout_s")
+    ldb_parser.add_argument(
+        "--test", type=str, default=None, dest="ldb_test_input",
+        help="Explicit test/assert input (e.g. 'assert add(1,2)==3')",
+    )
+    ldb_parser.add_argument(
+        "--no-menu", action="store_true", default=False,
+    )
 
     return parser
 
@@ -469,6 +476,7 @@ def run_ldb(args) -> None:
         "ldb_scope_all",
         "ldb_max_iterations",
         "ldb_timeout_s",
+        "ldb_test_input",
     ]
     for field in _LDB_FIELDS:
         val = getattr(args, field, None)
@@ -476,6 +484,15 @@ def run_ldb(args) -> None:
             cli_overrides[field] = val
 
     config = resolve_config(cli_overrides)
+
+    if not getattr(args, "no_menu", False):
+        from src.menu import run_ldb_menu
+
+        menu_result = run_ldb_menu(config)
+        if menu_result is None:
+            print("Выход.")
+            sys.exit(0)
+        config = menu_result
 
     if not config.ldb_scope_all and not config.ldb_target_file:
         print("Error: specify --all or --file --entry <name>")
