@@ -352,7 +352,7 @@ class TraceResult:
 
 - [x] **2.7 Запустить tracer-тесты** → проходят.
 
-- [ ] **2.8 Коммит**
+- [x] **2.8 Коммит**
 
 ```bash
 git add src/ldb/__init__.py src/ldb/staticfg src/ldb/blocks.py src/ldb/tracer.py tests/test_ldb_blocks.py tests/test_ldb_tracer.py
@@ -365,7 +365,7 @@ git commit -m "ldb core: block decomposition + runtime tracer"
 
 > User: «каждая фаза отдельный вызов и возможность выбрать оператора». Поэтому Input-Synthesizer — это **полноценный LLM-агент**, не код-эвристика. У него свой провайдер/модель в меню и CLI.
 
-- [ ] **3.1 Failing test для inputs.synthesize_inputs_llm()**
+- [x] **3.1 Failing test для inputs.synthesize_inputs_llm()**
 
 `tests/test_ldb_inputs.py`:
 
@@ -405,7 +405,7 @@ async def test_synthesize_inputs_llm_calls_provider():
     assert "add(1, 2)" in inputs[0]
 ```
 
-- [ ] **3.2 Создать `src/ldb/prompts.py` с `INPUT_PROMPT_LDB`** (другие промты добавит Phase 4.1 — НЕ перезаписывать файл там)
+- [x] **3.2 Создать `src/ldb/prompts.py` с `INPUT_PROMPT_LDB`** (другие промты добавит Phase 4.1 — НЕ перезаписывать файл там)
 
 ```python
 INPUT_PROMPT_LDB = '''You are a test-input designer for runtime debugging.
@@ -428,7 +428,7 @@ Example output:
 '''
 ```
 
-- [ ] **3.3 Имплементировать `src/ldb/inputs.py`**
+- [x] **3.3 Имплементировать `src/ldb/inputs.py`**
 
 ```python
 """LLM-driven input synthesis for LDB tracing."""
@@ -477,7 +477,7 @@ async def synthesize_inputs_llm(
     return inputs[:n] if inputs else [f"{entry}()"]
 ```
 
-- [ ] **3.4 Запустить inputs-тесты** → проходят.
+- [x] **3.4 Запустить inputs-тесты** → проходят.
 
 - [ ] **3.5 Коммит**
 

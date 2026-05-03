@@ -148,8 +148,30 @@ def _parse_entry_lines(raw: str) -> list[str]:
     return matches
 
 
+def parse_inputs_response(raw: str, entry: str) -> list[str]:
+    """Parse LLM response text to extract concrete ``entry(...)`` call expressions.
+
+    Looks first for backtick-wrapped expressions (`` `entry(...)` ``), then
+    falls back to finding bare ``entry(...)`` patterns in the text.
+    """
+    escaped = re.escape(entry)
+    # 1. Backtick-wrapped expressions: `entry(...)` or `` `entry(...)` ``
+    backtick_pattern = rf"`({escaped}\([^)]*\))`"
+    backtick_matches = re.findall(backtick_pattern, raw)
+    if backtick_matches:
+        return backtick_matches
+    # 2. Fallback: any entry(...) in plain text
+    plain_pattern = rf"{escaped}\([^)]*\)"
+    return re.findall(plain_pattern, raw)
+
+
 async def synthesize_inputs_llm(
-    provider, source: str, entry: str, working_dir: str = ".", model: str = ""
+    provider,
+    source: str,
+    entry: str,
+    working_dir: str = ".",
+    model: str = "",
+    n: int = 5,
 ) -> List[str]:
     """Use an LLM to synthesize test inputs for a function.
 
@@ -159,6 +181,7 @@ async def synthesize_inputs_llm(
         entry: Name of the function to generate inputs for.
         working_dir: Working directory for the provider.
         model: Optional model override.
+        n: Desired number of input expressions.
 
     Returns:
         List of entry(...) strings — each is a concrete call expression.
@@ -170,7 +193,7 @@ async def synthesize_inputs_llm(
         f"## Target function: `{entry}`\n\n"
         f"### Signature\n```\n{sig}\n```\n\n"
         f"### Surrounding code\n```python\n{surrounding}\n```\n\n"
-        f"Generate diverse test inputs for `{entry}`."
+        f"Generate {n} diverse test inputs for `{entry}`."
     )
 
     raw = await _collect_text(
@@ -192,4 +215,4 @@ async def synthesize_inputs_llm(
         if line.strip()
         and not line.strip().startswith("#")
         and not line.strip().startswith("```")
-    ][:10]
+    ][:n]
