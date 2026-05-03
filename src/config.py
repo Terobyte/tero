@@ -273,6 +273,10 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("mimo", 131_072),
     ("minimax/minimax-m2.5:free", 262_144),
     ("minimax-m2", 1_000_000),
+    ("gemini-2.5-pro", 1_000_000),
+    ("gemini-2.5-flash", 1_000_000),
+    ("gemini-2.0", 1_000_000),
+    ("gemini", 1_000_000),
     ("nemotron", 131_072),
     ("minimax", 40_960),
     # Short aliases used by _MODEL_ALIASES in claude_native.py
@@ -373,6 +377,12 @@ def short_model_name(model: str) -> str:
         return f"GLM-{ver}" if ver else "GLM"
     if "kimi" in m:
         return "KIMI"
+    if "gemini-2.5-pro" in m:
+        return "GEMINI-2.5-PRO"
+    if "gemini-2.5-flash" in m:
+        return "GEMINI-2.5-FL"
+    if "gemini" in m:
+        return "GEMINI"
     return model.split("/")[-1].upper()[:10]
 
 
