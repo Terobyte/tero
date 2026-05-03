@@ -264,10 +264,10 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return model_map.get(model, model)
 
     if provider == "gemini":
-        print("  Модели: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash")
+        print("  Модели: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash")
         model = (
-            input(f"  {prompt_label} model [gemini-2.5-flash]: ").strip().lower()
-            or "gemini-2.5-flash"
+            input(f"  {prompt_label} model [gemini-2.5-pro]: ").strip().lower()
+            or "gemini-2.5-pro"
         )
         return model
 

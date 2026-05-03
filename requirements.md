@@ -1364,8 +1364,8 @@ git commit -m "ldb: smoke verified, document tero ldb usage"
 
 ## Подтверждённые решения (2026-05-02)
 
-- [ ] **Input synthesis = LLM-агент** (Input-Synthesizer), у каждой фазы свой провайдер/модель → 4 агента в меню/CLI/конфиге.
-- [ ] **Gemini default**: `gemini-2.5-pro`. Команда: `gemini -p <prompt> -o stream-json --yolo` (подтверждено smoke-тестом).
+- [x] **Input synthesis = LLM-агент** (Input-Synthesizer), у каждой фазы свой провайдер/модель → 4 агента в меню/CLI/конфиге.
+- [x] **Gemini default**: `gemini-2.5-pro`. Команда: `gemini -p <prompt> -o stream-json --yolo` (подтверждено smoke-тестом).
 - [ ] **Mode 3 auto-commit**: селективный staging — `git add -- <files>` (только изменённые исходники + новые тесты), НЕ `-A`. Сообщение: `"ldb fix: N bug(s) via block-level runtime debugger"`.
 - [ ] **Scope**: `--file --entry` обязательны (прозрачность), плюс опциональный `--all` для whole-project обхода всех публичных функций (Phase 5b).
 
