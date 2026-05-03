@@ -7,6 +7,7 @@ from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
 from .zai import ZaiConfig, ZaiProvider
+from .gemini import GeminiConfig, GeminiProvider
 from .message_adapter import (
     AdaptedMessage,
     TextBlock,
@@ -78,11 +79,23 @@ def create_provider(
         )
         return OpenCodeProvider(opencode_cfg)
 
+    if provider_type == "gemini":
+        gemini_cfg = GeminiConfig(
+            command=provider_config.get("command", "gemini"),
+            default_model=provider_config.get("default_model", "gemini-2.5-pro"),
+            display_name=provider_config.get("display_name", "Gemini"),
+            default_timeout=provider_config.get(
+                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+            ),
+            yolo=provider_config.get("yolo", True),
+        )
+        return GeminiProvider(gemini_cfg)
+
     if provider_type == "codex":
         codex_cfg = CodexConfig(
             command=provider_config.get("command", "codex"),
             default_model=provider_config.get(
-                "default_model", provider_config.get("model", "")
+                "default_model", provider_config.get("model", "gpt-5.4")
             ),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -96,6 +109,9 @@ def create_provider(
             extra_args=provider_config.get("extra_args", []),
             enabled_features=provider_config.get("enabled_features", []),
             disabled_features=provider_config.get("disabled_features", []),
+            model_reasoning_effort=provider_config.get(
+                "model_reasoning_effort", "medium"
+            ),
         )
         return CodexProvider(codex_cfg)
 
@@ -119,6 +135,9 @@ __all__ = [
     # ZAI
     "ZaiConfig",
     "ZaiProvider",
+    # Gemini
+    "GeminiConfig",
+    "GeminiProvider",
     # Message adapter
     "AdaptedMessage",
     "TextBlock",

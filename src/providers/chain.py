@@ -45,6 +45,7 @@ def _is_recoverable_error(exc: Exception) -> bool:
             "gateway",
             "unexpected eof",
             "broken pipe",
+            "runaway",
         )
     )
 

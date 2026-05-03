@@ -111,7 +111,10 @@ class RunRecorder:
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 data["turn_details"] = self._normalize_turn_details(
                     data.get("turn_details") or []
                 )
@@ -174,7 +177,10 @@ class RunRecorder:
                     line = line.strip()
                     if not line:
                         continue
-                    data = json.loads(line)
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
                     data["turn_details"] = self._normalize_turn_details(
                         data.get("turn_details") or []
                     )

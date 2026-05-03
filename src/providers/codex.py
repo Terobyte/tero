@@ -19,6 +19,7 @@ from .message_adapter import (
     ToolUseBlock,
     ToolResultBlock,
 )
+from src.errors import ProviderError
 from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 
@@ -41,6 +42,11 @@ class CodexConfig:
     bypass_approvals: bool = True  # --dangerously-bypass-approvals-and-sandbox
     config_overrides: dict[str, str] = field(default_factory=dict)
     extra_args: list[str] = field(default_factory=list)
+    # Reasoning effort override (passed via -c model_reasoning_effort=<value>).
+    # Empty string = inherit from ~/.codex/config.toml. Use "medium" to clamp
+    # the model down from the user's global setting (e.g. "xhigh") for cheap
+    # roles like judge/coach.
+    model_reasoning_effort: str = ""
     # Feature flags (passed via --enable/--disable or -c features.<name>=true/false)
     enabled_features: list[str] = field(
         default_factory=list
@@ -174,6 +180,11 @@ class CodexProvider:
         for key, value in self.config.config_overrides.items():
             cmd.extend(["-c", f"{key}={value}"])
 
+        if self.config.model_reasoning_effort:
+            cmd.extend(
+                ["-c", f"model_reasoning_effort={self.config.model_reasoning_effort}"]
+            )
+
         # Extra args
         cmd.extend(self.config.extra_args)
 
@@ -201,8 +212,10 @@ class CodexProvider:
 
         # Write to temp file
         fd, tmp_path = tempfile.mkstemp(suffix=".md", prefix="codex_instructions_")
-        os.write(fd, encoded)
-        os.close(fd)
+        try:
+            os.write(fd, encoded)
+        finally:
+            os.close(fd)
         self._temp_instructions_path = tmp_path
 
         env["CODEX_INSTRUCTIONS"] = (
@@ -254,7 +267,7 @@ class CodexProvider:
             stderr_text = (stderr_data or "").strip()
 
         detail = stderr_text or "subprocess exited without stderr output"
-        raise RuntimeError(f"codex exited with code {returncode}: {detail}")
+        raise ProviderError(f"codex exited with code {returncode}: {detail}")
 
     def _adapt_codex_event(self, event: dict) -> AdaptedMessage | None:
         """Convert Codex JSONL event to AdaptedMessage.
@@ -474,6 +487,11 @@ class CodexProvider:
 
         cmd.append("--skip-git-repo-check")
 
+        if self.config.model_reasoning_effort:
+            cmd.extend(
+                ["-c", f"model_reasoning_effort={self.config.model_reasoning_effort}"]
+            )
+
         if review_prompt:
             cmd.append("-")  # Read from stdin
 
@@ -492,6 +510,7 @@ class CodexProvider:
                         yield adapted
         finally:
             await _gen.aclose()
+            self._cleanup_temp_instructions()
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if Codex CLI is installed and available."""

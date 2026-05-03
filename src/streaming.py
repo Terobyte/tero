@@ -207,25 +207,6 @@ def print_batch_turn_header(
         print(f"{DIM}  Роли: {roles_text}{RESET}")
 
 
-def print_preplanner_header(model_name: str = "") -> None:
-    """Print the Phase 0 pre-planner start header."""
-    model_info = f" [{model_name}]" if model_name else ""
-    print(f"\n{BOLD}{CYAN}═══ PHASE 0{model_info} — polishing plan {RESET}")
-
-
-def print_preplan_result(
-    num_phases: int,
-    num_roles: int,
-    enriched_plan_path: str = "",
-) -> None:
-    """Print the Phase 0 pre-planner completion summary."""
-    print(
-        f"  {GREEN}Plan polished: {num_phases} phases, {num_roles} role assignments{RESET}\n"
-    )
-    if enriched_plan_path:
-        print(f"  {DIM}Enriched plan: {enriched_plan_path}{RESET}\n")
-
-
 def print_step_header(
     step_num: int,
     total_steps: int,
@@ -307,22 +288,6 @@ def _progress_bar(done: int, total: int, width: int = 20) -> str:
     bar = "■" * filled + "□" * (width - filled)
     pct = int(100 * done / total)
     return f"[{bar}] {done}/{total} ({pct}%)"
-
-
-def print_test_writer_header(step_num: int, total_steps: int):
-    """Print header for test writer phase."""
-    print(f"\n{BOLD}{CYAN}🧪 TEST WRITER — шаг {step_num}/{total_steps}{RESET}")
-
-
-def print_tdd_status(tests_passed: bool, test_output: str):
-    """Print TDD test run results."""
-    if tests_passed:
-        print(f"\n  {BOLD}{GREEN}✓ Тесты прошли{RESET}")
-    else:
-        print(f"\n  {BOLD}{RED}✗ Тесты упали:{RESET}")
-        for line in test_output.strip().splitlines()[:10]:
-            if line.strip():
-                print(f"    {RED}{line}{RESET}")
 
 
 def print_code_review_header(

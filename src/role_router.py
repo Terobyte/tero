@@ -6,13 +6,11 @@ with a single ``_ROLE_CONFIG_MAP`` table and thin helper methods.
 
 from __future__ import annotations
 
-from src.errors import ProviderNotReadyError
+from src.errors import ProviderError, ProviderNotReadyError
 
 _ROLE_CONFIG_MAP: dict[str, tuple[str, str]] = {
     "player": ("player_provider", "player_model"),
     "coach": ("coach_provider", "coach_model"),
-    "test_writer": ("test_writer_provider", "test_writer_model"),
-    "preplanner": ("preplan_provider", "preplan_model"),
     "reviewer": ("review_provider", "review_model"),
     "coach_fallback": ("coach_fallback_provider", "coach_fallback_model"),
     "judge": ("batch_judge_provider", "batch_judge_model"),
@@ -48,7 +46,7 @@ class RoleRouter:
         name = getattr(self.config, provider_attr, "")
 
         if not name:
-            if role in ("test_writer", "coach_fallback"):
+            if role == "coach_fallback":
                 return self.config.coach_provider
             if role == "judge":
                 return "codex"  # matches BatchExecutor._judge_provider fallback
@@ -69,10 +67,10 @@ class RoleRouter:
         name = getattr(self.config, provider_attr, "")
 
         if not name:
-            if role == "test_writer":
+            if role == "coach_fallback":
                 name = self.config.coach_provider
-            elif role == "coach_fallback":
-                name = self.config.coach_provider
+            elif role == "judge":
+                name = "codex"
             else:
                 raise ValueError(f"No provider configured for role: {role}")
 
@@ -81,7 +79,10 @@ class RoleRouter:
     def display_label_for(self, role: str) -> str:
         """Build a stable label showing provider, model, and account."""
         provider_name = self.provider_name_for(role)
-        provider = self.provider_for(role)
+        try:
+            provider = self.provider_for(role)
+        except (ProviderError, ValueError):
+            provider = None
         if role == "reviewer":
             model_override = self._resolve_review_model()
         else:
@@ -132,8 +133,6 @@ class RoleRouter:
             "coach_fallback_model": getattr(self.config, "coach_fallback_model", ""),
             "review_provider": getattr(self.config, "review_provider", ""),
             "review_model": getattr(self.config, "review_model", ""),
-            "test_writer_provider": getattr(self.config, "test_writer_provider", ""),
-            "test_writer_model": getattr(self.config, "test_writer_model", ""),
             "player_provider": getattr(self.config, "player_provider", ""),
             "player_model": getattr(self.config, "player_model", ""),
             "coach_provider": getattr(self.config, "coach_provider", ""),

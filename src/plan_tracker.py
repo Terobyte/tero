@@ -27,10 +27,10 @@ class PlanItem:
     roles: tuple[str, ...] = field(default_factory=tuple)
     skipped: bool = False
 
-    def __new__(cls, text: str, done: bool = False, roles: tuple[str, ...] = ()):
+    def __new__(cls, text: str, done: bool = False, roles: tuple[str, ...] = (), skipped: bool = False):
         if isinstance(roles, list):
             roles = tuple(roles)
-        key = (text, done, roles)
+        key = (text, done, roles, skipped)
         cached = _PLAN_ITEM_CACHE.get(key)
         if cached is not None:
             return cached
@@ -489,7 +489,7 @@ def parse_enriched_plan(content: str) -> tuple[list[PlanItem], list[Phase]]:
     # Build Phase objects referencing the same PlanItem instances.
     phases: list[Phase] = []
     for display_name, step_indices in phases_raw:
-        phase_steps = [items[min(i, len(items) - 1)] for i in step_indices if i >= 0 and items]
+        phase_steps = [items[i] for i in step_indices if 0 <= i < len(items)]
         if not phase_steps:
             continue
         ptype = detect_step_type(phase_steps[0])
@@ -551,9 +551,18 @@ def write_checklist_back(file_path: str, items: list[PlanItem]) -> None:
         new_lines[insert_at:insert_at] = extra_lines
 
     content_to_write = "\n".join(new_lines)
-    with tempfile.NamedTemporaryFile(
-        mode="w", dir=path.parent, delete=False, suffix=".tmp"
-    ) as tmp:
-        tmp.write(content_to_write)
-        tmp_path = tmp.name
-    os.replace(tmp_path, path)
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=path.parent, delete=False, suffix=".tmp"
+        ) as tmp:
+            tmp.write(content_to_write)
+            tmp_path = tmp.name
+        os.replace(tmp_path, path)
+        tmp_path = None  # success — file renamed, nothing to clean up
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

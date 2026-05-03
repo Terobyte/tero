@@ -4,13 +4,10 @@ import asyncio
 import datetime
 import inspect
 import os
-import shlex
 import signal
-import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
-from pathlib import Path
+from dataclasses import dataclass
 
 from src.config import Config, load_provider_configs
 from src.feedback import (
@@ -24,7 +21,6 @@ from src.feedback import (
     is_invalid_feedback,
 )
 from src.learning.recorder import RunRecord, RunRecorder, TurnDetail, generate_run_id
-from src.personas import PersonaRegistry
 from src.plan_tracker import (
     get_current_step_index,
     mark_step_done,
@@ -37,11 +33,9 @@ from src.prompts import (
     COACH_STRICT_SYSTEM_PROMPT,
     PLAYER_SYSTEM_PROMPT,
     PLAYER_BATCH_SYSTEM_PROMPT,
-    TEST_WRITER_SYSTEM_PROMPT,
     CODE_REVIEWER_SYSTEM_PROMPT,
     build_coach_step_prompt,
     build_player_step_prompt,
-    build_test_writer_prompt,
     build_code_review_prompt,
     build_player_fix_prompt,
 )
@@ -95,7 +89,7 @@ class CoachPlayerSession:
         self.plan_file_path = plan_file_path
         self.recorder = RunRecorder(f"{config.working_dir}/.g3/knowledge")
         self._interrupted = False
-        self._persona_registry: PersonaRegistry | None = None
+        self._persona_registry = None
 
         # Load provider configs and create providers (supports multi-account)
         self.provider_configs = self._load_provider_configs()
@@ -135,12 +129,6 @@ class CoachPlayerSession:
     def _verify_providers_ready(self) -> None:
         """Verify all providers are ready, raise if not."""
         roles = ["player", "coach"]
-
-        if self.config.tdd_mode:
-            roles.append("test_writer")
-
-        if self.config.preplan_mode:
-            roles.append("preplanner")
 
         if self.config.code_review and self.review_provider is not None:
             roles.append("reviewer")
@@ -200,6 +188,19 @@ class CoachPlayerSession:
             self.player_provider = self.router.provider_for("player")
             self.player_model = display
         return display
+
+    def _provider_for_runtime_role(self, role: str):
+        """Return the current provider object for a runtime role."""
+        legacy_provider_for_role = getattr(self, "_provider_for_role", None)
+        if legacy_provider_for_role is not None and not hasattr(self, "router"):
+            return legacy_provider_for_role(role)
+        if role == "player":
+            return self.player_provider
+        if role == "coach":
+            return self.coach_provider
+        if role == "reviewer" and self.review_provider is not None:
+            return self.review_provider
+        return self.router.provider_for(role)
 
     def _setup_interrupt_handler(self):
         def handler(signum, frame):
@@ -305,17 +306,18 @@ class CoachPlayerSession:
         provider_override=None,
     ) -> TurnResult:
         """Retry incomplete player outputs with a continuation prompt."""
+        provider = provider_override or self._provider_for_runtime_role(role)
         return await self._turn_runner.run_with_continuation(
             role=role,
             prompt=prompt,
             system_prompt=system_prompt,
             max_turns=max_turns,
             timeout_s=timeout_s,
-            provider=provider_override or self.router.provider_for(role),
+            provider=provider,
             router=self.router,
             config=self.config,
             model_override=model_override,
-            provider_override=provider_override,
+            provider_override=provider,
         )
 
     @staticmethod
@@ -368,114 +370,6 @@ class CoachPlayerSession:
             return f"{base_prompt}\n\n## Review Focus\n{overlay}"
         return f"{base_prompt}\n\n{overlay}"
 
-    async def _run_phase_zero(self, raw_plan: str) -> tuple[list, list]:
-        """Run the pre-planner once and return enriched items/phases.
-
-        On any failure, returns ``([], [])`` so callers can fall back to the
-        original parsed checklist.
-        """
-        from src.plan_tracker import (
-            auto_group_phases,
-            parse_enriched_plan,
-            write_enriched_plan,
-        )
-        from src.prompts import PREPLANNER_SYSTEM_PROMPT, build_preplan_prompt
-
-        personas_dir = Path(self.config.working_dir) / "src" / "personas" / "prompts"
-        if not personas_dir.is_dir():
-            personas_dir = Path(__file__).resolve().parent / "personas" / "prompts"
-
-        registry = PersonaRegistry(personas_dir)
-        registry.load_all()
-        self._persona_registry = registry
-
-        available_roles = registry.available_roles()
-        if not any(role["name"] == "general" for role in available_roles):
-            available_roles = available_roles + [
-                {
-                    "name": "general",
-                    "description": "General implementation work without a specialist overlay",
-                }
-            ]
-
-        preplanner_provider = self.router.provider_for("preplanner")
-        preplanner_label = format_provider_display(
-            self.config.preplan_provider,
-            preplanner_provider,
-            self.config.preplan_model,
-        )
-        streaming_ui.print_preplanner_header(preplanner_label)
-
-        def _finalize_enriched_plan(
-            items: list, phases: list, raw_text: str
-        ) -> tuple[list, list]:
-            if not phases:
-                phases = auto_group_phases(items)
-
-            enriched_path = Path(self.config.working_dir) / ".g3" / "enriched-plan.md"
-            write_enriched_plan(enriched_path, raw_text)
-
-            roles_assigned = sum(len(item.roles) for item in items)
-            streaming_ui.print_preplan_result(
-                len(phases),
-                roles_assigned,
-                str(enriched_path),
-            )
-            return items, phases
-
-        # Fast path: if the input is already an enriched plan, trust it and move on.
-        existing_items, existing_phases = parse_enriched_plan(raw_plan)
-        if existing_items and all(item.roles for item in existing_items):
-            return _finalize_enriched_plan(existing_items, existing_phases, raw_plan)
-
-        original_items = parse_requirements(raw_plan)
-        if not original_items:
-            return [], []
-
-        normalized_plan = "\n".join(
-            f"- [{'x' if item.done else ' '}] {item.text}" for item in original_items
-        )
-        preplan_prompt = build_preplan_prompt(normalized_plan, available_roles)
-
-        try:
-            result = await self._run_turn(
-                role="preplanner",
-                prompt=preplan_prompt,
-                system_prompt=PREPLANNER_SYSTEM_PROMPT,
-                max_turns=1,
-                timeout_s=self.config.preplan_timeout_s,
-                model_override=self.config.preplan_model,
-                disable_tools=True,
-            )
-        except Exception as exc:
-            print(
-                f"  [Preplanner] Warning: failed ({exc}), using original plan",
-                file=sys.stderr,
-            )
-            return [], []
-
-        items, phases = parse_enriched_plan(result.text)
-        if len(items) != len(original_items):
-            print(
-                "  [Preplanner] Warning: step count mismatch "
-                f"({len(items)} vs {len(original_items)}), using original plan",
-                file=sys.stderr,
-            )
-            return [], []
-
-        preserved_items = [
-            replace(item, done=original.done)
-            for item, original in zip(items, original_items)
-        ]
-        index_by_old_id = {id(item): idx for idx, item in enumerate(items)}
-        for phase in phases:
-            phase.steps = [
-                preserved_items[index_by_old_id[id(step)]]
-                for step in phase.steps
-                if id(step) in index_by_old_id
-            ]
-        return _finalize_enriched_plan(preserved_items, phases, result.text)
-
     async def run(self) -> SessionResult:
         """Run the step-by-step coach-player loop."""
         self._setup_interrupt_handler()
@@ -485,12 +379,6 @@ class CoachPlayerSession:
         error = None
 
         plan_items = parse_requirements(self.requirements)
-        if self.config.preplan_mode:
-            enriched_items, _phases = await self._run_phase_zero(self.requirements)
-            if enriched_items:
-                plan_items = enriched_items
-        else:
-            self._persona_registry = None
         total_steps = len(plan_items)
 
         print(f"\n{BOLD}--- tero coach-player ---{RESET}")
@@ -554,32 +442,7 @@ class CoachPlayerSession:
 
                 feedback = None
                 step_approved = False
-                tests_written = False  # TDD: tests written once per step
                 restart_requested = False
-
-                # --- TDD Mode: Test Writer phase (once per step) ---
-                if self.config.tdd_mode and not tests_written:
-                    streaming_ui.print_test_writer_header(step_num, total_steps)
-                    test_prompt = build_test_writer_prompt(
-                        current_step=step.text,
-                        step_num=step_num,
-                        total_steps=total_steps,
-                        completed_steps=completed_steps,
-                    )
-                    try:
-                        await self._run_turn(
-                            role="test_writer",
-                            prompt=test_prompt,
-                            system_prompt=TEST_WRITER_SYSTEM_PROMPT,
-                            max_turns=15,
-                            timeout_s=self.config.coach_timeout_s,
-                            model_override=self.config.test_writer_model,
-                        )
-                        tests_written = True
-                    except TimeoutError:
-                        print(
-                            f"\n  {BOLD}{YELLOW}⚠ Test writer timed out, continuing...{RESET}"
-                        )
 
                 for attempt in range(1, self.config.max_turns + 1):
                     if self._interrupted:
@@ -693,17 +556,6 @@ class CoachPlayerSession:
                         streaming_ui.print_step_rejected(feedback.text)
                         continue
 
-                    # --- TDD Mode: Run tests after player attempt ---
-                    if self.config.tdd_mode:
-                        test_passed, test_output = await self._run_tests()
-                        streaming_ui.print_tdd_status(test_passed, test_output)
-                        if not test_passed:
-                            feedback = Feedback(
-                                f"1. Tests are still failing:\n{test_output[:500]}\n"
-                                "2. Fix the implementation until tests pass."
-                            )
-                            continue  # Skip coach, retry player
-
                     # --- Coach turn with retry on NoVerdict ---
                     streaming_ui.print_coach_header(
                         step_num, total_steps, attempt, self.coach_model
@@ -803,7 +655,7 @@ class CoachPlayerSession:
                     if isinstance(verdict, Approved):
                         # --- Code Review phase (iterative until zero bugs) ---
                         if self.config.code_review:
-                            review_provider = self.router.provider_for("reviewer")
+                            review_provider = self._provider_for_runtime_role("reviewer")
                             review_provider_name = self.router.provider_name_for(
                                 "reviewer"
                             )
@@ -972,14 +824,16 @@ class CoachPlayerSession:
         disable_tools: bool = False,
     ) -> TurnResult:
         """Run a single agent turn using the appropriate provider."""
+        if not hasattr(self, "_turn_runner"):
+            self._turn_runner = AgentTurnRunner(verbose=getattr(self.config, "verbose", False))
         result = await self._turn_runner.run_turn(
             role=role,
             prompt=prompt,
             system_prompt=system_prompt,
             max_turns=max_turns,
             timeout_s=timeout_s,
-            provider=provider_override or self.router.provider_for(role),
-            router=self.router,
+            provider=provider_override or self._provider_for_runtime_role(role),
+            router=getattr(self, "router", None),
             config=self.config,
             model_override=model_override,
             provider_override=provider_override,
@@ -1126,55 +980,3 @@ class CoachPlayerSession:
 
         if plan_items:
             streaming_ui.print_step_list(plan_items)
-
-    async def _run_tests(self) -> tuple[bool, str]:
-        """Run tests for TDD mode. Returns (passed, output)."""
-        # Determine test command
-        if self.config.test_command:
-            test_cmd = shlex.split(self.config.test_command)
-        else:
-            test_cmd = self._detect_test_command()
-
-        try:
-            result = subprocess.run(
-                test_cmd,
-                cwd=self.config.working_dir,
-                capture_output=True,
-                text=True,
-                timeout=self.config.test_timeout_s,
-            )
-            output = result.stdout + result.stderr
-            # Exit code 5 = no tests collected. In TDD mode this must fail closed,
-            # otherwise the run silently skips the entire testing gate.
-            if result.returncode == 5:
-                return (
-                    False,
-                    "No tests collected — TDD requires at least one runnable test",
-                )
-            return result.returncode == 0, output
-        except subprocess.TimeoutExpired:
-            return False, f"Test command timed out after {self.config.test_timeout_s}s"
-        except Exception as e:
-            return False, f"Test command failed: {e}"
-
-    def _detect_test_command(self) -> list[str]:
-        """Auto-detect the project test command."""
-        working_dir = Path(self.config.working_dir)
-        pyproject_path = working_dir / "pyproject.toml"
-
-        if (working_dir / "pytest.ini").exists():
-            return ["python3", "-m", "pytest", "-q"]
-        if pyproject_path.exists():
-            try:
-                pyproject_text = pyproject_path.read_text()
-            except OSError:
-                pyproject_text = ""
-            if "[tool.pytest" in pyproject_text:
-                return ["python3", "-m", "pytest", "-q"]
-        if (working_dir / "package.json").exists():
-            return ["npm", "test"]
-        if (working_dir / "Cargo.toml").exists():
-            return ["cargo", "test"]
-        if (working_dir / "Makefile").exists():
-            return ["make", "test"]
-        return ["python3", "-m", "pytest", "-q"]

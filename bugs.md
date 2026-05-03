@@ -1,175 +1,94 @@
-# Deep Code Audit — Bug Report
+# Bug Report — Active
 
-Аудит всего исходного кода tero (30+ .py файлов, ~6000 строк).
-
-## Сводка
-
-| Категория | Кол-во |
-|-----------|--------|
-| Подтверждённые баги (RED — тест падает) | 16 |
-| False positive (GREEN — тест проходит) | 3 |
-| Edge cases (GREEN — код работает) | 4 |
-| **Итого** | **23** |
-
-## Принцип тестирования
-
-- **RED тест**: утверждает правильное поведение → **падает**, доказывая баг
-- **GREEN тест**: утверждает что код работает → **проходит**, доказывая false positive
+22 failing tests as of 2026-05-02. Run:
+```
+python3 -m pytest tests/test_audit_bugs_critical.py tests/test_audit_bugs_serious.py tests/test_audit_bugs_medium.py tests/test_bugs_md_negative_registry.py tests/test_bugs_md_sw_negative.py -v
+```
 
 ---
 
-## Подтверждённые баги — RED тесты (16 + 2 дубли/доп)
+## Audit 1 — batch_executor, cli_entry
 
-### BUG-01: `ProviderConfig` — конфликт имён двух разных классов
-- **Файл**: `src/config.py:165` vs `src/providers/registry.py:13`
-- **Серьёзность**: критическая
-- **Суть**: `config.ProviderConfig` имеет `(type, config)`, а `registry.ProviderConfig` — `(name, type, config)`. Оба используются в `orchestrator.py`. Передача экземпляра одного типа вместо другого — `AttributeError` на `.name`.
-- **Тест**: `TestProviderConfigNameCollision` (3 теста)
-- **Файл теста**: `tests/test_audit_bugs_critical.py`
-
-### BUG-02: `_schedule_counts` молча перекрывает намеренные нули
+### BUG-02/27: `_schedule_counts` молча перекрывает нули
 - **Файл**: `src/batch_executor.py:442-445`
-- **Серьёзность**: серьёзная
-- **Суть**: `sum(values) <= 0` подменяет пользовательские нули на дефолты без предупреждения.
-- **Тест**: `TestScheduleCountsRespectsZeros`
-- **Файл теста**: `tests/test_audit_bugs_critical.py`
-
-### BUG-04: `ProcessGuard.kill_new_processes` — нет pgrep fallback
-- **Файл**: `src/process_guard.py:55-76`
-- **Серьёзность**: серьёзная
-- **Суть**: `snapshot_pids()` имеет pgrep fallback, а `kill_new_processes()` — нет (молча return). Без psutil процессы не убиваются.
-- **Тест**: `TestProcessGuardPgrepFallback`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-05: `RunRecorder.record()` — string decision даёт неверный status
-- **Файл**: `src/learning/recorder.py:67`
-- **Серьёзность**: средняя
-- **Суть**: `getattr("winner_a", "action", "")` возвращает `""`, статус становится `"completed"` вместо `"approved"`.
-- **Тест**: `TestRecorderStringDecisionStatus`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-06: `_run_phase_zero` использует `id()` — хрупко
-- **Файл**: `src/coach_player.py:470-476`
-- **Серьёзность**: серьёзная
-- **Суть**: Словарь `{id(item): idx}` ломается при любом `replace()` или копировании.
-- **Тест**: `TestPhaseZeroIdMapping`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-07: `parse_enriched_plan` молча отбрасывает невалидные индексы
-- **Файл**: `src/plan_tracker.py:470`
-- **Серьёзность**: средняя
-- **Суть**: Фаза получает меньше шагов чем указано — молча, без предупреждения.
-- **Тест**: `TestEnrichedPlanInvalidIndices`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-14: `_match_header` — ложное срабатывание на prose
-- **Файл**: `src/batch_executor.py:171-190`
-- **Серьёзность**: серьёзная
-- **Суть**: `cleaned.startswith(bare)` + `rest[0]==" "` — прозу парсит как report header.
-- **Тест**: `TestMatchHeaderProseNotMatched` (2 теста)
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-16: State machine — `_RESUMABLE_TO_AGENTS_RUNNING` конфликтует с `_VALID_TRANSITIONS`
-- **Файл**: `src/state.py:27-38` vs `src/state.py:42-99`
-- **Серьёзность**: серьёзная
-- **Суть**: `ROUND_FAILED` есть в `_RESUMABLE` но нет в `_VALID_TRANSITIONS`. Special-case обходит инвариант.
-- **Тест**: `TestStateMachineContradiction`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-17: `BugDetector._check_tests` — возвращает 1 при любой ошибке pytest
-- **Файл**: `src/bug_detector.py:237-248`
-- **Серьёзность**: средняя
-- **Суть**: Internal error → fallback `return 1` — будто есть 1 failed test.
-- **Тест**: `TestBugDetectorInternalErrorReturnsZero` (2 теста)
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
+- **Фикс**: `if sum(values) == 0: return defaults` + respect individual zeros
+- **Тесты**: `TestScheduleCountsRespectsZeros`, `TestScheduleCountsOverridesZeros`, negative-registry BUG-02/27
 
 ### BUG-20: `--limit 0` в debug игнорируется
 - **Файл**: `src/cli_entry.py:390`
-- **Серьёзность**: средняя
-- **Суть**: `0` falsy → elif не выполняется. `--limit 0` полностью игнорируется.
+- **Фикс**: `is not None` check вместо truthy
 - **Тест**: `TestDebugLimitZeroPropagated`
-- **Файл теста**: `tests/test_audit_bugs_serious.py`
-
-### BUG-15: `_latest_assistant_text` теряет первый фрагмент
-- **Файл**: `src/feedback.py:111-138`
-- **Серьёзность**: средняя
-- **Суть**: Break на non-assistant между двумя assistant сообщениями — первый текст теряется.
-- **Тест**: `TestLatestAssistantTextCapturesAll`
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
-
-### BUG-18: `provider.claude_home` перезаписывает общий конфиг
-- **Файл**: `src/config.py:482-485`
-- **Серьёзность**: средняя
-- **Суть**: Один `claude_home` для всех провайдеров. provider.claude_home затирает ZAI путь.
-- **Тест**: `TestConfigClaudeHomeOverride`
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
-
-### BUG-21: `_MODEL_CONTEXT_WINDOWS` — "codex" substring match
-- **Файл**: `src/config.py:254`
-- **Серьёзность**: низкая
-- **Суть**: `"codex" in model` — любая модель с "codex" в имени получает 1M окно.
-- **Тест**: `TestModelContextWindowsCodexSubstring` (2 теста)
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
-
-### BUG-22: `short_model_name` — "glm" catch-all → "GLM-5"
-- **Файл**: `src/config.py:348`
-- **Серьёзность**: низкая
-- **Суть**: Любая модель с "glm" отображается как "GLM-5".
-- **Тест**: `TestShortModelNameGlmCatchall` (2 теста)
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
-
-### BUG-25: `_is_recoverable_error` — "eof" substring слишком широкий
-- **Файл**: `src/providers/chain.py:46`
-- **Серьёзность**: низкая
-- **Суть**: `"eof"` совпадает с любым сообщением содержащим эти три буквы.
-- **Тест**: `TestIsRecoverableErrorEofSubstring` (2 теста)
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
-
-### BUG-27: `_schedule_counts` перекрывает нули (дубль BUG-02)
-- **Файл**: `src/batch_executor.py:442-445`
-- **Тест**: `TestScheduleCountsOverridesZeros`
-- **Файл теста**: `tests/test_audit_bugs_medium.py`
 
 ---
 
-## False positives — GREEN тесты (3)
+## Audit 2 — plan_tracker, role_router, turn_runner, providers
 
-### FP-11: `_fallback_menu` — нет return после 'd'
-- **Вердикт**: НЕ БАГ. `_launch_debugger` вызывает `sys.exit()`.
-- **Тест**: `TestFallbackMenuNoBug`
+### PLAN-B1: `display_label_for("judge")` крашит при пустом judge provider
+- **Файл**: `src/role_router.py:77,84`
+- **Фикс**: guard `provider_for("judge")` аналогично `provider_name_for`
 
-### FP-19: Picker timer leak при ESC
-- **Вердикт**: НЕ БАГ. `_handle_locked` отменяет и обнуляет `_cancel_timer` (строки 336-338).
-- **Тест**: `TestPickerTimerNoLeak`
+### PLAN-B5: `_schedule_counts(0,0,0)` → all-zero без fallback (связан BUG-02)
+- **Файл**: `src/batch_executor.py:436-443`
+- **Фикс**: `if sum(values) == 0: return defaults`
 
-### FP-26: `KeyboardListener` finally block — UnboundLocalError
-- **Вердикт**: НЕ БАГ. `old_settings` инициализирован в `None` до try.
-- **Тест**: `TestKeyboardListenerNoUnboundLocal`
+### PLAN-B6: `PlanItem.__new__` кэш без `skipped` → мутация frozen dataclass
+- **Файл**: `src/plan_tracker.py:30-38`
+- **Фикс**: добавить `skipped` в cache key
+
+### PLAN-B7: Skip-ветка не обновляет `tracker.items` (ломается после фикса B6)
+- **Файл**: `src/batch_executor.py:604-608`
+- **Фикс**: обновлять `tracker.items` явно в skip-ветке
+
+### GEN-B9: Continuation перезаписывает provider на каждой итерации
+- **Файл**: `src/turn_runner.py:221`
+- **Фикс**: resolve provider один раз перед loop
+
+### GEN-B11: `claude_native.py` молча игнорирует `returncode=None`
+- **Файл**: `src/providers/claude_native.py:68`
+- **Фикс**: `if event.returncode is not None and event.returncode != 0:`
+
+### GEN-B16: `menu.py` — bare `if` вместо `elif` + missing `continue`
+- **Файл**: `src/menu.py:530,778`
+- **Фикс**: `elif answer == "s":`, `continue` после `run_debugger_menu()`
 
 ---
 
-## Edge cases — GREEN тесты (4)
+## Audit 3 — providers, plan_tracker, duel, recorder
 
-### BUG-03: `PhaseFailedError` — __str__ с phase=None
-- **Вердикт**: НЕ БАГ. Код корректно обрабатывает `phase=None`.
-- **Тест**: `TestPhaseFailedErrorNonePhase` (3 теста)
-- **Файл теста**: `tests/test_audit_bugs_critical.py`
+### SW-02: `ProviderError` import внутри метода (registry.py)
+- **Файл**: `src/providers/registry.py:136`
+- **Фикс**: перенести import наверх файла
 
-### BUG-08: `_read_export_from_zshrc` — обычные кавычки работают
-- **Тест**: `TestReadExportFromZshrcNormalCases` (2 теста)
+### SW-06: Crash при `stderr=None` в claude_native
+- **Файл**: `src/providers/claude_native.py:69-73`
+- **Фикс**: `(event.stderr or b'').decode()`
 
-### BUG-13: `_build_compact_summary` — content=None
-- **Тест**: `TestBuildCompactSummaryNoBug` (2 теста)
+### SW-07: FD leak в codex `_build_env` при mkstemp
+- **Файл**: `src/providers/codex.py:213-216`
+- **Фикс**: try/finally вокруг `os.write()`, close fd
+
+### SW-11: `subprocess.run` без timeout в `check_ready`
+- **Файл**: `src/providers/claude_native.py:84-89`
+- **Фикс**: `timeout=10`
+
+### SW-13: Continuation передаёт `provider=None` в `run_turn`
+- **Файл**: `src/turn_runner.py:217-248`
+- **Фикс**: preserve resolved provider, не перезаписывать при ошибке
+
+### SW-47: `min(i, len-1)` возвращает wrong step при invalid index
+- **Файл**: `src/plan_tracker.py:492`
+- **Фикс**: `items[i] for i in step_indices if 0 <= i < len(items)`
+
+### SW-54: FD leak при JSON parse error в recorder
+- **Файл**: `src/learning/recorder.py:171-213`
+- **Фикс**: try/finally с явным close, catch `json.JSONDecodeError`
+
+### SW-61: Worktrees никогда не удаляются — disk leak
+- **Файл**: `src/duel.py:105-159`
+- **Фикс**: cleanup в `finally` блоке
 
 ---
 
-## Файлы тестов
+## Closed (~78 fixed)
 
-| Файл | RED | GREEN | Всего |
-|------|-----|-------|-------|
-| `tests/test_audit_bugs_critical.py` | 4 | 3 | 7 |
-| `tests/test_audit_bugs_serious.py` | 11 | 0 | 11 |
-| `tests/test_audit_bugs_medium.py` | 11 | 7 | 18 |
-| **Итого** | **26** | **10** | **36** |
-
-Запуск: `python3 -m pytest tests/test_audit_bugs_critical.py tests/test_audit_bugs_serious.py tests/test_audit_bugs_medium.py -v`
+BUG-01, BUG-03, BUG-04, BUG-05, BUG-06, BUG-07, BUG-14, BUG-15, BUG-16, BUG-17, BUG-18, BUG-21, BUG-22, BUG-25, PLAN-B2, PLAN-B3, PLAN-B4, GEN-B8, GEN-B10, GEN-B12, GEN-B13, GEN-B14, GEN-B15, GEN-B17, SW-01, SW-03..SW-05, SW-08..SW-10, SW-12, SW-14..SW-19, SW-20..SW-46, SW-48..SW-60

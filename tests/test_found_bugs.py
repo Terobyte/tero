@@ -13,10 +13,10 @@ def _empty_home(tmp_path, monkeypatch) -> Path:
     return home_dir
 
 
-def test_global_batch_default_does_not_force_project_into_batch_mode(
+def test_global_batch_default_is_ignored_after_batch_mode_removal(
     tmp_path, monkeypatch
 ):
-    """Project resolution should not silently inherit `batch_mode: true` from ~/.g3."""
+    """Removed `batch_mode` defaults must not reappear on resolved config."""
     home_dir = _empty_home(tmp_path, monkeypatch)
     home_config_dir = home_dir / ".g3"
     home_config_dir.mkdir()
@@ -27,4 +27,4 @@ def test_global_batch_default_does_not_force_project_into_batch_mode(
 
     cfg = resolve_config({"working_dir": str(workspace)})
 
-    assert cfg.batch_mode is False
+    assert not hasattr(cfg, "batch_mode")

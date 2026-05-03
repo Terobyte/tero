@@ -196,9 +196,6 @@ def test_switch_runtime_role_should_rollback_all_fields():
     assert "review_provider" in snapshot_block, (
         "BUG CONFIRMED: review_provider not in rollback snapshot"
     )
-    assert "test_writer_provider" in snapshot_block, (
-        "BUG CONFIRMED: test_writer_provider not in rollback snapshot"
-    )
 
 
 # ============================================================================

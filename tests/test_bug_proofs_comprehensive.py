@@ -25,31 +25,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 # ---------------------------------------------------------------------------
 
 
-class TestConfigEmptyStringStripped(unittest.TestCase):
-    """Bug: CLI arg with value "" is silently ignored, user cannot disable a provider."""
-
-    def test_empty_string_cli_value_is_preserved(self):
-        """If user passes --preplan-provider "" the intent to disable must be respected."""
-        from src.config import resolve_config
-
-        with tempfile.TemporaryDirectory() as td:
-            (Path(td) / ".g3").mkdir()
-            (Path(td) / ".g3" / "config.yaml").write_text(
-                "defaults:\n  preplan_provider: zai\n"
-            )
-
-            cli_args = {"working_dir": td, "preplan_provider": ""}
-            cfg = resolve_config(cli_args)
-
-            # CORRECT behavior: empty string should be preserved (or handled as explicit disable)
-            # BUGGY behavior: empty string is stripped, default "zai" is used
-            self.assertEqual(
-                cfg.preplan_provider,
-                "",
-                "Empty string CLI override was silently stripped — user cannot disable preplan provider",
-            )
-
-
 # ---------------------------------------------------------------------------
 # 2. CRITICAL: coach_player.py — incomplete rollback in switch_runtime_role
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ from .message_adapter import (
     ToolUseBlock,
     ToolResultBlock,
 )
+from src.errors import ProviderError
 from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 from src.constants import (
@@ -157,7 +158,7 @@ class OpenCodeProvider:
             stderr_text = (stderr_data or "").strip()
 
         detail = stderr_text or "subprocess exited without stderr output"
-        raise RuntimeError(f"opencode exited with code {returncode}: {detail}")
+        raise ProviderError(f"opencode exited with code {returncode}: {detail}")
 
     def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
         """Build separate tool-use and tool-result messages for one command."""
