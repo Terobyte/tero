@@ -550,7 +550,7 @@ class TestPhaseFailedErrorStrInPostInit(unittest.TestCase):
 
     def test_phase_failed_error_with_none_phase(self):
         """PhaseFailedError must handle None phase gracefully."""
-        from src.batch_executor import PhaseFailedError
+        from src.errors import PhaseFailedError
 
         try:
             err = PhaseFailedError(phase=None, attempts=3)

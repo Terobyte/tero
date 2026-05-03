@@ -934,7 +934,7 @@ def iter_targets(working_dir: str) -> Iterator[LdbTarget]:
 
 - [x] **5b.3 Запустить тест 5b.1** → проходит.
 
-- [ ] **5b.4 Коммит**
+- [x] **5b.4 Коммит**
 
 ```bash
 git add src/ldb/scope.py tests/test_ldb_scope.py
@@ -945,7 +945,7 @@ git commit -m "ldb: --all scope walker for whole-project mode"
 
 ## Phase 6: LdbRunner — orchestration
 
-- [ ] **6.1 Failing test для LdbRunner.run() (Mode 2)**
+- [x] **6.1 Failing test для LdbRunner.run() (Mode 2)**
 
 `tests/test_ldb_runner.py` (расширить):
 
@@ -977,7 +977,7 @@ async def test_runner_mode_2_writes_bugs_md(tmp_path):
     # В Mode 2 не должен быть git commit
 ```
 
-- [ ] **6.2 Имплементировать `LdbRunner` в `src/ldb/runner.py`**
+- [x] **6.2 Имплементировать `LdbRunner` в `src/ldb/runner.py`**
 
 ```python
 """LdbRunner — orchestrates Input → Player → Tester → (Fixer if mode=3)."""
@@ -1284,9 +1284,9 @@ def parse_player_response(raw: str, trace_blocks) -> "LdbBug | None":
         path.write_text("\n".join(body))
 ```
 
-- [ ] **6.3 Запустить тесты** → проходят (с моками).
+- [x] **6.3 Запустить тесты** → проходят (с моками).
 
-- [ ] **6.4 End-to-end smoke**
+- [x] **6.4 End-to-end smoke**
 
 Создать `/tmp/buggy_demo.py`:
 

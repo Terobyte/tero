@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.coach_player import CoachPlayerSession
 from src.config import Config
 from src.feedback import ReviewIssues
@@ -91,6 +93,7 @@ def test_session_marks_provider_errors_as_failed(tmp_path, monkeypatch):
     mock_provider.run = failing_run
 
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_provider)
 
     cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=2)
     session = CoachPlayerSession(cfg, "1. Ship feature")
@@ -134,6 +137,7 @@ def test_player_timeout_is_enforced(tmp_path, monkeypatch):
     mock_coach.run = coach_run
 
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player)
 
     cfg = Config(
         working_dir=str(tmp_path),
@@ -182,6 +186,7 @@ def test_coach_timeout_continues_to_next_turn(tmp_path, monkeypatch):
     mock_coach.run = slow_coach_run
 
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player)
 
     cfg = Config(
         working_dir=str(tmp_path),
@@ -213,6 +218,8 @@ def test_interrupt_stops_collecting_mid_turn(tmp_path, monkeypatch):
 
     mock_provider = _make_mock_provider()
     mock_provider.run = verbose_run
+
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_provider)
 
     cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=1)
     session = CoachPlayerSession(cfg, "1. Ship feature")
@@ -547,6 +554,8 @@ def test_code_review_fix_uses_raw_player_model_id(tmp_path, monkeypatch):
 
     review_verdicts = iter([ReviewIssues("1. Fix this bug."), ReviewPassed()])
 
+    _mock = _make_mock_provider()
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: _mock)
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
     monkeypatch.setattr("src.coach_player.parse_coach_output", lambda messages: Approved())
     monkeypatch.setattr("src.coach_player.parse_review_output", lambda messages: next(review_verdicts))
@@ -565,6 +574,7 @@ def test_code_review_fix_uses_raw_player_model_id(tmp_path, monkeypatch):
     session.review_provider_name = "codex"
     session.review_model = ""
     session._run_turn = AsyncMock(side_effect=fake_run_turn)
+    session._run_with_continuation = AsyncMock(side_effect=fake_run_turn)
 
     result = asyncio.run(session.run())
 

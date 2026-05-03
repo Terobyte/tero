@@ -309,7 +309,9 @@ class LdbRunner:
                         self._git_commit(summary)
 
         return LdbResult(
-            success=bugs_fixed > 0 or (bugs_found == 0),
+            success=bugs_fixed > 0
+            or bugs_found == 0
+            or (self.config.ldb_mode == 2 and tests_written > 0),
             bugs_found=bugs_found,
             tests_written=tests_written,
             bugs_fixed=bugs_fixed,
@@ -369,7 +371,9 @@ class LdbRunner:
                             )
 
         return LdbResult(
-            success=total_fixed > 0 or (total_found == 0),
+            success=total_fixed > 0
+            or total_found == 0
+            or (self.config.ldb_mode == 2 and total_tests > 0),
             bugs_found=total_found,
             tests_written=total_tests,
             bugs_fixed=total_fixed,

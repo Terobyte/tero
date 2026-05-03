@@ -78,8 +78,14 @@ def parse_coach_output(messages: list) -> Verdict:
     if not text:
         return NoVerdict()
 
-    # Check for approval marker
-    if _APPROVED_MARKER_RE.search(text):
+    # Check for verdict markers — whichever appears LAST in text wins,
+    # because later assistant messages override earlier ones.
+    approved_spans = [m.end() for m in _APPROVED_MARKER_RE.finditer(text)]
+    declined_spans = [m.end() for m in _DECLINED_MARKER_RE.finditer(text)]
+    last_approved = max(approved_spans) if approved_spans else -1
+    last_declined = max(declined_spans) if declined_spans else -1
+
+    if last_approved > last_declined:
         return Approved()
 
     declined = bool(_DECLINED_MARKER_RE.search(text))
