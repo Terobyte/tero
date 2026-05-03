@@ -9,6 +9,7 @@ from src.worktree import WorktreeManager
 from src.bug_detector import BugDetector, BugReport
 from src.judge import JudgeRunner, JudgeDecision
 from src.providers.base import AgentResult
+from src.constants import EXIT_AGENT_TIMEOUT, DEFAULT_DUEL_TIMEOUT_S
 
 
 async def _collect_agent_result(
@@ -64,7 +65,7 @@ async def _collect_agent_result_with_timeout(
     except asyncio.TimeoutError:
         return AgentResult(
             success=False,
-            exit_code=124,
+            exit_code=EXIT_AGENT_TIMEOUT,
             stdout="",
             stderr=f"Agent exceeded timeout of {timeout_s}s",
             duration_s=time.monotonic() - start,
@@ -107,7 +108,7 @@ class DuelRunner:
         agent_a_name: str,
         agent_b_name: str,
         autonomous: bool = False,
-        timeout_s: int = 600,
+        timeout_s: int = DEFAULT_DUEL_TIMEOUT_S,
     ) -> RoundResult:
         # 1. Create isolated workspaces
         ws_a = self.worktree.create(self.workspace_a_name)
@@ -137,17 +138,24 @@ class DuelRunner:
         # 5. Judge
         decision = self.judge.compare(
             task=task,
-            result_a=result_a, result_b=result_b,
-            bugs_a=bugs_a, bugs_b=bugs_b,
-            diff_a=diff_a, diff_b=diff_b,
+            result_a=result_a,
+            result_b=result_b,
+            bugs_a=bugs_a,
+            bugs_b=bugs_b,
+            diff_a=diff_a,
+            diff_b=diff_b,
         )
 
         return RoundResult(
-            result_a=result_a, result_b=result_b,
-            bugs_a=bugs_a, bugs_b=bugs_b,
-            diff_a=diff_a, diff_b=diff_b,
+            result_a=result_a,
+            result_b=result_b,
+            bugs_a=bugs_a,
+            bugs_b=bugs_b,
+            diff_a=diff_a,
+            diff_b=diff_b,
             decision=decision,
-            workspace_a=ws_a, workspace_b=ws_b,
+            workspace_a=ws_a,
+            workspace_b=ws_b,
         )
 
     def run_round_sync(
@@ -156,7 +164,7 @@ class DuelRunner:
         agent_a_name: str,
         agent_b_name: str,
         autonomous: bool = False,
-        timeout_s: int = 600,
+        timeout_s: int = DEFAULT_DUEL_TIMEOUT_S,
     ) -> RoundResult:
         """Synchronous wrapper for run_round.
 
@@ -170,12 +178,15 @@ class DuelRunner:
         if loop is not None and loop.is_running():
             # Already inside an event loop — create a new loop in a thread
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     asyncio.run,
-                    self.run_round(task, agent_a_name, agent_b_name, autonomous, timeout_s),
+                    self.run_round(
+                        task, agent_a_name, agent_b_name, autonomous, timeout_s
+                    ),
                 )
                 return future.result()
-        return asyncio.run(self.run_round(
-            task, agent_a_name, agent_b_name, autonomous, timeout_s
-        ))
+        return asyncio.run(
+            self.run_round(task, agent_a_name, agent_b_name, autonomous, timeout_s)
+        )

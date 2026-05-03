@@ -1,11 +1,13 @@
 """Native Claude CLI provider for Pro subscription."""
 
-import asyncio
 import json
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+
+from src.constants import DEFAULT_COMPACT_THRESHOLD
+from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 
 # Variables that MUST NOT be passed through to native Claude.
@@ -50,52 +52,28 @@ class ClaudeNativeProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        context_limit: int = 0,
+        compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
     ):
         """Run the native Claude CLI and yield JSON events."""
-        cmd = self._build_command(model, max_turns, system_prompt)
+        cmd = self._build_command(
+            model, max_turns, system_prompt, context_limit, compact_threshold
+        )
         env = self._clean_env()
 
-        proc = None
+        _gen = run_subprocess_jsonl(cmd, working_dir, env=env, stdin_data=prompt.encode())
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=working_dir,
-                env=env,
-            )
-            # Default StreamReader limit is 64 KB — large researcher prompts
-            # produce JSON lines that exceed this. Raise to 16 MB.
-            proc.stdout._limit = 16 * 1024 * 1024
-
-            proc.stdin.write(prompt.encode())
-
-            await proc.stdin.drain()
-            proc.stdin.close()
-
-            async for line in proc.stdout:
-                line = line.decode().strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
+            async for event in _gen:
+                if isinstance(event, SubprocessExit):
+                    if event.returncode and event.returncode != 0:
+                        raise RuntimeError(
+                            f"claude CLI exited with code {event.returncode}: "
+                            f"{event.stderr.decode()}"
+                        )
+                else:
                     yield event
-                except json.JSONDecodeError:
-                    yield {"type": "text", "text": line}
-
-            await proc.wait()
-
-            if proc.returncode and proc.returncode != 0:
-                stderr = await proc.stderr.read()
-                raise RuntimeError(
-                    f"claude CLI exited with code {proc.returncode}: "
-                    f"{stderr.decode()}"
-                )
         finally:
-            if proc and proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            await _gen.aclose()
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if native Claude CLI is available and authenticated."""
@@ -109,7 +87,10 @@ class ClaudeNativeProvider:
             env=self._clean_env(),
         )
         if result.returncode != 0:
-            return False, f"claude auth not configured. Run: {self.config.command} auth login"
+            return (
+                False,
+                f"claude auth not configured. Run: {self.config.command} auth login",
+            )
 
         return True, ""
 
@@ -122,11 +103,19 @@ class ClaudeNativeProvider:
         env = os.environ.copy()
         for var in _BLOCKED_ENV_VARS:
             env.pop(var, None)
-        claude_home = os.path.expanduser(self.config.claude_home)
-        env["CLAUDE_HOME"] = claude_home
+        # Do NOT set CLAUDE_CONFIG_DIR — it breaks auth resolution on macOS
+        # (Claude Code uses its own default path logic when the var is absent)
+        env.pop("CLAUDE_CONFIG_DIR", None)
         return env
 
-    def _build_command(self, model: str = "", max_turns: int = 30, system_prompt: str = "") -> list:
+    def _build_command(
+        self,
+        model: str = "",
+        max_turns: int = 30,
+        system_prompt: str = "",
+        context_limit: int = 0,
+        compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
+    ) -> list:
         """Build the CLI command with arguments."""
         resolved_model = model or self.config.default_model
         resolved_model = _MODEL_ALIASES.get(resolved_model, resolved_model)
@@ -135,11 +124,25 @@ class ClaudeNativeProvider:
             self.config.command,
             "-p",
             "--verbose",
-            "--model", resolved_model,
-            "--max-turns", str(max_turns),
-            "--permission-mode", "bypassPermissions",
-            "--output-format", "stream-json",
+            "--model",
+            resolved_model,
+            "--max-turns",
+            str(max_turns),
+            "--permission-mode",
+            "bypassPermissions",
+            "--output-format",
+            "stream-json",
         ]
+
+        # Disable CLI auto-compact within a single player turn.
+        # The CLI applies autoCompactThreshold against its own internal window
+        # (~60K for Pro), NOT against the model's full context window, so passing
+        # compact_threshold (0.85) caused premature compaction at ~50K tokens —
+        # dropping tool results and forcing the model to write an incomplete response.
+        # Tero's own continuation mechanism handles context overflow at turn boundaries.
+        cmd.extend(
+            ["--settings", json.dumps({"autoCompactThreshold": 0.99})]
+        )
 
         if system_prompt:
             cmd.extend(["--system-prompt", system_prompt])

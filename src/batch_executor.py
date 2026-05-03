@@ -4,12 +4,20 @@ import inspect
 import re
 from dataclasses import dataclass, replace
 
-from src.errors import ProviderError
-from src.feedback import Approved, Feedback
+from src.constants import (
+    DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS,
+    DEFAULT_BATCH_JUDGE_ATTEMPTS,
+    DEFAULT_BATCH_POST_JUDGE_ATTEMPTS,
+    PLAYER_MAX_TURNS,
+)
+from src.errors import ProviderError, PlanResetRequested
+from src.role_router import RoleRouter, format_provider_display
+from src.feedback import Approved, Feedback, NoVerdict
 from src.plan_tracker import PlanItem, Phase
 
 
 # --- Prompt / parser ---
+
 
 def build_batch_prompt(
     phase: Phase,
@@ -41,7 +49,9 @@ def build_batch_prompt(
         sections.append(f"Already completed in this attempt:\n{done_list}")
 
     if remaining:
-        steps_list = "\n".join(f"  {step_num}. {step.text}" for step_num, step in remaining)
+        steps_list = "\n".join(
+            f"  {step_num}. {step.text}" for step_num, step in remaining
+        )
         sections.append(
             "Before editing files, verify whether each planned step is already satisfied in the current workspace.\n"
             "If a step is already implemented, do not rewrite it; treat it as complete, cite proof, and continue with only the missing work.\n\n"
@@ -135,15 +145,11 @@ def _phase_complete_matches(raw_value: str, phase_name: str) -> bool:
         if left.casefold() == right.casefold():
             return True
         if left.casefold().startswith(right.casefold()):
-            suffix = left[len(right):]
+            suffix = left[len(right) :]
             return not suffix or suffix[0].isspace() or suffix[0] in ".:;,-()[]{}"
         return False
 
-    return any(
-        _matches_variant(candidate, variant)
-        for variant in variants
-        if variant
-    )
+    return any(_matches_variant(candidate, variant) for variant in variants if variant)
 
 
 def _find_phase_complete_index(lines: list[str], phase_name: str) -> int | None:
@@ -160,7 +166,34 @@ def _find_phase_complete_index(lines: list[str], phase_name: str) -> int | None:
     return None
 
 
-def _extract_completion_report_sections(text: str, phase_name: str) -> dict[str, list[str]] | None:
+_HEADER_STRIP_RE = re.compile(r"^[\s\-\*`#>]+|[\s\*`#>]+$")
+
+
+def _match_header(raw_line: str, headers: dict[str, str]) -> tuple[str | None, str]:
+    """Match a report header leniently; return (section_key, inline_content).
+
+    Handles common LLM variations:
+      - Markdown bold: **What changed:**
+      - Bullet prefix: - What changed:
+      - Inline content: What changed: Fixed env
+      - Backtick wrap: `What changed:`
+    """
+    cleaned = _HEADER_STRIP_RE.sub("", raw_line).lower()
+    for header_key, section_name in headers.items():
+        bare = header_key.rstrip(":")
+        if cleaned == header_key or cleaned == bare:
+            return section_name, ""
+        if cleaned.startswith(bare):
+            rest = cleaned[len(bare) :]
+            if rest and rest[0] == ":":
+                inline = rest.lstrip(": ").strip()
+                return section_name, inline
+    return None, ""
+
+
+def _extract_completion_report_sections(
+    text: str, phase_name: str
+) -> dict[str, list[str]] | None:
     """Parse the mandatory completion report after a valid PHASE_COMPLETE line."""
     lines = text.splitlines()
     phase_line_index = _find_phase_complete_index(lines, phase_name)
@@ -176,17 +209,20 @@ def _extract_completion_report_sections(text: str, phase_name: str) -> dict[str,
     current_section: str | None = None
 
     for raw_line in lines[phase_line_index + 1 :]:
-        lowered = raw_line.strip().lower()
-        if lowered in headers:
-            current_section = headers[lowered]
+        matched_section, inline = _match_header(raw_line, headers)
+        if matched_section is not None:
+            current_section = matched_section
+            if inline:
+                sections[current_section].append(inline)
             continue
         if current_section is None:
-            if raw_line.strip():
-                continue
             continue
         sections[current_section].append(raw_line)
 
-    if any(not any(line.strip() for line in section_lines) for section_lines in sections.values()):
+    if any(
+        not any(line.strip() for line in section_lines)
+        for section_lines in sections.values()
+    ):
         return None
 
     return sections
@@ -241,7 +277,9 @@ def build_incomplete_phase_feedback(phase: Phase, completed_steps: list[str]) ->
         lines.append(f"{index}. Complete the missing planned step: {missing_step}")
 
     next_num = len(lines) + 1
-    lines.append(f"{next_num}. Do not stop after exploration; actually implement the remaining work.")
+    lines.append(
+        f"{next_num}. Do not stop after exploration; actually implement the remaining work."
+    )
     next_num += 1
     lines.append(
         f"{next_num}. When finished, end with `PHASE_COMPLETE: {phase.name}` plus `What changed`, `Evidence`, and `Verification`."
@@ -277,45 +315,20 @@ def build_player_timeout_feedback(phase: Phase, exc: Exception) -> str:
     )
 
 
-# --- Error ---
-
-@dataclass
-class PhaseFailedError(Exception):
-    """Raised when a phase exhausts all retry attempts."""
-    phase: Phase | None
-    attempts: int
-
-    def __post_init__(self):
-        # @dataclass does not call Exception.__init__ — do it manually
-        # so that e.args is populated and str(e) works correctly.
-        super().__init__(str(self))
-
-    def __str__(self) -> str:
-        if self.phase is None:
-            return f"Phase failed after {self.attempts} attempts"
-        completed = [s.text for s in self.phase.steps if s.done]
-        return (
-            f"Phase '{self.phase.name}' failed after {self.attempts} attempts. "
-            f"Completed steps: {completed}"
-        )
-
-
-class PlanResetRequested(Exception):
-    """Raised when the operator requests a full plan-progress reset."""
-
-
 # --- Executor ---
+
 
 class BatchExecutor:
     """Executes a plan in phases: one Player turn per phase, Coach review once per phase."""
 
-    DEFAULT_PRE_JUDGE_ATTEMPTS = 3
-    DEFAULT_JUDGE_ATTEMPTS = 1
-    DEFAULT_POST_JUDGE_ATTEMPTS = 1
+    DEFAULT_PRE_JUDGE_ATTEMPTS = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
+    DEFAULT_JUDGE_ATTEMPTS = DEFAULT_BATCH_JUDGE_ATTEMPTS
+    DEFAULT_POST_JUDGE_ATTEMPTS = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
 
-    def __init__(self, session, tracker):
+    def __init__(self, session, tracker, router: RoleRouter | None = None):
         self.session = session
         self.tracker = tracker
+        self.router = router
 
     def _config_str(self, attr_name: str, default: str = "") -> str:
         """Read a string config value without letting MagicMock placeholders leak through."""
@@ -342,11 +355,11 @@ class BatchExecutor:
         if isinstance(label, str) and label.strip():
             return label
 
-        provider = getattr(self.session.config, f"{role}_provider", "")
-        model = getattr(self.session.config, f"{role}_model", "")
+        provider = self._config_str(f"{role}_provider", "")
+        model = self._config_str(f"{role}_model", "")
 
-        if isinstance(provider, str) and provider:
-            if isinstance(model, str) and model:
+        if provider:
+            if model:
                 return f"{provider} | model={model}"
             return provider
 
@@ -378,9 +391,12 @@ class BatchExecutor:
 
     def _provider_label(self, provider: str, model: str) -> str:
         """Display label for an arbitrary provider/model slot."""
-        builder = getattr(self.session, "build_provider_display", None)
-        if callable(builder):
-            return builder(provider, model)
+        if self.router is not None:
+            try:
+                provider_inst = self.router.get_provider_by_name(provider)
+                return format_provider_display(provider, provider_inst, model)
+            except Exception:
+                pass
         if model:
             return f"{provider} | model={model}"
         return provider
@@ -424,7 +440,7 @@ class BatchExecutor:
                 value = default
             values.append(value)
 
-        if sum(values) <= 0:
+        if sum(values) == 0:
             return defaults
 
         return tuple(values)
@@ -504,7 +520,11 @@ class BatchExecutor:
         from src.streaming import BOLD, RESET
 
         existing_phases = vars(self.tracker).get("phases")
-        phases = existing_phases if existing_phases else auto_group_phases(self.tracker.items)
+        phases = (
+            existing_phases
+            if existing_phases
+            else auto_group_phases(self.tracker.items)
+        )
         if not phases:
             logging.warning("BatchExecutor.run(): no phases generated, nothing to do")
             return
@@ -514,7 +534,9 @@ class BatchExecutor:
         max_phase_attempts = self._max_phase_attempts()
         done_count = sum(1 for p in phases if all(s.done for s in p.steps))
         print(f"\n{BOLD}--- tero batch ---{RESET}")
-        print(f"  Фаз: {len(phases)}  |  Выполнено: {done_count}  |  Макс. попыток на фазу: {max_phase_attempts}")
+        print(
+            f"  Фаз: {len(phases)}  |  Выполнено: {done_count}  |  Макс. попыток на фазу: {max_phase_attempts}"
+        )
         print(f"  Player: {self._role_label('player')}")
         print(
             f"  Player escalation: sonnet x{judge_attempts} → opus x{post_attempts}"
@@ -575,13 +597,21 @@ class BatchExecutor:
                     phase.status = "done"
                     self.tracker.phase_done(phase)
                     if getattr(self.session, "plan_file_path", ""):
-                        write_checklist_back(self.session.plan_file_path, self.tracker.items)
+                        write_checklist_back(
+                            self.session.plan_file_path, self.tracker.items
+                        )
                     phase_index += 1
                 else:
                     import logging
                     from src import streaming as streaming_ui
                     phase.status = "skipped"
-                    phase.steps = [replace(step, skipped=True) for step in phase.steps]
+                    new_steps = [replace(step, skipped=True) for step in phase.steps]
+                    phase.steps = new_steps
+                    skipped_texts = {s.text for s in new_steps}
+                    self.tracker.items = [
+                        next((s for s in new_steps if s.text == it.text), it)
+                        for it in self.tracker.items
+                    ]
                     self.tracker.render_dashboard()
                     if getattr(self.session, "plan_file_path", ""):
                         write_checklist_back(self.session.plan_file_path, self.tracker.items)
@@ -685,7 +715,7 @@ class BatchExecutor:
                     role="player",
                     prompt=prompt,
                     system_prompt=player_system,
-                    max_turns=self.session.config.max_turns,
+                    max_turns=PLAYER_MAX_TURNS,
                     timeout_s=self.session.config.player_timeout_s,
                     model_override=player_model_for_turn,
                     provider_override=player_provider_inst,
@@ -748,11 +778,13 @@ class BatchExecutor:
 
             if isinstance(verdict, Approved):
                 return True
-            if getattr(type(verdict), "__name__", "") == "NoVerdict":
+            if isinstance(verdict, NoVerdict):
                 coach_feedback = build_incomplete_phase_feedback(phase, completed_steps)
                 streaming_ui.print_step_rejected(coach_feedback)
                 continue
-            coach_feedback = verdict.text if isinstance(verdict, Feedback) else str(verdict)
+            coach_feedback = (
+                verdict.text if isinstance(verdict, Feedback) else str(verdict)
+            )
             streaming_ui.print_step_rejected(coach_feedback)
 
         return False

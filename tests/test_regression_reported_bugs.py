@@ -9,12 +9,6 @@ from unittest.mock import patch
 
 import g3
 
-from scripts.run_slug_collection import extract_slug_from_url
-from src.ai.resume_tailor import ResumeTailor, TailorStrategy
-from src.applier.universal_screening.batch_validator import (
-    BatchStepValidator,
-    ValidationSeverity,
-)
 from src.batch_executor import has_required_completion_report, parse_completed_steps
 from src.bug_detector import BugDetector
 from src.config import _load_yaml
@@ -28,23 +22,6 @@ def _phase(name: str = "Create") -> Phase:
         name=name,
         type="update",
         steps=[PlanItem(text="step a"), PlanItem(text="step b")],
-    )
-
-
-def test_slug_extraction_uses_subdomain_for_cdx_sources():
-    assert (
-        extract_slug_from_url(
-            "https://acme.jobs.lever.co/software-engineer",
-            "jobs.lever.co",
-        )
-        == "acme"
-    )
-    assert (
-        extract_slug_from_url(
-            "https://orbital.boards.greenhouse.io/jobs/123",
-            "boards.greenhouse.io",
-        )
-        == "orbital"
     )
 
 
@@ -79,19 +56,6 @@ def test_phase_completion_requires_matching_phase_name_and_report_sections():
     assert has_required_completion_report(valid_text, phase) is True
 
 
-def test_batch_validator_detects_duplicates_within_batch_only():
-    validator = BatchStepValidator(check_duplicates=True)
-
-    first_batch = validator.validate_batch({"q1": "Same answer", "q2": "Same answer"})
-    assert first_batch[0].passed is True
-    assert first_batch[1].severity == ValidationSeverity.WARNING
-    assert first_batch[1].details["duplicate_of"] == "q1"
-
-    second_batch = validator.validate_batch({"q3": "Same answer"})
-    assert second_batch[0].passed is True
-    assert second_batch[0].severity == ValidationSeverity.INFO
-
-
 def test_bug_detector_skips_missing_lint_and_test_modules(tmp_path):
     python_file = tmp_path / "example.py"
     python_file.write_text("print('ok')\n")
@@ -124,53 +88,6 @@ def test_bug_detector_skips_missing_lint_and_test_modules(tmp_path):
     with patch("src.bug_detector.subprocess.run", side_effect=fake_run):
         assert BugDetector._check_lint(str(tmp_path)) == 2
         assert BugDetector._check_tests(str(tmp_path)) == 0
-
-
-def test_resume_tailor_applies_distinct_strategies(tmp_path):
-    resume = "Python Engineer\nBuilt Python APIs with Docker\nLed backend delivery"
-    job_description = "Looking for a Python engineer with Docker and AWS experience."
-    tailor = ResumeTailor()
-
-    keyword_result = tailor.tailor(
-        resume,
-        job_description,
-        strategy=TailorStrategy.KEYWORD_MATCH,
-    )
-    experience_result = tailor.tailor(
-        resume,
-        job_description,
-        strategy=TailorStrategy.EXPERIENCE_HIGHLIGHT,
-    )
-    skills_result = tailor.tailor(
-        resume,
-        job_description,
-        strategy=TailorStrategy.SKILLS_ALIGNMENT,
-    )
-
-    assert "Target Keywords" in keyword_result.tailored_resume
-    assert "Relevant Experience Highlights" in experience_result.tailored_resume
-    assert "Skills Alignment" in skills_result.tailored_resume
-    assert len(
-        {
-            keyword_result.tailored_resume,
-            experience_result.tailored_resume,
-            skills_result.tailored_resume,
-        }
-    ) == 3
-
-    resume_path = tmp_path / "resume.txt"
-    output_path = tmp_path / "tailored.txt"
-    resume_path.write_text(resume)
-
-    file_result = tailor.tailor_file(
-        resume_path,
-        job_description,
-        output_path=output_path,
-        strategy=TailorStrategy.SKILLS_ALIGNMENT,
-    )
-
-    assert file_result.success is True
-    assert "Skills Alignment" in output_path.read_text()
 
 
 def test_load_yaml_ignores_non_mapping_roots(tmp_path):

@@ -74,7 +74,7 @@ class OpenCodeProvider:
         cmd = self._build_command(model, working_dir)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=full_prompt.encode("utf-8"))
+        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=full_prompt.encode("utf-8"), stall_timeout=120.0)
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
@@ -101,6 +101,7 @@ class OpenCodeProvider:
             "run",
             "--format",
             "json",
+            "--dangerously-skip-permissions",
         ]
 
         if working_dir:

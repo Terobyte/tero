@@ -11,22 +11,68 @@ if TYPE_CHECKING:
 
 
 def _build_compact_summary(messages: list) -> str:
-    """Extract assistant text blocks only — drops tool results (heaviest parts)."""
-    parts = []
+    """Extract assistant text + compact tool interaction records.
+
+    Preserves which files were read/edited/written and what commands were run
+    so that continuation subprocesses don't redo the same exploration.
+    """
+    from src.providers.message_adapter import ToolUseBlock, ToolResultBlock
+
+    parts: list[str] = []
+    tool_names: dict[str, str] = {}  # tool_use_id -> tool name
+
     for msg in messages:
-        if not (hasattr(msg, "role") and msg.role == "assistant"):
-            continue
+        role = getattr(msg, "role", None)
         content = getattr(msg, "content", None)
-        if isinstance(content, str):
-            text = content.strip()
-            if text:
-                parts.append(text)
-            continue
-        content = content or []
-        for block in content:
-            text = block.strip() if isinstance(block, str) else getattr(block, "text", None)
-            if text:
-                parts.append(text.strip())
+
+        if role == "assistant":
+            if isinstance(content, str):
+                text = content.strip()
+                if text:
+                    parts.append(text)
+                continue
+            for block in content or []:
+                if isinstance(block, str):
+                    text = block.strip()
+                    if text:
+                        parts.append(text)
+                elif isinstance(block, ToolUseBlock):
+                    tool_names[block.id] = block.name
+                    inp = block.input or {}
+                    if block.name in ("Read", "read_file", "file_read"):
+                        path = inp.get("file_path") or inp.get("path", "")
+                        parts.append(f"[Tool: {block.name} -> {path}]")
+                    elif block.name in ("Edit", "file_edit", "edit_file",
+                                        "Write", "file_write", "write_file"):
+                        path = inp.get("file_path") or inp.get("path", "")
+                        parts.append(f"[Tool: {block.name} -> {path}]")
+                    elif block.name in ("Bash", "bash", "execute_command"):
+                        cmd = inp.get("command", "")
+                        if len(cmd) > 200:
+                            cmd = cmd[:200] + "..."
+                        parts.append(f"[Tool: {block.name} -> {cmd}]")
+                    else:
+                        parts.append(f"[Tool: {block.name}]")
+                elif hasattr(block, "text"):
+                    text = getattr(block, "text", "")
+                    if text:
+                        parts.append(text.strip())
+
+        elif role == "tool":
+            for block in content or []:
+                if isinstance(block, ToolResultBlock):
+                    tool_name = tool_names.get(block.tool_use_id, "unknown")
+                    result_text = block.content or ""
+                    if block.is_error:
+                        parts.append(
+                            f"[Tool result ({tool_name}): ERROR: {result_text[:300]}]"
+                        )
+                    elif tool_name in ("Bash", "bash", "execute_command"):
+                        truncated = result_text[:500]
+                        if len(result_text) > 500:
+                            truncated += "... (truncated)"
+                        parts.append(f"[Tool result ({tool_name}): {truncated}]")
+
     return "\n".join(p for p in parts if p)
 
 

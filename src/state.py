@@ -42,6 +42,7 @@ _RESUMABLE_TO_AGENTS_RUNNING = {
 _VALID_TRANSITIONS: dict[SessionState, set[SessionState]] = {
     SessionState.CREATED: {
         SessionState.PREPARING_WORKSPACES,
+        SessionState.AGENTS_RUNNING,
         SessionState.FAILED,
         SessionState.STOPPED,
     },
@@ -51,21 +52,25 @@ _VALID_TRANSITIONS: dict[SessionState, set[SessionState]] = {
         SessionState.STOPPED,
     },
     SessionState.AGENTS_RUNNING: {
+        SessionState.AGENTS_RUNNING,
         SessionState.BUG_DETECTION,
         SessionState.ROUND_FAILED,
         SessionState.FAILED,
         SessionState.STOPPED,
     },
     SessionState.ROUND_FAILED: {
+        SessionState.AGENTS_RUNNING,
         SessionState.FAILED,
         SessionState.STOPPED,
     },
     SessionState.BUG_DETECTION: {
+        SessionState.AGENTS_RUNNING,
         SessionState.JUDGING,
         SessionState.FAILED,
         SessionState.STOPPED,
     },
     SessionState.JUDGING: {
+        SessionState.AGENTS_RUNNING,
         SessionState.WINNER_SELECTED,
         SessionState.RETRY,
         SessionState.SYNTHESIZING,
@@ -73,11 +78,13 @@ _VALID_TRANSITIONS: dict[SessionState, set[SessionState]] = {
         SessionState.STOPPED,
     },
     SessionState.WINNER_SELECTED: {
+        SessionState.AGENTS_RUNNING,
         SessionState.PROMOTING,
         SessionState.FAILED,
         SessionState.STOPPED,
     },
     SessionState.PROMOTING: {
+        SessionState.AGENTS_RUNNING,
         SessionState.COMPLETED,
         SessionState.FAILED,
         SessionState.STOPPED,
@@ -88,6 +95,7 @@ _VALID_TRANSITIONS: dict[SessionState, set[SessionState]] = {
         SessionState.STOPPED,
     },
     SessionState.SYNTHESIZING: {
+        SessionState.AGENTS_RUNNING,
         SessionState.COMPLETED,
         SessionState.FAILED,
         SessionState.STOPPED,

@@ -49,7 +49,7 @@ from src.providers import create_provider, adapt_claude_event, adapt_sdk_message
 from src.providers.message_adapter import AdaptedMessage
 from src.providers.codex import CodexProvider
 from src.role_router import RoleRouter, format_provider_display, _provider_model
-from src.constants import BATCH_REVIEW_MAX_TURNS
+from src.constants import BATCH_REVIEW_MAX_TURNS, PLAYER_MAX_TURNS
 from src.process_guard import ProcessGuard
 from src.turn_runner import AgentTurnRunner
 
@@ -615,7 +615,7 @@ class CoachPlayerSession:
                             if summary:
                                 if self._last_turn_result.tokens_used > 0:
                                     _eff = getattr(
-                                        self,
+                                        self._turn_runner,
                                         "_last_effective_context_limit",
                                         self.config.context_limit,
                                     )
@@ -649,7 +649,7 @@ class CoachPlayerSession:
                             role="player",
                             prompt=player_prompt,
                             system_prompt=player_system,
-                            max_turns=30,
+                            max_turns=PLAYER_MAX_TURNS,
                             timeout_s=self.config.player_timeout_s,
                             model_override=self.config.player_model,
                         )
@@ -863,17 +863,18 @@ class CoachPlayerSession:
                                     fix_prompt = build_player_fix_prompt(
                                         review_verdict.text
                                     )
-                                    run_fn = getattr(
-                                        self, "_run_with_continuation", self._run_turn
-                                    )
-                                    await run_fn(
-                                        role="player",
-                                        prompt=fix_prompt,
-                                        system_prompt=PLAYER_SYSTEM_PROMPT,
-                                        max_turns=self.config.max_turns,
-                                        timeout_s=self.config.player_timeout_s,
-                                        model_override=self.config.player_model,
-                                    )
+                                    try:
+                                        fix_result = await self._run_with_continuation(
+                                            role="player",
+                                            prompt=fix_prompt,
+                                            system_prompt=PLAYER_SYSTEM_PROMPT,
+                                            max_turns=PLAYER_MAX_TURNS,
+                                            timeout_s=self.config.player_timeout_s,
+                                            model_override=self.config.player_model,
+                                        )
+                                        self._last_turn_result = fix_result
+                                    except TimeoutError:
+                                        break
                             if not review_cleared:
                                 feedback = review_feedback
                                 streaming_ui.print_step_rejected(feedback.text)

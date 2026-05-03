@@ -1,5 +1,7 @@
 """Provider implementations for Claude Agent SDK."""
 
+from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
+from src.errors import ProviderError
 from .base import AgentProvider
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
@@ -13,7 +15,6 @@ from .message_adapter import (
     adapt_claude_event,
     adapt_sdk_message,
 )
-
 
 
 def create_provider(
@@ -31,7 +32,7 @@ def create_provider(
         Provider instance (ClaudeNativeProvider, CodexProvider, or OpenCodeProvider)
 
     Raises:
-        ValueError: If provider type is unknown
+        ProviderError: If provider type is unknown
     """
     provider_config = provider_config or {}
 
@@ -67,7 +68,9 @@ def create_provider(
                     else "opencode/mimo-v2-pro-free"
                 ),
             ),
-            default_timeout=provider_config.get("default_timeout", 900),
+            default_timeout=provider_config.get(
+                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+            ),
             display_name=provider_config.get(
                 "display_name",
                 "Kilo" if provider_type in ("kilo_native", "kilo") else "OpenCode",
@@ -81,7 +84,9 @@ def create_provider(
             default_model=provider_config.get(
                 "default_model", provider_config.get("model", "")
             ),
-            default_timeout=provider_config.get("default_timeout", 900),
+            default_timeout=provider_config.get(
+                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+            ),
             sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
             approval_policy=provider_config.get("approval_policy", "never"),
             ephemeral=provider_config.get("ephemeral", True),
@@ -94,7 +99,9 @@ def create_provider(
         )
         return CodexProvider(codex_cfg)
 
-    raise ValueError(f"Unknown provider type: {provider_type} (name: {provider_name})")
+    raise ProviderError(
+        f"Unknown provider type: {provider_type} (name: {provider_name})"
+    )
 
 
 __all__ = [

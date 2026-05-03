@@ -3,7 +3,8 @@
 import asyncio
 import pytest
 
-from src.providers.chain import ProviderChain, RateLimitError
+from src.providers.chain import ProviderChain
+from src.errors import RateLimitError
 
 
 class FakeProvider:
@@ -23,11 +24,15 @@ class FakeProvider:
     def check_ready(self) -> tuple[bool, str]:
         return True, ""
 
-    async def run(self, prompt="", system_prompt="", working_dir=".", max_turns=1, model=""):
+    async def run(
+        self, prompt="", system_prompt="", working_dir=".", max_turns=1, model=""
+    ):
         self.calls += 1
         if self.calls <= self.fail_count:
             raise RuntimeError(f"429 {self.fail_msg}")
-        yield type("Msg", (), {"content": f"response from {self.name}", "role": "assistant"})()
+        yield type(
+            "Msg", (), {"content": f"response from {self.name}", "role": "assistant"}
+        )()
 
 
 @pytest.mark.asyncio

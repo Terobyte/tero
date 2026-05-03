@@ -7,23 +7,40 @@ that walks a working directory.
 
 import ast
 import re
+from dataclasses import dataclass as _dataclass
 from pathlib import Path
 
+from src.constants import (
+    MAX_CONTEXT_CHARS,
+    BUDGET_CHARS_PER_FILE,
+    LARGE_FILE_LINE_THRESHOLD,
+    MAX_SYMBOLS,
+    SHORT_HELPER_LINE_THRESHOLD,
+    SEMANTIC_HELPER_LINE_THRESHOLD,
+    STRUCTURE_OVERVIEW_RATIO,
+)
+
 # Hard cap — prevents context from exceeding model window
-MAX_CONTEXT_CHARS = 200_000  # ~50K tokens
-BUDGET_CHARS_PER_FILE = 8_000
-LARGE_FILE_LINE_THRESHOLD = 200
-MAX_SYMBOLS = 200
-SHORT_HELPER_LINE_THRESHOLD = 15
-SEMANTIC_HELPER_LINE_THRESHOLD = 40
-STRUCTURE_OVERVIEW_RATIO = 2.0
+# (values are imported from src.constants)
 
 _SKIP_DIRS = {
-    ".git", "venv", ".venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".tox", ".eggs", "dist", "build",
-    ".ruff_cache", ".hypothesis",
-    "tests", "test",  # skip test dirs — player targets implementation, not tests
-    "docs", ".worktrees",
+    ".git",
+    "venv",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    ".eggs",
+    "dist",
+    "build",
+    ".ruff_cache",
+    ".hypothesis",
+    "tests",
+    "test",  # skip test dirs — player targets implementation, not tests
+    "docs",
+    ".worktrees",
 }
 
 SEMANTIC_HELPER_RE = re.compile(
@@ -31,6 +48,51 @@ SEMANTIC_HELPER_RE = re.compile(
     r"available|reserved|reorder|discount|points|redeem|earn|fulfill|"
     r"ship|transfer|deliver|cancel|create|price"
 )
+
+
+# ── Context cache ──────────────────────────────────────────────────────────────
+
+
+@_dataclass(frozen=True)
+class _CacheEntry:
+    content: str
+    rendered: str
+    render_mode: str  # "large" or "full"
+
+
+class ContextCache:
+    """Cache file content and rendered sections keyed by (path, mtime_ns).
+
+    Entries are invalidated automatically when the file's mtime changes.
+    Call clear() after a fixer run to drop all entries unconditionally.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, int], _CacheEntry] = {}
+
+    def get(self, path: Path) -> _CacheEntry | None:
+        """Return cached entry for *path*, or None if missing/stale."""
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        return self._store.get((str(path), mtime_ns))
+
+    def put(
+        self, path: Path, content: str, rendered: str, render_mode: str
+    ) -> None:
+        """Store an entry for *path* keyed by its current mtime."""
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return
+        self._store[(str(path), mtime_ns)] = _CacheEntry(
+            content=content, rendered=rendered, render_mode=render_mode
+        )
+
+    def clear(self) -> None:
+        """Wipe all cached entries (call after fixer modifies files)."""
+        self._store.clear()
 
 
 def discover_py_files(working_dir: str) -> list[str]:
@@ -47,6 +109,7 @@ def discover_py_files(working_dir: str) -> list[str]:
 
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
+
 
 def _format_numbered_lines(content: str) -> list[str]:
     lines = content.splitlines()
@@ -70,12 +133,12 @@ def _format_line_slice(content: str, start: int, end: int) -> str:
         return ""
     width = len(str(len(lines)))
     return "\n".join(
-        f"{lineno:>{width}}: {lines[lineno - 1]}"
-        for lineno in range(start, end + 1)
+        f"{lineno:>{width}}: {lines[lineno - 1]}" for lineno in range(start, end + 1)
     )
 
 
 # ── Symbol index ──────────────────────────────────────────────────────────────
+
 
 def _build_symbol_index(rel_path: str, content: str) -> str:
     if not rel_path.endswith(".py"):
@@ -144,7 +207,9 @@ def _parse_python_symbols(content: str) -> list[_SymbolEntry]:
                 names.update(_assignment_names(child))
         return names
 
-    def _hotspot_reasons(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
+    def _hotspot_reasons(
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> tuple[str, ...]:
         reasons: list[str] = []
         params = _parameter_names(node)
         docstring = ast.get_docstring(node, clean=True) or ""
@@ -182,9 +247,8 @@ def _parse_python_symbols(content: str) -> list[_SymbolEntry]:
                 SEMANTIC_HELPER_RE.search(node.name.lower())
                 or SEMANTIC_HELPER_RE.search(docstring.lower())
             )
-            if (
-                helper_line_count <= SHORT_HELPER_LINE_THRESHOLD
-                or (semantic_helper and helper_line_count <= SEMANTIC_HELPER_LINE_THRESHOLD)
+            if helper_line_count <= SHORT_HELPER_LINE_THRESHOLD or (
+                semantic_helper and helper_line_count <= SEMANTIC_HELPER_LINE_THRESHOLD
             ):
                 reasons.append("business-semantics")
 
@@ -192,7 +256,9 @@ def _parse_python_symbols(content: str) -> list[_SymbolEntry]:
 
     def _visit(nodes: list[ast.stmt], indent: int) -> None:
         for node in nodes:
-            if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not isinstance(
+                node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
                 continue
             signature = ""
             if 1 <= node.lineno <= len(lines):
@@ -228,7 +294,11 @@ def _build_docstring_index(content: str) -> str:
     lines = ["### Skeleton"]
     for entry in entries[:MAX_SYMBOLS]:
         prefix = "  " * min(entry.indent, 3)
-        summary = " | ".join(entry.docstring_lines) if entry.docstring_lines else "(no docstring)"
+        summary = (
+            " | ".join(entry.docstring_lines)
+            if entry.docstring_lines
+            else "(no docstring)"
+        )
         lines.append(f"{entry.lineno:>4}: {prefix}`{entry.signature}` — {summary}")
     if len(entries) > MAX_SYMBOLS:
         lines.append("     ...")
@@ -256,6 +326,7 @@ def _build_hotspot_sections(rel_path: str, content: str) -> str:
 
 # ── Section rendering ─────────────────────────────────────────────────────────
 
+
 def _code_fence(rel_path: str) -> str:
     return "```python" if rel_path.endswith(".py") else "```"
 
@@ -281,7 +352,9 @@ def _render_section(rel_path: str, content: str, *, truncated: bool = False) -> 
     return f"{header}{fence}\n{numbered}\n```\n"
 
 
-def _build_excerpt_body(numbered_lines: list[str], window_count: int, lines_per_window: int) -> str:
+def _build_excerpt_body(
+    numbered_lines: list[str], window_count: int, lines_per_window: int
+) -> str:
     total_lines = len(numbered_lines)
     if total_lines == 0 or lines_per_window <= 0:
         return ""
@@ -290,10 +363,9 @@ def _build_excerpt_body(numbered_lines: list[str], window_count: int, lines_per_
     if window_count == 1 or max_start == 0:
         starts = [0]
     else:
-        starts = sorted({
-            round(i * max_start / (window_count - 1))
-            for i in range(window_count)
-        })
+        starts = sorted(
+            {round(i * max_start / (window_count - 1)) for i in range(window_count)}
+        )
     windows: list[list[int]] = []
     for start in starts:
         end = min(total_lines, start + lines_per_window)
@@ -306,12 +378,16 @@ def _build_excerpt_body(numbered_lines: list[str], window_count: int, lines_per_
     for start, end in windows:
         if start > previous_end:
             omitted_count = start - previous_end
-            parts.append(f"... [{omitted_count} omitted lines: {previous_end + 1}-{start}]")
+            parts.append(
+                f"... [{omitted_count} omitted lines: {previous_end + 1}-{start}]"
+            )
         parts.extend(numbered_lines[start:end])
         previous_end = end
     if previous_end < total_lines:
         omitted_count = total_lines - previous_end
-        parts.append(f"... [{omitted_count} omitted lines: {previous_end + 1}-{total_lines}]")
+        parts.append(
+            f"... [{omitted_count} omitted lines: {previous_end + 1}-{total_lines}]"
+        )
     return "\n".join(parts)
 
 
@@ -357,7 +433,10 @@ def _truncate_rendered_text(section: str, max_chars: int) -> str:
         return section
     if max_chars <= 20:
         return section[:max_chars]
-    return section[: max_chars - len("\n... [truncated]\n")].rstrip() + "\n... [truncated]\n"
+    return (
+        section[: max_chars - len("\n... [truncated]\n")].rstrip()
+        + "\n... [truncated]\n"
+    )
 
 
 def _context_budget(file_count: int) -> int:
@@ -424,7 +503,9 @@ def _build_structure_overview(rel_paths: list[str], working_dir: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def plan_file_chunks(working_dir: str) -> list[list[str]]:
+def plan_file_chunks(
+    working_dir: str, cache: ContextCache | None = None
+) -> list[list[str]]:
     """Split discovered files into context-budget-sized chunks.
 
     Each chunk fits within MAX_CONTEXT_CHARS when fully rendered, so the player
@@ -440,19 +521,37 @@ def plan_file_chunks(working_dir: str) -> list[list[str]]:
 
     for rel_path in rel_paths:
         file_path = root / rel_path
+
+        # Try cache first
+        if cache is not None:
+            entry = cache.get(file_path)
+            if entry is not None:
+                measured.append((rel_path, len(entry.rendered)))
+                continue
+
         try:
             content = file_path.read_text(errors="replace")
         except OSError:
             continue
         line_count = len(content.splitlines())
-        use_large = (
-            rel_path.endswith(".py")
-            and line_count > LARGE_FILE_LINE_THRESHOLD
+        # Use the same hybrid threshold as build_context so bin-packing size
+        # estimates match the actual rendered output.
+        full_rendered = _render_section(rel_path, content)
+        use_large = rel_path.endswith(".py") and (
+            line_count > LARGE_FILE_LINE_THRESHOLD
+            or (
+                line_count >= LARGE_FILE_LINE_THRESHOLD - 40
+                and len(full_rendered) > BUDGET_CHARS_PER_FILE
+            )
         )
-        if use_large:
-            rendered = _render_large_python_section(rel_path, content)
-        else:
-            rendered = _render_section(rel_path, content)
+        rendered = (
+            _render_large_python_section(rel_path, content)
+            if use_large
+            else full_rendered
+        )
+        render_mode = "large" if use_large else "full"
+        if cache is not None:
+            cache.put(file_path, content, rendered, render_mode)
         measured.append((rel_path, len(rendered)))
 
     if not measured:
@@ -477,14 +576,20 @@ def plan_file_chunks(working_dir: str) -> list[list[str]]:
     return chunks
 
 
-def build_context(working_dir: str, file_subset: list[str] | None = None) -> str:
+def build_context(
+    working_dir: str,
+    file_subset: list[str] | None = None,
+    cache: ContextCache | None = None,
+) -> str:
     """Build the code context string to send to the player (debugger) model.
 
     When file_subset is provided, renders only those files (used by chunked
     scanning and targeted tester/fixer context).  Otherwise discovers all
     Python files in working_dir.
     """
-    rel_paths = file_subset if file_subset is not None else discover_py_files(working_dir)
+    rel_paths = (
+        file_subset if file_subset is not None else discover_py_files(working_dir)
+    )
     if not rel_paths:
         return ""
 
@@ -493,6 +598,14 @@ def build_context(working_dir: str, file_subset: list[str] | None = None) -> str
 
     for rel_path in rel_paths:
         file_path = root / rel_path
+
+        # Try cache first
+        if cache is not None:
+            entry = cache.get(file_path)
+            if entry is not None:
+                files.append((rel_path, entry.content, entry.rendered, entry.render_mode))
+                continue
+
         try:
             content = file_path.read_text(errors="replace")
         except OSError:
@@ -500,18 +613,21 @@ def build_context(working_dir: str, file_subset: list[str] | None = None) -> str
 
         line_count = len(content.splitlines())
         full_rendered = _render_section(rel_path, content)
-        use_large = (
-            rel_path.endswith(".py")
-            and (
-                line_count > LARGE_FILE_LINE_THRESHOLD
-                or (
-                    line_count >= LARGE_FILE_LINE_THRESHOLD - 40
-                    and len(full_rendered) > BUDGET_CHARS_PER_FILE
-                )
+        use_large = rel_path.endswith(".py") and (
+            line_count > LARGE_FILE_LINE_THRESHOLD
+            or (
+                line_count >= LARGE_FILE_LINE_THRESHOLD - 40
+                and len(full_rendered) > BUDGET_CHARS_PER_FILE
             )
         )
-        rendered = _render_large_python_section(rel_path, content) if use_large else full_rendered
+        rendered = (
+            _render_large_python_section(rel_path, content)
+            if use_large
+            else full_rendered
+        )
         render_mode = "large" if use_large else "full"
+        if cache is not None:
+            cache.put(file_path, content, rendered, render_mode)
         files.append((rel_path, content, rendered, render_mode))
 
     if not files:

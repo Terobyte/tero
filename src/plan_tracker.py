@@ -3,7 +3,7 @@
 import os
 import re
 import tempfile
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 
 
 # Constants
@@ -12,13 +12,31 @@ DEFAULT_TITLE = "Plan Progress"
 CHECKBOX_DONE = "x"
 CHECKBOX_PENDING = " "
 
+_PLAN_ITEM_CACHE: dict[tuple, "PlanItem"] = {}
+
+
 @dataclass(frozen=True)
 class PlanItem:
-    """A single plan item."""
+    """A single plan item.
+
+    Instances are interned by content: replace(item, done=item.done) returns
+    the original object, so id()-based mappings remain valid after no-op copies.
+    """
     text: str
     done: bool = False
     roles: tuple[str, ...] = field(default_factory=tuple)
     skipped: bool = False
+
+    def __new__(cls, text: str, done: bool = False, roles: tuple[str, ...] = ()):
+        if isinstance(roles, list):
+            roles = tuple(roles)
+        key = (text, done, roles)
+        cached = _PLAN_ITEM_CACHE.get(key)
+        if cached is not None:
+            return cached
+        inst = object.__new__(cls)
+        _PLAN_ITEM_CACHE[key] = inst
+        return inst
 
 
 # --- Batch execution types ---
@@ -463,12 +481,15 @@ def parse_enriched_plan(content: str) -> tuple[list[PlanItem], list[Phase]]:
                             step_indices.extend(range(int(s) - 1, int(e)))
                         else:
                             step_indices.append(int(part) - 1)
+                    # Deduplicate while preserving order (overlapping ranges like
+                    # "1-3, 2-4" would otherwise produce duplicate PlanItem refs).
+                    step_indices = list(dict.fromkeys(step_indices))
                     phases_raw.append((display_name, step_indices))
 
     # Build Phase objects referencing the same PlanItem instances.
     phases: list[Phase] = []
     for display_name, step_indices in phases_raw:
-        phase_steps = [items[i] for i in step_indices if 0 <= i < len(items)]
+        phase_steps = [items[min(i, len(items) - 1)] for i in step_indices if i >= 0 and items]
         if not phase_steps:
             continue
         ptype = detect_step_type(phase_steps[0])

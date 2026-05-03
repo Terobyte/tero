@@ -64,7 +64,10 @@ class RunRecorder:
             config = {}
 
         decision = kwargs.get("decision")
-        decision_action = getattr(decision, "action", "")
+        if isinstance(decision, str):
+            decision_action = decision
+        else:
+            decision_action = getattr(decision, "action", "")
         status = kwargs.get("status")
         if not isinstance(status, str) or not status:
             if decision_action in ("winner_a", "winner_b"):

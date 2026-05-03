@@ -121,9 +121,7 @@ class KeyboardListener(threading.Thread):
                     else:
                         bracket = os.read(fd, 1).decode(errors="ignore")
                         if bracket == "[":
-                            follow_ready2, _, _ = select.select(
-                                [fd], [], [], 0.05
-                            )
+                            follow_ready2, _, _ = select.select([fd], [], [], 0.05)
                             if follow_ready2:
                                 final = os.read(fd, 1)
                                 action = _parse_escape_sequence(final)
@@ -451,6 +449,7 @@ class RuntimeControls:
         self._player_name: str = ""
         self._coach_name: str = ""
         self._running = False
+        self._old_sigwinch: signal.Handlers | int | None = signal.SIG_DFL
 
     @staticmethod
     def _preset_index_for(provider_name: str, model: str, fallback: int = 0) -> int:
@@ -495,9 +494,10 @@ class RuntimeControls:
         self._running = True
         # Handle terminal resize
         try:
+            self._old_sigwinch = signal.getsignal(signal.SIGWINCH)
             signal.signal(signal.SIGWINCH, lambda *_: self._status_bar._render())
         except (OSError, ValueError, RuntimeError):
-            pass  # SIGWINCH not available on all platforms
+            pass
 
     def stop(self) -> None:
         """Stop listener thread and clear status bar."""
@@ -512,6 +512,10 @@ class RuntimeControls:
                 pass
         self._status_bar.clear()
         self._running = False
+        try:
+            signal.signal(signal.SIGWINCH, self._old_sigwinch)
+        except (OSError, ValueError, RuntimeError):
+            pass
 
     def pause_render(self) -> None:
         """Pause status bar rendering (call when Rich Live takes over the terminal)."""
@@ -611,9 +615,7 @@ class RuntimeControls:
                 session.player_model = session._build_role_display("player")
                 display = session.player_model
         except Exception as e:
-            self._status_bar.show_warning(
-                f"{role.capitalize()} switch failed: {e}"
-            )
+            self._status_bar.show_warning(f"{role.capitalize()} switch failed: {e}")
             return
 
         if role == "coach":

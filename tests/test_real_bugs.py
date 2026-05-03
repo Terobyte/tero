@@ -470,9 +470,11 @@ class TestBug9_WorktreeDiffWrongGitCheck:
 
         source = inspect.getsource(WorktreeManager.get_diff)
 
-        # The bug: code checks isdir instead of exists
-        assert "isdir" in source and '".git"' in source, (
-            "get_diff should be checking for .git existence, not whether it's a directory"
+        # BUG FIXED: code now uses os.path.exists instead of os.path.isdir
+        # Worktrees have .git as a FILE, not a directory.
+        # os.path.exists() correctly handles both cases.
+        assert "exists" in source and '".git"' in source, (
+            "get_diff should use os.path.exists for .git check (not isdir)"
         )
 
         # Proof: isdir returns False for .git files (which is what worktrees have)

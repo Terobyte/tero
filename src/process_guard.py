@@ -57,21 +57,47 @@ class ProcessGuard:
         try:
             import psutil
         except ImportError:
-            return
+            psutil = None  # type: ignore
 
         after = self.snapshot_pids()
         new_pids = after - before - {os.getpid()}
-        for pid in new_pids:
-            try:
-                proc = psutil.Process(pid)
-                children = proc.children(recursive=True)
-                for child in children:
-                    try:
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
-                pass
-        if new_pids and self.verbose:
+
+        if not new_pids:
+            return
+
+        if psutil is not None:
+            for pid in new_pids:
+                try:
+                    proc = psutil.Process(pid)
+                    children = proc.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
+                    pass
+        else:
+            # pgrep fallback when psutil is unavailable
+            for pid in new_pids:
+                try:
+                    result = subprocess.run(
+                        ["pgrep", "-P", str(pid)],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        for child_pid in result.stdout.strip().split("\n"):
+                            if child_pid.strip().isdigit():
+                                try:
+                                    os.kill(int(child_pid), signal.SIGTERM)
+                                except (ProcessLookupError, PermissionError):
+                                    pass
+                    os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired, OSError):
+                    pass
+
+        if self.verbose:
             print(f"  [cleanup] убито процессов: {len(new_pids)}")

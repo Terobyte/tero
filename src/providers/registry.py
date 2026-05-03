@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from .base import AgentProvider
 from .claude_native import ClaudeNativeProvider, ClaudeNativeConfig
 from .zai import ZaiProvider, ZaiConfig
@@ -88,7 +89,9 @@ class ProviderRegistry:
                 default_model=provider_config.get(
                     "default_model", provider_config.get("model", "")
                 ),
-                default_timeout=provider_config.get("default_timeout", 900),
+                default_timeout=provider_config.get(
+                    "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+                ),
                 sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
                 approval_policy=provider_config.get("approval_policy", "never"),
                 ephemeral=provider_config.get("ephemeral", True),
@@ -117,7 +120,9 @@ class ProviderRegistry:
                         else "opencode/mimo-v2-pro-free"
                     ),
                 ),
-                default_timeout=provider_config.get("default_timeout", 900),
+                default_timeout=provider_config.get(
+                    "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
+                ),
                 display_name=provider_config.get(
                     "display_name",
                     "Kilo" if provider_type in ("kilo_native", "kilo") else "OpenCode",

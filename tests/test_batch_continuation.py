@@ -20,8 +20,7 @@ async def test_batch_player_uses_run_with_continuation(monkeypatch):
 
     # _run_with_continuation returns a result with PHASE_COMPLETE markers
     complete_text = (
-        "PHASE_COMPLETE: Test\n"
-        "What changed:\n- x\nEvidence:\n- y\nVerification:\n- z"
+        "PHASE_COMPLETE: Test\nWhat changed:\n- x\nEvidence:\n- y\nVerification:\n- z"
     )
     session._run_with_continuation = AsyncMock(
         return_value=TurnResult("player", 1.0, 0, [], complete_text)
@@ -35,7 +34,9 @@ async def test_batch_player_uses_run_with_continuation(monkeypatch):
     tracker.items = [PlanItem(text="step one")]
 
     executor = BatchExecutor(session, tracker)
-    phase = Phase(name="Test", type="batch", steps=[PlanItem(text="step one")], status="pending")
+    phase = Phase(
+        name="Test", type="batch", steps=[PlanItem(text="step one")], status="pending"
+    )
 
     await executor._run_phase(phase)
 

@@ -52,7 +52,7 @@ class AgentTurnRunner:
         tools_used = 0
         tokens_used = 0
 
-        resolved_provider = provider_override or router.provider_for(role)
+        resolved_provider = provider_override or provider or router.provider_for(role)
         model = model_override or ""
 
         resolved_model_for_ctx = (
