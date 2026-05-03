@@ -1306,7 +1306,7 @@ tero ldb --no-menu --file /tmp/buggy_demo.py --entry add --mode 2 --player-provi
 
 Затем: `--mode 3` → код пофикшен, тест проходит, есть git-коммит «ldb fix: …».
 
-- [ ] **6.5 Коммит**
+- [x] **6.5 Коммит**
 
 ```bash
 git add src/ldb/runner.py tests/test_ldb_runner.py
@@ -1317,7 +1317,7 @@ git commit -m "ldb: runner orchestrating player/tester/fixer pipeline"
 
 ## Phase 7: Финальная проверка
 
-- [ ] **7.1 Запустить полный тест-сьют**
+- [x] **7.1 Запустить полный тест-сьют**
 
 ```bash
 pytest tests/ -x -q --tb=short
@@ -1325,16 +1325,16 @@ pytest tests/ -x -q --tb=short
 
 Все проходят. Если что-то сломалось — фиксим.
 
-- [ ] **7.2 Smoke оба режима**
+- [x] **7.2 Smoke оба режима**
 
 Mode 2: `tero ldb --no-menu --file <file> --entry <fn> --mode 2` → bugs.md + test, без правок кода.
 Mode 3: `tero ldb --no-menu --file <file> --entry <fn> --mode 3` → bugs.md + test + код пофикшен + git коммит.
 
-- [ ] **7.3 Меню**
+- [x] **7.3 Меню**
 
 `tero ldb` (без аргументов) → интерактивное меню. Все пункты редактируются. «Run LDB» → запускает runner.
 
-- [ ] **7.4 Gemini как player**
+- [x] **7.4 Gemini как player**
 
 ```bash
 tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini --player-model gemini-2.5-pro
@@ -1342,7 +1342,7 @@ tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini 
 
 Должен пройти, использовав Gemini CLI.
 
-- [ ] **7.5 Финальный коммит и сводка в README**
+- [x] **7.5 Финальный коммит и сводка в README**
 
 ```bash
 git add README.md  # если обновили

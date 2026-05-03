@@ -9,6 +9,7 @@ from src.cli_entry import (
     run_debug as _shared_run_debug,
     run_go as _shared_run_go,
     run_history as _shared_run_history,
+    run_ldb as _shared_run_ldb,
 )
 
 
@@ -39,6 +40,12 @@ def main():
         except KeyboardInterrupt:
             print("\nПрервано.")
             sys.exit(130)
+    elif args.command == "ldb":
+        try:
+            run_ldb(args)
+        except KeyboardInterrupt:
+            print("\nПрервано.")
+            sys.exit(130)
 
 
 async def run_go(args, config=None):
@@ -51,6 +58,10 @@ def run_history(args):
 
 def run_debug(args):
     return _shared_run_debug(args)
+
+
+def run_ldb(args):
+    return _shared_run_ldb(args)
 
 
 if __name__ == "__main__":
