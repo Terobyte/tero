@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.config import Config
-from src.ldb.runner import LdbResult, LdbRunner, _LdbBug
+from src.ldb.runner import LdbResult, LdbRunner, _LdbBug, parse_player_response
 
 
 def _make_config(**overrides):
@@ -396,3 +396,41 @@ class TestRunAll:
             assert result.success is True
             assert result.bugs_found == 0
             mock_player.assert_not_called()
+
+
+class TestParsePlayerResponse:
+    def test_returns_only_first_incorrect(self):
+        """Per PLAYER_PROMPT_LDB rule: report only the FIRST wrong block."""
+        raw = (
+            '{"block": "BLOCK-0", "correct": true, "explanation": "init ok"}\n'
+            '{"block": "BLOCK-1", "correct": false, "explanation": "wrong op"}\n'
+            '{"block": "BLOCK-2", "correct": false, "explanation": "downstream side-effect of BLOCK-1"}\n'
+        )
+        fake_trace_blocks = [
+            type("BT", (), {"rendered": [f"line {i}"], "block_id": i})()
+            for i in range(3)
+        ]
+        bug = parse_player_response(raw, fake_trace_blocks)
+        assert bug is not None
+        assert bug.block_id == 1
+        assert "wrong op" in bug.explanation
+        # Make sure we DIDN'T return BLOCK-2 — it's downstream
+
+    def test_all_correct_returns_none(self):
+        raw = '{"block": "BLOCK-0", "correct": true, "explanation": "ok"}'
+        assert parse_player_response(raw, []) is None
+
+    def test_empty_input_returns_none(self):
+        assert parse_player_response("", []) is None
+        assert parse_player_response("   ", []) is None
+
+    def test_unparseable_lines_skipped(self):
+        raw = (
+            'some garbage line\n'
+            '{"block": "BLOCK-0", "correct": true, "explanation": "ok"}\n'
+            '{"block": "BLOCK-3", "correct": false, "explanation": "the bug"}\n'
+        )
+        bug = parse_player_response(raw, [])
+        assert bug is not None
+        assert bug.block_id == 3
+        assert "the bug" in bug.explanation

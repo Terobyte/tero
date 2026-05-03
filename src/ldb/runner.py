@@ -96,6 +96,49 @@ def _provider_model(provider) -> str:
     return ""
 
 
+@dataclass
+class PlayerBug:
+    """First incorrect block found by the Player agent."""
+    block_id: int
+    explanation: str
+
+
+def parse_player_response(raw: str, trace_blocks: list | None = None) -> PlayerBug | None:
+    """Parse Player's JSONL response and return only the FIRST incorrect block.
+
+    Per PLAYER_PROMPT_LDB rule: "If multiple blocks have the same root cause,
+    mark only the FIRST one as the bug."
+
+    Each line is a JSON object:
+        {"block": "BLOCK-N", "correct": true/false, "explanation": "..."}
+
+    Returns a PlayerBug for the first ``correct: false`` entry, or ``None``
+    when every block is correct (or the response is empty/unparseable).
+    """
+    if not raw or not raw.strip():
+        return None
+
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("correct") is False:
+            block_name = obj.get("block", "")
+            # Extract numeric id from "BLOCK-N"
+            match = re.match(r"BLOCK-(\d+)", block_name)
+            block_id = int(match.group(1)) if match else -1
+            explanation = obj.get("explanation", "")
+            return PlayerBug(block_id=block_id, explanation=explanation)
+
+    return None
+
+
 def _parse_bugs_json(raw: str, start_id: int = 1) -> list[_LdbBug]:
     """Extract bug entries from player JSON output."""
     candidates: list[str] = []
