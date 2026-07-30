@@ -212,100 +212,6 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
 
-    debug_parser = subparsers.add_parser(
-        "debug", help="Run automated bug-find-test-fix loop"
-    )
-    debug_parser.add_argument(
-        "--working-dir",
-        "-w",
-        type=str,
-        default=".",
-        dest="working_dir",
-    )
-    debug_parser.add_argument(
-        "--player-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="debug_player_provider",
-    )
-    debug_parser.add_argument(
-        "--tester-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="debug_tester_provider",
-    )
-    debug_parser.add_argument(
-        "--fixer-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="debug_fixer_provider",
-    )
-    debug_parser.add_argument(
-        "--synthesizer-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="debug_synthesizer_provider",
-    )
-    debug_parser.add_argument(
-        "--intensity",
-        type=str,
-        choices=["low", "medium", "high"],
-        default=None,
-        dest="debug_intensity",
-    )
-    debug_parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        dest="debug_limit_value",
-    )
-    debug_parser.add_argument(
-        "--time",
-        type=int,
-        default=None,
-    )
-    debug_parser.add_argument(
-        "--infinite",
-        action="store_true",
-        default=False,
-    )
-    debug_parser.add_argument(
-        "--no-menu",
-        action="store_true",
-        default=False,
-    )
-    debug_parser.add_argument(
-        "--test",
-        type=str,
-        default=None,
-        dest="debug_failing_test",
-    )
-    debug_parser.add_argument(
-        "--all",
-        action="store_true",
-        default=False,
-        dest="debug_all",
-        help="Analyze every public function in working_dir (whole-project mode)",
-    )
-    debug_parser.add_argument(
-        "--file",
-        type=str,
-        default=None,
-        dest="debug_file",
-        help="Target a specific file for analysis",
-    )
-    debug_parser.add_argument(
-        "--entry",
-        type=str,
-        default=None,
-        dest="debug_entry",
-        help="Target a specific function/method name within --file",
-    )
-
     ldb_parser = subparsers.add_parser("ldb", help="Run ldb bug-finder")
     ldb_parser.add_argument(
         "--working-dir", "-w", type=str, default=".", dest="working_dir"
@@ -356,7 +262,12 @@ def build_parser() -> argparse.ArgumentParser:
     ldb_parser.add_argument("--file", type=str, default=None, dest="ldb_target_file")
     ldb_parser.add_argument("--entry", type=str, default=None, dest="ldb_target_entry")
     ldb_parser.add_argument(
-        "--all", action="store_true", default=False, dest="ldb_scope_all"
+        "--all", action="store_true", default=False, dest="ldb_scope_all",
+        help="scan every public function (default: only functions touched in git diff)",
+    )
+    ldb_parser.add_argument(
+        "--diff-base", type=str, default=None, dest="ldb_diff_base",
+        help="git ref the --changed scope diffs against (default: HEAD = staged + unstaged)",
     )
     ldb_parser.add_argument(
         "--max-iterations", type=int, default=None, dest="ldb_max_iterations"
@@ -368,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ldb_parser.add_argument(
         "--no-menu", action="store_true", default=False,
+        help="(deprecated; default) skip the LDB settings menu and run directly",
+    )
+    ldb_parser.add_argument(
+        "--menu", action="store_true", default=False,
+        help="open the LDB settings menu before running (default: run directly)",
     )
 
     return parser
@@ -398,66 +314,8 @@ async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
         sys.exit(1)
 
 
-def run_debug(args) -> None:
-    """Run the automated debugger loop."""
-    from src.config import resolve_config
-    from src.debugger import Debugger
-    from src.menu import run_debugger_menu
-
-    cli_overrides: dict = {"working_dir": args.working_dir}
-
-    if getattr(args, "debug_player_provider", None):
-        cli_overrides["debug_player_provider"] = args.debug_player_provider
-    if getattr(args, "debug_tester_provider", None):
-        cli_overrides["debug_tester_provider"] = args.debug_tester_provider
-    if getattr(args, "debug_fixer_provider", None):
-        cli_overrides["debug_fixer_provider"] = args.debug_fixer_provider
-    if getattr(args, "debug_synthesizer_provider", None):
-        cli_overrides["debug_synthesizer_provider"] = args.debug_synthesizer_provider
-    if getattr(args, "debug_intensity", None):
-        cli_overrides["debug_intensity"] = args.debug_intensity
-
-    if getattr(args, "debug_failing_test", None):
-        cli_overrides["debug_failing_test"] = args.debug_failing_test
-
-    if getattr(args, "debug_all", False):
-        cli_overrides["debug_all"] = True
-    if getattr(args, "debug_file", None):
-        cli_overrides["debug_file"] = args.debug_file
-    if getattr(args, "debug_entry", None):
-        cli_overrides["debug_entry"] = args.debug_entry
-
-    # Limit mode resolution: --infinite > --time > --limit
-    if getattr(args, "infinite", False):
-        cli_overrides["debug_limit_mode"] = "infinite"
-        cli_overrides["debug_limit_value"] = 0
-    elif getattr(args, "time", None):
-        cli_overrides["debug_limit_mode"] = "time"
-        cli_overrides["debug_limit_value"] = args.time
-    elif getattr(args, "debug_limit_value", None) is not None:
-        cli_overrides["debug_limit_mode"] = "iterations"
-        cli_overrides["debug_limit_value"] = args.debug_limit_value
-
-    config = resolve_config(cli_overrides)
-
-    if not getattr(args, "no_menu", False):
-        config = run_debugger_menu(config)
-
-    if not config.debug_all and not config.debug_file:
-        print("Error: specify --all or --file --entry <name>")
-        sys.exit(1)
-    if config.debug_file and not config.debug_entry:
-        print("Error: --file requires --entry <function_name>")
-        sys.exit(1)
-
-    debugger = Debugger(config)
-    result = debugger.run_sync()
-    sys.exit(0 if result.victory else 1)
-
-
 def run_ldb(args) -> None:
     from src.config import resolve_config
-    from src.ldb import LdbRunner
 
     cli_overrides: dict = {"working_dir": args.working_dir}
 
@@ -474,18 +332,25 @@ def run_ldb(args) -> None:
         "ldb_target_file",
         "ldb_target_entry",
         "ldb_scope_all",
+        "ldb_diff_base",
         "ldb_max_iterations",
         "ldb_timeout_s",
         "ldb_test_input",
     ]
     for field in _LDB_FIELDS:
         val = getattr(args, field, None)
-        if val is not None and not (isinstance(val, bool) and not val):
+        if val is not None:
+            if isinstance(val, bool) and not val:
+                # Skip False for store_true flags to allow config.yaml defaults
+                continue
             cli_overrides[field] = val
 
     config = resolve_config(cli_overrides)
 
-    if not getattr(args, "no_menu", False):
+    # Default = run automatically. The settings menu is opt-in via --menu;
+    # the legacy --no-menu flag is kept for backward compatibility but no
+    # longer needed (it is now the default behaviour).
+    if getattr(args, "menu", False):
         from src.menu import run_ldb_menu
 
         menu_result = run_ldb_menu(config)
@@ -494,15 +359,28 @@ def run_ldb(args) -> None:
             sys.exit(0)
         config = menu_result
 
-    if not config.ldb_scope_all and not config.ldb_target_file:
-        print("Error: specify --all or --file --entry <name>")
-        sys.exit(1)
+    _execute_ldb(config)
+
+
+def _execute_ldb(config) -> None:
+    """Run LDB with a fully resolved Config (no menu interaction).
+
+    Scope is decided automatically by Config.__post_init__:
+      - ldb_target_file set → single-target mode
+      - otherwise          → scan every public function (--all default)
+    """
+    from src.ldb import LdbRunner
+
     if config.ldb_target_file and not config.ldb_target_entry:
         print("Error: --file requires --entry <function_name>")
         sys.exit(1)
 
     runner = LdbRunner(config)
-    result = runner.run_sync()
+    try:
+        result = runner.run_sync()
+    except Exception as exc:
+        print(f"ldb error: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(
         f"ldb done: bugs_found={result.bugs_found} "
         f"tests_written={result.tests_written} "
@@ -538,6 +416,13 @@ def main():
 
     if args.command == "go":
         config = prepare_go_config(args)
+        if config.ldb_run_requested:
+            try:
+                _execute_ldb(config)
+            except KeyboardInterrupt:
+                print("\nПрервано.")
+                sys.exit(130)
+            return
         try:
             asyncio.run(run_go(args, config=config))
         except KeyboardInterrupt:
@@ -545,12 +430,6 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
-    elif args.command == "debug":
-        try:
-            run_debug(args)
-        except KeyboardInterrupt:
-            print("\nПрервано.")
-            sys.exit(130)
     elif args.command == "ldb":
         try:
             run_ldb(args)

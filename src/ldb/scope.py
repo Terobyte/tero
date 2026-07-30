@@ -13,23 +13,18 @@ from typing import Iterator
 
 _SKIP_DIRS = {
     ".git",
+    ".worktrees",
     "venv",
     ".venv",
     "node_modules",
     "__pycache__",
-    ".mypy_cache",
     ".pytest_cache",
-    ".tox",
-    ".eggs",
-    "dist",
-    "build",
-    ".ruff_cache",
-    ".hypothesis",
+    ".ldb-trace",
+    ".g3",
     "tests",
-    "test",
-    "docs",
-    ".worktrees",
 }
+# "tests" is intentional: LDB targets source code, not test files.
+# Tests written by the Tester agent (test_ldb_*.py) live in tests/ and should not be re-analyzed.
 
 
 @dataclass(frozen=True)
@@ -85,8 +80,17 @@ def iter_targets(working_dir: str | Path) -> Iterator[LdbTarget]:
     targets: list[LdbTarget] = []
 
     for path in sorted(root.rglob("*.py")):
-        parts = set(path.relative_to(root).parts)
-        if parts & _SKIP_DIRS:
+        if path.is_symlink():
+            continue
+        # Bug fix (issue #4): operator precedence — split skip-dir from skip-name,
+        # and only skip filenames (not all parts) that start with "_".
+        # Without this, src/ldb/__init__.py would be skipped because "ldb" path
+        # contains "_" components in nested projects, and ANY file in a path
+        # with a "_"-prefixed component dropped out.
+        parts = path.relative_to(root).parts
+        if any(part in _SKIP_DIRS for part in parts):
+            continue
+        if path.name.startswith("_"):  # only the FILE name, e.g. _private.py
             continue
         rel = str(path.relative_to(root))
         try:

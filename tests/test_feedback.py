@@ -92,7 +92,8 @@ class TestParseCoachOutput:
         verdict = parse_coach_output([msg])
 
         assert isinstance(verdict, Feedback)
-        assert "1. Missing tests Some extra commentary" in verdict.text
+        assert "1. Missing tests" in verdict.text
+        assert "Some extra commentary" not in verdict.text
         assert "2. No error handling" in verdict.text
         assert "I'll review the changes now." not in verdict.text
 

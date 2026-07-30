@@ -12,6 +12,9 @@ dependencies = [
     "psutil>=5.0",
     "astroid>=3.0",
     "astunparse>=1.6",
+    "astor>=0.8",
+    "graphviz>=0.20",
+    "questionary>=2.0",
 ]
 
 [project.scripts]

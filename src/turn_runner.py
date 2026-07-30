@@ -280,8 +280,8 @@ class AgentTurnRunner:
         )
 
         prompt_tokens = int(getattr(provider, "_last_input_tokens", 0) or 0)
-        effective_limit = getattr(
-            self, "_last_effective_context_limit", config.context_limit
+        effective_limit = (
+            getattr(self, "_last_effective_context_limit", 0) or config.context_limit
         )
         compact_limit = int(effective_limit * config.compact_threshold)
 

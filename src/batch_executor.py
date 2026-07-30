@@ -32,9 +32,10 @@ def build_batch_prompt(
     'PHASE_COMPLETE: <phase.name>' at the end.
     """
     remaining = [
-        (i + 1, step)
-        for i, step in enumerate(phase.steps)
-        if step.text not in completed_steps
+        (seq, step)
+        for seq, step in enumerate(
+            (s for s in phase.steps if s.text not in completed_steps), 1
+        )
     ]
     sections: list[str] = []
 
@@ -401,11 +402,6 @@ class BatchExecutor:
             return f"{provider} | model={model}"
         return provider
 
-    def _reset_tracker_progress_for_batch_run(self) -> None:
-        """Start each batch run from the plan itself, not stale checklist state."""
-        items_list = getattr(self.tracker, "items", [])
-        items_list[:] = [replace(item, done=False) for item in items_list]
-
     def _reset_plan_progress(self, phases: list[Phase]) -> None:
         """Reset batch progress both in memory and in the persisted plan file."""
         items_list = getattr(self.tracker, "items", [])
@@ -442,7 +438,6 @@ class BatchExecutor:
 
         if sum(values) == 0:
             return defaults
-
         return tuple(values)
 
     def _max_phase_attempts(self) -> int:

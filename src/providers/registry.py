@@ -86,7 +86,7 @@ class ProviderRegistry:
 
             gemini_cfg = GeminiConfig(
                 command=provider_config.get("command", "gemini"),
-                default_model=provider_config.get("default_model", "gemini-2.5-pro"),
+                default_model=provider_config.get("default_model", "gemini-3.1-pro-preview"),
                 display_name=provider_config.get("display_name", "Gemini"),
                 default_timeout=provider_config.get(
                     "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -102,7 +102,7 @@ class ProviderRegistry:
             codex_cfg = CodexConfig(
                 command=provider_config.get("command", "codex"),
                 default_model=provider_config.get(
-                    "default_model", provider_config.get("model", "gpt-5.4")
+                    "default_model", provider_config.get("model", "gpt-5.5")
                 ),
                 default_timeout=provider_config.get(
                     "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S

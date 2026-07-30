@@ -91,7 +91,3 @@ class PhaseFailedError(TeroError):
 
 class PlanResetRequested(TeroError):
     """Raised when the operator requests a full plan-progress reset."""
-
-
-class DebuggerError(TeroError):
-    """Raised for invalid debugger state transitions or logic errors."""

@@ -169,8 +169,7 @@ def _extract_numbered_issues(text: str) -> list[str]:
             current_issue = f"{match.group(1)}. {match.group(2).strip()}"
             continue
 
-        if current_issue:
-            current_issue += f" {line}"
+        pass
 
     if current_issue:
         issues.append(current_issue)

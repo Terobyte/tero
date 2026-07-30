@@ -10,6 +10,7 @@ import inspect
 import json
 import re
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,9 @@ from src.ldb.prompts import (
     PLAYER_PROMPT_LDB,
     TESTER_PROMPT_LDB,
 )
-from src.ldb.scope import iter_targets
+from src.ldb.git_diff import filter_targets_by_diff, get_changed_lines
+from src.ldb.scope import LdbTarget, iter_targets
+from src.ldb.tracer import trace_function
 from src.providers import create_provider
 from src.providers.message_adapter import normalize_message
 
@@ -56,7 +59,12 @@ async def _collect_text(
     context_limit: int = 0,
     compact_threshold: float = 0.6,
 ) -> str:
-    """Collect full text output from a provider call."""
+    """Collect full text output from a provider call.
+
+    ToolUseBlock messages are intentionally skipped — only text content is
+    collected via ``get_text_content()``.  Tool calls are side-effects that
+    should not appear in the synthesised output.
+    """
     resolved_model = model or _provider_model(provider) or "unknown"
     effective_limit = context_limit or get_effective_context_limit(
         resolved_model, 0, provider=provider
@@ -266,111 +274,134 @@ class LdbRunner:
                 return pool.submit(asyncio.run, self.run()).result()
         return asyncio.run(self.run())
 
-    async def run(self) -> LdbResult:
+    def _resolve_targets(self) -> list[LdbTarget]:
+        """Return target list according to scope config.
+
+        Resolution order:
+          1. ``ldb_target_file`` set → that single function only.
+          2. ``ldb_scope_all=True`` → every public function under working_dir.
+          3. (default) → only functions overlapping ``git diff <ldb_diff_base>``,
+             i.e. things actually changed since the base ref.  This is the
+             pre-commit / pre-PR gate use case.
+        """
+        if self.config.ldb_target_file:
+            return [self._single_target()]
+
+        all_targets = list(iter_targets(self.working_dir))
+
         if self.config.ldb_scope_all:
-            return await self._run_all()
+            return all_targets
 
-        bugs_found = 0
-        tests_written = 0
-        bugs_fixed = 0
+        base = self.config.ldb_diff_base or "HEAD"
+        changed = get_changed_lines(self.working_dir, base=base)
+        if not changed:
+            print(
+                f"ldb: no changes detected vs {base} — nothing to scan "
+                f"(use --all to force-scan every public function)",
+                flush=True,
+            )
+            return []
+        return filter_targets_by_diff(all_targets, changed)
 
-        entry = self.config.ldb_target_entry
+    def _single_target(self) -> LdbTarget:
+        """Build an LdbTarget from the --file/--entry CLI config."""
+        import ast as _ast
 
-        for _iteration in range(self.config.ldb_max_iterations):
-            source = self._read_target_source()
-            new_bugs = await self._run_player(source, entry)
-            if new_bugs is None:
-                break
-            bugs_found += len(new_bugs)
+        file = self.config.ldb_target_file
+        name = self.config.ldb_target_entry
+        lineno = 0
+        end_lineno = 0
 
-            if not new_bugs:
-                break
+        if file:
+            p = Path(self.working_dir) / file
+            if p.exists():
+                try:
+                    source = p.read_text(errors="replace")
+                    tree = _ast.parse(source)
+                    func_name = name.rpartition(".")[2] if "." in name else name
+                    for node in _ast.walk(tree):
+                        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                            if node.name == func_name:
+                                lineno = node.lineno
+                                end_lineno = getattr(
+                                    node, "end_lineno", node.lineno
+                                )
+                                break
+                except SyntaxError:
+                    pass
 
-            self._bugs.extend(new_bugs)
-            self._append_bugs_md(self.config.ldb_target_file, entry, new_bugs)
+        return LdbTarget(file=file, name=name, lineno=lineno, end_lineno=end_lineno)
 
-            open_bugs = [b for b in self._bugs if b.status == "open"]
-            if open_bugs:
-                test_count = await self._run_tester(open_bugs)
-                if test_count is None:
-                    break
-                tests_written += test_count
-
-            if self.config.ldb_mode == 3:
-                confirmed = [b for b in self._bugs if b.status == "confirmed"]
-                if confirmed:
-                    fixed_count = await self._run_fixer(confirmed)
-                    if fixed_count is None:
-                        break
-                    bugs_fixed += fixed_count
-                    if fixed_count > 0:
-                        summary = (
-                            f"iteration {_iteration + 1} — {fixed_count} bug(s) fixed"
-                        )
-                        self._git_commit(summary)
-
-        return LdbResult(
-            success=bugs_fixed > 0
-            or bugs_found == 0
-            or (self.config.ldb_mode == 2 and tests_written > 0),
-            bugs_found=bugs_found,
-            tests_written=tests_written,
-            bugs_fixed=bugs_fixed,
-        )
-
-    async def _run_all(self) -> LdbResult:
-        """Iterate over every public function/method found by iter_targets()."""
+    async def run(self) -> LdbResult:
+        targets = self._resolve_targets()
         total_found = 0
         total_tests = 0
         total_fixed = 0
 
-        for target in iter_targets(self.working_dir):
+        print(f"ldb: {len(targets)} target(s)", flush=True)
+
+        for t_idx, target in enumerate(targets, 1):
             self._bugs = []
             self._bug_counter = 0
-
-            target_path = Path(self.working_dir) / target.file
-            if not target_path.exists():
-                continue
-
             self.config.ldb_target_file = target.file
             self.config.ldb_target_entry = target.name
-            entry = target.name
+
+            print(f"\n[{t_idx}/{len(targets)}] {target.file}::{target.name}", flush=True)
 
             for _iteration in range(self.config.ldb_max_iterations):
-                source = (
-                    target_path.read_text(errors="replace")
-                    if target_path.exists()
-                    else ""
-                )
-                if not source:
-                    break
-                new_bugs = await self._run_player(source, entry)
+                print(f"  iteration {_iteration + 1}/{self.config.ldb_max_iterations}", flush=True)
+                source = self._read_target_source()
+
+                print("  → input: synthesizing test cases...", flush=True)
+                print("  → player: analysing blocks...", flush=True)
+                new_bugs = await self._run_player(source, target.name)
                 if new_bugs is None:
+                    print("  player returned no output — stopping", flush=True)
                     break
                 total_found += len(new_bugs)
+
                 if not new_bugs:
+                    print("  no bugs found — done", flush=True)
                     break
+
+                for b in new_bugs:
+                    print(f"  bug: [{b.severity}] {b.file}:{b.line} — {b.description}", flush=True)
+
                 self._bugs.extend(new_bugs)
                 self._append_bugs_md(target.file, target.name, new_bugs)
 
                 open_bugs = [b for b in self._bugs if b.status == "open"]
                 if open_bugs:
+                    print(f"  → tester: verifying {len(open_bugs)} bug(s)...", flush=True)
                     test_count = await self._run_tester(open_bugs)
                     if test_count is None:
+                        print("  tester returned no output — stopping", flush=True)
                         break
                     total_tests += test_count
+                    confirmed = [b for b in self._bugs if b.status == "confirmed"]
+                    false_pos = [b for b in self._bugs if b.status == "false_positive"]
+                    print(f"  tester: {len(confirmed)} confirmed, {len(false_pos)} false-positive", flush=True)
 
                 if self.config.ldb_mode == 3:
                     confirmed = [b for b in self._bugs if b.status == "confirmed"]
                     if confirmed:
+                        print(f"  → fixer: fixing {len(confirmed)} bug(s)...", flush=True)
                         fixed_count = await self._run_fixer(confirmed)
                         if fixed_count is None:
+                            print("  fixer returned no output — stopping", flush=True)
                             break
                         total_fixed += fixed_count
+                        print(f"  fixer: {fixed_count} fixed", flush=True)
                         if fixed_count > 0:
-                            self._git_commit(
-                                f"{target.file}:{target.name} — {fixed_count} bug(s) fixed"
+                            summary = (
+                                f"{target.file}:{target.name}"
+                                f" — {fixed_count} bug(s) fixed"
                             )
+                            bug_files = sorted(
+                                {b.file for b in confirmed if b.file}
+                                | {b.test_file for b in confirmed if b.test_file}
+                            )
+                            self._git_commit(summary, bug_files or None)
 
         return LdbResult(
             success=total_fixed > 0
@@ -423,6 +454,29 @@ class LdbRunner:
         if inputs:
             inputs_text = "\n## Synthesized Test Inputs\n\n" + "\n".join(inputs)
 
+        trace_text = ""
+        trace_sections: list[str] = []
+        for test_input in inputs:
+            trace = trace_function(
+                source=source,
+                test=test_input,
+                entry=func_name,
+                timeout=self.config.ldb_timeout_s,
+            )
+            if getattr(trace, "kind", "") != "ok":
+                continue
+            rendered_blocks = []
+            for block in trace.blocks[:10]:
+                rendered_blocks.append(
+                    f"[BLOCK-{block.block_id}]\n" + "\n".join(block.rendered)
+                )
+            if rendered_blocks:
+                trace_sections.append(
+                    f"### Input: `{test_input}`\n" + "\n\n".join(rendered_blocks)
+                )
+        if trace_sections:
+            trace_text = "\n## Runtime Trace\n\n" + "\n\n".join(trace_sections)
+
         target_file = self.config.ldb_target_file
         source_display = source[:6000] if len(source) > 6000 else source
 
@@ -432,6 +486,7 @@ class LdbRunner:
             f"```python\n{source_display}\n```"
             f"{blocks_text}"
             f"{inputs_text}"
+            f"{trace_text}"
         )
 
         raw = await _collect_text(
@@ -475,7 +530,7 @@ class LdbRunner:
 
         results = _parse_tester_results(raw)
         if not results:
-            return None
+            return 0
 
         tests_count = 0
         for bug in bugs:
@@ -507,14 +562,17 @@ class LdbRunner:
 
         user_prompt = f"## Confirmed Bugs to Fix\n\n{bug_list}\n\n{context}"
 
-        await _collect_text(
-            self._fixer,
-            prompt=user_prompt,
-            system_prompt=FIXER_PROMPT_LDB_ARCH,
-            working_dir=self.working_dir,
-            max_turns=50,
-            model=self.config.ldb_fixer_model,
-        )
+        try:
+            await _collect_text(
+                self._fixer,
+                prompt=user_prompt,
+                system_prompt=FIXER_PROMPT_LDB_ARCH,
+                working_dir=self.working_dir,
+                max_turns=50,
+                model=self.config.ldb_fixer_model,
+            )
+        except Exception:
+            return None
 
         return self._verify_fixes(confirmed)
 
@@ -549,22 +607,38 @@ class LdbRunner:
 
         return sum(1 for bug in bugs if bug.status == "fixed")
 
-    def _git_commit(self, summary: str) -> None:
+    def _git_commit(
+        self, summary: str, files: list[str] | None = None
+    ) -> None:
+        """Stage and commit changes; uses selective ``git add -- <files>``
+        when file paths are known, falling back to ``git add -A`` only
+        when no specific files are available."""
         try:
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=self.working_dir,
-                check=True,
-                capture_output=True,
-            )
+            if files:
+                subprocess.run(
+                    ["git", "add", "--"] + files,
+                    cwd=self.working_dir,
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=self.working_dir,
+                    check=True,
+                    capture_output=True,
+                )
             subprocess.run(
                 ["git", "commit", "-m", f"ldb fix: {summary}"],
                 cwd=self.working_dir,
                 check=True,
                 capture_output=True,
             )
-        except subprocess.CalledProcessError:
-            pass
+        except subprocess.CalledProcessError as exc:  # noqa: BLE001
+            warnings.warn(
+                f"ldb _git_commit failed: {(exc.stderr or b'').decode().strip() or exc}",
+                stacklevel=2,
+            )
 
     def _append_bugs_md(self, file: str, entry: str, bugs: list[_LdbBug]) -> None:
         """Append found bugs to ``{working_dir}/bugs.md`` (feedback memory).
@@ -583,9 +657,9 @@ class LdbRunner:
 
         path = Path(self.working_dir) / "bugs.md"
         existing = path.read_text() if path.exists() else "# Bugs\n\n"
-        body = [existing.rstrip(), "\n"]
+        lines = [existing.rstrip()]
         for i, b in enumerate(bugs, 1):
-            body.append(f"## {file}::{entry} — Bug {i}\n")
-            body.append(f"**Line {b.line}:** {b.description}\n")
-            body.append(f"Severity: {b.severity}\n")
-        path.write_text("\n".join(body))
+            lines.append(f"\n## {file}::{entry} — Bug {i}")
+            lines.append(f"**Line {b.line}:** {b.description}")
+            lines.append(f"Severity: {b.severity}")
+        path.write_text("\n".join(lines) + "\n")

@@ -2,6 +2,7 @@
 
 import json
 import os
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,8 +24,6 @@ from src.constants import (
     DEFAULT_MAX_REVIEW_ITERATIONS,
     DEFAULT_COMPACT_THRESHOLD,
     DEFAULT_CONTEXT_LIMIT,
-    DEFAULT_DEBUG_LIMIT_VALUE,
-    DEFAULT_DEBUG_VICTORY_THRESHOLD,
     DEFAULT_LDB_LIMIT_VALUE,
     DEFAULT_LDB_TIMEOUT_S,
     EXIT_AGENT_TIMEOUT,
@@ -69,7 +68,14 @@ def _read_export_from_zshrc(env_name: str) -> str:
 
 @dataclass
 class Config:
-    """Resolved configuration."""
+    """Resolved configuration.
+
+    Config update patterns (two accepted styles):
+      1. Constructor rebuild — ``Config(**filtered)`` — used in resolve_config()
+         when assembling from defaults/env/cli.
+      2. ``dataclasses.replace(cfg, field=value)`` — used in menu.py for
+         incremental edits.  Prefer this for single-field changes.
+    """
 
     max_turns: int = DEFAULT_MAX_TURNS
     autonomous: bool = False
@@ -122,7 +128,7 @@ class Config:
     batch_pre_provider: str = "zai"
     batch_pre_model: str = ""  # fixed provider default
     batch_judge_provider: str = "codex"  # native Codex CLI judge by default
-    batch_judge_model: str = "gpt-5.4"  # pin judge to gpt-5.4; reasoning effort
+    batch_judge_model: str = "gpt-5.5"  # pin judge to gpt-5.5; reasoning effort
     # is forced to "medium" by the codex provider factory (see providers/registry.py)
     batch_post_provider: str = "zai"
     batch_post_model: str = ""  # fixed provider default
@@ -135,24 +141,6 @@ class Config:
     coach_fallback_chain: str = ""  # comma-separated: "codex,zai"
     chain_retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S
     chain_max_retries: int = DEFAULT_CHAIN_MAX_RETRIES
-    debug_player_provider: str = "zai"
-    debug_tester_provider: str = "claude"
-    debug_fixer_provider: str = "codex"
-    debug_synthesizer_provider: str = "opencode"
-    debug_player_model: str = ""
-    debug_tester_model: str = ""
-    debug_fixer_model: str = ""
-    debug_synthesizer_model: str = ""
-    debug_intensity: str = "medium"
-    debug_limit_mode: str = "infinite"
-    debug_limit_value: int = DEFAULT_DEBUG_LIMIT_VALUE
-    debug_victory_threshold: int = DEFAULT_DEBUG_VICTORY_THRESHOLD
-    debug_failing_test: str = ""
-    debug_level: str = "block"
-    debug_file: str = ""
-    debug_entry: str = ""
-    debug_all: bool = False
-
     ldb_input_provider: str = "claude"
     ldb_player_provider: str = "claude"
     ldb_tester_provider: str = "claude"
@@ -165,9 +153,19 @@ class Config:
     ldb_target_file: str = ""
     ldb_target_entry: str = ""
     ldb_test_input: str = ""
-    ldb_scope_all: bool = False
+    ldb_scope_all: bool = False  # opt-in: scan every public function
+    ldb_diff_base: str = "HEAD"   # git ref the --changed scope diffs against
     ldb_max_iterations: int = DEFAULT_LDB_LIMIT_VALUE
     ldb_timeout_s: int = DEFAULT_LDB_TIMEOUT_S
+    ldb_run_requested: bool = False
+
+    def __post_init__(self) -> None:
+        # Resolve the historical "--all and --file/--entry are mutually exclusive"
+        # error: when both are set, an explicit --file/--entry pair wins (since it
+        # is a more specific intent).  All other combinations are left intact, so
+        # tests and config files that pin only one of the two still work.
+        if self.ldb_scope_all and self.ldb_target_file:
+            object.__setattr__(self, "ldb_scope_all", False)
 
 
 @dataclass
@@ -217,20 +215,6 @@ _ENV_MAP = {
     "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
     "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
     "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
-    # Debugger
-    "G3_DEBUG_PLAYER_PROVIDER": ("debug_player_provider", str),
-    "G3_DEBUG_TESTER_PROVIDER": ("debug_tester_provider", str),
-    "G3_DEBUG_FIXER_PROVIDER": ("debug_fixer_provider", str),
-    "G3_DEBUG_SYNTHESIZER_PROVIDER": ("debug_synthesizer_provider", str),
-    "G3_DEBUG_PLAYER_MODEL": ("debug_player_model", str),
-    "G3_DEBUG_TESTER_MODEL": ("debug_tester_model", str),
-    "G3_DEBUG_FIXER_MODEL": ("debug_fixer_model", str),
-    "G3_DEBUG_SYNTHESIZER_MODEL": ("debug_synthesizer_model", str),
-    "G3_DEBUG_INTENSITY": ("debug_intensity", str),
-    "G3_DEBUG_LIMIT_MODE": ("debug_limit_mode", str),
-    "G3_DEBUG_LIMIT_VALUE": ("debug_limit_value", int),
-    "G3_DEBUG_VICTORY_THRESHOLD": ("debug_victory_threshold", int),
-    "G3_DEBUG_LEVEL": ("debug_level", str),
     "G3_LDB_INPUT_PROVIDER": ("ldb_input_provider", str),
     "G3_LDB_PLAYER_PROVIDER": ("ldb_player_provider", str),
     "G3_LDB_TESTER_PROVIDER": ("ldb_tester_provider", str),
@@ -244,6 +228,7 @@ _ENV_MAP = {
     "G3_LDB_TARGET_ENTRY": ("ldb_target_entry", str),
     "G3_LDB_TEST_INPUT": ("ldb_test_input", str),
     "G3_LDB_SCOPE_ALL": ("ldb_scope_all", lambda x: x.lower() in ("true", "1", "yes")),
+    "G3_LDB_DIFF_BASE": ("ldb_diff_base", str),
     "G3_LDB_MAX_ITERATIONS": ("ldb_max_iterations", int),
     "G3_LDB_TIMEOUT_S": ("ldb_timeout_s", int),
 }
@@ -262,7 +247,7 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("glm-5", 98_000),
     ("kimi-k2", 131_072),
     ("kimi", 128_000),
-    ("gpt-5.4", 128_000),
+    ("gpt-5.5", 128_000),
     ("gpt-5", 128_000),
     ("o3", 128_000),
     ("o4-mini", 128_000),
@@ -271,8 +256,12 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("codex", 1_000_000),
     ("xiaomi/mimo-v2-pro:free", 1_048_576),
     ("mimo", 131_072),
-    ("minimax/minimax-m2.5:free", 262_144),
+    ("minimax-m2.5", 262_144),
     ("minimax-m2", 1_000_000),
+    ("gemini-3.1-pro-preview", 1_000_000),
+    ("gemini-3-flash-preview", 1_000_000),
+    ("gemini-3.1-flash-lite-preview", 1_000_000),
+    ("gemini-3", 1_000_000),
     ("gemini-2.5-pro", 1_000_000),
     ("gemini-2.5-flash", 1_000_000),
     ("gemini-2.0", 1_000_000),
@@ -290,6 +279,10 @@ def get_context_window(model: str) -> int:
     """Return the context window size for a model, or 0 if unknown."""
     lower = model.lower()
     for pattern, size in _MODEL_CONTEXT_WINDOWS:
+        if pattern == "codex":
+            if lower == "codex" or lower.startswith("codex-") or "/codex" in lower:
+                return size
+            continue
         if pattern in lower:
             return size
     return 0
@@ -316,6 +309,8 @@ def get_effective_context_limit(
     # contains "codex" as substring → 1M). Handles providers with empty default_model.
     if provider is not None:
         cls_hint = type(provider).__name__.lower()
+        if cls_hint.startswith("codex"):
+            return get_context_window("codex")
         window = get_context_window(cls_hint)
         if window > 0:
             return window
@@ -358,8 +353,8 @@ def short_model_name(model: str) -> str:
         return "SONNET"
     if "haiku" in m:
         return "HAIKU"
-    if "gpt-5.4" in m:
-        return "GPT-5.4"
+    if "gpt-5.5" in m:
+        return "GPT-5.5"
     if "glm-5.1" in m:
         return "GLM-5.1"
     if "glm-4.7" in m:
@@ -377,6 +372,12 @@ def short_model_name(model: str) -> str:
         return f"GLM-{ver}" if ver else "GLM"
     if "kimi" in m:
         return "KIMI"
+    if "gemini-3.1-pro" in m:
+        return "GEMINI-3.1-PRO"
+    if "gemini-3-flash" in m:
+        return "GEMINI-3-FL"
+    if "gemini-3.1-flash-lite" in m:
+        return "GEMINI-3-LITE"
     if "gemini-2.5-pro" in m:
         return "GEMINI-2.5-PRO"
     if "gemini-2.5-flash" in m:
@@ -493,6 +494,14 @@ def resolve_config(cli_args: dict) -> Config:
     defaults.update({k: v for k, v in cli_args.items() if v is not None})
     defaults["working_dir"] = working_dir
 
+    # Coerce int ldb fields — YAML loads numbers as strings when quoted
+    for _int_field in ("ldb_mode", "ldb_max_iterations", "ldb_timeout_s"):
+        if _int_field in defaults and isinstance(defaults[_int_field], str):
+            try:
+                defaults[_int_field] = int(defaults[_int_field])
+            except ValueError:
+                pass
+
     for key in (
         "player_provider",
         "coach_provider",
@@ -503,10 +512,6 @@ def resolve_config(cli_args: dict) -> Config:
         "batch_post_provider",
         "coach_fallback_provider",
         "review_provider",
-        "debug_player_provider",
-        "debug_tester_provider",
-        "debug_fixer_provider",
-        "debug_synthesizer_provider",
         "ldb_input_provider",
         "ldb_player_provider",
         "ldb_tester_provider",
@@ -526,7 +531,7 @@ def resolve_config(cli_args: dict) -> Config:
         if key not in _KNOWN_SECTIONS and key not in defaults:
             defaults[key] = val
 
-    valid_fields = set(Config.__dataclass_fields__)
+    valid_fields = {f.name for f in dataclasses.fields(Config)}
     unknown = set(defaults) - valid_fields
     if unknown:
         import warnings

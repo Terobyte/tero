@@ -74,28 +74,28 @@ LDB закрывает именно эту дыру: разбивает функ
 - [x] `src/ldb/__init__.py` — публичные экспорты
 - [x] `src/ldb/blocks.py` — обёртка над staticfg (`decompose_function(prog, entry) -> List[Block]`)
 - [x] `src/ldb/tracer.py` — runtime tracer (`trace_function(prog, test, entry) -> List[BlockTrace]`)
-- [~] `src/ldb/inputs.py` — **LLM-driven** синтез входов (`synthesize_inputs_llm(provider, source, entry) -> List[str]`)
-- [~] `src/ldb/prompts.py` — `INPUT_PROMPT_LDB`, `PLAYER_PROMPT_LDB`, `TESTER_PROMPT_LDB`, `FIXER_PROMPT_LDB_ARCH`
-- [~] `src/ldb/runner.py` — главный класс `LdbRunner` (Input → Player → Tester → Fixer)
-- [~] `src/ldb/scope.py` — `iter_targets(working_dir)` для `--all` режима (обход AST публичных функций)
-- [~] `src/ldb/staticfg/` — вендор-копия из `/tmp/ldb-source/programming/tracing/staticfg/`
-- [~] `tests/test_ldb_blocks.py`, `tests/test_ldb_tracer.py`, `tests/test_ldb_inputs.py`, `tests/test_ldb_scope.py`, `tests/test_ldb_runner.py`
-- [~] `tests/test_gemini_provider.py`
+- [x] `src/ldb/inputs.py` — **LLM-driven** синтез входов (`synthesize_inputs_llm(provider, source, entry) -> List[str]`)
+- [x] `src/ldb/prompts.py` — `INPUT_PROMPT_LDB`, `PLAYER_PROMPT_LDB`, `TESTER_PROMPT_LDB`, `FIXER_PROMPT_LDB_ARCH`
+- [x] `src/ldb/runner.py` — главный класс `LdbRunner` (Input → Player → Tester → Fixer)
+- [x] `src/ldb/scope.py` — `iter_targets(working_dir)` для `--all` режима (обход AST публичных функций)
+- [x] `src/ldb/staticfg/` — вендор-копия из `/tmp/ldb-source/programming/tracing/staticfg/`
+- [x] `tests/test_ldb_blocks.py`, `tests/test_ldb_tracer.py`, `tests/test_ldb_inputs.py`, `tests/test_ldb_scope.py`, `tests/test_ldb_runner.py`
+- [x] `tests/test_gemini_provider.py`
 
 **Модифицируем:**
-- [~] `src/providers/__init__.py` — регистрация `gemini`
-- [~] `src/providers/registry.py` — фабрика `gemini`
-- [~] `src/cli_entry.py` — `PROVIDER_CHOICES` += `"gemini"`, новый subparser `ldb`, `run_ldb()`
-- [~] `src/menu.py` — новое меню `run_ldb_menu()`, добавить `gemini` в `PROVIDER_PRESETS`, `GEMINI_MODEL_PRESETS`
-- [~] `src/config.py` — поля `ldb_*` (mirror `debug_*`) + env mapping
-- [~] `src/constants.py` — `DEFAULT_LDB_LIMIT_VALUE`, `DEFAULT_LDB_TIMEOUT_S`
-- [~] `pyproject.toml` — deps: `astroid`, `astunparse` (staticfg уже вендорим)
+- [x] `src/providers/__init__.py` — регистрация `gemini`
+- [x] `src/providers/registry.py` — фабрика `gemini`
+- [x] `src/cli_entry.py` — `PROVIDER_CHOICES` += `"gemini"`, новый subparser `ldb`, `run_ldb()`
+- [x] `src/menu.py` — новое меню `run_ldb_menu()`, добавить `gemini` в `PROVIDER_PRESETS`, `GEMINI_MODEL_PRESETS`
+- [x] `src/config.py` — поля `ldb_*` (mirror `debug_*`) + env mapping
+- [x] `src/constants.py` — `DEFAULT_LDB_LIMIT_VALUE`, `DEFAULT_LDB_TIMEOUT_S`
+- [x] `pyproject.toml` — deps: `astroid`, `astunparse` (staticfg уже вендорим)
 
 ---
 
 ## Phase 1: Gemini CLI Provider
 
-- [~] **1.1 Написать failing-тест для GeminiProvider.check_ready()**
+- [x] **1.1 Написать failing-тест для GeminiProvider.check_ready()**
 
 Создать `tests/test_gemini_provider.py`:
 
@@ -124,20 +124,20 @@ def test_display_name():
 
 Запуск: `pytest tests/test_gemini_provider.py -v` → ожидается ImportError (модуль не существует).
 
-- [~] **1.2 Создать `src/providers/gemini.py`**
+- [x] **1.2 Создать `src/providers/gemini.py`**
 
 Скопировать `src/providers/opencode.py` как стартовую точку. Изменить:
-- [~] Класс `GeminiConfig`: `command="gemini"`, `default_model="gemini-2.5-pro"`, `display_name="Gemini"`.
-- [~] В `_build_command()`: команду собрать как `[command, "-p", prompt, "-o", "stream-json", "--yolo"]`. Подтверждено работает: `echo | gemini -p "hi" -o stream-json --yolo` выдаёт JSONL. Передавать модель через `-m`. **Не передавать stdin** (как opencode) — Gemini берёт prompt только из `-p`. Если prompt > N символов — писать в tmp file и `cat tmp | gemini -p "see stdin" -o stream-json --yolo`.
-- [~] **Реальный формат событий** (из подтверждённого smoke-теста):
+- [x] Класс `GeminiConfig`: `command="gemini"`, `default_model="gemini-2.5-pro"`, `display_name="Gemini"`.
+- [x] В `_build_command()`: команду собрать как `[command, "-p", prompt, "-o", "stream-json", "--yolo"]`. Подтверждено работает: `echo | gemini -p "hi" -o stream-json --yolo` выдаёт JSONL. Передавать модель через `-m`. **Не передавать stdin** (как opencode) — Gemini берёт prompt только из `-p`. Если prompt > N символов — писать в tmp file и `cat tmp | gemini -p "see stdin" -o stream-json --yolo`.
+- [x] **Реальный формат событий** (из подтверждённого smoke-теста):
   - `{"type":"init","timestamp":...,"session_id":...,"model":"..."}` — игнорируем
   - `{"type":"message","role":"assistant","content":"...","delta":true}` — оборачиваем в `AdaptedMessage(role="assistant", content=[TextBlock(text=content)])`
   - `{"type":"result","status":"success","stats":{...}}` — финальный, фиксируем токены
-- [~] Реализовать `_adapt_gemini_event(event)` — НЕ копировать `_adapt_opencode_event` дословно: ключи разные.
-- [~] `check_ready()`: `shutil.which(self.config.command) is not None`.
-- [~] `display_name`: `f"Gemini ({self.config.default_model})"`.
+- [x] Реализовать `_adapt_gemini_event(event)` — НЕ копировать `_adapt_opencode_event` дословно: ключи разные.
+- [x] `check_ready()`: `shutil.which(self.config.command) is not None`.
+- [x] `display_name`: `f"Gemini ({self.config.default_model})"`.
 
-- [~] **1.3 Запустить тест из 1.1** → должен пройти. Затем добавить интеграционный тест с реальным `gemini --version` через `subprocess`:
+- [x] **1.3 Запустить тест из 1.1** → должен пройти. Затем добавить интеграционный тест с реальным `gemini --version` через `subprocess`:
 
 ```python
 def test_gemini_cli_available():
@@ -148,7 +148,7 @@ def test_gemini_cli_available():
 
 (Skipped if not installed.)
 
-- [~] **1.4 Зарегистрировать в фабрике**
+- [x] **1.4 Зарегистрировать в фабрике**
 
 В `src/providers/__init__.py:create_provider()` добавить ветку:
 
@@ -165,7 +165,7 @@ if provider_type == "gemini":
 
 И аналогично в `src/providers/registry.py:_create_provider()`.
 
-- [~] **1.5 Прокинуть `gemini` в CLI choices**
+- [x] **1.5 Прокинуть `gemini` в CLI choices**
 
 `src/cli_entry.py:17`:
 
@@ -173,7 +173,7 @@ if provider_type == "gemini":
 PROVIDER_CHOICES = ["zai", "claude", "codex", "opencode", "kilo", "gemini"]
 ```
 
-- [~] **1.6 Прокинуть в меню**
+- [x] **1.6 Прокинуть в меню**
 
 `src/menu.py`:
 
@@ -193,7 +193,7 @@ PROVIDER_PRESETS = {
 В `_model_presets_for_provider()`: ветка `if provider == "gemini": return GEMINI_MODEL_PRESETS`.
 В `_fixed_model_for_provider()`: gemini не fixed, остаётся `""`.
 
-- [~] **1.7 Smoke-тест ручной**
+- [x] **1.7 Smoke-тест ручной**
 
 ```bash
 G3_PLAYER_PROVIDER=gemini tero go --no-menu --plan requirements.md
@@ -201,7 +201,7 @@ G3_PLAYER_PROVIDER=gemini tero go --no-menu --plan requirements.md
 
 Проверить, что Player запустился через `gemini -p ... -o stream-json` и stream дошёл до stdout.
 
-- [~] **1.8 Коммит**
+- [x] **1.8 Коммит**
 
 ```bash
 git add src/providers/gemini.py src/providers/__init__.py src/providers/registry.py src/cli_entry.py src/menu.py tests/test_gemini_provider.py
@@ -212,7 +212,7 @@ git commit -m "add gemini cli provider"
 
 ## Phase 2: LDB Core — block decomposition + tracer
 
-- [~] **2.1 Вендор staticfg**
+- [x] **2.1 Вендор staticfg**
 
 ```bash
 cp -r /tmp/ldb-source/programming/tracing/staticfg src/ldb/staticfg
@@ -1325,16 +1325,16 @@ pytest tests/ -x -q --tb=short
 
 Все проходят. Если что-то сломалось — фиксим.
 
-- [~] **7.2 Smoke оба режима**
+- [x] **7.2 Smoke оба режима**
 
 Mode 2: `tero ldb --no-menu --file <file> --entry <fn> --mode 2` → bugs.md + test, без правок кода.
 Mode 3: `tero ldb --no-menu --file <file> --entry <fn> --mode 3` → bugs.md + test + код пофикшен + git коммит.
 
-- [~] **7.3 Меню**
+- [x] **7.3 Меню**
 
 `tero ldb` (без аргументов) → интерактивное меню. Все пункты редактируются. «Run LDB» → запускает runner.
 
-- [~] **7.4 Gemini как player**
+- [x] **7.4 Gemini как player**
 
 ```bash
 tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini --player-model gemini-2.5-pro
@@ -1342,7 +1342,7 @@ tero ldb --no-menu --file <file> --entry <fn> --mode 2 --player-provider gemini 
 
 Должен пройти, использовав Gemini CLI.
 
-- [~] **7.5 Финальный коммит и сводка в README**
+- [x] **7.5 Финальный коммит и сводка в README**
 
 ```bash
 git add README.md  # если обновили
@@ -1366,8 +1366,8 @@ git commit -m "ldb: smoke verified, document tero ldb usage"
 
 - [x] **Input synthesis = LLM-агент** (Input-Synthesizer), у каждой фазы свой провайдер/модель → 4 агента в меню/CLI/конфиге.
 - [x] **Gemini default**: `gemini-2.5-pro`. Команда: `gemini -p <prompt> -o stream-json --yolo` (подтверждено smoke-тестом).
-- [ ] **Mode 3 auto-commit**: селективный staging — `git add -- <files>` (только изменённые исходники + новые тесты), НЕ `-A`. Сообщение: `"ldb fix: N bug(s) via block-level runtime debugger"`.
-- [ ] **Scope**: `--file --entry` обязательны (прозрачность), плюс опциональный `--all` для whole-project обхода всех публичных функций (Phase 5b).
+- [x] **Mode 3 auto-commit**: селективный staging — `git add -- <files>` (только изменённые исходники + новые тесты), НЕ `-A`. Сообщение: `"ldb fix: N bug(s) via block-level runtime debugger"`.
+- [x] **Scope**: `--file --entry` обязательны (прозрачность), плюс опциональный `--all` для whole-project обхода всех публичных функций (Phase 5b).
 
 ## Phase Dependencies (issue #15)
 
@@ -1378,41 +1378,41 @@ Phase 1 (Gemini provider) **независима** от Phase 2-7. Если Gemi
 ## Acknowledgement of review fixes (2026-05-02)
 
 Этот план прошёл code-review с 15 пунктами. Применены фиксы:
-- [ ] **#1** import `synthesize_inputs_llm` (Phase 6.2)
-- [ ] **#2** `ldb_input_provider/model` теперь в `run_ldb()` (Phase 5.2)
-- [ ] **#3** unified `LdbTarget` для обоих режимов (Phase 6.2)
-- [ ] **#4** `_SKIP_DIRS` precedence + filename-only `_*` skip (Phase 5b.2)
-- [ ] **#5** добавлен `_fallback_ldb_menu()` (Phase 5.3)
-- [ ] **#6** реальный формат событий Gemini документирован (Phase 1.2)
-- [ ] **#7** Phase 4.1 теперь дополняет, а не создаёт `prompts.py`
-- [ ] **#8** тест Player'а явно проверяет «only first incorrect»
-- [ ] **#9** валидация `--file/--entry` vs `--all` в `run_ldb()`
-- [ ] **#10** `_run_player/_run_tester/_run_fixer` раскрыты (Phase 6.2)
-- [ ] **#11** «зеркалит debug» уточнено: используется селективный путь, не `-A` fallback
-- [ ] **#12** `git add -- <files>` вместо `-A` (Phase 6.2)
-- [ ] **#13** контракт `trace_function(source: str)` явно задокументирован + `monkeypatch.chdir(tmp_path)` в тесте (Phase 2.5)
-- [ ] **#14** везде `dataclasses.replace(config, ...)` вместо `Config(**{**config.__dict__, ...})`
-- [ ] **#15** Phase 1 помечена как параллельная, не блокирующая
+- [x] **#1** import `synthesize_inputs_llm` (Phase 6.2)
+- [x] **#2** `ldb_input_provider/model` теперь в `run_ldb()` (Phase 5.2)
+- [x] **#3** unified `LdbTarget` для обоих режимов (Phase 6.2)
+- [x] **#4** `_SKIP_DIRS` precedence + filename-only `_*` skip (Phase 5b.2)
+- [x] **#5** добавлен `_fallback_ldb_menu()` (Phase 5.3)
+- [x] **#6** реальный формат событий Gemini документирован (Phase 1.2)
+- [x] **#7** Phase 4.1 теперь дополняет, а не создаёт `prompts.py`
+- [x] **#8** тест Player'а явно проверяет «only first incorrect»
+- [x] **#9** валидация `--file/--entry` vs `--all` в `run_ldb()`
+- [x] **#10** `_run_player/_run_tester/_run_fixer` раскрыты (Phase 6.2)
+- [x] **#11** «зеркалит debug» уточнено: используется селективный путь, не `-A` fallback
+- [x] **#12** `git add -- <files>` вместо `-A` (Phase 6.2)
+- [x] **#13** контракт `trace_function(source: str)` явно задокументирован + `monkeypatch.chdir(tmp_path)` в тесте (Phase 2.5)
+- [x] **#14** везде `dataclasses.replace(config, ...)` вместо `Config(**{**config.__dict__, ...})`
+- [x] **#15** Phase 1 помечена как параллельная, не блокирующая
 
 ## Second-review fixes (2026-05-02)
 
 План прошёл второй аудит с 17 пунктами (16 применены, #14 --yolo оставлен как есть):
-- [ ] **#R1** Невалидный Python синтаксис `dataclasses.replace(config, "key": val})` → `dataclasses.replace(config, key=val)` (5 мест)
-- [ ] **#R2** `from src.providers import AgentProvider` → `from src.providers.base import AgentProvider` (Protocol не экспортируется из `__init__`)
-- [ ] **#R3** Добавлен NOTE о config keys для `create_provider()` — `default_model` не universal key
-- [ ] **#R4** `_run_fixer` вызывает `_verify_fix_passes()` один раз (было N раз с одинаковым результатом)
-- [ ] **#R5** `trace_function()` вызывается через keyword args для ясности
-- [ ] **#R6** `ldb_*_provider` добавлены в `_normalize_provider_name()` whitelist в `resolve_config()`
-- [ ] **#R7** Добавлен `import dataclasses` + style note о двух паттернах Config update
-- [ ] **#R8** `_questionary_select_provider_model` работает с любыми field names (информационная заметка)
-- [ ] **#R9** Тест `parse_player_response` теперь передаёт `trace_blocks` (было 0 аргументов, функция ждёт 2)
-- [ ] **#R10** `_append_bugs_md` получает guard `if bugs:` + заметка о совместимости формата с `tero debug`
-- [ ] **#R11** `_SKIP_DIRS` → `tests/` skip задокументирован как intent
-- [ ] **#R12** `_collect_text` получает docstring о намеренном пропуске ToolUseBlock
-- [ ] **#R13** `import dataclasses` добавлен в Phase 5.3
-- [ ] **#R14** ~~`--yolo` configurable~~ — оставлен как есть (user decision)
-- [ ] **#R15** `run_sync()` обрабатывает already-running event loop через ThreadPoolExecutor
-- [ ] **#R16** Guard от пустого `_append_bugs_md` — не пишем пустой заголовок в bugs.md
-- [ ] **#R17** `_git_commit` теперь `warnings.warn()` вместо silent `pass`
+- [x] **#R1** Невалидный Python синтаксис `dataclasses.replace(config, "key": val})` → `dataclasses.replace(config, key=val)` (5 мест)
+- [x] **#R2** `from src.providers import AgentProvider` → `from src.providers.base import AgentProvider` (Protocol не экспортируется из `__init__`)
+- [x] **#R3** Добавлен NOTE о config keys для `create_provider()` — `default_model` не universal key
+- [x] **#R4** `_run_fixer` вызывает `_verify_fix_passes()` один раз (было N раз с одинаковым результатом)
+- [x] **#R5** `trace_function()` вызывается через keyword args для ясности
+- [x] **#R6** `ldb_*_provider` добавлены в `_normalize_provider_name()` whitelist в `resolve_config()`
+- [x] **#R7** Добавлен `import dataclasses` + style note о двух паттернах Config update
+- [x] **#R8** `_questionary_select_provider_model` работает с любыми field names (информационная заметка)
+- [x] **#R9** Тест `parse_player_response` теперь передаёт `trace_blocks` (было 0 аргументов, функция ждёт 2)
+- [x] **#R10** `_append_bugs_md` получает guard `if bugs:` + заметка о совместимости формата с `tero debug`
+- [x] **#R11** `_SKIP_DIRS` → `tests/` skip задокументирован как intent
+- [x] **#R12** `_collect_text` получает docstring о намеренном пропуске ToolUseBlock
+- [x] **#R13** `import dataclasses` добавлен в Phase 5.3
+- [x] **#R14** ~~`--yolo` configurable~~ — оставлен как есть (user decision)
+- [x] **#R15** `run_sync()` обрабатывает already-running event loop через ThreadPoolExecutor
+- [x] **#R16** Guard от пустого `_append_bugs_md` — не пишем пустой заголовок в bugs.md
+- [x] **#R17** `_git_commit` теперь `warnings.warn()` вместо silent `pass`
 
 Готов стартовать.

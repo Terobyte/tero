@@ -18,7 +18,7 @@ except ImportError:
 # (see providers/registry.py), so users can't accidentally inherit a global
 # `xhigh` from ~/.codex/config.toml when picking a coach/judge model here.
 CODEX_MODEL_PRESETS = {
-    "GPT-5.4 (medium)": "gpt-5.4",
+    "GPT-5.5 (medium)": "gpt-5.5",
     "Default (~/.codex/config.toml)": "",
 }
 
@@ -35,9 +35,9 @@ KILO_MODEL_PRESETS = {
 }
 
 GEMINI_MODEL_PRESETS = {
-    "Gemini 2.5 Flash": "gemini-2.5-flash",
-    "Gemini 2.5 Pro": "gemini-2.5-pro",
-    "Gemini 2.0 Flash": "gemini-2.0-flash",
+    "Gemini 3.1 Pro": "gemini-3.1-pro-preview",
+    "Gemini 3 Flash": "gemini-3-flash-preview",
+    "Gemini 3.1 Flash-Lite": "gemini-3.1-flash-lite-preview",
 }
 
 
@@ -149,7 +149,7 @@ def _resolve_model_choice(
         model_id = questionary.text("Введи model ID:").ask()
         if not model_id:
             return config
-    return Config(**{**config.__dict__, model_field: model_id})
+    return dataclasses.replace(config, **{model_field: model_id})
 
 
 def _sync_batch_roles_with_coach(
@@ -158,23 +158,27 @@ def _sync_batch_roles_with_coach(
     previous_model: str,
 ) -> Config:
     """Keep batch pre/post reviewers aligned with coach after an explicit coach change."""
-    updates = dict(config.__dict__)
-
     if (
         config.batch_pre_provider == previous_provider
         and config.batch_pre_model == previous_model
     ):
-        updates["batch_pre_provider"] = config.coach_provider
-        updates["batch_pre_model"] = config.coach_model
+        config = dataclasses.replace(
+            config,
+            batch_pre_provider=config.coach_provider,
+            batch_pre_model=config.coach_model,
+        )
 
     if (
         config.batch_post_provider == previous_provider
         and config.batch_post_model == previous_model
     ):
-        updates["batch_post_provider"] = config.coach_provider
-        updates["batch_post_model"] = config.coach_model
+        config = dataclasses.replace(
+            config,
+            batch_post_provider=config.coach_provider,
+            batch_post_model=config.coach_model,
+        )
 
-    return Config(**updates)
+    return config
 
 
 def _questionary_select_provider_model(
@@ -184,7 +188,13 @@ def _questionary_select_provider_model(
     prompt_label: str,
     provider_choices: dict[str, str] | None = None,
 ) -> Config:
-    """Shared questionary provider/model picker."""
+    """Shared questionary provider/model picker.
+
+    Works with *any* pair of ``<role>_provider`` / ``<role>_model`` field names
+    on Config — ``getattr`` + ``dataclasses.replace`` make the function agnostic
+    to the specific field, so it supports player, coach, debug_*, ldb_*, etc.
+    without special-casing.
+    """
     choices = list((provider_choices or PROVIDER_PRESETS).keys())
     current = getattr(config, provider_field)
     choice = questionary.select(
@@ -196,20 +206,17 @@ def _questionary_select_provider_model(
 
     provider = (provider_choices or PROVIDER_PRESETS)[choice]
     next_model = getattr(config, model_field) if provider == current else ""
-    config = Config(
-        **{
-            **config.__dict__,
-            provider_field: provider,
-            model_field: "" if not provider else next_model,
-        }
+    config = dataclasses.replace(
+        config,
+        **{provider_field: provider, model_field: "" if not provider else next_model},
     )
 
     if not provider:
-        return Config(**{**config.__dict__, model_field: ""})
+        return dataclasses.replace(config, **{model_field: ""})
 
     fixed_model = _fixed_model_for_provider(provider)
     if fixed_model:
-        return Config(**{**config.__dict__, model_field: fixed_model})
+        return dataclasses.replace(config, **{model_field: fixed_model})
 
     model_choice = questionary.select(
         f"Модель для {prompt_label}:",
@@ -229,7 +236,7 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return input(f"  {prompt_label} model [sonnet]: ").strip() or "sonnet"
 
     if provider == "codex":
-        print("  Модели: default, gpt-5.4, o3, o4-mini")
+        print("  Модели: default, gpt-5.5, o3, o4-mini")
         model = input(f"  {prompt_label} model [default]: ").strip()
         return "" if model.lower() == "default" else model
 
@@ -264,10 +271,10 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return model_map.get(model, model)
 
     if provider == "gemini":
-        print("  Модели: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash")
+        print("  Модели: gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite-preview, gemini-2.5-pro")
         model = (
-            input(f"  {prompt_label} model [gemini-2.5-pro]: ").strip().lower()
-            or "gemini-2.5-pro"
+            input(f"  {prompt_label} model [gemini-3.1-pro-preview]: ").strip().lower()
+            or "gemini-3.1-pro-preview"
         )
         return model
 
@@ -302,12 +309,12 @@ def _fallback_select_provider_model(
     else:
         return config
 
-    config = Config(**{**config.__dict__, provider_field: provider})
+    config = dataclasses.replace(config, **{provider_field: provider})
     if not provider:
-        return Config(**{**config.__dict__, model_field: ""})
+        return dataclasses.replace(config, **{model_field: ""})
 
     model = _fallback_prompt_model(provider, prompt_label)
-    return Config(**{**config.__dict__, model_field: model})
+    return dataclasses.replace(config, **{model_field: model})
 
 
 def _fallback_effective_slot_label(
@@ -361,6 +368,9 @@ def _questionary_menu(config: Config) -> Config | None:
         judge_display = _provider_model_label(judge_provider, judge_model)
         choices = [
             questionary.Choice("▶   Запустить", value="start"),
+            questionary.Separator("─── инструменты ─────────────────────────"),
+            questionary.Choice("🧪  Run LDB", value="run_ldb"),
+            questionary.Choice("⚙   LDB settings →", value="ldb_settings"),
             questionary.Separator("─── провайдеры ──────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
@@ -408,8 +418,14 @@ def _questionary_menu(config: Config) -> Config | None:
             except OSError:
                 pass
             return config
-        if answer == "start_debug":
-            config = run_debugger_menu(config)
+        if answer == "run_ldb":
+            return dataclasses.replace(config, ldb_run_requested=True)
+        if answer == "ldb_settings":
+            result = run_ldb_menu(config)
+            if result is not None and result.ldb_run_requested:
+                return result
+            if result is not None:
+                config = result
             continue
 
         config = _edit_setting_questionary(config, answer)
@@ -460,12 +476,12 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             f"Макс. попыток на шаг (текущее: {config.max_turns}):"
         ).ask()
         if val and val.isdigit():
-            config = Config(**{**config.__dict__, "max_turns": int(val)})
+            config = dataclasses.replace(config, max_turns=int(val))
 
     elif setting == "plan_file":
         val = questionary.text(f"Файл плана (текущий: {config.plan_file}):").ask()
         if val:
-            config = Config(**{**config.__dict__, "plan_file": val})
+            config = dataclasses.replace(config, plan_file=val)
 
     elif setting == "batch_judge":
         config = _questionary_select_provider_model(
@@ -488,15 +504,13 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             choices=choices,
         ).ask()
         if val == "auto":
-            config = Config(
-                **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
-            )
+            config = dataclasses.replace(config, context_limit=_DEFAULT_CONTEXT_LIMIT)
         elif val == "custom":
             raw = questionary.text("Лимит в токенах:").ask()
             if raw and raw.isdigit():
-                config = Config(**{**config.__dict__, "context_limit": int(raw)})
+                config = dataclasses.replace(config, context_limit=int(raw))
         elif val and val.isdigit():
-            config = Config(**{**config.__dict__, "context_limit": int(val)})
+            config = dataclasses.replace(config, context_limit=int(val))
 
     return config
 
@@ -543,6 +557,8 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [1] Файл плана:    {config.plan_file}")
         print(f"  [2] Макс. попыток: {config.max_turns}")
         print(f"  [3] Context Limit: {_format_context_limit(config.context_limit)}")
+        print(f"  [l] Run LDB")
+        print(f"  [d] LDB settings →")
         print(f"  [Enter] Запустить (сохраняет настройки)")
         print(f"  [q] Выход\n")
 
@@ -581,14 +597,20 @@ def _fallback_menu(config: Config) -> Config | None:
             config = _fallback_select_provider_model(
                 config, "batch_judge_provider", "batch_judge_model", "Judge"
             )
+        elif answer == "l":
+            return dataclasses.replace(config, ldb_run_requested=True)
+        elif answer == "d":
+            result = _fallback_ldb_menu(config)
+            if result is not None:
+                config = result
         elif answer == "1":
             val = input(f"  Файл [{config.plan_file}]: ").strip()
             if val:
-                config = Config(**{**config.__dict__, "plan_file": val})
+                config = dataclasses.replace(config, plan_file=val)
         elif answer == "2":
             val = input(f"  Макс. попыток [{config.max_turns}]: ").strip()
             if val.isdigit():
-                config = Config(**{**config.__dict__, "max_turns": int(val)})
+                config = dataclasses.replace(config, max_turns=int(val))
         elif answer == "3":
             print("  [a] Авто  [1] 200K  [2] 500K  [3] 1M  [4] Вручную")
             choice = input("  › ").strip().lower()
@@ -597,179 +619,17 @@ def _fallback_menu(config: Config) -> Config | None:
                     **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
                 )
             elif choice == "1":
-                config = Config(**{**config.__dict__, "context_limit": 200_000})
+                config = dataclasses.replace(config, context_limit=200_000)
             elif choice == "2":
-                config = Config(**{**config.__dict__, "context_limit": 500_000})
+                config = dataclasses.replace(config, context_limit=500_000)
             elif choice == "3":
-                config = Config(**{**config.__dict__, "context_limit": 1_000_000})
+                config = dataclasses.replace(config, context_limit=1_000_000)
             elif choice == "4":
                 raw = input("  Лимит в токенах: ").strip()
                 if raw.isdigit():
-                    config = Config(**{**config.__dict__, "context_limit": int(raw)})
+                    config = dataclasses.replace(config, context_limit=int(raw))
 
         print()
-
-
-# ── Debugger menu ─────────────────────────────────────────────────────────────
-
-DEBUG_INTENSITY_PRESETS = {
-    "Low  (1 pass — structural analysis)": "low",
-    "Medium (2 passes — structural + anchor)": "medium",
-    "High  (5 passes — all audits)": "high",
-}
-
-DEBUG_LIMIT_PRESETS = {
-    "Infinite": ("infinite", 0),
-    "5 iterations": ("iterations", 5),
-    "10 iterations": ("iterations", 10),
-    "20 iterations": ("iterations", 20),
-    "10 minutes": ("time", 10),
-    "30 minutes": ("time", 30),
-    "60 minutes": ("time", 60),
-}
-
-
-def run_debugger_menu(config: "Config") -> "Config":
-    """Interactive menu for the debugger command.
-
-    Returns updated config with debug_* fields set.
-    """
-    if not QUESTIONARY_AVAILABLE:
-        return _fallback_debugger_menu(config)
-
-    while True:
-        player_display = _provider_model_label(
-            config.debug_player_provider, config.debug_player_model
-        )
-        tester_display = _provider_model_label(
-            config.debug_tester_provider, config.debug_tester_model
-        )
-        fixer_display = _provider_model_label(
-            config.debug_fixer_provider, config.debug_fixer_model
-        )
-        synthesizer_display = _provider_model_label(
-            config.debug_synthesizer_provider, config.debug_synthesizer_model
-        )
-
-        intensity_label = next(
-            (
-                k
-                for k, v in DEBUG_INTENSITY_PRESETS.items()
-                if v == config.debug_intensity
-            ),
-            config.debug_intensity,
-        )
-        limit_label = next(
-            (
-                k
-                for k, (m, v) in DEBUG_LIMIT_PRESETS.items()
-                if m == config.debug_limit_mode and v == config.debug_limit_value
-            ),
-            f"{config.debug_limit_mode}/{config.debug_limit_value}",
-        )
-
-        choices = [
-            questionary.Choice("▶   Запустить Debugger", value="start"),
-            questionary.Separator("─── агенты ──────────────────────────────"),
-            questionary.Choice(
-                f"    Player (ищет баги):       {player_display}", value="player"
-            ),
-            questionary.Choice(
-                f"    Tester (пишет тесты):     {tester_display}", value="tester"
-            ),
-            questionary.Choice(
-                f"    Fixer (чинит баги):       {fixer_display}", value="fixer"
-            ),
-            questionary.Choice(
-                f"    Synthesizer (входы):      {synthesizer_display}",
-                value="synthesizer",
-            ),
-            questionary.Separator("─── параметры ───────────────────────────"),
-            questionary.Choice(
-                f"    Интенсивность:        {intensity_label}", value="intensity"
-            ),
-            questionary.Choice(
-                f"    Лимит:                {limit_label}", value="limit"
-            ),
-            questionary.Separator("─────────────────────────────────────────"),
-            questionary.Choice("←   Назад", value="back"),
-        ]
-
-        answer = questionary.select(
-            "🔍 Debugger — настройка  (↑↓ выбор, Enter)",
-            choices=choices,
-            use_shortcuts=False,
-        ).ask()
-
-        if answer is None or answer == "back":
-            return config
-        if answer == "start":
-            return config
-
-        if answer == "player":
-            config = _questionary_select_provider_model(
-                config, "debug_player_provider", "debug_player_model", "Player"
-            )
-        elif answer == "tester":
-            config = _questionary_select_provider_model(
-                config, "debug_tester_provider", "debug_tester_model", "Tester"
-            )
-        elif answer == "fixer":
-            config = _questionary_select_provider_model(
-                config, "debug_fixer_provider", "debug_fixer_model", "Fixer"
-            )
-        elif answer == "synthesizer":
-            config = _questionary_select_provider_model(
-                config,
-                "debug_synthesizer_provider",
-                "debug_synthesizer_model",
-                "Synthesizer",
-            )
-        elif answer == "intensity":
-            choice = questionary.select(
-                "Интенсивность:",
-                choices=list(DEBUG_INTENSITY_PRESETS.keys()),
-            ).ask()
-            if choice:
-                config = Config(
-                    **{
-                        **config.__dict__,
-                        "debug_intensity": DEBUG_INTENSITY_PRESETS[choice],
-                    }
-                )
-        elif answer == "limit":
-            choice = questionary.select(
-                "Лимит:",
-                choices=list(DEBUG_LIMIT_PRESETS.keys()),
-            ).ask()
-            if choice:
-                mode, value = DEBUG_LIMIT_PRESETS[choice]
-                config = Config(
-                    **{
-                        **config.__dict__,
-                        "debug_limit_mode": mode,
-                        "debug_limit_value": value,
-                    }
-                )
-
-
-def _fallback_debugger_menu(config: "Config") -> "Config":
-    """Plain-text fallback for debugger menu when questionary is not available."""
-    print("\n🔍 Debugger — настройка")
-    print(f"  Player:       {config.debug_player_provider}")
-    print(f"  Tester:       {config.debug_tester_provider}")
-    print(f"  Fixer:        {config.debug_fixer_provider}")
-    print(f"  Synthesizer:  {config.debug_synthesizer_provider}")
-    print(f"  Intensity: {config.debug_intensity}")
-    print(f"  Limit:     {config.debug_limit_mode}/{config.debug_limit_value}")
-    print("\n  (установи questionary для интерактивного меню: pip install questionary)")
-    print("  Нажми Enter для продолжения, q для выхода")
-    answer = input("  › ").strip().lower()
-    if answer == "q":
-        import sys
-
-        sys.exit(0)
-    return config
 
 
 # ── LDB menu ──────────────────────────────────────────────────────────────────
@@ -788,11 +648,15 @@ def run_ldb_menu(config: "Config") -> "Config":
     import questionary
 
     while True:
-        scope_label = "ALL public functions" if config.ldb_scope_all else f"{config.ldb_target_file}::{config.ldb_target_entry}"
+        scope_summary = (
+            "every public function"
+            if config.ldb_scope_all
+            else f"functions changed vs {config.ldb_diff_base or 'HEAD'}"
+        )
         choices = [
-            questionary.Choice("▶   Run LDB", value="start"),
+            questionary.Choice(f"▶   Run LDB ({scope_summary})", value="start"),
             questionary.Separator("─── Target ─────────────────────"),
-            questionary.Choice(f"    Scope:  {scope_label}", value="scope"),
+            questionary.Choice(f"    Scope:  {scope_summary}  (toggle)", value="scope"),
             questionary.Choice(f"    Test:   {config.ldb_test_input or '(LLM-synthesized)'}", value="test"),
             questionary.Separator("─── Pipeline ───────────────────"),
             questionary.Choice(f"    Mode:   {config.ldb_mode}", value="mode"),
@@ -808,20 +672,9 @@ def run_ldb_menu(config: "Config") -> "Config":
         if ans in (None, "back"):
             return None
         if ans == "start":
-            return config
+            return dataclasses.replace(config, ldb_run_requested=True)
         if ans == "scope":
-            scope_choice = questionary.select(
-                "Scope:",
-                choices=["Single function (--file --entry)", "All public functions (--all)"],
-            ).ask()
-            if scope_choice and scope_choice.startswith("All"):
-                config = dataclasses.replace(config, ldb_scope_all=True)
-            elif scope_choice:
-                f = questionary.text("Path to .py file:", default=config.ldb_target_file).ask() or ""
-                e = questionary.text("Function name:", default=config.ldb_target_entry).ask() or ""
-                config = dataclasses.replace(config,
-                                   ldb_scope_all=False,
-                                   ldb_target_file=f, ldb_target_entry=e)
+            config = dataclasses.replace(config, ldb_scope_all=not config.ldb_scope_all)
         elif ans == "test":
             v = questionary.text("Explicit assert (empty = LLM synthesize):", default=config.ldb_test_input).ask()
             config = dataclasses.replace(config, ldb_test_input=v or "")
@@ -841,31 +694,26 @@ def _fallback_ldb_menu(config: "Config") -> "Config":
     """
     print("\n🧪 LDB — settings (questionary not installed, plain text mode)")
     while True:
-        scope = "ALL" if config.ldb_scope_all else f"{config.ldb_target_file}::{config.ldb_target_entry}"
-        print(f"  [1] Scope:    {scope}")
+        scope_label = (
+            "every public function"
+            if config.ldb_scope_all
+            else f"functions changed vs {config.ldb_diff_base or 'HEAD'}"
+        )
+        print(f"  [1] Scope:    {scope_label}  (toggle)")
         print(f"  [2] Test:     {config.ldb_test_input or '(LLM-synthesized)'}")
         print(f"  [3] Mode:     {config.ldb_mode}")
         print(f"  [4] Input  agent: {config.ldb_input_provider}/{config.ldb_input_model or 'default'}")
         print(f"  [5] Player agent: {config.ldb_player_provider}/{config.ldb_player_model or 'default'}")
         print(f"  [6] Tester agent: {config.ldb_tester_provider}/{config.ldb_tester_model or 'default'}")
         print(f"  [7] Fixer  agent: {config.ldb_fixer_provider}/{config.ldb_fixer_model or 'default'}")
-        print(f"  [Enter] Run    [q] Quit")
+        print(f"  [Enter] Run ({scope_label})    [q] Quit")
         ans = input("  › ").strip().lower()
         if ans == "":
-            return config
+            return dataclasses.replace(config, ldb_run_requested=True)
         if ans == "q":
             return None
         if ans == "1":
-            mode = input("  Scope (s=single / a=all): ").strip().lower()
-            if mode == "a":
-                config = dataclasses.replace(config, ldb_scope_all=True)
-            elif mode == "s":
-                f = input("  File path: ").strip()
-                e = input("  Entry function: ").strip()
-                config = dataclasses.replace(
-                    config, ldb_scope_all=False,
-                    ldb_target_file=f, ldb_target_entry=e,
-                )
+            config = dataclasses.replace(config, ldb_scope_all=not config.ldb_scope_all)
         elif ans == "2":
             v = input("  Explicit assert (empty = synthesize): ").strip()
             config = dataclasses.replace(config, ldb_test_input=v)

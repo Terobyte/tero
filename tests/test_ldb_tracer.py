@@ -31,37 +31,37 @@ def sum_list(items):
 
 class TestTraceFunctionBasic:
     def test_simple_function_records_blocks(self):
-        traces = trace_function(SIMPLE_FUNC, {"a": 1, "b": 2}, "add")
+        traces = trace_function(source=SIMPLE_FUNC, test={"a": 1, "b": 2}, entry="add")
         assert len(traces) > 0
         assert all(isinstance(t, BlockTrace) for t in traces)
         assert all(t.hit_count > 0 for t in traces)
 
     def test_lines_hit_populated(self):
-        traces = trace_function(SIMPLE_FUNC, {"a": 1, "b": 2}, "add")
+        traces = trace_function(source=SIMPLE_FUNC, test={"a": 1, "b": 2}, entry="add")
         all_lines = []
         for t in traces:
             all_lines.extend(t.lines_hit)
         assert len(all_lines) >= 2
 
     def test_visitation_order_no_duplicates(self):
-        traces = trace_function(SIMPLE_FUNC, {"a": 1, "b": 2}, "add")
+        traces = trace_function(source=SIMPLE_FUNC, test={"a": 1, "b": 2}, entry="add")
         block_ids = [t.block_id for t in traces]
         assert block_ids == list(dict.fromkeys(block_ids))
 
 
 class TestTraceFunctionBranch:
     def test_negative_input_visits_negative_branch(self):
-        traces = trace_function(BRANCH_FUNC, {"x": -5}, "abs_val")
+        traces = trace_function(source=BRANCH_FUNC, test={"x": -5}, entry="abs_val")
         assert len(traces) >= 1
         assert all(t.hit_count > 0 for t in traces)
 
     def test_positive_input_visits_positive_branch(self):
-        traces = trace_function(BRANCH_FUNC, {"x": 5}, "abs_val")
+        traces = trace_function(source=BRANCH_FUNC, test={"x": 5}, entry="abs_val")
         assert len(traces) >= 1
 
     def test_different_inputs_visit_different_blocks(self):
-        traces_neg = trace_function(BRANCH_FUNC, {"x": -5}, "abs_val")
-        traces_pos = trace_function(BRANCH_FUNC, {"x": 5}, "abs_val")
+        traces_neg = trace_function(source=BRANCH_FUNC, test={"x": -5}, entry="abs_val")
+        traces_pos = trace_function(source=BRANCH_FUNC, test={"x": 5}, entry="abs_val")
         ids_neg = {t.block_id for t in traces_neg}
         ids_pos = {t.block_id for t in traces_pos}
         assert ids_neg != ids_pos
@@ -69,23 +69,23 @@ class TestTraceFunctionBranch:
 
 class TestTraceFunctionLoop:
     def test_loop_body_hit_multiple_times(self):
-        traces = trace_function(LOOP_FUNC, {"items": [1, 2, 3]}, "sum_list")
+        traces = trace_function(source=LOOP_FUNC, test={"items": [1, 2, 3]}, entry="sum_list")
         assert len(traces) > 0
         loop_traces = [t for t in traces if t.hit_count > 1]
         assert len(loop_traces) >= 1
 
     def test_empty_list_no_loop_hits(self):
-        traces = trace_function(LOOP_FUNC, {"items": []}, "sum_list")
+        traces = trace_function(source=LOOP_FUNC, test={"items": []}, entry="sum_list")
         assert len(traces) > 0
 
 
 class TestTraceFunctionTestInput:
     def test_string_test_code(self):
-        traces = trace_function(SIMPLE_FUNC, "result = add(3, 4)", "add")
+        traces = trace_function(source=SIMPLE_FUNC, test="result = add(3, 4)", entry="add")
         assert len(traces) > 0
 
     def test_callable_test(self):
-        traces = trace_function(SIMPLE_FUNC, lambda f: f(10, 20), "add")
+        traces = trace_function(source=SIMPLE_FUNC, test=lambda f: f(10, 20), entry="add")
         assert len(traces) > 0
 
     def test_none_test_calls_no_args(self):
@@ -93,7 +93,7 @@ class TestTraceFunctionTestInput:
 def greet():
     return "hello"
 """
-        traces = trace_function(no_arg, None, "greet")
+        traces = trace_function(source=no_arg, test=None, entry="greet")
         assert len(traces) > 0
 
     def test_empty_dict_test(self):
@@ -101,14 +101,14 @@ def greet():
 def greet():
     return "hello"
 """
-        traces = trace_function(no_arg, {}, "greet")
+        traces = trace_function(source=no_arg, test={}, entry="greet")
         assert len(traces) > 0
 
 
 class TestTraceFunctionErrors:
     def test_function_not_found_raises(self):
         with pytest.raises(ValueError, match="not found"):
-            trace_function("def other(): pass", {}, "nonexistent")
+            trace_function(source="def other(): pass", test={}, entry="nonexistent")
 
 
 # ------------------------------------------------------------------ #

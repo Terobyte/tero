@@ -13,21 +13,6 @@ from unittest.mock import MagicMock, patch
 # ═══════════════════════════════════════════════════════════════════════
 
 
-# ── FP-11: _fallback_menu no return after 'd' ──────────────────────────
-
-
-class TestFallbackMenuNoBug:
-    """FP-11: Suspected fall-through after 'd' selection.
-    run_debugger_menu is a separate function, so fall-through is unreachable."""
-
-    def test_d_handler_calls_sys_exit(self):
-        import inspect
-        from src.menu import run_debugger_menu
-
-        source = inspect.getsource(run_debugger_menu)
-        assert "sys.exit" in source or "run_debugger_menu" in source
-
-
 # ── FP-19: Picker cancel timer leak on ESC ─────────────────────────────
 
 

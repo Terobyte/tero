@@ -249,15 +249,6 @@ def test_orchestrator_run_persists_run_metadata(monkeypatch, tmp_path):
     assert state["state"] == "completed"
 
 
-def test_allocate_section_budgets_never_exceeds_total_budget():
-    from src.debugger_context import _allocate_section_budgets
-
-    budgets = _allocate_section_budgets([100, 100, 100], 2)
-
-    assert sum(budgets) <= 2
-    assert budgets.count(1) == 2
-
-
 def test_worktree_git_diff_handles_git_file(monkeypatch, tmp_path):
     from src.worktree import WorktreeManager
 

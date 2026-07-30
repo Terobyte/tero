@@ -12,8 +12,6 @@ import g3
 from src.batch_executor import has_required_completion_report, parse_completed_steps
 from src.bug_detector import BugDetector
 from src.config import _load_yaml
-from src.debugger import Debugger
-from src.debugger_bugs import BugEntry
 from src.plan_tracker import PlanItem, Phase
 
 
@@ -97,53 +95,3 @@ def test_load_yaml_ignores_non_mapping_roots(tmp_path):
     assert _load_yaml(config_path) == {}
 
 
-def test_g3_main_dispatches_debug_subcommand(monkeypatch):
-    parser = SimpleNamespace(
-        parse_args=lambda: SimpleNamespace(command="debug"),
-    )
-    called = {}
-
-    monkeypatch.setattr(g3, "build_parser", lambda: parser)
-    monkeypatch.setattr(g3, "run_debug", lambda args: called.setdefault("args", args))
-
-    g3.main()
-
-    assert called["args"].command == "debug"
-
-
-def test_debugger_does_not_confirm_or_fix_without_parseable_proof(tmp_path):
-    debugger = Debugger.__new__(Debugger)
-    debugger.working_dir = str(tmp_path)
-
-    assert debugger._parse_tester_results("not json at all") == {}
-
-    bug_a = BugEntry(
-        id=1,
-        file="a.py",
-        line=1,
-        description="bug a",
-        severity="high",
-        status="confirmed",
-        test_file="tests/test_a.py",
-    )
-    bug_b = BugEntry(
-        id=2,
-        file="b.py",
-        line=2,
-        description="bug b",
-        severity="high",
-        status="confirmed",
-        test_file="tests/test_b.py",
-    )
-
-    def fake_pytest(cmd, **kwargs):
-        if "test_a.py" in cmd[3]:
-            return subprocess.CompletedProcess(cmd, 0, ".", "")
-        return subprocess.CompletedProcess(cmd, 1, "F", "")
-
-    with patch("src.debugger.subprocess.run", side_effect=fake_pytest):
-        fixed_count = debugger._verify_confirmed_fixes([bug_a, bug_b])
-
-    assert fixed_count == 1
-    assert bug_a.status == "fixed"
-    assert bug_b.status == "confirmed"

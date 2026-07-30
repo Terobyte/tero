@@ -649,17 +649,15 @@ def test_run_with_continuation_with_provider_override_skips_router(tmp_path):
     override_provider = MagicMock()
     fake_result = MagicMock()
 
-    turn_runner_mock = MagicMock()
-    turn_runner_mock.run_with_continuation = AsyncMock(return_value=fake_result)
-
     router_mock = MagicMock()
     router_mock.provider_for.side_effect = ValueError("Must not be called")
 
     cfg = Config(working_dir=str(tmp_path))
     session = object.__new__(CoachPlayerSession)
     session.config = cfg
-    session._turn_runner = turn_runner_mock
     session.router = router_mock
+    session._interrupted = False
+    session._run_turn = AsyncMock(return_value=fake_result)
 
     result = asyncio.run(
         session._run_with_continuation(
@@ -674,5 +672,5 @@ def test_run_with_continuation_with_provider_override_skips_router(tmp_path):
 
     assert result == fake_result
     router_mock.provider_for.assert_not_called()
-    _, call_kwargs = turn_runner_mock.run_with_continuation.call_args
-    assert call_kwargs["provider"] is override_provider
+    _, call_kwargs = session._run_turn.call_args
+    assert call_kwargs["provider_override"] is override_provider
