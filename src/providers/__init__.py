@@ -34,6 +34,12 @@ def create_provider(
 
     Raises:
         ProviderError: If provider type is unknown
+
+    NOTE: Config keys like ``default_model`` are *provider-specific*, not universal.
+    Not every provider reads ``default_model`` from the config dict — some derive it
+    from the provider type (e.g. Codex defaults to ``gpt-5.5``, ZAI to ``glm-5.1``).
+    When extending ``create_provider()``, check the target Config dataclass for the
+    actual field names rather than assuming ``default_model`` is always accepted.
     """
     provider_config = provider_config or {}
 
@@ -82,7 +88,7 @@ def create_provider(
     if provider_type == "gemini":
         gemini_cfg = GeminiConfig(
             command=provider_config.get("command", "gemini"),
-            default_model=provider_config.get("default_model", "gemini-2.5-pro"),
+            default_model=provider_config.get("default_model", "gemini-3.1-pro-preview"),
             display_name=provider_config.get("display_name", "Gemini"),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -95,7 +101,7 @@ def create_provider(
         codex_cfg = CodexConfig(
             command=provider_config.get("command", "codex"),
             default_model=provider_config.get(
-                "default_model", provider_config.get("model", "gpt-5.4")
+                "default_model", provider_config.get("model", "gpt-5.5")
             ),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S

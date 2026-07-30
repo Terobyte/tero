@@ -243,7 +243,7 @@ MODEL_PRESETS: list[tuple[str, str, str]] = [
     ("GLM-5.1", "zai", "glm-5.1"),
     ("Sonnet", "claude", "claude-sonnet-4-6"),
     ("Opus", "claude", "claude-opus-4-6"),
-    ("GPT-5.4", "codex", "gpt-5.4"),
+    ("GPT-5.5", "codex", "gpt-5.5"),
     ("o3", "codex", "o3"),
     ("o4-mini", "codex", "o4-mini"),
     ("MIMO-Pro", "opencode", "opencode/mimo-v2-pro-free"),

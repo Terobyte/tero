@@ -7,8 +7,8 @@ Two APIs:
       # result: TraceResult(kind, blocks, error)
       # blocks[i].rendered — lines with variable-value annotations
 
-  **Legacy API** — positional args only, no ``timeout``, returns list[BlockTrace]:
-      traces = trace_function(prog, {"a": 1}, "fn")
+  **Legacy API** — keyword args (no ``timeout``), returns list[BlockTrace]:
+      traces = trace_function(source=prog, test={"a": 1}, entry="fn")
       # traces[i].hit_count, traces[i].lines_hit — in-process sys.settrace data
 
 The new API uses subprocess isolation (``python -m trace -t`` + instrumented runner)
@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import ast
 import os
-import random
 import re
+import secrets
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -203,21 +203,26 @@ def _get_trace(
     Named ``_ldb_t.py.XXXX`` so Python's trace module derives module name
     ``_ldb_t.py`` (via ``os.path.splitext``), making the mark predictable.
     """
-    rid = random.randint(0, 100_000)
+    rid = secrets.token_hex(8)
     fname = str(trace_dir / f"_ldb_t.py.{rid}")
     try:
         with open(fname, "w") as fh:
             fh.write(exec_prog)
 
         try:
-            res = subprocess.run(
+            with subprocess.Popen(
                 [sys.executable, "-m", "trace", "-t", fname],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return "*timeout*"
+            ) as proc:
+                try:
+                    stdout_data, _ = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    return "*timeout*"
+                except Exception as exc:
+                    return f"*execution fail*{exc}"
         except Exception as exc:
             return f"*execution fail*{exc}"
     finally:
@@ -226,7 +231,7 @@ def _get_trace(
         except FileNotFoundError:
             pass
 
-    trace_out = res.stdout.decode("utf-8", errors="replace")
+    trace_out = stdout_data.decode("utf-8", errors="replace")
 
     # Python's trace module derives module name via os.path.splitext(basename)[0].
     # The mark is emitted with a leading space: " --- modulename: ..."
@@ -258,21 +263,26 @@ def _collect_runtime_value(
     value_prof_prog: str, trace_dir: Path, timeout: int
 ) -> str:
     """Run value_prof_prog as a script and capture stdout."""
-    rid = random.randint(0, 100_000)
+    rid = secrets.token_hex(8)
     fname = str(trace_dir / f"_ldb_vp.py.{rid}")
     try:
         with open(fname, "w") as fh:
             fh.write(value_prof_prog)
 
         try:
-            res = subprocess.run(
+            with subprocess.Popen(
                 [sys.executable, fname],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return "*timeout*"
+            ) as proc:
+                try:
+                    stdout_data, stderr_data = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    return "*timeout*"
+                except Exception as exc:
+                    return f"*execution fail*{exc}"
         except Exception as exc:
             return f"*execution fail*{exc}"
     finally:
@@ -281,11 +291,11 @@ def _collect_runtime_value(
         except FileNotFoundError:
             pass
 
-    stderr = res.stderr.decode("utf-8", errors="replace")
+    stderr = stderr_data.decode("utf-8", errors="replace")
     if "Traceback (most recent call last):" in stderr and "AssertionError" not in stderr:
         return f"*execution fail*{stderr[:200]}"
 
-    return res.stdout.decode("utf-8", errors="replace")
+    return stdout_data.decode("utf-8", errors="replace")
 
 
 def _get_lineno(trace_line: str) -> int:
@@ -419,7 +429,7 @@ def _trace_ldb(source: str, test: Any, entry: str, timeout: int) -> TraceResult:
     rendered_groups = _parse_runtime_value_simple_block(value_output, trace_lines)
 
     # Write trace log to .ldb-trace/ (not ../tracing_log/ as in LDB upstream)
-    log_file = trace_dir / f"trace.log.{random.randint(0, 100_000)}"
+    log_file = trace_dir / f"trace.log.{secrets.token_hex(8)}"
     try:
         log_file.write_text(
             f"Trace:\n{''.join(trace_lines[:10])}\n\nValue Profile Output:\n{value_output}"

@@ -47,3 +47,9 @@ g3/.g3/sessions/
 *.pem
 *.key
 credentials.json
+
+# ldb run traces and scratch harnesses (generated)
+.ldb-trace/
+test_agent/
+test_env/
+reproduce_*.py

@@ -85,7 +85,15 @@ class TestLdbRunnerRun:
 
     @pytest.mark.asyncio
     async def test_mode3_fixer_success_auto_commits(self, tmp_path):
-        cfg = _make_config(working_dir=str(tmp_path), ldb_mode=3)
+        # Pin a single target so the runner takes the file/entry branch
+        # rather than the new default "changed-only" git-diff scope (which
+        # would yield an empty target list inside an empty tmp_path).
+        cfg = _make_config(
+            working_dir=str(tmp_path),
+            ldb_mode=3,
+            ldb_target_file="foo.py",
+            ldb_target_entry="bar",
+        )
         runner = LdbRunner(cfg)
 
         call_count = 0
@@ -153,7 +161,12 @@ class TestLdbRunnerRun:
         report ``success=True`` — the pipeline completed its job even though
         no fixes were applied.
         """
-        cfg = _make_config(working_dir=str(tmp_path), ldb_mode=2)
+        cfg = _make_config(
+            working_dir=str(tmp_path),
+            ldb_mode=2,
+            ldb_target_file="foo.py",
+            ldb_target_entry="bar",
+        )
         runner = LdbRunner(cfg)
 
         call_count = 0
@@ -380,7 +393,7 @@ class TestRunAll:
             patch("src.ldb.runner.iter_targets", return_value=fake_targets),
             patch.object(runner, "_run_player", side_effect=fake_player),
         ):
-            result = await runner._run_all()
+            result = await runner.run()
             assert result.success is True
             assert targets_seen == ["alpha", "Beta.method"]
 
@@ -418,7 +431,7 @@ class TestRunAll:
             patch.object(runner, "_run_fixer", return_value=1),
             patch.object(runner, "_git_commit") as mock_commit,
         ):
-            result = await runner._run_all()
+            result = await runner.run()
             assert result.bugs_found == 1
             assert result.bugs_fixed == 1
             mock_commit.assert_called_once()
@@ -432,7 +445,7 @@ class TestRunAll:
             patch("src.ldb.runner.iter_targets", return_value=[]),
             patch.object(runner, "_run_player") as mock_player,
         ):
-            result = await runner._run_all()
+            result = await runner.run()
             assert result.success is True
             assert result.bugs_found == 0
             mock_player.assert_not_called()
@@ -454,7 +467,12 @@ class TestParsePlayerResponse:
         assert bug is not None
         assert bug.block_id == 1
         assert "wrong op" in bug.explanation
-        # Make sure we DIDN'T return BLOCK-2 — it's downstream
+        # Explicitly verify "only first incorrect": BLOCK-2 is also incorrect
+        # but must NOT be returned — only the FIRST wrong block is reported
+        assert "downstream" not in bug.explanation, (
+            "Must return only the FIRST incorrect block (BLOCK-1), "
+            "not the downstream BLOCK-2"
+        )
 
     def test_all_correct_returns_none(self):
         raw = '{"block": "BLOCK-0", "correct": true, "explanation": "ok"}'

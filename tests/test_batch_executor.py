@@ -209,8 +209,8 @@ class TestBuildBatchPrompt:
         assert "Already completed" in prompt
         assert "create a.py" in prompt
         assert "create b.py" in prompt
-        assert "  2. create b.py" in prompt
-        assert "Step 2 done:" in prompt
+        assert "  1. create b.py" in prompt
+        assert "Step 1 done:" in prompt
 
     def test_with_coach_feedback_shows_rejection(self):
         from src.batch_executor import build_batch_prompt

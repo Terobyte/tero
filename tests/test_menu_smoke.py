@@ -16,8 +16,6 @@ from src.config import Config
 from src.menu import (
     CLAUDE_MODEL_PRESETS,
     CODEX_MODEL_PRESETS,
-    DEBUG_INTENSITY_PRESETS,
-    DEBUG_LIMIT_PRESETS,
     FALLBACK_PROVIDER_PRESETS,
     GEMINI_MODEL_PRESETS,
     KILO_MODEL_PRESETS,
@@ -37,7 +35,6 @@ from src.menu import (
     _provider_model_label,
     _questionary_menu,
     _sync_batch_roles_with_coach,
-    run_debugger_menu,
     run_ldb_menu,
     run_settings_menu,
 )
@@ -80,9 +77,6 @@ class TestMenuModuleLoads:
     def test_run_settings_menu_exists(self):
         assert callable(run_settings_menu)
 
-    def test_run_debugger_menu_exists(self):
-        assert callable(run_debugger_menu)
-
     def test_run_ldb_menu_exists(self):
         assert callable(run_ldb_menu)
 
@@ -116,12 +110,6 @@ class TestPresetsPopulated:
 
     def test_gemini_model_presets(self):
         assert any("gemini" in v.lower() for v in GEMINI_MODEL_PRESETS.values())
-
-    def test_debug_intensity_presets(self):
-        assert set(DEBUG_INTENSITY_PRESETS.values()) == {"low", "medium", "high"}
-
-    def test_debug_limit_presets(self):
-        assert len(DEBUG_LIMIT_PRESETS) >= 3
 
     def test_ldb_mode_presets_contain_2_and_3(self):
         """LDB menu must offer Mode 2 and Mode 3."""
@@ -249,39 +237,7 @@ class TestQuestionarySettingsMenu:
         assert result is None  # quit
 
 
-# ── 6. Questionary debugger menu smoke ───────────────────────────────────────
-
-class TestQuestionaryDebuggerMenu:
-    def test_back_returns_config(self):
-        mock_q = _fake_questionary(["back"])
-        with patch("src.menu.questionary", mock_q):
-            result = run_debugger_menu(Config())
-        assert isinstance(result, Config)
-
-    def test_start_returns_config(self):
-        mock_q = _fake_questionary(["start"])
-        with patch("src.menu.questionary", mock_q):
-            result = run_debugger_menu(Config())
-        assert isinstance(result, Config)
-
-    def test_intensity_switching(self):
-        """Selecting intensity → low then back should update config."""
-        mock_q = _fake_questionary(["intensity", "Low  (1 pass — structural analysis)", "back"])
-        with patch("src.menu.questionary", mock_q):
-            result = run_debugger_menu(Config(debug_intensity="medium"))
-        assert result.debug_intensity == "low"
-
-    def test_limit_switching(self):
-        """Selecting limit → 5 iterations then back should update config."""
-        preset_key = "5 iterations"
-        mock_q = _fake_questionary(["limit", preset_key, "back"])
-        with patch("src.menu.questionary", mock_q):
-            result = run_debugger_menu(Config())
-        assert result.debug_limit_mode == "iterations"
-        assert result.debug_limit_value == 5
-
-
-# ── 7. Questionary LDB menu smoke ────────────────────────────────────────────
+# ── 6. Questionary LDB menu smoke ────────────────────────────────────────────
 
 class TestQuestionaryLdbMenu:
     def test_back_returns_none(self, monkeypatch):
@@ -316,34 +272,6 @@ class TestQuestionaryLdbMenu:
         result = run_ldb_menu(Config(ldb_mode=2))
         assert result.ldb_mode == 3
 
-    def test_scope_all_switching(self, monkeypatch):
-        """Switching scope to 'All public functions' sets ldb_scope_all=True."""
-        mock_q = _fake_questionary(
-            ["scope", "All public functions (--all)", "start"]
-        )
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_scope_all=False))
-        assert result.ldb_scope_all is True
-
-    def test_scope_single_function(self, monkeypatch):
-        """Switching scope to single function sets file and entry."""
-        mock_q = _fake_questionary(
-            [
-                "scope",
-                "Single function (--file --entry)",
-                "src/menu.py",  # file input
-                "run_ldb_menu",  # entry input
-                "start",
-            ]
-        )
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_scope_all=True))
-        assert result.ldb_scope_all is False
-        assert result.ldb_target_file == "src/menu.py"
-        assert result.ldb_target_entry == "run_ldb_menu"
-
     def test_test_input_update(self, monkeypatch):
         """Editing test input should persist the value."""
         mock_q = _fake_questionary(["test", "assert foo == bar", "start"])
@@ -351,6 +279,14 @@ class TestQuestionaryLdbMenu:
         monkeypatch.setattr("src.menu.questionary", mock_q)
         result = run_ldb_menu(Config(ldb_test_input=""))
         assert result.ldb_test_input == "assert foo == bar"
+
+    def test_scope_toggle_flips_in_place(self, monkeypatch):
+        """Picking 'scope' toggles ldb_scope_all without any extra prompt."""
+        mock_q = _fake_questionary(["scope", "start"])
+        monkeypatch.setitem(sys.modules, "questionary", mock_q)
+        monkeypatch.setattr("src.menu.questionary", mock_q)
+        result = run_ldb_menu(Config(ldb_scope_all=False))
+        assert result.ldb_scope_all is True
 
     def test_agent_provider_editing(self, monkeypatch):
         """Editing the input agent provider should update config."""
@@ -407,6 +343,7 @@ class TestFallbackLdbMenu:
         assert isinstance(result, Config)
 
     def test_mode_2_switching(self, monkeypatch):
+        # Menu indices: [1] Scope toggle, [2] Test, [3] Mode, [4-7] agents.
         answers = iter(["3", "2", ""])
         monkeypatch.setattr("builtins.input", lambda *_: next(answers))
         result = _fallback_ldb_menu(Config(ldb_mode=3))
@@ -418,25 +355,24 @@ class TestFallbackLdbMenu:
         result = _fallback_ldb_menu(Config(ldb_mode=2))
         assert result.ldb_mode == 3
 
-    def test_scope_all_switching(self, monkeypatch):
-        answers = iter(["1", "a", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_scope_all=False))
-        assert result.ldb_scope_all is True
-
-    def test_scope_single_function(self, monkeypatch):
-        answers = iter(["1", "s", "src/foo.py", "my_func", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_scope_all=True))
-        assert result.ldb_scope_all is False
-        assert result.ldb_target_file == "src/foo.py"
-        assert result.ldb_target_entry == "my_func"
-
     def test_test_input_update(self, monkeypatch):
         answers = iter(["2", "assert bar == baz", ""])
         monkeypatch.setattr("builtins.input", lambda *_: next(answers))
         result = _fallback_ldb_menu(Config(ldb_test_input=""))
         assert result.ldb_test_input == "assert bar == baz"
+
+    def test_scope_toggle_changed_to_all(self, monkeypatch):
+        """Picking [1] flips ldb_scope_all without any extra prompt."""
+        answers = iter(["1", ""])
+        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+        result = _fallback_ldb_menu(Config(ldb_scope_all=False))
+        assert result.ldb_scope_all is True
+
+    def test_scope_toggle_all_to_changed(self, monkeypatch):
+        answers = iter(["1", ""])
+        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+        result = _fallback_ldb_menu(Config(ldb_scope_all=True))
+        assert result.ldb_scope_all is False
 
 
 # ── 10. Fallback effective slot label ────────────────────────────────────────

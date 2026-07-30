@@ -108,32 +108,6 @@ class TestNormalizeSdkLike:
         assert result is None
 
 
-class TestNormalizeIntegration:
-    """Verify debugger._extract_text and feedback._extract_text_from_message use normalize_message."""
-
-    def test_debugger_extract_text_bare_string(self):
-        from src.debugger import Debugger
-
-        parts: list[str] = []
-        Debugger._extract_text("bare text message", parts)
-        assert parts == ["bare text message"]
-
-    def test_debugger_extract_text_adapted_message(self):
-        from src.debugger import Debugger
-
-        msg = AdaptedMessage(role="assistant", content=[TextBlock(text="found bug")])
-        parts: list[str] = []
-        Debugger._extract_text(msg, parts)
-        assert parts == ["found bug"]
-
-    def test_debugger_extract_text_dict_event(self):
-        from src.debugger import Debugger
-
-        event = {"type": "text", "text": "analysis result"}
-        parts: list[str] = []
-        Debugger._extract_text(event, parts)
-        assert parts == ["analysis result"]
-
     def test_feedback_extract_text_from_message(self):
         from src.feedback import _extract_text_from_message
 

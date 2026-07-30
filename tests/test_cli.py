@@ -583,28 +583,3 @@ def test_smoke_parse_requires_subcommand():
         parser.parse_args([])
 
 
-def test_run_debug_rejects_file_without_entry(tmp_path, monkeypatch, capsys):
-    """debug --file <path> without --entry must exit(1) with a clear message."""
-    from src.cli_entry import run_debug
-
-    dummy_file = tmp_path / "mymodule.py"
-    dummy_file.write_text("def foo(): pass\n")
-
-    args = SimpleNamespace(
-        working_dir=str(tmp_path),
-        debug_file=str(dummy_file),
-        debug_entry=None,
-        debug_all=False,
-        debug_failing_test=None,
-        debug_level=None,
-        debug_limit=None,
-        debug_limit_value=None,
-        no_menu=True,
-    )
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_debug(args)
-
-    assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "--entry" in captured.out

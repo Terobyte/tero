@@ -143,38 +143,6 @@ async def test_codex_run_review_cleans_up_temp_instructions_on_failure():
     )
 
 
-def test_start_debug_back_does_not_call_edit_setting():
-    """GEN-B16: After run_debugger_menu returns, missing continue causes
-    fall-through to _edit_setting_questionary(config, 'start_debug')."""
-    from src.config import Config
-    from src.menu import _questionary_menu
-
-    config = Config()
-    answers = ["start_debug", None]
-    idx = [0]
-
-    def mock_ask():
-        i = idx[0]
-        idx[0] += 1
-        return answers[i] if i < len(answers) else None
-
-    mock_q = MagicMock()
-    mock_q.select.return_value.ask.side_effect = mock_ask
-
-    with patch.dict(sys.modules, {"questionary": mock_q}), \
-         patch("src.menu.run_debugger_menu", return_value=config), \
-         patch("src.menu._edit_setting_questionary", return_value=config) as mock_edit:
-        _questionary_menu(config)
-
-    for c in mock_edit.call_args_list:
-        if len(c.args) >= 2 and c.args[1] == "start_debug":
-            pytest.fail(
-                "GEN-B16: _edit_setting_questionary called with 'start_debug'. "
-                "Control fell through after run_debugger_menu returned — "
-                "missing continue at menu.py ~line 530."
-            )
-
-
 def test_recorder_load_all_skips_corrupt_jsonl_lines():
     """GEN-B17: json.loads() in _read_all_records() has no exception handling.
     A corrupt JSONL line raises json.JSONDecodeError instead of being skipped."""

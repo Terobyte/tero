@@ -110,3 +110,18 @@ class TestIterTargets:
         names = [t.name for t in targets]
         assert "Outer.outer_method" in names
         assert "Outer.Inner.inner_method" in names
+
+    def test_skips_underscore_prefixed_files(self, tmp_path):
+        """Issue #4: only the FILE name is checked for _* prefix, not path components.
+
+        _private.py should be skipped, but subdir/_underscore/file.py should NOT
+        be skipped just because it lives under a _-prefixed directory.
+        """
+        (tmp_path / "_private.py").write_text("def secret():\n    pass\n")
+        (tmp_path / "__init__.py").write_text("def init_func():\n    pass\n")
+        (tmp_path / "public.py").write_text("def visible():\n    pass\n")
+        targets = list(iter_targets(tmp_path))
+        names = [t.name for t in targets]
+        assert "visible" in names
+        assert "secret" not in names
+        assert "init_func" not in names

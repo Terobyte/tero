@@ -195,9 +195,9 @@ class CoachPlayerSession:
         if legacy_provider_for_role is not None and not hasattr(self, "router"):
             return legacy_provider_for_role(role)
         if role == "player":
-            return self.player_provider
+            return getattr(self, "player_provider", None)
         if role == "coach":
-            return self.coach_provider
+            return getattr(self, "coach_provider", None)
         if role == "reviewer" and self.review_provider is not None:
             return self.review_provider
         return self.router.provider_for(role)
@@ -306,20 +306,50 @@ class CoachPlayerSession:
         provider_override=None,
     ) -> TurnResult:
         """Retry incomplete player outputs with a continuation prompt."""
-        provider = provider_override or self._provider_for_runtime_role(role)
-        return await self._turn_runner.run_with_continuation(
+        result = await self._run_turn(
             role=role,
             prompt=prompt,
             system_prompt=system_prompt,
             max_turns=max_turns,
             timeout_s=timeout_s,
-            provider=provider,
-            router=self.router,
-            config=self.config,
             model_override=model_override,
-            provider_override=provider,
-            interrupted_fn=lambda: self._interrupted,
+            provider_override=provider_override,
         )
+
+        if role != "player":
+            return result
+
+        max_attempts = max(0, int(getattr(self.config, "max_continuation_attempts", 0) or 0))
+        current_prompt = prompt
+
+        for attempt in range(1, max_attempts + 1):
+            if self._interrupted:
+                return result
+            if self._player_output_complete(result.text, current_prompt):
+                return result
+
+            streaming_ui.print_continuation_started(role, attempt, max_attempts)
+            provider = provider_override or self._provider_for_runtime_role(role)
+            if not hasattr(self, "_turn_runner"):
+                self._turn_runner = AgentTurnRunner(verbose=getattr(self.config, "verbose", False))
+            current_prompt = await self._turn_runner._build_continuation_retry_prompt(
+                role=role,
+                base_prompt=current_prompt,
+                last_result=result,
+                provider=provider,
+                config=self.config,
+            )
+            result = await self._run_turn(
+                role=role,
+                prompt=current_prompt,
+                system_prompt=system_prompt,
+                max_turns=max_turns,
+                timeout_s=timeout_s,
+                model_override=model_override,
+                provider_override=provider_override,
+            )
+
+        return result
 
     @staticmethod
     def _build_missing_player_report_feedback(step_text: str) -> Feedback:

@@ -45,6 +45,8 @@ class ClaudeNativeProvider:
 
     def __init__(self, config: ClaudeNativeConfig | None = None):
         self.config = config or ClaudeNativeConfig()
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
 
     async def run(
         self,
@@ -57,6 +59,8 @@ class ClaudeNativeProvider:
         compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
     ):
         """Run the native Claude CLI and yield JSON events."""
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
         cmd = self._build_command(
             model, max_turns, system_prompt, context_limit, compact_threshold
         )
@@ -72,6 +76,7 @@ class ClaudeNativeProvider:
                             f"{(event.stderr or b'').decode()}"
                         )
                 else:
+                    self._capture_usage(event)
                     yield event
         finally:
             await _gen.aclose()
@@ -109,6 +114,26 @@ class ClaudeNativeProvider:
         # (Claude Code uses its own default path logic when the var is absent)
         env.pop("CLAUDE_CONFIG_DIR", None)
         return env
+
+    def _capture_usage(self, event) -> None:
+        """Best-effort token accounting from Claude stream-json result events."""
+        if not isinstance(event, dict):
+            return
+        usage = event.get("usage") or event.get("stats") or {}
+        if not isinstance(usage, dict):
+            return
+        self._last_input_tokens = int(
+            usage.get("input_tokens")
+            or usage.get("prompt_tokens")
+            or self._last_input_tokens
+            or 0
+        )
+        self._last_output_tokens = int(
+            usage.get("output_tokens")
+            or usage.get("completion_tokens")
+            or self._last_output_tokens
+            or 0
+        )
 
     def _build_command(
         self,

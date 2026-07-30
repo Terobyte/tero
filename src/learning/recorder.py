@@ -2,6 +2,8 @@
 
 import fcntl
 import json
+import os
+import tempfile
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -157,6 +159,8 @@ class RunRecorder:
             return []
         if limit is None:
             return list(reversed(records))
+        if limit <= 0:
+            return []
         return list(reversed(records[-limit:]))
 
     def load_all(self) -> list[RunRecord]:
@@ -207,11 +211,22 @@ class RunRecorder:
                     break
 
                 if updated:
-                    f.seek(0)
-                    f.truncate()
-                    for record in records:
-                        f.write(json.dumps(asdict(record)) + "\n")
-                    f.flush()
+                    tmp_name = None
+                    try:
+                        with tempfile.NamedTemporaryFile(
+                            "w",
+                            dir=self.knowledge_dir,
+                            delete=False,
+                        ) as tmp:
+                            tmp_name = tmp.name
+                            for record in records:
+                                tmp.write(json.dumps(asdict(record)) + "\n")
+                            tmp.flush()
+                            os.fsync(tmp.fileno())
+                        os.replace(tmp_name, self.runs_file)
+                    finally:
+                        if tmp_name and os.path.exists(tmp_name):
+                            os.unlink(tmp_name)
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
 

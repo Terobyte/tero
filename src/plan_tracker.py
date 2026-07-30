@@ -38,6 +38,10 @@ class PlanItem:
         _PLAN_ITEM_CACHE[key] = inst
         return inst
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.roles, tuple):
+            object.__setattr__(self, "roles", tuple(self.roles))
+
 
 # --- Batch execution types ---
 
@@ -72,6 +76,7 @@ class Phase:
     status: str = "pending"
     attempts: int = 0
     display_name: str = ""
+    parallel: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,6 +328,10 @@ def auto_group_phases(items: list["PlanItem"]) -> list["Phase"]:
 
     if current_batch:
         phases.append(_make_phase(current_type, current_batch))
+
+    # Phase 1 (create) is parallel-safe: its failure does not block later phases.
+    if phases:
+        phases[0].parallel = True
 
     return phases
 

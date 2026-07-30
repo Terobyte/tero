@@ -85,9 +85,7 @@ def test_audit2_async_negative(bug_id: str, module: str, func: str) -> None:
     _run_async_module_func(module, func)
 
 
-_AUDIT2_SYNC: list[tuple[str, str, str]] = [
-    ("GEN-B16", "tests.test_new_bugs_general", "test_start_debug_back_does_not_call_edit_setting"),
-]
+_AUDIT2_SYNC: list[tuple[str, str, str]] = []
 
 
 @pytest.mark.parametrize(

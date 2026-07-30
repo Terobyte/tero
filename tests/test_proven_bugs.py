@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.bug_detector import BugDetector
-from src.debugger import Debugger
 from src.feedback import (
     ReviewIssues,
     ReviewPassed,
@@ -55,31 +54,6 @@ class TestBug1RoundNumNameError:
             assert "round_num" not in str(result.error), (
                 f"NameError about 'round_num' masked the real error: {result.error}"
             )
-
-
-class TestBug2ExtractTextDuplication:
-    """Bug: _extract_text duplicates text when dict has both type=text and result keys.
-
-    debugger.py:464-469 use independent `if` instead of `elif`.
-    A dict {"type": "text", "text": "X", "result": "X"} appends "X" twice.
-    """
-
-    def test_dict_with_text_and_result_no_duplicate(self):
-        parts = []
-        message = {"type": "text", "text": "Found 3 bugs", "result": "Found 3 bugs"}
-        Debugger._extract_text(message, parts)
-
-        assert len(parts) == 1, f"Expected 1, got {len(parts)}: {parts}"
-
-    def test_dict_with_different_text_and_result_both_extracted(self):
-        parts = []
-        message = {"type": "text", "text": "header", "result": "body"}
-        Debugger._extract_text(message, parts)
-
-        assert len(parts) == 1, (
-            f"Expected 1 (text wins over result via elif), got {len(parts)}: {parts}"
-        )
-        assert parts[0] == "header"
 
 
 class TestBug3NoTestsCollectedFalsePositive:

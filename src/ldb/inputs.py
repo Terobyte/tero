@@ -107,7 +107,12 @@ async def _collect_text(
     max_turns: int = 1,
     model: str = "",
 ) -> str:
-    """Collect full text output from a provider call."""
+    """Collect full text output from a provider call.
+
+    ToolUseBlock messages are intentionally skipped — only text content is
+    collected via ``get_text_content()``.  Tool calls are side-effects that
+    should not appear in the synthesised output.
+    """
     from src.config import get_effective_context_limit
 
     resolved_model = (
@@ -151,17 +156,17 @@ def _parse_entry_lines(raw: str) -> list[str]:
 def parse_inputs_response(raw: str, entry: str) -> list[str]:
     """Parse LLM response text to extract concrete ``entry(...)`` call expressions.
 
-    Looks first for backtick-wrapped expressions (`` `entry(...)` ``), then
-    falls back to finding bare ``entry(...)`` patterns in the text.
+    Supports one level of nested parens in arguments (e.g. ``entry((1, 2), fn(x))``).
+    Looks first for backtick-wrapped expressions, then bare patterns.
     """
     escaped = re.escape(entry)
-    # 1. Backtick-wrapped expressions: `entry(...)` or `` `entry(...)` ``
-    backtick_pattern = rf"`({escaped}\([^)]*\))`"
+    # Allow one level of nested parens: outer args may contain inner (...)
+    paren_content = r"[^()]*(?:\([^()]*\)[^()]*)*"
+    backtick_pattern = rf"`({escaped}\({paren_content}\))`"
     backtick_matches = re.findall(backtick_pattern, raw)
     if backtick_matches:
         return backtick_matches
-    # 2. Fallback: any entry(...) in plain text
-    plain_pattern = rf"{escaped}\([^)]*\)"
+    plain_pattern = rf"{escaped}\({paren_content}\)"
     return re.findall(plain_pattern, raw)
 
 
@@ -205,14 +210,9 @@ async def synthesize_inputs_llm(
         model=model,
     )
 
-    entries = _parse_entry_lines(raw)
+    entries = parse_inputs_response(raw, entry)
+    if not entries:
+        entries = _parse_entry_lines(raw)
     if entries:
-        return entries
-
-    return [
-        line.strip()
-        for line in raw.splitlines()
-        if line.strip()
-        and not line.strip().startswith("#")
-        and not line.strip().startswith("```")
-    ][:n]
+        return entries[:n]
+    return [f"{entry}()"]

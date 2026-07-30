@@ -670,7 +670,7 @@ def test_opencode_context_windows():
     from src.config import get_context_window
 
     assert get_context_window("opencode/mimo-v2-pro-free") == 131_072
-    assert get_context_window("opencode/minimax-m2.5-free") == 1_000_000
+    assert get_context_window("opencode/minimax-m2.5-free") == 262_144
     assert get_context_window("openrouter/moonshotai/kimi-k2:free") == 131_072
     assert get_context_window("opencode/nemotron-3-super-free") == 131_072
 

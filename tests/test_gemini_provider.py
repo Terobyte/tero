@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.constants import LARGE_PROMPT_THRESHOLD_BYTES
+from src.constants import LARGE_PROMPT_THRESHOLD_BYTES  # used for test boundary
 from src.errors import ProviderError
 from src.providers.gemini import GeminiConfig, GeminiProvider
 from src.providers.message_adapter import AdaptedMessage
@@ -23,7 +23,7 @@ class TestGeminiConfig:
     def test_defaults(self):
         cfg = GeminiConfig()
         assert cfg.command == "gemini"
-        assert cfg.default_model == "gemini-2.5-pro"
+        assert cfg.default_model == "gemini-3.1-pro-preview"
         assert cfg.display_name == "Gemini"
         assert cfg.yolo is True
 
@@ -39,10 +39,10 @@ class TestBuildCommand:
         assert cmd[0] == "gemini"
         assert "-p" in cmd
         assert "hello" in cmd
-        assert "-o" in cmd
+        assert "--output-format" in cmd
         assert "stream-json" in cmd
         assert "-m" in cmd
-        assert "gemini-2.5-pro" in cmd
+        assert "gemini-3.1-pro-preview" in cmd
         assert "--yolo" in cmd
 
     def test_custom_model(self):
@@ -56,12 +56,12 @@ class TestBuildCommand:
         cmd = p._build_command(prompt="hi")
         assert "--yolo" not in cmd
 
-    def test_long_prompt_uses_see_stdin(self):
+    def test_long_prompt_passed_directly(self):
         p = _make_provider()
         long_prompt = "x" * (LARGE_PROMPT_THRESHOLD_BYTES + 1)
         cmd = p._build_command(prompt=long_prompt)
         idx = cmd.index("-p")
-        assert cmd[idx + 1] == "see stdin"
+        assert cmd[idx + 1] == long_prompt  # always inline, no stdin workaround
 
     def test_short_prompt_inlined(self):
         p = _make_provider()
@@ -76,10 +76,10 @@ class TestBuildCommand:
             "gemini",
             "-p",
             "test",
-            "-o",
+            "--output-format",
             "stream-json",
             "-m",
-            "gemini-2.5-pro",
+            "gemini-3.1-pro-preview",
             "--yolo",
         ]
 
@@ -136,9 +136,9 @@ class TestAdaptGeminiEvent:
         msg = p._adapt_gemini_event(
             {
                 "type": "tool_use",
-                "name": "read_file",
-                "id": "t1",
-                "input": {"path": "foo.py"},
+                "tool_name": "read_file",
+                "tool_id": "t1",
+                "parameters": {"path": "foo.py"},
             }
         )
         assert msg is not None
@@ -152,7 +152,8 @@ class TestAdaptGeminiEvent:
         msg = p._adapt_gemini_event(
             {
                 "type": "tool_result",
-                "tool_use_id": "t1",
+                "tool_id": "t1",
+                "status": "success",
                 "output": "file contents",
             }
         )
@@ -160,10 +161,10 @@ class TestAdaptGeminiEvent:
         assert msg.role == "tool"
 
     def test_error_event(self):
+        from src.errors import ProviderError
         p = _make_provider()
-        msg = p._adapt_gemini_event({"type": "error", "message": "something broke"})
-        assert msg is not None
-        assert "something broke" in msg.get_text_content()
+        with pytest.raises(ProviderError, match="something broke"):
+            p._adapt_gemini_event({"type": "error", "message": "something broke"})
 
     def test_unknown_event_returns_none(self):
         p = _make_provider()
@@ -211,7 +212,7 @@ class TestDisplayName:
     def test_default(self):
         p = _make_provider()
         assert "Gemini" in p.display_name
-        assert "gemini-2.5-pro" in p.display_name
+        assert "gemini-3.1-pro-preview" in p.display_name
 
     def test_custom_model(self):
         p = _make_provider(default_model="gemini-3.0-flash")
@@ -276,7 +277,8 @@ class TestRunIntegration:
                     pass
 
     @pytest.mark.asyncio
-    async def test_run_long_prompt_passes_stdin(self):
+    async def test_run_long_prompt_passed_inline(self):
+        """Large prompts are always inlined via -p, never via stdin."""
         p = _make_provider()
         long_prompt = "x" * (LARGE_PROMPT_THRESHOLD_BYTES + 1)
 
@@ -297,12 +299,12 @@ class TestRunIntegration:
                 msgs.append(msg)
             assert len(msgs) == 1
             call_kwargs = mock_run.call_args
-            stdin_data = call_kwargs.kwargs.get("stdin_data") or call_kwargs[1].get(
-                "stdin_data"
-            )
-            assert stdin_data is not None
-            cmd = call_kwargs[0][0] if call_kwargs[0] else call_kwargs.args[0]
-            assert "see stdin" in cmd
+            # No stdin_data — Gemini CLI reads prompt only from -p
+            stdin_data = call_kwargs.kwargs.get("stdin_data")
+            assert stdin_data is None
+            cmd = call_kwargs.args[0] if call_kwargs.args else call_kwargs[0][0]
+            assert long_prompt in cmd
+            assert "see stdin" not in " ".join(str(x) for x in cmd)
 
 
 class TestCheckReady:

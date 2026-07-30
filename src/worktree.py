@@ -83,17 +83,29 @@ class WorktreeManager:
         # Bug fix #8: Use tracked mode instead of self._is_git()
         ws_mode = self._workspace_modes.pop(agent_name, None)
 
-        if ws_mode == "git":
+        # Even if not in _workspace_modes, check if it's a git worktree to avoid leaks from crashed processes
+        is_git_worktree = ws_mode == "git"
+        if not is_git_worktree and os.path.exists(ws):
+            # Check if it looks like a git worktree (has .git file)
+            git_dot_file = os.path.join(ws, ".git")
+            if os.path.isfile(git_dot_file):
+                is_git_worktree = True
+
+        if is_git_worktree:
+            # Try to remove via git first
             subprocess.run(
                 ["git", "worktree", "remove", ws, "--force"],
                 cwd=self.source_dir, capture_output=True
             )
             session_id = os.path.basename(self.session_dir)
             branch = f"g3/{session_id}/{agent_name}"
+            # Also try the branch name used in Phase 1 (if we can't find it, it's fine)
             subprocess.run(
                 ["git", "branch", "-D", branch],
                 cwd=self.source_dir, capture_output=True
             )
+            # Try to delete any branch that might look like our worktree branch
+            # based on the workspace path if needed, but session_id/agent_name is usually enough.
 
         if os.path.exists(ws):
             shutil.rmtree(ws, ignore_errors=True)

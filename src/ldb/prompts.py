@@ -103,7 +103,7 @@ Implement the chosen fix. Rules:
 - If ARCHITECTURAL: full refactor, but keep the public signature stable (callers must keep working).
 - Run the test from Tester phase: `pytest <path> -x -q` — must PASS after your fix.
 - Then run the full suite: `pytest tests/ -x -q --tb=short`. If anything breaks, ADJUST YOUR FIX, do NOT modify other tests.
-- After all bugs fixed and suite green: `git add -A && git commit -m "ldb fix: <summary>"`.
+- After all bugs fixed and suite green, stop — the runner handles the git commit.
 
 ## Output
 

@@ -6,7 +6,7 @@ import shutil
 from dataclasses import dataclass
 from typing import AsyncIterator
 
-from src.constants import DEFAULT_PROVIDER_TIMEOUT_S, LARGE_PROMPT_THRESHOLD_BYTES
+from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
 from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock
 from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
@@ -17,7 +17,7 @@ class GeminiConfig:
     """Configuration for Gemini CLI provider."""
 
     command: str = "gemini"
-    default_model: str = "gemini-2.5-pro"
+    default_model: str = "gemini-3.1-pro-preview"
     display_name: str = "Gemini"
     default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
     yolo: bool = True
@@ -53,11 +53,7 @@ class GeminiProvider:
         full_prompt = self._combine_prompt(system_prompt, prompt)
         cmd = self._build_command(model, full_prompt)
 
-        stdin_data = None
-        if len(full_prompt) > LARGE_PROMPT_THRESHOLD_BYTES:
-            stdin_data = full_prompt.encode("utf-8")
-
-        _gen = run_subprocess_jsonl(cmd, working_dir, env=env, stdin_data=stdin_data)
+        _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
@@ -71,25 +67,17 @@ class GeminiProvider:
 
     def _build_command(self, model: str = "", prompt: str = "") -> list[str]:
         resolved_model = model or self.config.default_model
-
-        if len(prompt) > LARGE_PROMPT_THRESHOLD_BYTES:
-            p_arg = "see stdin"
-        else:
-            p_arg = prompt
-
         cmd = [
             self.config.command,
             "-p",
-            p_arg,
-            "-o",
+            prompt,
+            "--output-format",
             "stream-json",
             "-m",
             resolved_model,
         ]
-
         if self.config.yolo:
             cmd.append("--yolo")
-
         return cmd
 
     def _build_env(self, system_prompt: str = "") -> dict:
@@ -108,6 +96,32 @@ class GeminiProvider:
         return user_prompt
 
     def _adapt_gemini_event(self, event: dict) -> AdaptedMessage | None:
+        """Adapt a single Gemini CLI stream-json event into an AdaptedMessage.
+
+        Real Gemini CLI event format (confirmed via smoke-test, issue #6):
+
+        1. ``{"type":"init","timestamp":...,"session_id":...,"model":"..."}``
+           — session metadata; ignored (returns None).
+
+        2. ``{"type":"message","role":"assistant","content":"...","delta":true}``
+           — streamed text chunk from the model.  The ``delta`` field is present
+           but not used for routing; all ``type:"message"`` events with
+           ``role:"assistant"`` and non-empty ``content`` are yielded as text.
+
+        3. ``{"type":"result","status":"success","stats":{...}}``
+           — final event.  ``stats`` may contain ``input_tokens`` and
+           ``output_tokens``; captured into ``_last_input_tokens`` /
+           ``_last_output_tokens``.
+
+        4. ``{"type":"tool_use","tool_name":"...","tool_id":"...","parameters":{...}}``
+           — model invokes a tool.  ``parameters`` holds the tool arguments.
+
+        5. ``{"type":"tool_result","tool_id":"...","status":"success","output":"..."}``
+           — tool execution result.  ``status != "success"`` indicates failure.
+
+        6. ``{"type":"error","message":"..."}``
+           — error from the CLI.  Raised as ProviderError so orchestration can retry/fail.
+        """
         t = event.get("type", "")
 
         if t == "message":
@@ -135,9 +149,9 @@ class GeminiProvider:
             )
 
         if t == "tool_use":
-            name = event.get("name", "")
-            tool_id = event.get("id", "")
-            args = event.get("input", {})
+            name = event.get("tool_name", "")
+            tool_id = event.get("tool_id", "")
+            args = event.get("parameters", {})
             return AdaptedMessage(
                 role="assistant",
                 content=[
@@ -152,9 +166,10 @@ class GeminiProvider:
             )
 
         if t == "tool_result":
-            tool_id = event.get("tool_use_id", event.get("id", ""))
-            output = event.get("output", event.get("content", ""))
-            is_error = event.get("is_error", False)
+            tool_id = event.get("tool_id", "")
+            output = event.get("output", "")
+            status = event.get("status")
+            is_error = status is not None and status != "success"
             return AdaptedMessage(
                 role="tool",
                 content=[
@@ -169,11 +184,7 @@ class GeminiProvider:
 
         if t == "error":
             msg = event.get("message", event.get("error", "Unknown error"))
-            return AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text=f"[gemini error: {msg}]")],
-                type="text",
-            )
+            raise ProviderError(f"gemini CLI error: {msg}")
 
         return None
 
