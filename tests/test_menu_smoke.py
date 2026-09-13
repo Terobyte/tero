@@ -18,8 +18,8 @@ from src.menu import (
     CODEX_MODEL_PRESETS,
     FALLBACK_PROVIDER_PRESETS,
     GEMINI_MODEL_PRESETS,
-    KILO_MODEL_PRESETS,
     LDB_MODE_PRESETS,
+    MUSE_MODEL_PRESETS,
     OPENCODE_MODEL_PRESETS,
     PROVIDER_PRESETS,
     QUESTIONARY_AVAILABLE,
@@ -95,18 +95,23 @@ class TestPresetsPopulated:
         assert "" in FALLBACK_PROVIDER_PRESETS.values()
 
     def test_claude_model_presets(self):
-        assert "sonnet" in CLAUDE_MODEL_PRESETS.values()
-        assert "opus" in CLAUDE_MODEL_PRESETS.values()
-        assert "haiku" in CLAUDE_MODEL_PRESETS.values()
+        assert "claude-sonnet-5" in CLAUDE_MODEL_PRESETS.values()
+        assert "claude-opus-5" in CLAUDE_MODEL_PRESETS.values()
+        assert "claude-haiku-4-5" in CLAUDE_MODEL_PRESETS.values()
+        assert "claude-fable-5-1" in CLAUDE_MODEL_PRESETS.values()
 
     def test_codex_model_presets(self):
-        assert any("gpt-5.4" in v for v in CODEX_MODEL_PRESETS.values())
+        values = list(CODEX_MODEL_PRESETS.values())
+        assert "gpt-5.6-sol" in values
+        assert "gpt-5.6-terra" in values
+        assert "gpt-5.6-luna" in values
+        assert "gpt-6-astra" in values
 
     def test_opencode_model_presets(self):
         assert any("minimax" in v.lower() for v in OPENCODE_MODEL_PRESETS.values())
 
-    def test_kilo_model_presets(self):
-        assert any("mimo" in v.lower() for v in KILO_MODEL_PRESETS.values())
+    def test_muse_model_presets(self):
+        assert "muse-spark-1.3" in MUSE_MODEL_PRESETS.values()
 
     def test_gemini_model_presets(self):
         assert any("gemini" in v.lower() for v in GEMINI_MODEL_PRESETS.values())
@@ -121,13 +126,13 @@ class TestPresetsPopulated:
 class TestHelperFunctions:
     @pytest.mark.parametrize(
         "provider,expected",
-        [("zai", "glm-5.1"), ("lite", "glm-5.1"), ("claude", ""), ("codex", "")],
+        [("muse", ""), ("claude", ""), ("codex", ""), ("gemini", "")],
     )
     def test_fixed_model_for_provider(self, provider, expected):
         assert _fixed_model_for_provider(provider) == expected
 
     def test_model_presets_for_provider_returns_dict(self):
-        for p in ("claude", "codex", "opencode", "kilo", "gemini"):
+        for p in ("claude", "codex", "opencode", "gemini", "muse", "cursor"):
             presets = _model_presets_for_provider(p)
             assert isinstance(presets, dict)
             assert len(presets) > 0
@@ -139,7 +144,8 @@ class TestHelperFunctions:
         assert _custom_model_allowed("codex") is True
         assert _custom_model_allowed("opencode") is True
         assert _custom_model_allowed("claude") is False
-        assert _custom_model_allowed("zai") is False
+        assert _custom_model_allowed("muse") is False
+        assert _custom_model_allowed("cursor") is True
 
     @pytest.mark.parametrize(
         "limit,expected",
@@ -174,10 +180,10 @@ class TestHelperFunctions:
         assert p == "claude"
         assert m == "sonnet"
 
-    def test_effective_provider_model_fixed_for_zai(self):
-        p, m = _effective_provider_model("zai", "")
-        assert p == "zai"
-        assert m == "glm-5.1"
+    def test_effective_provider_model_keeps_empty_when_selectable(self):
+        p, m = _effective_provider_model("muse", "")
+        assert p == "muse"
+        assert m == ""
 
 
 # ── 4. Sync batch roles with coach ───────────────────────────────────────────
@@ -185,23 +191,23 @@ class TestHelperFunctions:
 class TestSyncBatchRoles:
     def test_sync_updates_matching_batch_roles(self):
         config = Config(
-            coach_provider="zai",
-            coach_model="glm-5.1",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
             batch_pre_provider="codex",
             batch_pre_model="gpt-5.4",
             batch_post_provider="codex",
             batch_post_model="gpt-5.4",
         )
         updated = _sync_batch_roles_with_coach(config, "codex", "gpt-5.4")
-        assert updated.batch_pre_provider == "zai"
-        assert updated.batch_pre_model == "glm-5.1"
-        assert updated.batch_post_provider == "zai"
-        assert updated.batch_post_model == "glm-5.1"
+        assert updated.batch_pre_provider == "muse"
+        assert updated.batch_pre_model == "muse-spark-1.3"
+        assert updated.batch_post_provider == "muse"
+        assert updated.batch_post_model == "muse-spark-1.3"
 
     def test_sync_does_not_touch_mismatched_roles(self):
         config = Config(
-            coach_provider="zai",
-            coach_model="glm-5.1",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
             batch_pre_provider="claude",
             batch_pre_model="sonnet",
         )
@@ -230,7 +236,9 @@ class TestQuestionarySettingsMenu:
 
     def test_player_provider_editing(self, monkeypatch):
         """Selecting player_provider then quit should update provider."""
-        mock_q = _fake_questionary(["player_provider", "ZAI (Z.AI / GLM-5.1)", "quit"])
+        mock_q = _fake_questionary(
+            ["player_provider", "Muse Code (Spark)", "Muse Spark 1.3", "quit"]
+        )
         monkeypatch.setitem(sys.modules, "questionary", mock_q)
         monkeypatch.setattr("src.menu.questionary", mock_q)
         result = _questionary_menu(Config(player_provider="claude"))
@@ -291,13 +299,13 @@ class TestQuestionaryLdbMenu:
     def test_agent_provider_editing(self, monkeypatch):
         """Editing the input agent provider should update config."""
         mock_q = _fake_questionary(
-            ["input", "Claude Pro (native)", "Sonnet (balanced)", "start"]
+            ["input", "Claude Pro (native)", "Sonnet 5", "start"]
         )
         monkeypatch.setitem(sys.modules, "questionary", mock_q)
         monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_input_provider="zai"))
+        result = run_ldb_menu(Config(ldb_input_provider="muse"))
         assert result.ldb_input_provider == "claude"
-        assert result.ldb_input_model == "sonnet"
+        assert result.ldb_input_model == "claude-sonnet-5"
 
 
 # ── 8. Fallback menu (no questionary) smoke ──────────────────────────────────
@@ -380,12 +388,12 @@ class TestFallbackLdbMenu:
 class TestFallbackEffectiveSlotLabel:
     def test_shows_provider_default(self):
         config = Config(
-            batch_pre_provider="zai",
-            batch_pre_model="",
-            coach_provider="zai",
-            coach_model="",
+            batch_pre_provider="muse",
+            batch_pre_model="muse-spark-1.3",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
         )
         label = _fallback_effective_slot_label(
             config, "batch_pre_provider", "batch_pre_model"
         )
-        assert "zai" in label
+        assert "muse" in label

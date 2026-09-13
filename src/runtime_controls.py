@@ -240,20 +240,25 @@ class StatusBar:
 
 # Model presets available at runtime
 MODEL_PRESETS: list[tuple[str, str, str]] = [
-    ("GLM-5.1", "zai", "glm-5.1"),
-    ("Sonnet", "claude", "claude-sonnet-4-6"),
-    ("Opus", "claude", "claude-opus-4-6"),
-    ("GPT-5.5", "codex", "gpt-5.5"),
-    ("o3", "codex", "o3"),
-    ("o4-mini", "codex", "o4-mini"),
+    ("Spark 1.3", "muse", "muse-spark-1.3"),
+    ("Spark 1.2", "muse", "muse-spark-1.2"),
+    ("Composer 2.5", "cursor", "composer-2.5"),
+    ("Composer 2", "cursor", "composer-2"),
+    ("Fable 5.1", "claude", "claude-fable-5-1"),
+    ("Opus 5", "claude", "claude-opus-5"),
+    ("Sonnet 5", "claude", "claude-sonnet-5"),
+    ("Haiku 4.5", "claude", "claude-haiku-4-5"),
+    ("GPT-6 Astra", "codex", "gpt-6-astra"),
+    ("GPT-5.6 Sol", "codex", "gpt-5.6-sol"),
+    ("GPT-5.6 Terra", "codex", "gpt-5.6-terra"),
+    ("GPT-5.6 Luna", "codex", "gpt-5.6-luna"),
+    ("Gemini 3.1 Pro", "gemini", "gemini-3.1-pro-preview"),
+    ("Gemini 3.8 Flash", "gemini", "gemini-3.8-flash"),
+    ("Gemini 3.5 Flash-Lite", "gemini", "gemini-3.5-flash-lite"),
     ("MIMO-Pro", "opencode", "opencode/mimo-v2-pro-free"),
     ("MIMO-Omni", "opencode", "opencode/mimo-v2-omni-free"),
     ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free"),
     ("Kimi-K2", "opencode", "openrouter/moonshotai/kimi-k2:free"),
-    ("OpenCode GLM-5.1", "opencode", "zai/glm-5.1"),
-    ("Nemotron-3", "opencode", "opencode/nemotron-3-super-free"),
-    ("Kilo MIMO-Pro", "kilo", "kilo/xiaomi/mimo-v2-pro:free"),
-    ("Kilo MiniMax", "kilo", "kilo/minimax/minimax-m2.5:free"),
 ]
 
 

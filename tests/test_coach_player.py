@@ -67,7 +67,7 @@ def test_session_passes_role_specific_system_prompts(tmp_path, monkeypatch):
     mock_coach = _make_mock_provider()
     mock_coach.run = fake_run
 
-    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name == "player_provider" or name == "zai" else mock_coach)
+    monkeypatch.setattr("src.coach_player.create_provider", lambda name, env=None, cfg=None: mock_player if name in ("player_provider", "muse") else mock_coach)
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
 
     cfg = Config(working_dir=str(tmp_path), plan_file="requirements.md", max_turns=1)
@@ -498,6 +498,10 @@ def test_code_review_rejects_step_when_issues_remain(tmp_path, monkeypatch):
 
     monkeypatch.setattr("src.streaming.stream_messages", lambda msg, verbose=False, role="": 0)
     monkeypatch.setattr("src.coach_player.parse_review_output", lambda messages: ReviewIssues("1. Found a bug in the implementation."))
+    monkeypatch.setattr(
+        "src.coach_player.create_provider",
+        lambda name, env=None, cfg=None: mock_player if name == "muse" else mock_coach,
+    )
 
     cfg = Config(
         working_dir=str(tmp_path),

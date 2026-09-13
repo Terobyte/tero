@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -83,42 +80,5 @@ async def test_stderr_deadlock_does_not_hang():
 
 
 
-
-# ── Bug 6: zai.py — temp dir leaked when shutil.copy2 raises ─────────────────
-
-@pytest.mark.asyncio
-async def test_zai_temp_dir_cleaned_up_on_copy_error():
-    """Temp dir must be removed even when shutil.copy2 raises before the try block."""
-    import shutil as _shutil
-    from src.providers.zai import ZaiProvider
-
-    created_dirs: list[str] = []
-    orig_mkdtemp = tempfile.mkdtemp
-
-    def tracking_mkdtemp(prefix="", **kwargs):
-        d = orig_mkdtemp(prefix=prefix, **kwargs)
-        created_dirs.append(d)
-        return d
-
-    with tempfile.TemporaryDirectory() as fake_home:
-        # Create a settings.json so the `if base_settings.exists()` branch is taken
-        # and shutil.copy2 is actually called.
-        (Path(fake_home) / "settings.json").write_text('{"env": {"ZAI_API_KEY": "tok"}}')
-
-        provider = ZaiProvider()
-        provider.config.claude_home = fake_home
-
-        with patch("tempfile.mkdtemp", side_effect=tracking_mkdtemp):
-            with patch("shutil.copy2", side_effect=PermissionError("denied")):
-                with pytest.raises(PermissionError):
-                    async for _ in provider.run("prompt", "system", "/tmp"):
-                        pass  # pragma: no cover
-
-    assert created_dirs, "mkdtemp should have been called"
-    for d in created_dirs:
-        assert not os.path.exists(d), (
-            f"Temp dir leaked: '{d}' still exists after PermissionError in copy2. "
-            "Fix: move tempfile.mkdtemp() and shutil.copy2() inside the try block."
-        )
 
 

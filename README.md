@@ -15,8 +15,8 @@ agents you don't babysit, kept honest by other agents and by actually
 running the code — not by reading it and vibing.**
 
 tero is a personal research bench for multi-agent coding loops. It treats
-locally installed agent CLIs — Claude Code, Codex, OpenCode, Kilo, Gemini,
-and GLM (via Z.AI's Anthropic-compatible endpoint) — as interchangeable
+locally installed agent CLIs — Muse Code (Spark), Claude Code, Codex,
+Gemini, OpenCode, and Cursor Headless — as interchangeable
 workers behind one provider interface, then wires them into adversarial
 pipelines: one model implements, a different model reviews, a third judges.
 124 Python files, ~37,000 lines (16.8k source / 20.1k tests), heavily
@@ -32,10 +32,10 @@ repo root is the plan tero executed to build `ldb` into itself.
 | `tero ldb` | Runtime bug hunt — the interesting one. See below. |
 
 Roles are freely mixable across providers, and the point is that they
-differ: the default wiring has GLM-5.1 (via Z.AI) implementing and Codex
-(pinned to `gpt-5.4`) judging the batches, so no model grades its own
-homework. OpenCode and Kilo slots exist specifically for free models
-(MIMO, Kimi) when the work is cheap.
+differ: the default wiring has Muse Spark 1.3 implementing and Codex
+(pinned to `gpt-5.6-terra` at max reasoning) judging the batches, so no
+model grades its own homework. LDB tester defaults to Gemini 3.8 Flash.
+OpenCode remains for free models (MIMO, Kimi) when the work is cheap.
 
 ## ldb: verify by execution, not by reading
 
@@ -78,8 +78,7 @@ the in-repo integration plan (`requirements.md`) explicitly expects less.
 
 Requires Python 3.11+ and, for anything beyond `--help`, at least one agent
 CLI installed and authenticated on your machine (`claude`, `codex`,
-`opencode`, `kilo`, or `gemini`; the `zai` provider additionally needs
-`claude-agent-sdk` and a `ZAI_API_KEY`).
+`opencode`, `gemini`, `muse`, or `agent`).
 
 ```bash
 git clone https://github.com/Terobyte/tero.git
@@ -112,7 +111,7 @@ pip install pytest
 python -m pytest tests/ -q
 ```
 
-Result at HEAD: **995 passed, 6 failed, 5 skipped in ~24 s** — offline,
+Result at HEAD: **1004 passed, 2 failed, 5 skipped in ~20 s** — offline,
 no API keys needed. The failures are the repo's known-bug backlog, not your
 environment: this workflow writes "bug-proof" tests that *demonstrate* each
 confirmed-but-unfixed bug (the backlog lives in `bugs.md`), so the suite
@@ -137,8 +136,6 @@ docs, specs, and plans that drove each subsystem are in `docs/superpowers/`.
 - **The UI speaks Russian.** Menus, prompts to the user, and CLI status
   messages are partly in Russian ("Прервано.", "История пуста."). The agent
   prompts themselves are English.
-- **`claude-agent-sdk` is an optional dependency**, undeclared on purpose —
-  it is needed only for the `zai` provider.
 - **Naming drift.** The package is `g3-coach`, the CLI is `tero`, state lives
   in `.g3/` — "g3" is the project's earlier codename and never got renamed.
 - **Stowaway files from a different project.** `.env.example`,

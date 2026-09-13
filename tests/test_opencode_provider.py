@@ -662,7 +662,9 @@ def test_opencode_runtime_presets():
 
     providers = [p for _, p, _ in MODEL_PRESETS]
     assert "opencode" in providers
-    assert ("OpenCode GLM-5.1", "opencode", "zai/glm-5.1") in MODEL_PRESETS
+    assert ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free") in MODEL_PRESETS
+    assert all(provider != "kilo" for _, provider, _ in MODEL_PRESETS)
+    assert all(provider != "zai" for _, provider, _ in MODEL_PRESETS)
 
 
 def test_opencode_context_windows():
@@ -704,19 +706,6 @@ def test_opencode_create_provider_with_config():
     assert provider.config.default_model == "opencode/mimo-v2-pro-free"
 
 
-def test_kilo_create_provider_uses_kilo_command_and_models():
-    """create_provider('kilo') returns an OpenCodeProvider configured for Kilo."""
-    from src.providers import create_provider
-
-    provider = create_provider("kilo")
-    from src.providers.opencode import OpenCodeProvider
-
-    assert isinstance(provider, OpenCodeProvider)
-    assert provider.config.command == "kilo"
-    assert provider.config.default_model == "kilo/xiaomi/mimo-v2-pro:free"
-    assert provider.display_name.startswith("Kilo")
-
-
 def test_fallback_menu_accepts_opencode_player(monkeypatch):
     """Plain-text fallback menu should let users choose opencode for player."""
     from src.menu import _fallback_menu
@@ -732,19 +721,19 @@ def test_fallback_menu_accepts_opencode_player(monkeypatch):
     assert config.player_model == "openrouter/moonshotai/kimi-k2:free"
 
 
-def test_fallback_menu_accepts_kilo_player(monkeypatch):
-    """Plain-text fallback menu should let users choose kilo for player."""
+def test_fallback_menu_accepts_muse_player(monkeypatch):
+    """Plain-text fallback menu should let users choose muse for player."""
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["p", "kilo", "minimax-m2.5", ""])
+    answers = iter(["p", "muse", "muse-spark-1.3", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
 
     assert config is not None
-    assert config.player_provider == "kilo"
-    assert config.player_model == "kilo/minimax/minimax-m2.5:free"
+    assert config.player_provider == "muse"
+    assert config.player_model == "muse-spark-1.3"
 
 
 def test_fallback_menu_accepts_opencode_coach(monkeypatch):
@@ -762,27 +751,12 @@ def test_fallback_menu_accepts_opencode_coach(monkeypatch):
     assert config.coach_model == "opencode/mimo-v2-omni-free"
 
 
-def test_fallback_menu_accepts_opencode_zai_model(monkeypatch):
-    """Plain-text fallback menu should let users choose direct Z.AI in OpenCode."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["p", "opencode", "glm-5.1", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config())
-
-    assert config is not None
-    assert config.player_provider == "opencode"
-    assert config.player_model == "zai/glm-5.1"
-
-
 def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     """Questionary player provider flow should expose the same OpenCode models as coach."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -813,7 +787,7 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -839,12 +813,12 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     assert updated.player_model == "opencode/minimax-m2.5-free"
 
 
-def test_questionary_player_kilo_uses_kilo_model_presets(monkeypatch):
-    """Questionary player provider flow should expose the Kilo-only models."""
+def test_questionary_player_muse_uses_muse_model_presets(monkeypatch):
+    """Questionary player provider flow should expose Muse Spark models."""
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["Kilo (MIMO/MiniMax)", "MiniMax M2.5 (free)"])
+    prompts = iter(["Muse Code (Spark)", "Muse Spark 1.3"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -866,8 +840,8 @@ def test_questionary_player_kilo_uses_kilo_model_presets(monkeypatch):
 
     updated = _edit_setting_questionary(Config(), "player_provider")
 
-    assert updated.player_provider == "kilo"
-    assert updated.player_model == "kilo/minimax/minimax-m2.5:free"
+    assert updated.player_provider == "muse"
+    assert updated.player_model == "muse-spark-1.3"
 
 
 def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
@@ -927,7 +901,7 @@ def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coac
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -949,12 +923,12 @@ def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coac
 
     updated = _edit_setting_questionary(
         Config(
-            coach_provider="zai",
-            coach_model="glm-5.1",
-            batch_pre_provider="zai",
-            batch_pre_model="glm-5.1",
-            batch_post_provider="zai",
-            batch_post_model="glm-5.1",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
+            batch_pre_provider="muse",
+            batch_pre_model="muse-spark-1.3",
+            batch_post_provider="muse",
+            batch_post_model="muse-spark-1.3",
         ),
         "coach_provider",
     )
@@ -977,12 +951,12 @@ def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
 
     config = _fallback_menu(
         Config(
-            coach_provider="zai",
-            coach_model="glm-5.1",
-            batch_pre_provider="zai",
-            batch_pre_model="glm-5.1",
-            batch_post_provider="zai",
-            batch_post_model="glm-5.1",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
+            batch_pre_provider="muse",
+            batch_pre_model="muse-spark-1.3",
+            batch_post_provider="muse",
+            batch_post_model="muse-spark-1.3",
         )
     )
 
@@ -1007,15 +981,14 @@ def test_fallback_menu_can_edit_batch_judge_provider(monkeypatch):
 
     assert config is not None
     assert config.batch_judge_provider == "claude"
-    assert config.batch_judge_model == "opus"
+    assert config.batch_judge_model == "claude-opus-5"
 
 
-def test_questionary_zai_provider_selects_without_model_submenu(monkeypatch):
-    """ZAI provider has no fixed model — should not crash on empty model presets."""
+def test_questionary_muse_provider_selects_spark_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["ZAI (Z.AI / GLM-5.1)"])
+    prompts = iter(["Muse Code (Spark)", "Muse Spark 1.3"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -1037,4 +1010,5 @@ def test_questionary_zai_provider_selects_without_model_submenu(monkeypatch):
 
     updated = _edit_setting_questionary(Config(), "player_provider")
 
-    assert updated.player_provider == "zai"
+    assert updated.player_provider == "muse"
+    assert updated.player_model == "muse-spark-1.3"
