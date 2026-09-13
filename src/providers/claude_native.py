@@ -25,9 +25,10 @@ _BLOCKED_ENV_VARS = [
 
 # Mapping of short aliases to full IDs (so versions aren't hardcoded)
 _MODEL_ALIASES = {
-    "sonnet": "sonnet",
-    "opus": "opus",
-    "haiku": "haiku",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+    "haiku": "claude-haiku-4-5",
+    "fable": "claude-fable-5-1",
 }
 
 
@@ -37,7 +38,7 @@ class ClaudeNativeConfig:
 
     claude_home: str = "~/.claude"
     command: str = "claude"
-    default_model: str = "sonnet"
+    default_model: str = "claude-sonnet-5"
 
 
 class ClaudeNativeProvider:

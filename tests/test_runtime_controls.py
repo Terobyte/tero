@@ -313,7 +313,7 @@ class TestRuntimeControls:
         controls._picker.pop_pending_change.return_value = ("coach", "codex", "gpt-5.4")
 
         session = MagicMock()
-        session.config.coach_provider = "zai"
+        session.config.coach_provider = "muse"
         mock_provider = MagicMock()
         mock_provider.check_ready.return_value = (False, "Proxy not reachable")
         session._get_or_create_provider.return_value = mock_provider
@@ -321,27 +321,27 @@ class TestRuntimeControls:
         controls.apply_pending(session)
 
         # coach_provider should NOT have changed
-        assert session.config.coach_provider == "zai"
+        assert session.config.coach_provider == "muse"
         controls._status_bar.show_warning.assert_called_once()
 
     def test_apply_pending_uses_session_runtime_switch_when_available(self):
         controls = self._make_controls()
         controls._picker.pop_pending_change.return_value = (
             "coach",
-            "kilo",
-            "kilo/minimax/minimax-m2.5:free",
+            "gemini",
+            "gemini-3.8-flash",
         )
 
         class Session:
             def __init__(self):
                 self.config = MagicMock()
-                self.config.coach_provider = "zai"
-                self.config.coach_model = "glm-5.1"
+                self.config.coach_provider = "muse"
+                self.config.coach_model = "muse-spark-1.3"
                 self._provider = MagicMock()
                 self._provider.check_ready.return_value = (True, "")
                 self._get_or_create_provider = MagicMock(return_value=self._provider)
                 self._switch_mock = MagicMock(
-                    return_value="kilo | model=kilo/minimax/minimax-m2.5:free"
+                    return_value="gemini | model=gemini-3.8-flash"
                 )
 
             def switch_runtime_role(self, role, provider_name, model):
@@ -352,11 +352,11 @@ class TestRuntimeControls:
         controls.apply_pending(session)
 
         session._switch_mock.assert_called_once_with(
-            "coach", "kilo", "kilo/minimax/minimax-m2.5:free"
+            "coach", "gemini", "gemini-3.8-flash"
         )
         assert (
             controls._coach_name
-            == "kilo | model=kilo/minimax/minimax-m2.5:free"
+            == "gemini | model=gemini-3.8-flash"
         )
 
     def test_apply_pending_shows_warning_if_runtime_switch_fails(self):

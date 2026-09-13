@@ -13,31 +13,39 @@ try:
 except ImportError:
     QUESTIONARY_AVAILABLE = False
 
-# Codex model IDs.
-# Reasoning effort is forced to "medium" by the codex provider factory
-# (see providers/registry.py), so users can't accidentally inherit a global
-# `xhigh` from ~/.codex/config.toml when picking a coach/judge model here.
+# Codex model IDs (OpenAI GPT-5.6 family + GPT-6 Astra).
+# Reasoning effort is forced to "max" by the codex provider factory
+# (see providers/registry.py) so the default Terra judge runs at max.
 CODEX_MODEL_PRESETS = {
-    "GPT-5.5 (medium)": "gpt-5.5",
+    "GPT-6 Astra": "gpt-6-astra",
+    "GPT-5.6 Sol": "gpt-5.6-sol",
+    "GPT-5.6 Terra": "gpt-5.6-terra",
+    "GPT-5.6 Luna": "gpt-5.6-luna",
     "Default (~/.codex/config.toml)": "",
 }
 
 # OpenCode model IDs
 OPENCODE_MODEL_PRESETS = {
     "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
-    "Z.AI GLM-5.1 (direct)": "zai/glm-5.1",
-    "Z.AI GLM-5 Turbo (openrouter)": "openrouter/z-ai/glm-5-turbo",
-}
-
-KILO_MODEL_PRESETS = {
-    "MIMO Pro  (free)": "kilo/xiaomi/mimo-v2-pro:free",
-    "MiniMax M2.5 (free)": "kilo/minimax/minimax-m2.5:free",
+    "MIMO Pro (free)": "opencode/mimo-v2-pro-free",
+    "MIMO Omni (free)": "opencode/mimo-v2-omni-free",
+    "Kimi K2 (free)": "openrouter/moonshotai/kimi-k2:free",
 }
 
 GEMINI_MODEL_PRESETS = {
     "Gemini 3.1 Pro": "gemini-3.1-pro-preview",
-    "Gemini 3 Flash": "gemini-3-flash-preview",
-    "Gemini 3.1 Flash-Lite": "gemini-3.1-flash-lite-preview",
+    "Gemini 3.8 Flash": "gemini-3.8-flash",
+    "Gemini 3.5 Flash-Lite": "gemini-3.5-flash-lite",
+}
+
+MUSE_MODEL_PRESETS = {
+    "Muse Spark 1.3": "muse-spark-1.3",
+    "Muse Spark 1.2": "muse-spark-1.2",
+}
+
+CURSOR_MODEL_PRESETS = {
+    "Composer 2.5": "composer-2.5",
+    "Composer 2": "composer-2",
 }
 
 
@@ -54,19 +62,21 @@ def _format_context_limit(limit: int) -> str:
 
 # Provider choices
 PROVIDER_PRESETS = {
-    "ZAI (Z.AI / GLM-5.1)": "zai",
+    "Muse Code (Spark)": "muse",
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
-    "OpenCode (MIMO/Kimi/Z.AI)": "opencode",
-    "Kilo (MIMO/MiniMax)": "kilo",
     "Gemini (Google CLI)": "gemini",
+    "OpenCode (MIMO/Kimi)": "opencode",
+    "Cursor Headless": "cursor",
 }
 
-# Claude model choices (for native provider)
+# Claude model choices (for native provider). Full ids so the picker
+# does not silently drift when CLI aliases retarget.
 CLAUDE_MODEL_PRESETS = {
-    "Sonnet (balanced)": "sonnet",
-    "Opus   (most capable)": "opus",
-    "Haiku  (fast)": "haiku",
+    "Fable 5.1": "claude-fable-5-1",
+    "Opus 5": "claude-opus-5",
+    "Sonnet 5": "claude-sonnet-5",
+    "Haiku 4.5": "claude-haiku-4-5",
 }
 
 FALLBACK_PROVIDER_PRESETS = {
@@ -85,14 +95,7 @@ def _provider_model_label(
 
 
 def _fixed_model_for_provider(provider: str) -> str:
-    """Return the model locked to a provider, or empty string if selectable.
-
-    IMPORTANT: ZAI must return a fixed model here.  Without it the menu calls
-    questionary.select() with an empty choices list and crashes.
-    See test_menu_bugs.py::TestZaiFixedModel for the regression test.
-    """
-    if provider in ("lite", "zai"):
-        return "glm-5.1"
+    """Return the model locked to a provider, or empty if the user can pick."""
     return ""
 
 
@@ -119,16 +122,18 @@ def _model_presets_for_provider(provider: str) -> dict[str, str]:
         return CODEX_MODEL_PRESETS
     if provider == "opencode":
         return OPENCODE_MODEL_PRESETS
-    if provider == "kilo":
-        return KILO_MODEL_PRESETS
     if provider == "gemini":
         return GEMINI_MODEL_PRESETS
+    if provider == "muse":
+        return MUSE_MODEL_PRESETS
+    if provider == "cursor":
+        return CURSOR_MODEL_PRESETS
     return {}
 
 
 def _custom_model_allowed(provider: str) -> bool:
     """Return True when the provider picker supports manual model entry."""
-    return provider in {"codex", "opencode"}
+    return provider in {"codex", "opencode", "cursor"}
 
 
 def _resolve_model_choice(
@@ -232,17 +237,25 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return fixed_model
 
     if provider == "claude":
-        print("  Модели: sonnet, opus, haiku")
-        return input(f"  {prompt_label} model [sonnet]: ").strip() or "sonnet"
+        print("  Модели: fable, opus, sonnet, haiku")
+        model = (
+            input(f"  {prompt_label} model [sonnet]: ").strip().lower() or "sonnet"
+        )
+        return {
+            "fable": "claude-fable-5-1",
+            "opus": "claude-opus-5",
+            "sonnet": "claude-sonnet-5",
+            "haiku": "claude-haiku-4-5",
+        }.get(model, model)
 
     if provider == "codex":
-        print("  Модели: default, gpt-5.5, o3, o4-mini")
+        print("  Модели: default, gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna")
         model = input(f"  {prompt_label} model [default]: ").strip()
         return "" if model.lower() == "default" else model
 
     if provider == "opencode":
         print(
-            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2, kimi-k2.5, glm-5.1, nemotron-3-super"
+            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2"
         )
         model = (
             input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
@@ -252,31 +265,30 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
             "mimo-omni": "opencode/mimo-v2-omni-free",
             "minimax-m2.5": "opencode/minimax-m2.5-free",
             "kimi-k2": "openrouter/moonshotai/kimi-k2:free",
-            "kimi-k2.5": "openrouter/moonshotai/kimi-k2.5",
-            "glm-5.1": "zai/glm-5.1",
-            "zai": "zai/glm-5.1",
-            "nemotron-3-super": "opencode/nemotron-3-super-free",
-        }
-        return model_map.get(model, model)
-
-    if provider == "kilo":
-        print("  Модели: mimo-pro, minimax-m2.5")
-        model = (
-            input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
-        )
-        model_map = {
-            "mimo-pro": "kilo/xiaomi/mimo-v2-pro:free",
-            "minimax-m2.5": "kilo/minimax/minimax-m2.5:free",
         }
         return model_map.get(model, model)
 
     if provider == "gemini":
-        print("  Модели: gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite-preview, gemini-2.5-pro")
+        print("  Модели: gemini-3.1-pro-preview, gemini-3.8-flash, gemini-3.5-flash-lite")
         model = (
             input(f"  {prompt_label} model [gemini-3.1-pro-preview]: ").strip().lower()
             or "gemini-3.1-pro-preview"
         )
         return model
+
+    if provider == "muse":
+        print("  Модели: muse-spark-1.3, muse-spark-1.2")
+        return (
+            input(f"  {prompt_label} model [muse-spark-1.3]: ").strip().lower()
+            or "muse-spark-1.3"
+        )
+
+    if provider == "cursor":
+        print("  Модели: composer-2.5, composer-2")
+        return (
+            input(f"  {prompt_label} model [composer-2.5]: ").strip().lower()
+            or "composer-2.5"
+        )
 
     return ""
 

@@ -29,13 +29,15 @@ from src.menu import _format_context_limit
 class TestClaudeAliasBug:
     """Claude native provider uses short aliases that bypass model matching."""
 
-    @pytest.mark.parametrize("alias", ["sonnet", "opus", "haiku"])
-    def test_context_window_for_claude_aliases(self, alias):
-        """Short Claude aliases must resolve to 1M context window."""
+    @pytest.mark.parametrize(
+        "alias,expected",
+        [("sonnet", 1_000_000), ("opus", 1_000_000), ("haiku", 200_000)],
+    )
+    def test_context_window_for_claude_aliases(self, alias, expected):
+        """Short Claude aliases must resolve to the current family window."""
         window = get_context_window(alias)
-        # BUG: returns 0 because "sonnet" doesn't contain "claude-sonnet-4"
-        assert window == 1_000_000, (
-            f"Model alias '{alias}' should resolve to 1M context window, "
+        assert window == expected, (
+            f"Model alias '{alias}' should resolve to {expected} context window, "
             f"got {window}"
         )
 

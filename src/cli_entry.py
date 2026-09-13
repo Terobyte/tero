@@ -14,7 +14,7 @@ from src.learning.recorder import RunRecorder
 from src.plan_tracker import PlanTracker, parse_requirements
 
 
-PROVIDER_CHOICES = ["zai", "claude", "codex", "opencode", "kilo", "gemini"]
+PROVIDER_CHOICES = ["muse", "claude", "codex", "gemini", "opencode", "cursor"]
 
 
 def resolve_go_config(args):

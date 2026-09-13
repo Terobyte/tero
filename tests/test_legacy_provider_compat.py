@@ -26,14 +26,14 @@ def test_project_defaults_preserve_canonical_provider_names(tmp_path, monkeypatc
     config_dir.mkdir()
     (config_dir / "config.yaml").write_text(
         "defaults:\n"
-        "  player_provider: zai\n"
-        "  coach_provider: zai\n"
+        "  player_provider: muse\n"
+        "  coach_provider: muse\n"
     )
 
     cfg = resolve_config({"working_dir": str(workspace)})
 
-    assert cfg.player_provider == "zai"
-    assert cfg.coach_provider == "zai"
+    assert cfg.player_provider == "muse"
+    assert cfg.coach_provider == "muse"
 
 
 def test_cli_parser_rejects_invalid_provider_names():

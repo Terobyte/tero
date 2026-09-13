@@ -385,7 +385,7 @@ class BatchExecutor:
             return self._provider_label(provider, model)
         if model:
             return self._provider_label(
-                self._config_str("coach_provider", "zai"),
+                self._config_str("coach_provider", "muse"),
                 model,
             )
         return self._role_label("coach")
@@ -462,7 +462,7 @@ class BatchExecutor:
         if post_attempts > 0 and attempt_num > judge_end:
             post_provider = self._config_str(
                 "batch_post_provider",
-                self._config_str("coach_provider", "zai"),
+                self._config_str("coach_provider", "muse"),
             )
             post_model = self._config_str("batch_post_model", "")
             return {
@@ -475,7 +475,7 @@ class BatchExecutor:
 
         pre_provider = self._config_str(
             "batch_pre_provider",
-            self._config_str("coach_provider", "zai"),
+            self._config_str("coach_provider", "muse"),
         )
         pre_model = self._config_str("batch_pre_model", "")
         return {

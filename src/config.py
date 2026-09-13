@@ -84,13 +84,13 @@ class Config:
     working_dir: str = "."
     player_timeout_s: int = DEFAULT_PLAYER_TIMEOUT_S
     coach_timeout_s: int = DEFAULT_COACH_TIMEOUT_S
-    claude_home: str = "~/.claude-zai"
-    coach_model: str = ""  # empty = use default model from env
+    claude_home: str = "~/.claude"
+    coach_model: str = "muse-spark-1.3"
 
-    # Provider selection (NEW)
-    player_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
-    coach_provider: str = "zai"  # "zai" | "claude" | "codex" | "opencode" | "kilo"
-    player_model: str = ""  # model for player (empty = provider default)
+    # Provider selection
+    player_provider: str = "muse"
+    coach_provider: str = "muse"
+    player_model: str = "muse-spark-1.3"
     batch_pre_judge_attempts: int = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
     batch_judge_attempts: int = DEFAULT_BATCH_JUDGE_ATTEMPTS
     batch_post_judge_attempts: int = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
@@ -105,8 +105,8 @@ class Config:
     run_types: bool = True
     run_compile: bool = True
     judge: str = "claude"
-    agent_a: str = "zai"
-    agent_b: str = "zai"
+    agent_a: str = "muse"
+    agent_b: str = "muse"
     ask_feedback: bool = False
 
     # Code Review (Phase 3)
@@ -125,29 +125,28 @@ class Config:
     max_continuation_attempts: int = DEFAULT_MAX_CONTINUATION_ATTEMPTS
 
     # Batch role providers + models (configurable per slot)
-    batch_pre_provider: str = "zai"
-    batch_pre_model: str = ""  # fixed provider default
-    batch_judge_provider: str = "codex"  # native Codex CLI judge by default
-    batch_judge_model: str = "gpt-5.5"  # pin judge to gpt-5.5; reasoning effort
-    # is forced to "medium" by the codex provider factory (see providers/registry.py)
-    batch_post_provider: str = "zai"
-    batch_post_model: str = ""  # fixed provider default
+    batch_pre_provider: str = "muse"
+    batch_pre_model: str = "muse-spark-1.3"
+    batch_judge_provider: str = "codex"
+    batch_judge_model: str = "gpt-5.6-terra"
+    batch_post_provider: str = "muse"
+    batch_post_model: str = "muse-spark-1.3"
 
     # Code review loop
     max_review_iterations: int = DEFAULT_MAX_REVIEW_ITERATIONS
 
     # Provider fallback chain
-    player_fallback_chain: str = ""  # comma-separated: "codex,zai"
-    coach_fallback_chain: str = ""  # comma-separated: "codex,zai"
+    player_fallback_chain: str = ""  # comma-separated: "codex,claude"
+    coach_fallback_chain: str = ""  # comma-separated: "codex,claude"
     chain_retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S
     chain_max_retries: int = DEFAULT_CHAIN_MAX_RETRIES
     ldb_input_provider: str = "claude"
     ldb_player_provider: str = "claude"
-    ldb_tester_provider: str = "claude"
+    ldb_tester_provider: str = "gemini"
     ldb_fixer_provider: str = "codex"
     ldb_input_model: str = ""
     ldb_player_model: str = ""
-    ldb_tester_model: str = ""
+    ldb_tester_model: str = "gemini-3.8-flash"
     ldb_fixer_model: str = ""
     ldb_mode: int = 2
     ldb_target_file: str = ""
@@ -237,9 +236,13 @@ _ENV_MAP = {
 # Known context window sizes (tokens) by model name pattern.
 # Matched in order — first substring hit wins.
 _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
+    ("claude-fable-5", 1_000_000),
+    ("claude-opus-5", 1_000_000),
+    ("claude-sonnet-5", 1_000_000),
+    ("claude-haiku-4-5", 200_000),
     ("claude-opus-4", 1_000_000),
     ("claude-sonnet-4", 1_000_000),
-    ("claude-haiku-4", 1_000_000),
+    ("claude-haiku-4", 200_000),
     ("claude-3-5", 200_000),
     ("claude-3", 200_000),
     ("glm-5.1", 204_800),
@@ -247,6 +250,8 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("glm-5", 98_000),
     ("kimi-k2", 131_072),
     ("kimi", 128_000),
+    ("gpt-6-astra", 1_048_576),
+    ("gpt-5.6", 1_048_576),
     ("gpt-5.5", 128_000),
     ("gpt-5", 128_000),
     ("o3", 128_000),
@@ -258,9 +263,16 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("mimo", 131_072),
     ("minimax-m2.5", 262_144),
     ("minimax-m2", 1_000_000),
+    ("muse-spark", 1_048_576),
+    ("composer-2.5", 200_000),
+    ("composer-2", 200_000),
+    ("composer", 200_000),
     ("gemini-3.1-pro-preview", 1_000_000),
+    ("gemini-3.8-flash", 1_000_000),
+    ("gemini-3.5-flash-lite", 1_000_000),
+    ("gemini-3.5-flash", 1_000_000),
     ("gemini-3-flash-preview", 1_000_000),
-    ("gemini-3.1-flash-lite-preview", 1_000_000),
+    ("gemini-3.1-flash-lite", 1_000_000),
     ("gemini-3", 1_000_000),
     ("gemini-2.5-pro", 1_000_000),
     ("gemini-2.5-flash", 1_000_000),
@@ -269,9 +281,10 @@ _MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
     ("nemotron", 131_072),
     ("minimax", 40_960),
     # Short aliases used by _MODEL_ALIASES in claude_native.py
+    ("fable", 1_000_000),
     ("opus", 1_000_000),
     ("sonnet", 1_000_000),
-    ("haiku", 1_000_000),
+    ("haiku", 200_000),
 ]
 
 
@@ -318,22 +331,14 @@ def get_effective_context_limit(
 
 
 def _normalize_provider_name(value: str) -> str:
-    """Normalize supported Z.AI shorthands onto the canonical provider name."""
+    """Normalize provider shorthands onto the canonical provider name."""
     aliases = {
-        "z.ai": "zai",
-        "glm51": "zai",
-        "glm-51": "zai",
-        "glm-5.1": "zai",
-        "glm-5.1-zai": "zai",
-        "glm47": "zai",
-        "glm-47": "zai",
-        "glm-4.7": "zai",
-        "glm47lite": "zai",
-        "glm-4.7-lite": "zai",
-        "lite": "zai",
-        "glm5turbo": "zai",
-        "glm-5turbo": "zai",
-        "glm-5-turbo": "zai",
+        "spark": "muse",
+        "muse-code": "muse",
+        "musecode": "muse",
+        "cursor-cli": "cursor",
+        "cursor-headless": "cursor",
+        "headless": "cursor",
     }
     return aliases.get(value, value)
 
@@ -347,14 +352,32 @@ def short_model_name(model: str) -> str:
         return "o3"
     if m == "o4-mini":
         return "o4-mini"
+    if "muse-spark" in m or "spark-1" in m:
+        return "SPARK"
+    if "composer" in m:
+        return "COMPOSER"
+    if "fable" in m:
+        return "FABLE"
     if "opus" in m:
         return "OPUS"
     if "sonnet" in m:
         return "SONNET"
     if "haiku" in m:
         return "HAIKU"
+    if "astra" in m:
+        return "ASTRA"
+    if "gpt-5.6-sol" in m or m.endswith("-sol"):
+        return "SOL"
+    if "gpt-5.6-terra" in m or m.endswith("-terra"):
+        return "TERRA"
+    if "gpt-5.6-luna" in m or m.endswith("-luna"):
+        return "LUNA"
+    if "gpt-5.6" in m:
+        return "GPT-5.6"
     if "gpt-5.5" in m:
         return "GPT-5.5"
+    if "gpt-5.4" in m:
+        return "GPT-5.4"
     if "glm-5.1" in m:
         return "GLM-5.1"
     if "glm-4.7" in m:
@@ -374,6 +397,12 @@ def short_model_name(model: str) -> str:
         return "KIMI"
     if "gemini-3.1-pro" in m:
         return "GEMINI-3.1-PRO"
+    if "gemini-3.8-flash" in m:
+        return "GEMINI-3.8-FL"
+    if "gemini-3.5-flash-lite" in m:
+        return "GEMINI-3.5-LITE"
+    if "gemini-3.5-flash" in m:
+        return "GEMINI-3.5-FL"
     if "gemini-3-flash" in m:
         return "GEMINI-3-FL"
     if "gemini-3.1-flash-lite" in m:

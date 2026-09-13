@@ -16,10 +16,10 @@ from src.ldb.runner import LdbResult, LdbRunner, _LdbBug, parse_player_response
 def _make_config(**overrides):
     defaults = dict(
         working_dir=".",
-        ldb_input_provider="zai",
-        ldb_player_provider="zai",
-        ldb_tester_provider="zai",
-        ldb_fixer_provider="zai",
+        ldb_input_provider="claude",
+        ldb_player_provider="muse",
+        ldb_tester_provider="gemini",
+        ldb_fixer_provider="codex",
         ldb_input_model="",
         ldb_player_model="",
         ldb_tester_model="",

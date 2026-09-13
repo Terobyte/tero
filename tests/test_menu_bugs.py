@@ -43,8 +43,8 @@ class TestProviderModelCarryover:
         from src.menu import _questionary_select_provider_model
 
         config = Config(
-            player_provider="zai",
-            player_model="glm-5.1",
+            player_provider="muse",
+            player_model="muse-spark-1.3",
         )
 
         call_count = [0]
@@ -70,17 +70,17 @@ class TestFallbackEffectiveSlotLabel:
         from src.menu import _fallback_effective_slot_label
 
         config = Config(
-            batch_pre_provider="zai",
-            batch_pre_model="",
-            coach_provider="zai",
-            coach_model="",
+            batch_pre_provider="muse",
+            batch_pre_model="muse-spark-1.3",
+            coach_provider="muse",
+            coach_model="muse-spark-1.3",
         )
 
         label = _fallback_effective_slot_label(
             config, "batch_pre_provider", "batch_pre_model"
         )
 
-        assert label == "zai (GLM-5.1)"
+        assert label == "muse (SPARK)"
 
 
 class TestShortModelName:
@@ -98,8 +98,8 @@ class TestSaveDefault:
         monkeypatch.setenv("HOME", str(tmp_path))
 
         config = Config(
-            player_fallback_chain="claude,zai",
-            coach_fallback_chain="zai,claude",
+            player_fallback_chain="claude,muse",
+            coach_fallback_chain="muse,claude",
             chain_retry_wait_s=30.0,
             chain_max_retries=3,
         )
@@ -108,8 +108,8 @@ class TestSaveDefault:
 
         saved = yaml.safe_load((tmp_path / ".g3" / "config.yaml").read_text())
         defaults = saved["defaults"]
-        assert defaults["player_fallback_chain"] == "claude,zai"
-        assert defaults["coach_fallback_chain"] == "zai,claude"
+        assert defaults["player_fallback_chain"] == "claude,muse"
+        assert defaults["coach_fallback_chain"] == "muse,claude"
         assert defaults["chain_retry_wait_s"] == 30.0
         assert defaults["chain_max_retries"] == 3
 
@@ -145,7 +145,7 @@ class TestBatchRolePrompts:
         )
 
         captured_labels = []
-        prompts = iter(["OpenCode (MIMO/Kimi/Z.AI)", None])
+        prompts = iter(["OpenCode (MIMO/Kimi)", None])
 
         def mock_select(label, choices=None, **kwargs):
             captured_labels.append(label)
@@ -187,28 +187,14 @@ class TestBatchRolePrompts:
         assert "codex (GPT-5.4)" in judge_lines[0]
 
 
-class TestZaiFixedModel:
-    """Regression: ZAI must return a fixed model so questionary.select() is never
-    called with an empty choices list (which crashes the menu).
+class TestMuseModelPresets:
+    def test_muse_has_selectable_presets(self):
+        from src.menu import _fixed_model_for_provider, _model_presets_for_provider
 
-    Root cause: debugger iteration 3 removed FIXED_PROVIDER_MODELS but forgot
-    that _fixed_model_for_provider("zai") depended on it.  Without a fixed model,
-    _questionary_select_provider_model falls through to questionary.select() with
-    _model_presets_for_provider("zai") == {} → crash.
-    """
+        assert _fixed_model_for_provider("muse") == ""
+        assert _model_presets_for_provider("muse")["Muse Spark 1.3"] == "muse-spark-1.3"
 
-    def test_fixed_model_returns_glm51_for_zai(self):
-        from src.menu import _fixed_model_for_provider
-
-        assert _fixed_model_for_provider("zai") == "glm-5.1"
-
-    def test_fixed_model_returns_glm51_for_lite_alias(self):
-        from src.menu import _fixed_model_for_provider
-
-        assert _fixed_model_for_provider("lite") == "glm-5.1"
-
-    def test_selecting_zai_does_not_prompt_for_model(self):
-        """Selecting ZAI must skip the model picker (fixed model → early return)."""
+    def test_selecting_muse_prompts_for_model(self):
         from src.config import Config
         from src.menu import _questionary_select_provider_model
 
@@ -216,7 +202,9 @@ class TestZaiFixedModel:
 
         def mock_select(*args, **kwargs):
             select_calls.append(kwargs.get("choices", args[1] if len(args) > 1 else None))
-            return DummyPrompt("ZAI (Z.AI / GLM-5.1)")
+            if len(select_calls) == 1:
+                return DummyPrompt("Muse Code (Spark)")
+            return DummyPrompt("Muse Spark 1.3")
 
         with patch("src.menu.questionary", MagicMock(select=mock_select)):
             result = _questionary_select_provider_model(
@@ -226,10 +214,9 @@ class TestZaiFixedModel:
                 "player",
             )
 
-        assert result.player_provider == "zai"
-        assert result.player_model == "glm-5.1"
-        # Only one select call (provider picker), NOT a second one for model
-        assert len(select_calls) == 1
+        assert result.player_provider == "muse"
+        assert result.player_model == "muse-spark-1.3"
+        assert len(select_calls) == 2
 
 
 class TestCustomModelHandling:

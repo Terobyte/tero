@@ -6,8 +6,9 @@ from .base import AgentProvider
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
-from .zai import ZaiConfig, ZaiProvider
 from .gemini import GeminiConfig, GeminiProvider
+from .muse import MuseConfig, MuseProvider
+from .cursor import CursorConfig, CursorProvider
 from .message_adapter import (
     AdaptedMessage,
     TextBlock,
@@ -25,7 +26,7 @@ def create_provider(
     """Create provider by name from config.
 
     Args:
-        provider_name: "zai", "claude", "codex", "opencode", or "kilo"
+        provider_name: "claude", "codex", "opencode", "gemini", "muse", or "cursor"
         provider_config: Optional config dict from .g3/config.yaml providers section
                         Supports "type" key to override provider type
 
@@ -37,51 +38,34 @@ def create_provider(
 
     NOTE: Config keys like ``default_model`` are *provider-specific*, not universal.
     Not every provider reads ``default_model`` from the config dict — some derive it
-    from the provider type (e.g. Codex defaults to ``gpt-5.5``, ZAI to ``glm-5.1``).
-    When extending ``create_provider()``, check the target Config dataclass for the
-    actual field names rather than assuming ``default_model`` is always accepted.
+    from the provider type (e.g. Codex defaults to ``gpt-5.6-terra``, Muse to
+    ``muse-spark-1.3``). When extending ``create_provider()``, check the target
+    Config dataclass for the actual field names rather than assuming
+    ``default_model`` is always accepted.
     """
     provider_config = provider_config or {}
 
     # Use type from config if specified, otherwise fall back to provider_name
     provider_type = provider_config.get("type", provider_name)
 
-    if provider_type == "zai":
-        zai_cfg = ZaiConfig(
-            claude_home=provider_config.get("claude_home", "~/.claude-zai"),
-            default_model=provider_config.get("default_model", "glm-5.1"),
-        )
-        return ZaiProvider(zai_cfg)
-
     if provider_type in ("claude_native", "claude"):
         native_cfg = ClaudeNativeConfig(
             claude_home=provider_config.get("claude_home", "~/.claude"),
             command=provider_config.get("command", "claude"),
-            default_model=provider_config.get("default_model", "sonnet"),
+            default_model=provider_config.get("default_model", "claude-sonnet-5"),
         )
         return ClaudeNativeProvider(native_cfg)
 
-    if provider_type in ("opencode_native", "opencode", "kilo_native", "kilo"):
+    if provider_type in ("opencode_native", "opencode"):
         opencode_cfg = OpenCodeConfig(
-            command=provider_config.get(
-                "command",
-                "kilo" if provider_type in ("kilo_native", "kilo") else "opencode",
-            ),
+            command=provider_config.get("command", "opencode"),
             default_model=provider_config.get(
-                "default_model",
-                (
-                    "kilo/xiaomi/mimo-v2-pro:free"
-                    if provider_type in ("kilo_native", "kilo")
-                    else "opencode/mimo-v2-pro-free"
-                ),
+                "default_model", "opencode/mimo-v2-pro-free"
             ),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
             ),
-            display_name=provider_config.get(
-                "display_name",
-                "Kilo" if provider_type in ("kilo_native", "kilo") else "OpenCode",
-            ),
+            display_name=provider_config.get("display_name", "OpenCode"),
         )
         return OpenCodeProvider(opencode_cfg)
 
@@ -97,11 +81,31 @@ def create_provider(
         )
         return GeminiProvider(gemini_cfg)
 
+    if provider_type in ("cursor", "cursor_cli", "cursor_headless"):
+        cursor_cfg = CursorConfig(
+            command=provider_config.get("command", "agent"),
+            default_model=provider_config.get("default_model", "composer-2.5"),
+            display_name=provider_config.get("display_name", "Cursor"),
+            force=provider_config.get("force", provider_config.get("yolo", True)),
+            trust=provider_config.get("trust", True),
+        )
+        return CursorProvider(cursor_cfg)
+
+    if provider_type in ("muse", "muse_code"):
+        muse_cfg = MuseConfig(
+            command=provider_config.get("command", "muse"),
+            default_model=provider_config.get("default_model", "muse-spark-1.3"),
+            display_name=provider_config.get("display_name", "Muse"),
+            yolo=provider_config.get("yolo", True),
+            trust_workspace=provider_config.get("trust_workspace", True),
+        )
+        return MuseProvider(muse_cfg)
+
     if provider_type == "codex":
         codex_cfg = CodexConfig(
             command=provider_config.get("command", "codex"),
             default_model=provider_config.get(
-                "default_model", provider_config.get("model", "gpt-5.5")
+                "default_model", provider_config.get("model", "gpt-5.6-terra")
             ),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -116,7 +120,7 @@ def create_provider(
             enabled_features=provider_config.get("enabled_features", []),
             disabled_features=provider_config.get("disabled_features", []),
             model_reasoning_effort=provider_config.get(
-                "model_reasoning_effort", "medium"
+                "model_reasoning_effort", "max"
             ),
         )
         return CodexProvider(codex_cfg)
@@ -138,12 +142,15 @@ __all__ = [
     # OpenCode
     "OpenCodeConfig",
     "OpenCodeProvider",
-    # ZAI
-    "ZaiConfig",
-    "ZaiProvider",
     # Gemini
     "GeminiConfig",
     "GeminiProvider",
+    # Muse
+    "MuseConfig",
+    "MuseProvider",
+    # Cursor
+    "CursorConfig",
+    "CursorProvider",
     # Message adapter
     "AdaptedMessage",
     "TextBlock",

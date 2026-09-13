@@ -7,7 +7,6 @@ from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
 from .base import AgentProvider
 from .claude_native import ClaudeNativeProvider, ClaudeNativeConfig
-from .zai import ZaiProvider, ZaiConfig
 
 
 @dataclass
@@ -23,7 +22,7 @@ class ProviderRegistry:
     """Registry for managing multiple providers with different accounts.
 
     Supports:
-    - Multiple provider types (zai, claude, codex, opencode, kilo)
+    - Multiple provider types (claude, codex, opencode, gemini, muse, cursor)
     - Parallel execution of providers
     """
 
@@ -41,7 +40,7 @@ class ProviderRegistry:
         """Get or create a provider instance by name.
 
         Args:
-            provider_name: Provider name ("zai", "claude", "codex", "opencode", "kilo")
+            provider_name: Provider name ("claude", "codex", "opencode", "gemini", "muse", "cursor")
 
         Returns:
             Provider instance
@@ -66,18 +65,11 @@ class ProviderRegistry:
         provider_config: dict,
     ) -> AgentProvider:
         """Create a provider instance."""
-        if provider_type == "zai":
-            zai_cfg = ZaiConfig(
-                claude_home=provider_config.get("claude_home", "~/.claude-zai"),
-                default_model=provider_config.get("default_model", "glm-5.1"),
-            )
-            return ZaiProvider(zai_cfg)
-
         if provider_type in ("claude_native", "claude"):
             native_cfg = ClaudeNativeConfig(
                 claude_home=provider_config.get("claude_home", "~/.claude"),
                 command=provider_config.get("command", "claude"),
-                default_model=provider_config.get("default_model", "sonnet"),
+                default_model=provider_config.get("default_model", "claude-sonnet-5"),
             )
             return ClaudeNativeProvider(native_cfg)
 
@@ -95,6 +87,30 @@ class ProviderRegistry:
             )
             return GeminiProvider(gemini_cfg)
 
+        if provider_type in ("cursor", "cursor_cli", "cursor_headless"):
+            from .cursor import CursorProvider, CursorConfig
+
+            cursor_cfg = CursorConfig(
+                command=provider_config.get("command", "agent"),
+                default_model=provider_config.get("default_model", "composer-2.5"),
+                display_name=provider_config.get("display_name", "Cursor"),
+                force=provider_config.get("force", provider_config.get("yolo", True)),
+                trust=provider_config.get("trust", True),
+            )
+            return CursorProvider(cursor_cfg)
+
+        if provider_type in ("muse", "muse_code"):
+            from .muse import MuseProvider, MuseConfig
+
+            muse_cfg = MuseConfig(
+                command=provider_config.get("command", "muse"),
+                default_model=provider_config.get("default_model", "muse-spark-1.3"),
+                display_name=provider_config.get("display_name", "Muse"),
+                yolo=provider_config.get("yolo", True),
+                trust_workspace=provider_config.get("trust_workspace", True),
+            )
+            return MuseProvider(muse_cfg)
+
         if provider_type == "codex":
             # Import here to avoid circular dependency
             from .codex import CodexProvider, CodexConfig
@@ -102,7 +118,7 @@ class ProviderRegistry:
             codex_cfg = CodexConfig(
                 command=provider_config.get("command", "codex"),
                 default_model=provider_config.get(
-                    "default_model", provider_config.get("model", "gpt-5.5")
+                    "default_model", provider_config.get("model", "gpt-5.6-terra")
                 ),
                 default_timeout=provider_config.get(
                     "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
@@ -117,34 +133,23 @@ class ProviderRegistry:
                 enabled_features=provider_config.get("enabled_features", []),
                 disabled_features=provider_config.get("disabled_features", []),
                 model_reasoning_effort=provider_config.get(
-                    "model_reasoning_effort", "medium"
+                    "model_reasoning_effort", "max"
                 ),
             )
             return CodexProvider(codex_cfg)
 
-        if provider_type in ("opencode_native", "opencode", "kilo_native", "kilo"):
+        if provider_type in ("opencode_native", "opencode"):
             from .opencode import OpenCodeProvider, OpenCodeConfig
 
             opencode_cfg = OpenCodeConfig(
-                command=provider_config.get(
-                    "command",
-                    "kilo" if provider_type in ("kilo_native", "kilo") else "opencode",
-                ),
+                command=provider_config.get("command", "opencode"),
                 default_model=provider_config.get(
-                    "default_model",
-                    (
-                        "kilo/xiaomi/mimo-v2-pro:free"
-                        if provider_type in ("kilo_native", "kilo")
-                        else "opencode/mimo-v2-pro-free"
-                    ),
+                    "default_model", "opencode/mimo-v2-pro-free"
                 ),
                 default_timeout=provider_config.get(
                     "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
                 ),
-                display_name=provider_config.get(
-                    "display_name",
-                    "Kilo" if provider_type in ("kilo_native", "kilo") else "OpenCode",
-                ),
+                display_name=provider_config.get("display_name", "OpenCode"),
             )
             return OpenCodeProvider(opencode_cfg)
 
@@ -156,7 +161,7 @@ class ProviderRegistry:
         """Get multiple provider instances for parallel execution.
 
         Args:
-            names: List of provider names (e.g., ["zai", "claude"])
+            names: List of provider names (e.g., ["muse", "claude"])
 
         Returns:
             List of provider instances
