@@ -1,6 +1,0 @@
-Trace:
-(4):      c = a + b(5):      return c
-
-Value Profile Output:
-Value_After:3|a=1|b=2
-Value_After:5|a=1|b=2|c=3|_ret=3
