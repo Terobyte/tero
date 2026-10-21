@@ -367,3 +367,92 @@ async def test_guard_never_writes_through_symlinked_parent(tmp_path: Path):
     assert outcome.status == "ship", outcome
     assert (outside / ".claude/settings.json").read_text() == "VICTIM\n", "guard wrote outside the repo"
     assert seen == {"pkg_link": False, "settings": '{"user": 1}'}
+
+
+CASE_VARIANTS = ["claude.md", "Agents.MD", ".CLAUDE/settings.json", "pkg/.Gemini/settings.json"]
+
+
+@pytest.mark.asyncio
+async def test_guard_folds_case(tmp_path: Path):
+    # macOS and Windows filesystems are case-insensitive: the judge's CLI opening
+    # CLAUDE.md reads claude.md, and pytest reads Pytest.ini as pytest.ini.
+    repo = _repo(tmp_path)
+    seen: dict[str, object] = {}
+
+    def plant():
+        for rel in CASE_VARIANTS:
+            write_file(repo, rel, "evil instructions\n")
+        write_file(repo, "Pytest.ini", "[pytest]\n")
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["left"] = [
+            rel for rel in [*CASE_VARIANTS, "Pytest.ini"] if (repo / rel).exists()
+        ]
+        return ship()
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), check_judge])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert seen.get("left") == []
+    paths = [row["path"] for row in _kinds(ledger, "agent_config_violation")]
+    for rel in CASE_VARIANTS:
+        assert rel in paths, (rel, paths)
+    assert [row["path"] for row in _kinds(ledger, "suite_violation")] == ["Pytest.ini"]
+
+
+OPENCODE_NEW = ["opencode.json", "opencode.jsonc", "AGENTS.override.md", "sub/opencode.json"]
+
+
+@pytest.mark.asyncio
+async def test_guard_covers_opencode_and_codex_override(tmp_path: Path):
+    repo = _repo(tmp_path)
+    seen: dict[str, object] = {}
+
+    def plant():
+        for rel in OPENCODE_NEW:
+            write_file(repo, rel, '{"evil": 1}\n')
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["left"] = [rel for rel in OPENCODE_NEW if (repo / rel).exists()]
+        return ship()
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), check_judge])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert seen.get("left") == []
+    paths = [row["path"] for row in _kinds(ledger, "agent_config_violation")]
+    assert sorted(paths) == sorted(OPENCODE_NEW), paths
+
+
+@pytest.mark.asyncio
+async def test_guard_covers_in_repo_target_of_config_symlink(tmp_path: Path):
+    # The user's `.claude` links to a plain dir inside the repo; the judge reads
+    # cfg/ through the link, so cfg/ is agent config too.
+    repo = _repo(tmp_path)
+    write_file(repo, "cfg/settings.json", '{"user": 1}')
+    (repo / ".claude").symlink_to("cfg", target_is_directory=True)
+    write_file(repo, "notes/real.md", "user\n")
+    (repo / "CLAUDE.md").symlink_to("notes/real.md")
+    seen: dict[str, object] = {}
+
+    def tamper():
+        write_file(repo, "cfg/settings.json", '{"evil": 1}')
+        write_file(repo, "cfg/hooks.json", '{"evil": 1}')
+        write_file(repo, "notes/real.md", "evil\n")
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["settings"] = (repo / ".claude/settings.json").read_text()
+        seen["hooks"] = (repo / ".claude/hooks.json").exists()
+        seen["claude_md"] = (repo / "CLAUDE.md").read_text()
+        return ship()
+
+    agents = FakeAgents(repo, [_player_greets(repo, tamper), check_judge])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert seen == {"settings": '{"user": 1}', "hooks": False, "claude_md": "user\n"}
+    assert (repo / ".claude").is_symlink() and (repo / "CLAUDE.md").is_symlink()
+    paths = sorted(row["path"] for row in _kinds(ledger, "agent_config_violation"))
+    assert paths == ["cfg/hooks.json", "cfg/settings.json", "notes/real.md"], paths
