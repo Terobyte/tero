@@ -1,10 +1,11 @@
-"""Process Guard — snapshot and clean up child processes spawned during agent turns."""
+"""Snapshot child processes before an agent turn and kill new ones after."""
 
 from __future__ import annotations
 
 import os
 import signal
-import subprocess
+
+import psutil
 
 
 class ProcessGuard:
@@ -20,80 +21,32 @@ class ProcessGuard:
         don't see each other's subprocesses and kill them.
         """
         try:
-            import psutil
-
-            try:
-                return {
-                    c.pid for c in psutil.Process(os.getpid()).children(recursive=True)
-                }
-            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, PermissionError):
-                return set()
-        except ImportError:
-            pass
-
-        try:
-            result = subprocess.run(
-                ["pgrep", "-P", str(os.getpid())],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return {
-                    int(pid)
-                    for pid in result.stdout.strip().split("\n")
-                    if pid.strip().isdigit()
-                }
-        except (subprocess.TimeoutExpired, ValueError, OSError):
-            pass
-        return set()
+            return {
+                c.pid for c in psutil.Process(os.getpid()).children(recursive=True)
+            }
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            return set()
 
     def kill_new_processes(self, before: set[int]) -> None:
         """Kill processes that appeared since the snapshot, including children."""
-        try:
-            import psutil
-        except ImportError:
-            psutil = None  # type: ignore
-
         after = self.snapshot_pids()
         new_pids = after - before - {os.getpid()}
 
         if not new_pids:
             return
 
-        if psutil is not None:
-            for pid in new_pids:
-                try:
-                    proc = psutil.Process(pid)
-                    children = proc.children(recursive=True)
-                    for child in children:
-                        try:
-                            child.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                    os.kill(pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
-                    pass
-        else:
-            # pgrep fallback when psutil is unavailable
-            for pid in new_pids:
-                try:
-                    result = subprocess.run(
-                        ["pgrep", "-P", str(pid)],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    if result.returncode == 0:
-                        for child_pid in result.stdout.strip().split("\n"):
-                            if child_pid.strip().isdigit():
-                                try:
-                                    os.kill(int(child_pid), signal.SIGTERM)
-                                except (ProcessLookupError, PermissionError):
-                                    pass
-                    os.kill(pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, subprocess.TimeoutExpired, OSError):
-                    pass
+        for pid in new_pids:
+            try:
+                proc = psutil.Process(pid)
+                children = proc.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
+                pass
 
         if self.verbose:
             print(f"  [cleanup] убито процессов: {len(new_pids)}")
