@@ -281,12 +281,12 @@ class CodexProvider:
 
         # Item events
         if etype in ("item.completed", "item.started"):
-            item = event.get("item", {})
+            item = event.get("item") or {}
             return self._adapt_item(item, etype)
 
         # Turn completion (contains usage)
         if etype == "turn.completed":
-            usage = event.get("usage", {})
+            usage = event.get("usage") or {}
             self._last_input_tokens = usage.get("input_tokens", 0)
             self._last_output_tokens = usage.get("output_tokens", 0)
             return AdaptedMessage(
@@ -306,7 +306,7 @@ class CodexProvider:
             )
 
         if etype == "turn.failed":
-            error = event.get("error", {})
+            error = event.get("error") or {}
             msg = (
                 error.get("message", "Turn failed")
                 if isinstance(error, dict)

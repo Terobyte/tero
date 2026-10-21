@@ -163,8 +163,12 @@ class GeminiProvider:
                 )
             return None
 
+        failed = t == "result" and event.get("status") not in (None, "success")
+        if t == "error" or failed:
+            raise ProviderError(f"gemini CLI error: {_error_text(event)}")
+
         if t == "result":
-            stats = event.get("stats", {})
+            stats = event.get("stats") or {}
             self._last_input_tokens = stats.get("input_tokens", 0)
             self._last_output_tokens = stats.get("output_tokens", 0)
             return AdaptedMessage(
@@ -177,7 +181,7 @@ class GeminiProvider:
         if t == "tool_use":
             name = event.get("tool_name", "")
             tool_id = event.get("tool_id", "")
-            args = event.get("parameters", {})
+            args = event.get("parameters") or {}
             return AdaptedMessage(
                 role="assistant",
                 content=[
@@ -208,10 +212,6 @@ class GeminiProvider:
                 type="tool_result",
             )
 
-        if t == "error":
-            msg = event.get("message", event.get("error", "Unknown error"))
-            raise ProviderError(f"gemini CLI error: {msg}")
-
         return None
 
     def _raise_for_returncode(
@@ -230,3 +230,11 @@ class GeminiProvider:
     @property
     def display_name(self) -> str:
         return f"Gemini ({self.config.default_model})"
+
+
+def _error_text(event: dict) -> str:
+    # A failed result nests the text: {"error": {"type": ..., "message": ...}}.
+    error = event.get("error")
+    if isinstance(error, dict):
+        error = error.get("message")
+    return event.get("message") or error or "Unknown error"

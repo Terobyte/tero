@@ -133,14 +133,14 @@ class OpenCodeProvider:
         a read, `{"command": ...}` for bash) so `_activity` can show the real
         argument instead of a stringified dict.
         """
-        state = part.get("state", {})
+        state = part.get("state") or {}
         call_id = part.get("callID", "")
         tool = part.get("tool", "bash")
         inp = dict(state.get("input") or {})
         if tool == "bash" and "command" not in inp:
             inp["command"] = inp.get("description") or str(inp)
-        output = state.get("output", "")
-        exit_code = state.get("metadata", {}).get("exit")
+        output = state.get("output") or ""
+        exit_code = (state.get("metadata") or {}).get("exit")
         result_text = output[:MAX_TOOL_OUTPUT_CHARS]
 
         return [
@@ -184,7 +184,7 @@ class OpenCodeProvider:
         if not isinstance(event, dict):
             return None
         t = event.get("type")
-        part = event.get("part", {})
+        part = event.get("part") or {}
         if not isinstance(part, dict):
             part = {}
 
@@ -197,7 +197,7 @@ class OpenCodeProvider:
             return self._tool_messages(part)
 
         elif t == "step_finish":
-            tokens = part.get("tokens", {})
+            tokens = part.get("tokens") or {}
             self._last_input_tokens = tokens.get("input", 0)
             self._last_output_tokens = tokens.get("output", 0)
 

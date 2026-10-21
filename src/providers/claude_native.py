@@ -7,9 +7,8 @@ import subprocess
 from dataclasses import dataclass
 
 from src.constants import DEFAULT_COMPACT_THRESHOLD
-from src.errors import ProviderError
 from .effort import normalize_effort
-from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
+from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 
 # Variables that MUST NOT be passed through to native Claude.
@@ -84,10 +83,7 @@ class ClaudeNativeProvider:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
                     if event.returncode != 0:
-                        raise ProviderError(
-                            f"claude CLI exited with code {event.returncode}: "
-                            f"{(event.stderr or b'').decode()}"
-                        )
+                        raise_for_exit("claude CLI", event.returncode, event.stderr)
                 else:
                     self._capture_usage(event)
                     yield event
