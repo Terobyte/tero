@@ -1,7 +1,5 @@
 import os
-import pytest
 from src.providers.codex import CodexProvider, CodexConfig
-from src.providers.message_adapter import TextBlock
 
 SMALL_PROMPT = "You are a helpful assistant."
 LARGE_PROMPT = "x" * 100_000  # 100KB — above 64KB threshold
@@ -83,34 +81,3 @@ class TestCodexTranscriptGuarantee:
         result = provider._adapt_codex_event(event)
         assert result is not None
         assert "edit the file" in result.content[0].text
-
-    def test_codex_approved_not_masked_by_turn_completed(self):
-        """Regression: turn.completed must not mask IMPLEMENTATION_APPROVED verdict.
-
-        Before fix, _latest_assistant_text picked '[codex] turn completed'
-        (the last assistant message) instead of the real verdict text.
-        """
-        from src.feedback import parse_coach_output, Approved
-        from src.providers.message_adapter import AdaptedMessage, TextBlock
-
-        messages = [
-            AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text="IMPLEMENTATION_APPROVED")],
-                type="text",
-            ),
-            AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text="1. No blocking findings.")],
-                type="text",
-            ),
-            # turn.completed — lifecycle event, must not mask verdict
-            AdaptedMessage(
-                role="assistant",
-                content=[],
-                stop_reason="end_turn",
-                type="result",
-            ),
-        ]
-        verdict = parse_coach_output(messages)
-        assert isinstance(verdict, Approved)

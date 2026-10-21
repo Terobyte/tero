@@ -1,11 +1,8 @@
 """Tests for normalize_message() in src/providers/message_adapter.py."""
 
-import pytest
-
 from src.providers.message_adapter import (
     AdaptedMessage,
     TextBlock,
-    ToolUseBlock,
     normalize_message,
 )
 
@@ -106,15 +103,3 @@ class TestNormalizeSdkLike:
         m = ResultMessage()
         result = normalize_message(m)
         assert result is None
-
-
-    def test_feedback_extract_text_from_message(self):
-        from src.feedback import _extract_text_from_message
-
-        msg = AdaptedMessage(role="assistant", content=[TextBlock(text="APPROVED")])
-        assert _extract_text_from_message(msg) == "APPROVED"
-
-    def test_feedback_extract_text_bare_string(self):
-        from src.feedback import _extract_text_from_message
-
-        assert _extract_text_from_message("raw text") == "raw text"

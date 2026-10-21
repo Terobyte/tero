@@ -661,7 +661,7 @@ def test_display_name_default():
 
 
 # ---------------------------------------------------------------------------
-# Menu / config / runtime_controls tests
+# Menu / config tests
 # ---------------------------------------------------------------------------
 
 
@@ -678,17 +678,6 @@ def test_opencode_model_presets_exist():
 
     values = list(OPENCODE_MODEL_PRESETS.values())
     assert "opencode/minimax-m2.5-free" in values
-
-
-def test_opencode_runtime_presets():
-    """MODEL_PRESETS includes opencode entries."""
-    from src.runtime_controls import MODEL_PRESETS
-
-    providers = [p for _, p, _ in MODEL_PRESETS]
-    assert "opencode" in providers
-    assert ("MiniMax-2.5", "opencode", "opencode/minimax-m2.5-free") in MODEL_PRESETS
-    assert all(provider != "kilo" for _, provider, _ in MODEL_PRESETS)
-    assert all(provider != "zai" for _, provider, _ in MODEL_PRESETS)
 
 
 def test_opencode_context_windows():

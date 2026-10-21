@@ -7,11 +7,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.batch_executor import BatchExecutor
 from src.config import resolve_config
-from src.coach_player import CoachPlayerSession
-from src.learning.recorder import RunRecorder
-from src.plan_tracker import PlanTracker, parse_requirements
 
 
 PROVIDER_CHOICES = ["muse", "claude", "codex", "gemini", "opencode", "cursor"]
@@ -297,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
+async def run_go(args, config=None):
     """Run the v4 player → judge loop."""
     from src.loop.agents import LiveAgents
     from src.loop.config import apply_saved_config, config_from_namespace

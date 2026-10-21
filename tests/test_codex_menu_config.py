@@ -11,7 +11,6 @@ from src.menu import (
     PROVIDER_PRESETS,
     _save_global_default,
 )
-from src.runtime_controls import MODEL_PRESETS
 
 
 def test_codex_menu_presets_match_native_cli_models():
@@ -23,17 +22,6 @@ def test_codex_menu_presets_match_native_cli_models():
         "Default (~/.codex/config.toml)": "",
     }
     assert PROVIDER_PRESETS["Codex (native CLI)"] == "codex"
-
-
-def test_runtime_controls_offer_native_codex_presets():
-    preset_labels = [label for label, _, _ in MODEL_PRESETS]
-    assert "GPT-5.6 Sol" in preset_labels
-    assert "GPT-5.6 Terra" in preset_labels
-    assert "GPT-5.6 Luna" in preset_labels
-    assert "GPT-6 Astra" in preset_labels
-    assert "Spark 1.3" in preset_labels
-    assert "Spark 1.3 free" in preset_labels
-    assert "GLM-5.1" not in preset_labels
 
 
 def test_codex_config_defaults_and_names_use_native_models():
