@@ -1,4 +1,4 @@
-"""System/user prompts for the three v4 roles."""
+"""System/user prompts for the three roles."""
 
 from __future__ import annotations
 

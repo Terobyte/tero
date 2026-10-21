@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 
-from src.loop.schemas import JUDGE, PLAYER, TESTER, ValidateCtx, validate
+from src.loop.schemas import SCHEMAS, ValidateCtx, validate
 from src.process_guard import ProcessGuard
-
-_ROLE_SCHEMAS = {"player": PLAYER, "judge": JUDGE, "tester": TESTER}
 
 # Overridable in tests: how long a role can go silent before we print a
 # "still working" line, so a slow provider (opencode: 81s to first event,
@@ -109,7 +109,7 @@ class LiveAgents:
         prompt = kwargs.get("prompt") or ""
         timeout = kwargs.get("timeout") or 600
         ctx = kwargs.get("ctx")
-        schema = _ROLE_SCHEMAS[role]
+        schema = SCHEMAS[role]
         read_only = role == "judge"
 
         text = await self._call(
@@ -147,9 +147,6 @@ class LiveAgents:
         role: str = "",
         effort: str = "",
     ) -> str | None:
-        import asyncio
-
-        last_error: Exception | None = None
         for attempt in range(2):
             before = self.guard.snapshot_pids()
             call_start = _now()
@@ -175,7 +172,6 @@ class LiveAgents:
                 )
                 return text
             except Exception as exc:  # provider auth/network
-                last_error = exc
                 self.last_error = str(exc) or type(exc).__name__
                 print(f"  {provider_name} ошибка: {exc}", flush=True)
                 if attempt == 0 and self.retry_wait_s:
@@ -188,14 +184,12 @@ class LiveAgents:
                 except asyncio.CancelledError:
                     pass
                 self.guard.kill_new_processes(before)
-        return None if last_error else ""
+        return None
 
     def _mark_output(self) -> None:
         self._last_output_ts = _now()
 
     async def _heartbeat(self, role: str, provider_name: str, call_start: float) -> None:
-        import asyncio
-
         poll_s = HEARTBEAT_S / 6
         while True:
             await asyncio.sleep(poll_s)
@@ -214,8 +208,6 @@ class LiveAgents:
 
 
 def _now() -> float:
-    import time
-
     return time.monotonic()
 
 
@@ -256,10 +248,7 @@ def _activity(block: Any, working_dir: str = "") -> str:
         return name
     arg = str(params[key])
     if key in _ACTIVITY_PATH_KEYS and working_dir:
-        if ", " in arg:
-            arg = ", ".join(_relative_path(p, working_dir) for p in arg.split(", "))
-        else:
-            arg = _relative_path(arg, working_dir)
+        arg = ", ".join(_relative_path(p, working_dir) for p in arg.split(", "))
     arg = " ".join(arg.split())
     arg = _truncate_tail(arg, 100)
     return f"{name} {arg}".strip()

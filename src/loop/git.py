@@ -1,4 +1,4 @@
-"""Git operations for a v4 run. All commands go through subprocess."""
+"""Git operations for a run. All commands go through subprocess."""
 
 from __future__ import annotations
 
@@ -170,10 +170,10 @@ def _branch_exists(repo: str | Path, name: str) -> bool:
         return False
 
 
-def _names(repo: str | Path, *args: str) -> list[str]:
+def _names(repo: str | Path, cmd: str, *args: str) -> list[str]:
     # -z: git quotes non-ASCII, tab and quote characters in plain path output.
     # It goes right after the subcommand so a "--" pathspec list cannot swallow it.
-    return [name for name in _git(repo, args[0], "-z", *args[1:]).split("\0") if name]
+    return [name for name in _git(repo, cmd, "-z", *args).split("\0") if name]
 
 
 def _git(repo: str | Path, *args: str) -> str:

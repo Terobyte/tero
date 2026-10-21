@@ -1,4 +1,4 @@
-"""Start a v4 run, walk phases, stop with the spec exit codes."""
+"""Start a run, walk phases, stop with the spec exit codes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.config import Config, UnknownProviderError, normalize_provider
-from src.loop.gates import detect, run_all
+from src.loop.gates import detect, print_red_tail, run_all
 from src.loop.git import (
     DirtyWorktreeError,
     checkout_run_branch,
@@ -116,8 +116,7 @@ async def run(
         gate = run_all(command, repo=repo, timeout_s=cfg.test_timeout_s)
         if not gate.ok:
             print(f"стартовый прогон тестов: КРАСНЫЕ (код {gate.exit_code})", flush=True)
-            for line in gate.output.splitlines()[-15:]:
-                print(f"    {line}", flush=True)
+            print_red_tail(gate.output)
             return RunOutcome(status="error", exit_code=1, reason="red_start")
 
     checkout_run_branch(repo, slug)
@@ -128,6 +127,15 @@ async def run(
 
     preamble = load_preamble(plan_path)
     shipped = 0
+
+    def _end(reason: str) -> None:
+        ledger.event(
+            "run_end",
+            reason=reason,
+            phases_shipped=shipped,
+            phases_total=len(phases),
+        )
+
     try:
         for phase in phases:
             if phase.done:
@@ -145,12 +153,7 @@ async def run(
             if outcome.status == "ship":
                 shipped += 1
                 continue
-            ledger.event(
-                "run_end",
-                reason=outcome.reason,
-                phases_shipped=shipped,
-                phases_total=len(phases),
-            )
+            _end(outcome.reason)
             return RunOutcome(
                 status="stop",
                 exit_code=2,
@@ -162,12 +165,7 @@ async def run(
     except (KeyboardInterrupt, asyncio.CancelledError) as exc:
         # Under asyncio.run, Ctrl+C reaches this coroutine as CancelledError.
         ledger.event("interrupted")
-        ledger.event(
-            "run_end",
-            reason="interrupted",
-            phases_shipped=shipped,
-            phases_total=len(phases),
-        )
+        _end("interrupted")
         if isinstance(exc, asyncio.CancelledError):
             raise
         return RunOutcome(
@@ -179,12 +177,7 @@ async def run(
             run_dir=str(run_dir),
         )
 
-    ledger.event(
-        "run_end",
-        reason="ship",
-        phases_shipped=shipped,
-        phases_total=len(phases),
-    )
+    _end("ship")
     return RunOutcome(
         status="ok",
         exit_code=0,

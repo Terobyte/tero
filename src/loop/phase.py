@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.config import Config
-from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_files
+from src.loop.gates import GateResult, TestCommand, fingerprint, print_red_tail, run_all, run_files
 from src.loop.git import (
     GitError,
     checkout_paths,
@@ -103,7 +103,6 @@ class PhaseOutcome:
 class _State:
     round: int = 0
     escalated: bool = False
-    stopped: bool = False
     stop_reason: str = ""
     user_question: str = ""
     open_findings: list[OpenFinding] = field(default_factory=list)
@@ -113,7 +112,6 @@ class _State:
     gate_output: str = ""
     last_red_fp: frozenset[str] | None = None
     last_red_tree: str | None = None
-    last_red_had_fp: bool = False
     protected: dict[str, str] = field(default_factory=dict)
     protected_content: dict[str, str] = field(default_factory=dict)
     protected_by_id: dict[str, str] = field(default_factory=dict)
@@ -170,6 +168,8 @@ class _PhaseRunner:
         self.guarded = _read_guarded(repo, self.suite_hashes)
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
+        self._last_player = UNAVAILABLE_PLAYER
+        self.contract = phase.body or phase.title
 
     async def run(self) -> PhaseOutcome:
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
@@ -184,7 +184,7 @@ class _PhaseRunner:
                 flush=True,
             )
             if not await self._player():
-                return self._provider_stop()
+                return self._halt("provider_unavailable")
             if self._protect_tests():
                 if self._no_progress():
                     return self._halt(self.state.stop_reason)
@@ -204,12 +204,12 @@ class _PhaseRunner:
             )
             verdict = await self._judge()
             if verdict == "unavailable":
-                return self._provider_stop()
+                return self._halt("provider_unavailable")
             if verdict == "invalid":
                 if self._no_progress():
                     return self._halt(self.state.stop_reason)
                 continue
-            if self.state.stopped:
+            if self.state.stop_reason:
                 return self._halt(self.state.stop_reason)
             if verdict == "ship":
                 return self._ship()
@@ -220,13 +220,13 @@ class _PhaseRunner:
                     flush=True,
                 )
                 if not await self._tester():
-                    return self._provider_stop()
+                    return self._halt("provider_unavailable")
 
     async def _player(self) -> bool:
         model, provider, effort = self._player_identity()
         prompt = player_prompt(
             preamble=self.preamble,
-            contract=self.phase.body or self.phase.title,
+            contract=self.contract,
             findings=[item.as_prompt() for item in self.state.open_findings],
             suite_delta=self.state.suite_delta,
             protected=list(self.state.protected),
@@ -327,7 +327,7 @@ class _PhaseRunner:
             round=self.state.round,
         )
         self.ledger.artifact(
-            f"phase-{self.phase.index:02d}/round-{self.state.round:02d}/tests.log",
+            self._round_file("tests.log"),
             result.output,
         )
         if result.ok:
@@ -337,21 +337,19 @@ class _PhaseRunner:
             )
         else:
             print(f"  тесты: КРАСНЫЕ (код {result.exit_code})", flush=True)
-            for line in result.output.splitlines()[-15:]:
-                print(f"    {line}", flush=True)
+            print_red_tail(result.output)
         return result
 
     def _same_red(self, result: GateResult) -> bool:
         tree_now = write_tree(self.repo)
         fp = fingerprint(result)
         same = False
-        if fp is not None and self.state.last_red_had_fp and fp == self.state.last_red_fp:
+        if fp is not None and fp == self.state.last_red_fp:
             same = True
         elif fp is None and self.state.last_red_tree is not None and tree_now == self.state.last_red_tree:
             same = True
         if fp is not None:
             self.state.last_red_fp = fp
-            self.state.last_red_had_fp = True
         self.state.last_red_tree = tree_now
         return same
 
@@ -365,8 +363,8 @@ class _PhaseRunner:
         )
         prompt = judge_prompt(
             preamble=self.preamble,
-            contract=self.phase.body or self.phase.title,
-            player_report=getattr(self, "_last_player", UNAVAILABLE_PLAYER),
+            contract=self.contract,
+            player_report=self._last_player,
             diff=diff,
             status_short=status,
             suite_delta=self.state.suite_delta,
@@ -410,7 +408,6 @@ class _PhaseRunner:
         if verdict == "SHIP":
             return "ship"
         if verdict == "NEEDS_USER":
-            self.state.stopped = True
             self.state.stop_reason = "user"
             self.state.user_question = data.get("user_question", "")
             return "user"
@@ -424,8 +421,7 @@ class _PhaseRunner:
             if not path:
                 continue
             target = self.repo / path
-            if target.exists():
-                target.unlink()
+            target.unlink(missing_ok=True)
             self.state.protected.pop(path, None)
             self.state.protected_content.pop(path, None)
             note = "тест снят, чини код"
@@ -442,9 +438,8 @@ class _PhaseRunner:
             and not any(previous.get(item.id) == "resolved" for item in self.state.open_findings)
             and not self.state.discarded
         )
-        if stall:
-            if self._no_progress():
-                return "stop"
+        if stall and self._no_progress():
+            return "stop"
 
         still_open = [
             item
@@ -488,7 +483,7 @@ class _PhaseRunner:
         before_files = set(list_worktree_files(self.repo))
         prompt = tester_prompt(
             preamble=self.preamble,
-            contract=self.phase.body or self.phase.title,
+            contract=self.contract,
             diff=stage_and_diff(self.repo, self.checkpoint),
             findings=[item.as_dict() for item in routed],
         )
@@ -536,8 +531,7 @@ class _PhaseRunner:
             self.ledger.event("red_check", path=path, ok=result.ok)
             if result.ok:
                 target = self.repo / path
-                if target.exists():
-                    target.unlink()
+                target.unlink(missing_ok=True)
                 self._note_finding(fid, "tester test was green; file removed")
                 continue
             red_confirmed += 1
@@ -594,7 +588,6 @@ class _PhaseRunner:
             )
             return False
         print("  нет прогресса → откат фазы", flush=True)
-        self.state.stopped = True
         self.state.stop_reason = "stuck"
         return True
 
@@ -671,9 +664,6 @@ class _PhaseRunner:
             escalated=self.state.escalated,
         )
 
-    def _provider_stop(self) -> PhaseOutcome:
-        return self._halt("provider_unavailable")
-
 
 def is_test_path(rel: str) -> bool:
     path = Path(rel)
@@ -719,8 +709,6 @@ def _print_verdict(data: dict[str, Any]) -> None:
 
 
 def _tail(text: str, limit: int = 200) -> str:
-    if not text:
-        return ""
     lines = text.splitlines()
     return "\n".join(lines[-limit:])
 

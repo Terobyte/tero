@@ -30,15 +30,19 @@ class Ledger:
         return target
 
 
+def _runs_dir(repo: str | Path) -> Path:
+    return Path(repo) / ".tero" / "runs"
+
+
 def new_run_dir(repo: str | Path, slug: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S%f")
-    path = Path(repo) / ".tero" / "runs" / f"{stamp}-{slug}"
+    path = _runs_dir(repo) / f"{stamp}-{slug}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
-    runs = Path(repo) / ".tero" / "runs"
+    runs = _runs_dir(repo)
     if limit <= 0 or not runs.is_dir():
         return []
     rows: list[dict[str, Any]] = []
@@ -59,8 +63,6 @@ def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
         except OSError:
             continue
         for line in lines:
-            if not line.strip():
-                continue
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:

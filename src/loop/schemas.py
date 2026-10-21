@@ -1,4 +1,4 @@
-"""JSON schemas and semantic validation for the three v4 roles."""
+"""JSON schemas and semantic validation for the three roles."""
 
 from __future__ import annotations
 
@@ -109,9 +109,9 @@ TESTER = {
     },
 }
 
-_SCHEMAS = {"player": PLAYER, "judge": JUDGE, "tester": TESTER}
+SCHEMAS = {"player": PLAYER, "judge": JUDGE, "tester": TESTER}
 _VALIDATORS = {
-    role: Draft202012Validator(schema) for role, schema in _SCHEMAS.items()
+    role: Draft202012Validator(schema) for role, schema in SCHEMAS.items()
 }
 
 
@@ -125,7 +125,7 @@ class ValidateCtx:
 
 def validate(role: str, data: dict, ctx: ValidateCtx | None = None) -> list[str]:
     """Return schema + semantic errors. Empty list means the payload is usable."""
-    schema = _SCHEMAS.get(role)
+    schema = SCHEMAS.get(role)
     if schema is None:
         return [f"unknown role: {role}"]
 

@@ -53,7 +53,7 @@ def mark_phase_done(path: str | Path, phase: Phase) -> None:
         raw = line.rstrip("\r\n")
         if phase.start_line <= i < phase.end_line and _CHECKBOX.match(raw):
             raw = _CHECKBOX.sub(r"- [x] \2", raw)
-        changed.append(raw + newline if line.endswith(("\n", "\r")) else raw)
+        changed.append(raw + newline)
     _atomic_write(target, "".join(changed))
 
 
@@ -93,14 +93,13 @@ def _checkbox_phases(lines: list[str]) -> tuple[str, list[Phase]]:
         match = _CHECKBOX.match(line)
         if not match:
             continue
-        done = match.group(1).lower() == "x"
         text = match.group(2)
         phases.append(
             Phase(
                 index=len(phases),
                 title=text,
                 body=line,
-                checkboxes=[Checkbox(text=text, done=done)],
+                checkboxes=[_parse_box(match)],
                 start_line=i,
                 end_line=i + 1,
             )
@@ -108,14 +107,16 @@ def _checkbox_phases(lines: list[str]) -> tuple[str, list[Phase]]:
     return preamble, phases
 
 
+def _parse_box(match: re.Match[str]) -> Checkbox:
+    return Checkbox(text=match.group(2), done=match.group(1).lower() == "x")
+
+
 def _checkboxes(lines: list[str]) -> list[Checkbox]:
     found: list[Checkbox] = []
     for line in lines:
         match = _CHECKBOX.match(line)
         if match:
-            found.append(
-                Checkbox(text=match.group(2), done=match.group(1).lower() == "x")
-            )
+            found.append(_parse_box(match))
     return found
 
 

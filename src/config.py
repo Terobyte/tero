@@ -51,7 +51,7 @@ def split_role_spec(value: str) -> tuple[str, str]:
 
 @dataclass
 class Config:
-    """Resolved v4 configuration (spec §6.1)."""
+    """Resolved configuration (spec §6.1)."""
 
     plan_file: str = "requirements.md"
     working_dir: str = "."

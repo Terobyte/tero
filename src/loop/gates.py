@@ -94,12 +94,14 @@ def run_files(
 
 
 def fingerprint(result: GateResult) -> frozenset[str] | None:
-    if getattr(result, "command_name", "") != "pytest":
+    if result.command_name != "pytest":
         return None
-    ids = []
-    for match in _PYTEST_FAILED.finditer(result.output):
-        ids.append(match.group(1) or match.group(2))
-    return frozenset(ids) or None
+    return frozenset(m.group(1) or m.group(2) for m in _PYTEST_FAILED.finditer(result.output)) or None
+
+
+def print_red_tail(output: str) -> None:
+    for line in output.splitlines()[-15:]:
+        print(f"    {line}", flush=True)
 
 
 def _has_pytest(root: Path) -> bool:

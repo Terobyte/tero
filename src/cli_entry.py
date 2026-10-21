@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run_go(args, config: Config | None = None):
-    """Run the v4 player → judge loop."""
+    """Run the player → judge loop."""
     from src.loop.agents import LiveAgents
     from src.loop.run import run as run_loop
 
@@ -124,7 +124,7 @@ async def run_go(args, config: Config | None = None):
 
 
 def run_history(args):
-    """Show recent v4 runs from .tero/runs."""
+    """Show recent runs from .tero/runs."""
     from src.loop.ledger import history
 
     rows = history(Path(args.working_dir).resolve(), limit=args.limit)
