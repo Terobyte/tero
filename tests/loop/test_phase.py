@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.loop.config import LoopConfig
+from src.config import Config
 from src.loop.gates import detect
 from src.loop.git import head, list_files, status_short
 from src.loop.ledger import Ledger, new_run_dir
@@ -56,13 +56,13 @@ def _repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _cfg(**overrides) -> LoopConfig:
+def _cfg(**overrides) -> Config:
     data = {"plan_file": "plan.md", "max_rounds": 8, "test_timeout_s": 30}
     data.update(overrides)
-    return LoopConfig(**data)
+    return Config(**data)
 
 
-async def _run(repo: Path, agents: FakeAgents, cfg: LoopConfig | None = None):
+async def _run(repo: Path, agents: FakeAgents, cfg: Config | None = None):
     from src.loop.plan import load_phases, load_preamble
 
     cfg = cfg or _cfg()

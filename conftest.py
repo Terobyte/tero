@@ -8,9 +8,19 @@ from __future__ import annotations
 import asyncio
 import inspect
 
+import pytest
+
 
 def pytest_configure(config) -> None:
     config.addinivalue_line("markers", "asyncio: run async test in a local event loop")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path_factory, monkeypatch):
+    """Keep every test away from the real ~/.g3 (the menu saves there on start)."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    return home
 
 
 def pytest_pyfunc_call(pyfuncitem):

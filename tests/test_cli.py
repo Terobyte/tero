@@ -9,8 +9,17 @@ from src import cli_entry
 from src.config import resolve_config
 
 
+def _isolate_home(tmp_path, monkeypatch) -> Path:
+    """Point HOME at an empty temp dir so ~/.g3 does not leak in."""
+    home_dir = tmp_path / "home"
+    home_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home_dir))
+    return home_dir
+
+
 def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
     """tero go calls the v4 loop, not the old batch executor."""
+    _isolate_home(tmp_path, monkeypatch)
     (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
     captured = {}
 
@@ -50,7 +59,8 @@ def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
 
 
 def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatch):
-    """▶ Запустить must copy Judge/tests from the menu, even if -p was passed."""
+    """Config returned by the menu must reach the loop even if -p was passed."""
+    _isolate_home(tmp_path, monkeypatch)
     (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
     captured = {}
 
@@ -85,8 +95,8 @@ def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatc
         plan_file="plan.md",
         player_provider="opencode",
         player_model="opencode/muse-spark-1.3-contributor-free",
-        batch_judge_provider="claude",
-        batch_judge_model="claude-opus-5",
+        judge_provider="claude",
+        judge_model="claude-opus-5",
         tester_provider="gemini",
         tester_model="gemini-3.8-flash",
         test_command="./scripts/test.sh",
@@ -106,9 +116,7 @@ def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatc
 
 def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
     """Interactive menu must be handled before asyncio.run(), not inside run_go()."""
-    home_dir = tmp_path / "home"
-    home_dir.mkdir()
-    monkeypatch.setenv("HOME", str(home_dir))
+    _isolate_home(tmp_path, monkeypatch)
 
     (tmp_path / "requirements.md").write_text("1. Build it\n")
 
@@ -150,8 +158,8 @@ def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
         "defaults:\n"
         "  player_provider: muse\n"
         "  player_model: muse-spark-1.3\n"
-        "  coach_provider: muse\n"
-        "  coach_model: muse-spark-1.3\n"
+        "  judge_provider: claude\n"
+        "  judge_model: opus\n"
     )
 
     workspace = tmp_path / "workspace"
@@ -159,66 +167,39 @@ def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HOME", str(home_dir))
 
-    cfg = resolve_config(
-        {
-            "working_dir": str(workspace),
-            "plan_file": None,
-            "verbose": None,
-            "player_provider": None,
-            "coach_provider": None,
-            "player_model": None,
-            "coach_model": None,
-        }
-    )
+    cfg = resolve_config({"working_dir": str(workspace)})
 
     assert cfg.player_provider == "muse"
     assert cfg.player_model == "muse-spark-1.3"
-    assert cfg.coach_provider == "muse"
-    assert cfg.coach_model == "muse-spark-1.3"
+    assert cfg.judge_provider == "claude"
+    assert cfg.judge_model == "opus"
 
 
-def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
-    tmp_path, monkeypatch
-):
-    """Global defaults must not silently enable opt-in runtime modes."""
+def test_resolve_config_project_overrides_global(tmp_path, monkeypatch):
+    """Project .g3/config.yaml must win over the global ~/.g3/config.yaml."""
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     global_config_dir = home_dir / ".g3"
     global_config_dir.mkdir()
     (global_config_dir / "config.yaml").write_text(
         "defaults:\n"
-        "  player_provider: muse\n"
-        "  player_model: muse-spark-1.3\n"
-        "  coach_provider: muse\n"
-        "  coach_model: muse-spark-1.3\n"
-        "  code_review: true\n"
-        "  review_provider: codex\n"
+        "  judge_provider: claude\n"
     )
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    project_config_dir = workspace / ".g3"
+    project_config_dir.mkdir()
+    (project_config_dir / "config.yaml").write_text(
+        "defaults:\n"
+        "  judge_provider: codex\n"
+    )
 
     monkeypatch.setenv("HOME", str(home_dir))
 
-    cfg = resolve_config(
-        {
-            "working_dir": str(workspace),
-            "plan_file": None,
-            "verbose": None,
-            "player_provider": None,
-            "coach_provider": None,
-            "player_model": None,
-            "coach_model": None,
-        }
-    )
+    cfg = resolve_config({"working_dir": str(workspace)})
 
-    assert cfg.player_provider == "muse"
-    assert cfg.player_model == "muse-spark-1.3"
-    assert cfg.coach_provider == "muse"
-    assert cfg.coach_model == "muse-spark-1.3"
-    assert cfg.code_review is False
-    assert not hasattr(cfg, "tdd_mode")
-    assert not hasattr(cfg, "preplan_mode")
+    assert cfg.judge_provider == "codex"
 
 
 def test_installed_script_points_at_package_entrypoint():
@@ -259,6 +240,15 @@ def test_removed_go_mode_flags_are_rejected():
     for flag in ("--batch", "--tdd", "--preplan", "--no-preplan"):
         with pytest.raises(SystemExit):
             parser.parse_args(["go", flag])
+    for argv in (
+        ["go", "--max-turns", "3"],
+        ["go", "--autonomous"],
+        ["go", "--player-provider", "muse"],
+        ["go", "--coach-provider", "muse"],
+        ["go", "--context-limit", "1"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
 
 
 def test_smoke_parse_requires_subcommand():
@@ -268,5 +258,3 @@ def test_smoke_parse_requires_subcommand():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args([])
-
-

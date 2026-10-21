@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.loop.config import LoopConfig
+from src.config import Config
 from src.loop.run import run
 from tests.loop import fakes as scripted
 
@@ -39,16 +39,15 @@ def _init(tmp_path: Path, plan: str, *, failing: bool = False) -> Path:
     return tmp_path
 
 
-def _cfg(repo: Path, **overrides) -> LoopConfig:
+def _cfg(repo: Path, **overrides) -> Config:
     data = {
         "plan_file": "plan.md",
         "working_dir": str(repo),
         "max_rounds": 8,
         "test_timeout_s": 30,
-        "no_menu": True,
     }
     data.update(overrides)
-    return LoopConfig(**data)
+    return Config(**data)
 
 
 PLAN_ONE = """# Demo

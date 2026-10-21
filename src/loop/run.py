@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.loop.config import LoopConfig, UnknownProviderError, normalize_provider
+from src.config import Config, UnknownProviderError, normalize_provider
 from src.loop.gates import detect, run_all
 from src.loop.git import (
     DirtyWorktreeError,
@@ -36,7 +36,7 @@ class RunOutcome:
 
 
 async def run(
-    cfg: LoopConfig,
+    cfg: Config,
     *,
     agents: AgentRunner,
     check_ready: Callable[[str, str], tuple[bool, str]] | None = None,
@@ -193,13 +193,13 @@ def slugify(name: str) -> str:
     return text or "plan"
 
 
-def _validate_providers(cfg: LoopConfig) -> None:
+def _validate_providers(cfg: Config) -> None:
     for _role, provider, _model in _roles(cfg):
         if provider:
             normalize_provider(provider)
 
 
-def _roles(cfg: LoopConfig) -> list[tuple[str, str, str]]:
+def _roles(cfg: Config) -> list[tuple[str, str, str]]:
     rows = [
         ("player", cfg.player_provider, cfg.player_model),
         ("judge", cfg.judge_provider, cfg.judge_model),

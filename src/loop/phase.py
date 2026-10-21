@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from src.loop.config import LoopConfig
+from src.config import Config
 from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_files
 from src.loop.git import (
     checkout_paths,
@@ -117,7 +117,7 @@ async def run_phase(
     repo: str | Path,
     plan_path: str | Path,
     preamble: str,
-    cfg: LoopConfig,
+    cfg: Config,
     agents: AgentRunner,
     test_command: TestCommand | None,
     ledger: Ledger,
@@ -143,7 +143,7 @@ class _PhaseRunner:
         repo: Path,
         plan_path: Path,
         preamble: str,
-        cfg: LoopConfig,
+        cfg: Config,
         agents: AgentRunner,
         test_command: TestCommand | None,
         ledger: Ledger,

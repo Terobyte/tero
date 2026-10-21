@@ -7,13 +7,10 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.config import resolve_config
+from src.config import Config, UnknownProviderError, apply_cli_args, resolve_config
 
 
-PROVIDER_CHOICES = ["muse", "claude", "codex", "gemini", "opencode", "cursor"]
-
-
-def resolve_go_config(args):
+def resolve_go_config(args) -> Config:
     """Resolve config for `tero go` from CLI-like args."""
     return resolve_config(
         {
@@ -24,9 +21,10 @@ def resolve_go_config(args):
     )
 
 
-def prepare_go_config(args):
-    """Resolve config and, when requested, prompt for interactive settings."""
+def prepare_go_config(args) -> Config:
+    """Resolve config, apply CLI flags, then prompt for interactive settings."""
     config = resolve_go_config(args)
+    config = apply_cli_args(config, args)
     no_menu = getattr(args, "no_menu", False)
 
     if no_menu:
@@ -70,15 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_go(args, config=None):
+async def run_go(args, config: Config | None = None):
     """Run the v4 player → judge loop."""
     from src.loop.agents import LiveAgents
-    from src.loop.config import apply_saved_config, config_from_namespace
     from src.loop.run import run as run_loop
 
-    loop_cfg = config_from_namespace(args)
-    if config is not None:
-        loop_cfg = apply_saved_config(loop_cfg, config, args)
+    loop_cfg = config if config is not None else apply_cli_args(resolve_go_config(args), args)
 
     plan_path = Path(loop_cfg.working_dir) / loop_cfg.plan_file
     if not plan_path.exists():
@@ -150,7 +145,11 @@ def main():
     args = parser.parse_args()
 
     if args.command == "go":
-        config = prepare_go_config(args)
+        try:
+            config = prepare_go_config(args)
+        except UnknownProviderError as exc:
+            print(f"Ошибка: неизвестный провайдер: {exc}")
+            sys.exit(1)
         try:
             asyncio.run(run_go(args, config=config))
         except KeyboardInterrupt:

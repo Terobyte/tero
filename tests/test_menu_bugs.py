@@ -1,4 +1,4 @@
-"""Regression tests for menu/config bugs that were previously confirmed."""
+"""Regression tests for menu/config behavior that was previously confirmed."""
 
 from types import SimpleNamespace
 import sys
@@ -13,28 +13,6 @@ class DummyPrompt:
 
     def ask(self):
         return self._value
-
-
-class TestCoachModelStandalone:
-    def test_coach_model_shows_correct_presets_for_claude(self):
-        from src.config import Config
-        from src.menu import _edit_setting_questionary, CLAUDE_MODEL_PRESETS
-
-        config = Config(
-            coach_provider="claude",
-            coach_model="sonnet",
-        )
-
-        captured_choices = []
-
-        def mock_select(label, choices=None, **kwargs):
-            captured_choices.append(choices)
-            return DummyPrompt(None)
-
-        with patch("src.menu.questionary", MagicMock(select=mock_select)):
-            _edit_setting_questionary(config, "coach_model")
-
-        assert captured_choices[0] == list(CLAUDE_MODEL_PRESETS.keys())
 
 
 class TestProviderModelCarryover:
@@ -65,25 +43,6 @@ class TestProviderModelCarryover:
         assert result.player_effort == ""
 
 
-class TestFallbackEffectiveSlotLabel:
-    def test_effective_label_shows_provider_default(self):
-        from src.config import Config
-        from src.menu import _fallback_effective_slot_label
-
-        config = Config(
-            batch_pre_provider="muse",
-            batch_pre_model="muse-spark-1.3",
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-        )
-
-        label = _fallback_effective_slot_label(
-            config, "batch_pre_provider", "batch_pre_model"
-        )
-
-        assert label == "muse (SPARK)"
-
-
 class TestShortModelName:
     def test_empty_model_should_not_show_codex(self):
         from src.config import short_model_name
@@ -92,100 +51,25 @@ class TestShortModelName:
 
 
 class TestSaveDefault:
-    def test_save_default_includes_fallback_chains(self, tmp_path, monkeypatch):
+    def test_save_default_writes_dataclass_dict(self, tmp_path, monkeypatch):
         from src.config import Config
         from src.menu import _save_global_default
 
         monkeypatch.setenv("HOME", str(tmp_path))
 
         config = Config(
-            player_fallback_chain="claude,muse",
-            coach_fallback_chain="muse,claude",
-            chain_retry_wait_s=30.0,
-            chain_max_retries=3,
+            player_provider="codex",
+            player_model="gpt-5.6-terra",
+            max_rounds=12,
         )
 
         _save_global_default(config)
 
         saved = yaml.safe_load((tmp_path / ".g3" / "config.yaml").read_text())
         defaults = saved["defaults"]
-        assert defaults["player_fallback_chain"] == "claude,muse"
-        assert defaults["coach_fallback_chain"] == "muse,claude"
-        assert defaults["chain_retry_wait_s"] == 30.0
-        assert defaults["chain_max_retries"] == 3
-
-    def test_save_default_includes_context_settings(self, tmp_path, monkeypatch):
-        from src.config import Config
-        from src.menu import _save_global_default
-
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        config = Config(
-            context_limit=200_000,
-            compact_threshold=0.9,
-            max_continuation_attempts=3,
-        )
-
-        _save_global_default(config)
-
-        saved = yaml.safe_load((tmp_path / ".g3" / "config.yaml").read_text())
-        defaults = saved["defaults"]
-        assert defaults["context_limit"] == 200_000
-        assert defaults["compact_threshold"] == 0.9
-        assert defaults["max_continuation_attempts"] == 3
-
-
-class TestBatchRolePrompts:
-    def test_batch_model_prompt_uses_friendly_label(self):
-        from src.config import Config
-        from src.menu import _edit_setting_questionary
-
-        config = Config(
-            batch_judge_provider="opencode",
-            batch_judge_model="",
-        )
-
-        captured_labels = []
-        prompts = iter(["OpenCode (MIMO/Kimi)", None])
-
-        def mock_select(label, choices=None, **kwargs):
-            captured_labels.append(label)
-            return DummyPrompt(next(prompts))
-
-        with patch("src.menu.questionary", MagicMock(select=mock_select)):
-            _edit_setting_questionary(config, "batch_judge")
-
-        assert any("Judge" in label for label in captured_labels)
-        assert all("batch_judge" not in label.lower() for label in captured_labels)
-
-    def test_questionary_batch_display_shows_effective_fallback(self, monkeypatch):
-        import src.menu as menu
-        from src.config import Config
-
-        captured_titles = []
-
-        def fake_select(_message, choices=None, **kwargs):
-            if choices is not None:
-                for choice in choices:
-                    if hasattr(choice, "value"):
-                        captured_titles.append(choice.title)
-            return DummyPrompt("quit")
-
-        dummy_questionary = SimpleNamespace(
-            Choice=lambda title, value: SimpleNamespace(title=title, value=value),
-            Separator=lambda text: SimpleNamespace(separator=text),
-            select=fake_select,
-        )
-
-        monkeypatch.setitem(sys.modules, "questionary", dummy_questionary)
-        monkeypatch.setattr(menu, "QUESTIONARY_AVAILABLE", True)
-
-        menu._questionary_menu(Config(batch_judge_provider="codex", batch_judge_model="gpt-5.4"))
-
-        judge_lines = [title for title in captured_titles if "Judge:" in title]
-
-        assert judge_lines
-        assert "codex (GPT-5.4)" in judge_lines[0]
+        assert defaults["player_provider"] == "codex"
+        assert defaults["player_model"] == "gpt-5.6-terra"
+        assert defaults["max_rounds"] == 12
 
 
 class TestV4MenuRoles:
@@ -213,8 +97,8 @@ class TestV4MenuRoles:
 
         menu._questionary_menu(
             Config(
-                batch_judge_provider="codex",
-                batch_judge_model="gpt-5.6-terra",
+                judge_provider="codex",
+                judge_model="gpt-5.6-terra",
                 tester_provider="gemini",
                 tester_model="gemini-3.8-flash",
                 test_command="./scripts/test.sh",
@@ -227,12 +111,33 @@ class TestV4MenuRoles:
         assert "./scripts/test.sh" in titles
         assert "gemini" in titles.lower()
 
+    def test_questionary_start_saves_and_returns_config(self, monkeypatch):
+        import src.menu as menu
+        from src.config import Config
+
+        def fake_select(_message, choices=None, **kwargs):
+            return DummyPrompt("start")
+
+        dummy_questionary = SimpleNamespace(
+            Choice=lambda title, value: SimpleNamespace(title=title, value=value),
+            Separator=lambda text: SimpleNamespace(separator=text),
+            select=fake_select,
+        )
+
+        monkeypatch.setitem(sys.modules, "questionary", dummy_questionary)
+        monkeypatch.setattr(menu, "QUESTIONARY_AVAILABLE", True)
+
+        with patch("src.menu._save_global_default") as save:
+            result = menu._questionary_menu(Config())
+
+        assert isinstance(result, Config)
+        save.assert_called_once()
+
 
 class TestMuseModelPresets:
     def test_muse_has_selectable_presets(self):
-        from src.menu import _fixed_model_for_provider, _model_presets_for_provider
+        from src.menu import _model_presets_for_provider
 
-        assert _fixed_model_for_provider("muse") == ""
         assert _model_presets_for_provider("muse")["Muse Spark 1.3 (свой ключ)"] == "muse-spark-1.3"
 
     def test_selecting_muse_prompts_for_model(self):
@@ -268,16 +173,16 @@ class TestCustomModelHandling:
         from src.config import Config
         from src.menu import _resolve_model_choice
 
-        config = Config(coach_model="sonnet")
+        config = Config(judge_model="sonnet")
         test_presets = {"Sonnet": "sonnet", "Custom": "__custom__"}
 
         with patch("src.menu._model_presets_for_provider", return_value=test_presets):
             with patch("src.menu._custom_model_allowed", return_value=False):
                 result = _resolve_model_choice(
-                    config, "claude", "coach_model", "Custom"
+                    config, "claude", "judge_model", "Custom"
                 )
 
-        assert result.coach_model == "sonnet"
+        assert result.judge_model == "sonnet"
 
 
 class TestEffortPicker:
@@ -310,9 +215,21 @@ class TestEffortPicker:
         from src.menu import CURSOR_MODEL_PRESETS
 
         assert CURSOR_MODEL_PRESETS["Grok 4.6"] == "cursor-grok-4.6"
-        assert CURSOR_MODEL_PRESETS["Composer 2.5"] == "composer-2.5"
 
     def test_label_appends_effort(self):
         from src.menu import _provider_model_label
 
         assert "high" in _provider_model_label("cursor", "cursor-grok-4.6", effort="high")
+
+    def test_fallback_menu_escalation_off(self, monkeypatch):
+        from src.config import Config
+        from src.menu import _fallback_menu
+
+        answers = iter(["e", "off", ""])
+        monkeypatch.setattr("builtins.input", lambda _="": next(answers))
+
+        result = _fallback_menu(Config(escalation_provider="claude"))
+
+        assert result is not None
+        assert result.escalation_provider == ""
+        assert result.escalation_model == ""

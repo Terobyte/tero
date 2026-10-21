@@ -32,7 +32,7 @@ def test_gemini_has_no_effort_flag():
 
 def test_effort_field_follows_model_field_name():
     assert effort_field_for("player_model") == "player_effort"
-    assert effort_field_for("batch_judge_model") == "batch_judge_effort"
+    assert effort_field_for("judge_model") == "judge_effort"
 
 
 def test_cursor_model_arg_wraps_effort():

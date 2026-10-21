@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from src.errors import ProviderError
-from src.loop.config import UnknownProviderError, normalize_provider
+from src.config import UnknownProviderError, normalize_provider
 from src.providers import claude_native as claude_native_module
 from src.providers import create_provider
 from src.providers.muse import MuseConfig, MuseProvider, load_api_key

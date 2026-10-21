@@ -4,12 +4,9 @@ Verifies that the menu module loads, all entry points exist, and preset
 dictionaries are populated.
 """
 
-import dataclasses
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from src.config import Config
 from src.menu import (
@@ -22,16 +19,11 @@ from src.menu import (
     PROVIDER_PRESETS,
     QUESTIONARY_AVAILABLE,
     _custom_model_allowed,
-    _effective_provider_model,
-    _fallback_effective_slot_label,
     _fallback_menu,
     _fallback_select_provider_model,
-    _fixed_model_for_provider,
-    _format_context_limit,
     _model_presets_for_provider,
     _provider_model_label,
     _questionary_menu,
-    _sync_batch_roles_with_coach,
     run_settings_menu,
 )
 
@@ -113,13 +105,6 @@ class TestPresetsPopulated:
 # ── 3. Helper functions ──────────────────────────────────────────────────────
 
 class TestHelperFunctions:
-    @pytest.mark.parametrize(
-        "provider,expected",
-        [("muse", ""), ("claude", ""), ("codex", ""), ("gemini", "")],
-    )
-    def test_fixed_model_for_provider(self, provider, expected):
-        assert _fixed_model_for_provider(provider) == expected
-
     def test_model_presets_for_provider_returns_dict(self):
         for p in ("claude", "codex", "opencode", "gemini", "muse", "cursor"):
             presets = _model_presets_for_provider(p)
@@ -129,80 +114,23 @@ class TestHelperFunctions:
     def test_model_presets_for_unknown_provider_empty(self):
         assert _model_presets_for_provider("unknown_xyz") == {}
 
-    def test_custom_model_allowed_only_for_codex_and_opencode(self):
+    def test_custom_model_allowed_only_for_codex_opencode_cursor(self):
         assert _custom_model_allowed("codex") is True
         assert _custom_model_allowed("opencode") is True
         assert _custom_model_allowed("claude") is False
         assert _custom_model_allowed("muse") is False
         assert _custom_model_allowed("cursor") is True
 
-    @pytest.mark.parametrize(
-        "limit,expected",
-        [
-            (110_000, "авто (по модели)"),  # DEFAULT_CONTEXT_LIMIT
-            (500, "500"),
-            (200_000, "200K"),
-            (1_000_000, "1M"),
-            (128_000, "128K"),
-        ],
-    )
-    def test_format_context_limit(self, limit, expected):
-        assert _format_context_limit(limit) == expected
-
     def test_provider_model_label_off(self):
         assert _provider_model_label("", "") == "выкл"
 
     def test_provider_model_label_with_model(self):
         assert "sonnet" in _provider_model_label("claude", "sonnet").lower() or \
-               "SONNET" in _provider_model_label("claude", "sonnet")
+                "SONNET" in _provider_model_label("claude", "sonnet")
 
     def test_provider_model_label_default(self):
         label = _provider_model_label("codex", "")
         assert "по умолчанию" in label
-
-    def test_effective_provider_model_fallback(self):
-        p, m = _effective_provider_model(
-            "", "",
-            fallback_provider="claude",
-            fallback_model="sonnet",
-        )
-        assert p == "claude"
-        assert m == "sonnet"
-
-    def test_effective_provider_model_keeps_empty_when_selectable(self):
-        p, m = _effective_provider_model("muse", "")
-        assert p == "muse"
-        assert m == ""
-
-
-# ── 4. Sync batch roles with coach ───────────────────────────────────────────
-
-class TestSyncBatchRoles:
-    def test_sync_updates_matching_batch_roles(self):
-        config = Config(
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-            batch_pre_provider="codex",
-            batch_pre_model="gpt-5.4",
-            batch_post_provider="codex",
-            batch_post_model="gpt-5.4",
-        )
-        updated = _sync_batch_roles_with_coach(config, "codex", "gpt-5.4")
-        assert updated.batch_pre_provider == "muse"
-        assert updated.batch_pre_model == "muse-spark-1.3"
-        assert updated.batch_post_provider == "muse"
-        assert updated.batch_post_model == "muse-spark-1.3"
-
-    def test_sync_does_not_touch_mismatched_roles(self):
-        config = Config(
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-            batch_pre_provider="claude",
-            batch_pre_model="sonnet",
-        )
-        updated = _sync_batch_roles_with_coach(config, "codex", "gpt-5.4")
-        assert updated.batch_pre_provider == "claude"
-        assert updated.batch_pre_model == "sonnet"
 
 
 # ── 5. Questionary settings menu smoke ───────────────────────────────────────
@@ -224,7 +152,7 @@ class TestQuestionarySettingsMenu:
         assert isinstance(result, Config)
 
     def test_player_provider_editing(self, monkeypatch):
-        """Selecting player_provider then quit should update provider."""
+        """Selecting player_provider then quit should not change anything yet."""
         mock_q = _fake_questionary(
             ["player_provider", "Muse API (свой ключ)", "Muse Spark 1.3 (свой ключ)", "High", "quit"]
         )
@@ -259,19 +187,3 @@ class TestFallbackMenu:
         monkeypatch.setattr("builtins.input", lambda *_: next(answers))
         result = run_settings_menu(Config())
         assert result is None
-
-
-# ── 10. Fallback effective slot label ────────────────────────────────────────
-
-class TestFallbackEffectiveSlotLabel:
-    def test_shows_provider_default(self):
-        config = Config(
-            batch_pre_provider="muse",
-            batch_pre_model="muse-spark-1.3",
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-        )
-        label = _fallback_effective_slot_label(
-            config, "batch_pre_provider", "batch_pre_model"
-        )
-        assert "muse" in label

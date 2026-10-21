@@ -1,10 +1,10 @@
-"""Interactive TUI settings menu for tero go."""
+"""Interactive TUI settings menu for tero go (spec §6.2)."""
 
 import dataclasses
 from pathlib import Path
 import yaml
 
-from src.config import Config, short_model_name, _DEFAULT_CONTEXT_LIMIT
+from src.config import Config, short_model_name
 from src.providers.effort import (
     EFFORT_LABELS,
     effort_field_for,
@@ -52,62 +52,28 @@ MUSE_MODEL_PRESETS = {
 CURSOR_MODEL_PRESETS = {
     "Composer 2.5": "composer-2.5",
     "Grok 4.6": "cursor-grok-4.6",
-    "Composer 2": "composer-2",
+    "Composer 2": "cursor-2",
 }
 
 
 def _tests_label(config: Config) -> str:
-    cmd = (getattr(config, "test_command", "") or "").strip()
+    cmd = (config.test_command or "").strip()
     return cmd if cmd else "автодетект"
 
 
-def _judge_pair(config: Config) -> tuple[str, str]:
-    return (
-        config.judge_provider or config.batch_judge_provider,
-        config.judge_model or config.batch_judge_model,
-    )
+def _plan_label(config: Config) -> str:
+    name = config.plan_file
+    plan_path = Path(config.working_dir).expanduser() / name
+    if not plan_path.is_file():
+        return f"{name}  (не найден)"
+    try:
+        from src.loop.plan import load_phases
 
-
-def _tester_pair(config: Config) -> tuple[str, str]:
-    return (
-        getattr(config, "tester_provider", "") or "gemini",
-        getattr(config, "tester_model", "") or "gemini-3.8-flash",
-    )
-
-
-def _escalation_pair(config: Config) -> tuple[str, str]:
-    provider = config.escalation_provider or config.coach_fallback_provider
-    model = config.escalation_model or config.coach_fallback_model
-    return provider, model
-
-
-def _sync_judge(config: Config) -> Config:
-    return dataclasses.replace(
-        config,
-        judge_provider=config.batch_judge_provider,
-        judge_model=config.batch_judge_model,
-        judge_effort=config.batch_judge_effort,
-    )
-
-
-def _sync_escalation(config: Config) -> Config:
-    return dataclasses.replace(
-        config,
-        escalation_provider=config.coach_fallback_provider,
-        escalation_model=config.coach_fallback_model,
-        escalation_effort=config.coach_fallback_effort,
-    )
-
-
-def _format_context_limit(limit: int) -> str:
-    """Format context limit for menu display."""
-    if limit == _DEFAULT_CONTEXT_LIMIT:
-        return "авто (по модели)"
-    if limit < 1000:
-        return f"{limit}"
-    if limit >= 1_000_000 and limit % 1_000_000 == 0:
-        return f"{limit // 1_000_000}M"
-    return f"{limit // 1000}K"
+        phases = load_phases(plan_path)
+    except (OSError, ValueError):
+        return name
+    done = sum(1 for phase in phases if phase.done)
+    return f"{name}  (фаз {len(phases)}, готово {done})"
 
 
 # Provider choices
@@ -145,26 +111,6 @@ def _provider_model_label(
     if effort:
         name = f"{name} {effort}"
     return f"{provider} ({name})"
-
-
-def _fixed_model_for_provider(provider: str) -> str:
-    """Return the model locked to a provider, or empty if the user can pick."""
-    return ""
-
-
-def _effective_provider_model(
-    provider: str,
-    model: str,
-    *,
-    fallback_provider: str = "",
-    fallback_model: str = "",
-) -> tuple[str, str]:
-    """Resolve the provider/model pair the runtime will actually use."""
-    effective_provider = provider or fallback_provider
-    effective_model = model or (fallback_model if not provider else "")
-    if effective_provider and not effective_model:
-        effective_model = _fixed_model_for_provider(effective_provider)
-    return effective_provider, effective_model
 
 
 def _model_presets_for_provider(provider: str) -> dict[str, str]:
@@ -210,37 +156,6 @@ def _resolve_model_choice(
     return dataclasses.replace(config, **{model_field: model_id})
 
 
-def _sync_batch_roles_with_coach(
-    config: Config,
-    previous_provider: str,
-    previous_model: str,
-) -> Config:
-    """Keep batch pre/post reviewers aligned with coach after an explicit coach change."""
-    if (
-        config.batch_pre_provider == previous_provider
-        and config.batch_pre_model == previous_model
-    ):
-        config = dataclasses.replace(
-            config,
-            batch_pre_provider=config.coach_provider,
-            batch_pre_model=config.coach_model,
-            batch_pre_effort=config.coach_effort,
-        )
-
-    if (
-        config.batch_post_provider == previous_provider
-        and config.batch_post_model == previous_model
-    ):
-        config = dataclasses.replace(
-            config,
-            batch_post_provider=config.coach_provider,
-            batch_post_model=config.coach_model,
-            batch_post_effort=config.coach_effort,
-        )
-
-    return config
-
-
 def _questionary_select_provider_model(
     config: Config,
     provider_field: str,
@@ -252,7 +167,7 @@ def _questionary_select_provider_model(
 
     Works with *any* pair of ``<role>_provider`` / ``<role>_model`` field names
     on Config — ``getattr`` + ``dataclasses.replace`` make the function agnostic
-    to the specific field, so it supports player, coach, debug_*, etc.
+    to the specific field, so it supports player, judge, tester, escalation
     without special-casing.
     """
     choices = list((provider_choices or PROVIDER_PRESETS).keys())
@@ -280,11 +195,6 @@ def _questionary_select_provider_model(
 
     if not provider:
         return config
-
-    fixed_model = _fixed_model_for_provider(provider)
-    if fixed_model:
-        config = dataclasses.replace(config, **{model_field: fixed_model})
-        return _apply_effort_choice(config, provider, model_field)
 
     model_choice = questionary.select(
         f"Модель для {prompt_label}:",
@@ -315,10 +225,6 @@ def _apply_effort_choice(config: Config, provider: str, model_field: str) -> Con
 
 def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
     """Prompt for a provider-specific model in the plain-text fallback menu."""
-    fixed_model = _fixed_model_for_provider(provider)
-    if fixed_model:
-        return fixed_model
-
     if provider == "claude":
         print("  Модели: fable, opus, sonnet, haiku")
         model = (
@@ -431,23 +337,11 @@ def _fallback_prompt_effort(provider: str) -> str:
     return normalize_effort(raw)
 
 
-def _fallback_effective_slot_label(
-    config: Config,
-    provider_field: str,
-    model_field: str,
-) -> str:
-    """Render the effective provider/model label for a batch-adjacent slot."""
-    provider, model = _effective_provider_model(
-        getattr(config, provider_field),
-        getattr(config, model_field),
-        fallback_provider=config.coach_provider,
-        fallback_model=config.coach_model,
-    )
-    return _provider_model_label(
-        provider,
-        model,
-        effort=getattr(config, effort_field_for(model_field), "") or "",
-    )
+def _role_display(config: Config, provider_field: str, model_field: str) -> str:
+    provider = getattr(config, provider_field)
+    model = getattr(config, model_field)
+    effort = getattr(config, effort_field_for(model_field), "") or ""
+    return _provider_model_label(provider, model, effort=effort)
 
 
 def run_settings_menu(config: Config) -> Config | None:
@@ -465,74 +359,34 @@ def _questionary_menu(config: Config) -> Config | None:
     import questionary
 
     while True:
-        coach_display = (
-            short_model_name(config.coach_model)
-            if config.coach_model
-            else "по умолчанию"
-        )
-        if config.coach_effort:
-            coach_display = f"{coach_display} {config.coach_effort}"
-        player_display = (
-            short_model_name(config.player_model)
-            if config.player_model
-            else "по умолчанию"
-        )
-        if config.player_effort:
-            player_display = f"{player_display} {config.player_effort}"
-        fallback_display = _provider_model_label(
-            *_escalation_pair(config),
-            effort=config.escalation_effort or config.coach_fallback_effort,
-        )
-        judge_provider, judge_model = _effective_provider_model(*_judge_pair(config))
-        judge_display = _provider_model_label(
-            judge_provider,
-            judge_model,
-            effort=config.judge_effort or config.batch_judge_effort,
-        )
-        tester_display = _provider_model_label(
-            *_tester_pair(config),
-            effort=config.tester_effort,
-        )
         choices = [
             questionary.Choice("▶   Запустить", value="start"),
-            questionary.Separator("─── роли ────────────────────────────────"),
+            questionary.Separator("─── роли ───"),
             questionary.Choice(
-                f"    Player:         {config.player_provider} ({player_display})",
+                f"    Player:      {_role_display(config, 'player_provider', 'player_model')}",
                 value="player_provider",
             ),
             questionary.Choice(
-                f"    Coach:          {config.coach_provider} ({coach_display})",
-                value="coach_provider",
+                f"    Judge:       {_role_display(config, 'judge_provider', 'judge_model')}",
+                value="judge_provider",
             ),
             questionary.Choice(
-                f"    Escalation:     {fallback_display}",
-                value="coach_fallback",
+                f"    Tester:      {_role_display(config, 'tester_provider', 'tester_model')}",
+                value="tester_provider",
             ),
             questionary.Choice(
-                f"    Judge:          {judge_display}",
-                value="batch_judge",
+                f"    Escalation:  {_role_display(config, 'escalation_provider', 'escalation_model')}",
+                value="escalation_provider",
+            ),
+            questionary.Separator("─── план ───"),
+            questionary.Choice(
+                f"    Файл плана:  {_plan_label(config)}", value="plan_file"
             ),
             questionary.Choice(
-                f"    Tester:         {tester_display}",
-                value="tester",
-            ),
-            questionary.Separator("─── настройки ───────────────────────────"),
-            questionary.Choice(
-                f"    Файл плана:     {config.plan_file}", value="plan_file"
-            ),
-            questionary.Choice(
-                f"    Тесты:          {_tests_label(config)}",
+                f"    Тесты:       {_tests_label(config)}",
                 value="test_command",
             ),
-            questionary.Choice(
-                f"    Макс. попыток:  {config.max_turns} (на шаг)", value="max_turns"
-            ),
-            questionary.Choice(
-                f"    Context Limit:  {_format_context_limit(config.context_limit)}",
-                value="context_limit",
-            ),
-            questionary.Separator("─────────────────────────────────────────"),
-            questionary.Choice("💾  Сохранить как default", value="save_default"),
+            questionary.Separator("───"),
             questionary.Choice("✗   Выход", value="quit"),
         ]
 
@@ -545,7 +399,6 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer is None or answer == "quit":
             return None
         if answer == "start":
-            config = _sync_judge(_sync_escalation(config))
             try:
                 _save_global_default(config)
             except OSError:
@@ -562,62 +415,15 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             config, "player_provider", "player_model", "player"
         )
 
-    elif setting == "coach_provider":
-        previous_provider = config.coach_provider
-        previous_model = config.coach_model
-        config = _questionary_select_provider_model(
-            config, "coach_provider", "coach_model", "coach"
-        )
-        config = _sync_batch_roles_with_coach(config, previous_provider, previous_model)
-
-    elif setting == "coach_fallback":
+    elif setting == "judge_provider":
         config = _questionary_select_provider_model(
             config,
-            "coach_fallback_provider",
-            "coach_fallback_model",
-            "fallback coach",
-            provider_choices=FALLBACK_PROVIDER_PRESETS,
-        )
-        config = _sync_escalation(config)
-
-    elif setting == "coach_model":
-        _, current_model = _effective_provider_model(
-            config.coach_provider,
-            config.coach_model,
-        )
-        label = (
-            "Текущая модель коуча: "
-            f"{short_model_name(current_model) if current_model else 'по умолчанию'}"
-        )
-        choices = list(_model_presets_for_provider(config.coach_provider).keys())
-        choice = questionary.select(label, choices=choices).ask()
-        if choice:
-            config = _resolve_model_choice(
-                config, config.coach_provider, "coach_model", choice
-            )
-
-    elif setting == "max_turns":
-        val = questionary.text(
-            f"Макс. попыток на шаг (текущее: {config.max_turns}):"
-        ).ask()
-        if val and val.isdigit():
-            config = dataclasses.replace(config, max_turns=int(val))
-
-    elif setting == "plan_file":
-        val = questionary.text(f"Файл плана (текущий: {config.plan_file}):").ask()
-        if val:
-            config = dataclasses.replace(config, plan_file=val)
-
-    elif setting == "batch_judge":
-        config = _questionary_select_provider_model(
-            config,
-            "batch_judge_provider",
-            "batch_judge_model",
+            "judge_provider",
+            "judge_model",
             "Judge",
         )
-        config = _sync_judge(config)
 
-    elif setting == "tester":
+    elif setting == "tester_provider":
         config = _questionary_select_provider_model(
             config,
             "tester_provider",
@@ -625,33 +431,26 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             "Tester",
         )
 
+    elif setting == "escalation_provider":
+        config = _questionary_select_provider_model(
+            config,
+            "escalation_provider",
+            "escalation_model",
+            "escalation",
+            provider_choices=FALLBACK_PROVIDER_PRESETS,
+        )
+
+    elif setting == "plan_file":
+        val = questionary.text(f"Файл плана (текущий: {config.plan_file}):").ask()
+        if val:
+            config = dataclasses.replace(config, plan_file=val)
+
     elif setting == "test_command":
         val = questionary.text(
             f"Команда тестов (пусто = автодетект, текущая: {_tests_label(config)}):"
         ).ask()
         if val is not None:
             config = dataclasses.replace(config, test_command=val.strip())
-
-    elif setting == "context_limit":
-        choices = [
-            questionary.Choice("Авто (по модели) — рекомендуется", value="auto"),
-            questionary.Choice("200K", value="200000"),
-            questionary.Choice("500K", value="500000"),
-            questionary.Choice("1M (максимум Claude/Codex)", value="1000000"),
-            questionary.Choice("Ввести вручную", value="custom"),
-        ]
-        val = questionary.select(
-            f"Context limit (текущий: {_format_context_limit(config.context_limit)}):",
-            choices=choices,
-        ).ask()
-        if val == "auto":
-            config = dataclasses.replace(config, context_limit=_DEFAULT_CONTEXT_LIMIT)
-        elif val == "custom":
-            raw = questionary.text("Лимит в токенах:").ask()
-            if raw and raw.isdigit():
-                config = dataclasses.replace(config, context_limit=int(raw))
-        elif val and val.isdigit():
-            config = dataclasses.replace(config, context_limit=int(val))
 
     return config
 
@@ -661,7 +460,7 @@ def _save_global_default(config: Config) -> None:
     global_config_path = Path.home() / ".g3" / "config.yaml"
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = {"defaults": dict(config.__dict__)}
+    data = {"defaults": dataclasses.asdict(config)}
     global_config_path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
     wd = config.working_dir.replace(str(Path.home()), "~")
     print(f"\n  Сохранено в ~/.g3/config.yaml (рабочая папка: {wd})\n")
@@ -673,39 +472,18 @@ def _fallback_menu(config: Config) -> Config | None:
     print("  (установи questionary для красивого меню: pip install questionary)\n")
 
     while True:
-        coach_display = (
-            short_model_name(config.coach_model)
-            if config.coach_model
-            else "по умолчанию"
-        )
-        if config.coach_effort:
-            coach_display = f"{coach_display} {config.coach_effort}"
-        player_display = (
-            short_model_name(config.player_model)
-            if config.player_model
-            else "по умолчанию"
-        )
-        if config.player_effort:
-            player_display = f"{player_display} {config.player_effort}"
-        fallback_display = _provider_model_label(*_escalation_pair(config))
-        judge_display = _provider_model_label(*_judge_pair(config))
-        tester_display = _provider_model_label(*_tester_pair(config))
-        print(f"  [p] Player:        {config.player_provider} ({player_display})")
-        print(f"  [c] Coach:         {config.coach_provider} ({coach_display})")
-        print(f"  [f] Escalation:    {fallback_display}")
-        print(f"  [j] Judge:         {judge_display}")
-        print(f"  [t] Tester:        {tester_display}")
-        print(f"  [1] Файл плана:    {config.plan_file}")
-        print(f"  [s] Тесты:         {_tests_label(config)}")
-        print(f"  [2] Макс. попыток: {config.max_turns}")
-        print(f"  [3] Context Limit: {_format_context_limit(config.context_limit)}")
-        print(f"  [Enter] Запустить (сохраняет настройки)")
-        print(f"  [q] Выход\n")
+        print(f"  [p] Player:      {_role_display(config, 'player_provider', 'player_model')}")
+        print(f"  [j] Judge:       {_role_display(config, 'judge_provider', 'judge_model')}")
+        print(f"  [t] Tester:      {_role_display(config, 'tester_provider', 'tester_model')}")
+        print(f"  [e] Escalation:  {_role_display(config, 'escalation_provider', 'escalation_model')}")
+        print(f"  [1] Файл плана:  {_plan_label(config)}")
+        print(f"  [s] Тесты:       {_tests_label(config)}")
+        print("  [Enter] Запустить (сохраняет настройки)")
+        print("  [q] Выход\n")
 
         answer = input("  › ").strip().lower()
 
         if answer == "":
-            config = _sync_judge(_sync_escalation(config))
             try:
                 _save_global_default(config)
             except OSError:
@@ -717,32 +495,21 @@ def _fallback_menu(config: Config) -> Config | None:
             config = _fallback_select_provider_model(
                 config, "player_provider", "player_model", "Player"
             )
-        elif answer == "c":
-            previous_provider = config.coach_provider
-            previous_model = config.coach_model
-            config = _fallback_select_provider_model(
-                config, "coach_provider", "coach_model", "Coach"
-            )
-            config = _sync_batch_roles_with_coach(
-                config, previous_provider, previous_model
-            )
-        elif answer == "f":
-            config = _fallback_select_provider_model(
-                config,
-                "coach_fallback_provider",
-                "coach_fallback_model",
-                "Fallback",
-                provider_choices=FALLBACK_PROVIDER_PRESETS,
-            )
-            config = _sync_escalation(config)
         elif answer == "j":
             config = _fallback_select_provider_model(
-                config, "batch_judge_provider", "batch_judge_model", "Judge"
+                config, "judge_provider", "judge_model", "Judge"
             )
-            config = _sync_judge(config)
         elif answer == "t":
             config = _fallback_select_provider_model(
                 config, "tester_provider", "tester_model", "Tester"
+            )
+        elif answer == "e":
+            config = _fallback_select_provider_model(
+                config,
+                "escalation_provider",
+                "escalation_model",
+                "Escalation",
+                provider_choices=FALLBACK_PROVIDER_PRESETS,
             )
         elif answer == "s":
             val = input(f"  Тесты [{_tests_label(config)}]: ").strip()
@@ -751,26 +518,5 @@ def _fallback_menu(config: Config) -> Config | None:
             val = input(f"  Файл [{config.plan_file}]: ").strip()
             if val:
                 config = dataclasses.replace(config, plan_file=val)
-        elif answer == "2":
-            val = input(f"  Макс. попыток [{config.max_turns}]: ").strip()
-            if val.isdigit():
-                config = dataclasses.replace(config, max_turns=int(val))
-        elif answer == "3":
-            print("  [a] Авто  [1] 200K  [2] 500K  [3] 1M  [4] Вручную")
-            choice = input("  › ").strip().lower()
-            if choice == "a":
-                config = Config(
-                    **{**config.__dict__, "context_limit": _DEFAULT_CONTEXT_LIMIT}
-                )
-            elif choice == "1":
-                config = dataclasses.replace(config, context_limit=200_000)
-            elif choice == "2":
-                config = dataclasses.replace(config, context_limit=500_000)
-            elif choice == "3":
-                config = dataclasses.replace(config, context_limit=1_000_000)
-            elif choice == "4":
-                raw = input("  Лимит в токенах: ").strip()
-                if raw.isdigit():
-                    config = dataclasses.replace(config, context_limit=int(raw))
 
         print()

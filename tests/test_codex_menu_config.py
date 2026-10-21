@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from src.cli_entry import PROVIDER_CHOICES
-from src.config import Config, get_context_window, short_model_name
+from src.config import KNOWN_PROVIDERS, Config, short_model_name
 from src.menu import (
     CODEX_MODEL_PRESETS,
     MUSE_MODEL_PRESETS,
@@ -29,9 +28,8 @@ def test_codex_config_defaults_and_names_use_native_models():
 
     assert cfg.player_provider == "muse"
     assert cfg.player_model == "muse-spark-1.3"
-    assert cfg.coach_provider == "muse"
-    assert cfg.batch_judge_provider == "codex"
-    assert cfg.batch_judge_model == "gpt-5.6-terra"
+    assert cfg.judge_provider == "codex"
+    assert cfg.judge_model == "gpt-5.6-terra"
     assert short_model_name("") == "DEFAULT"
     assert short_model_name("gpt-5.6-sol") == "SOL"
     assert short_model_name("gpt-5.6-terra") == "TERRA"
@@ -43,13 +41,6 @@ def test_codex_config_defaults_and_names_use_native_models():
     assert short_model_name("composer-2.5") == "COMPOSER"
     assert short_model_name("o3") == "o3"
     assert short_model_name("o4-mini") == "o4-mini"
-    assert get_context_window("gpt-5.6-sol") == 1_048_576
-    assert get_context_window("gpt-6-astra") == 1_048_576
-    assert get_context_window("muse-spark-1.3") == 1_048_576
-    assert get_context_window("composer-2.5") == 200_000
-    assert get_context_window("claude-haiku-4-5") == 200_000
-    assert get_context_window("o3") == 128_000
-    assert get_context_window("o4-mini") == 128_000
 
 
 def test_provider_presets_drop_zai_and_kilo():
@@ -59,7 +50,7 @@ def test_provider_presets_drop_zai_and_kilo():
     assert "turbo" not in PROVIDER_PRESETS.values()
     assert PROVIDER_PRESETS["Muse API (свой ключ)"] == "muse"
     assert PROVIDER_PRESETS["Cursor Headless"] == "cursor"
-    assert PROVIDER_CHOICES == [
+    assert list(KNOWN_PROVIDERS) == [
         "muse",
         "claude",
         "codex",
@@ -75,7 +66,7 @@ def test_muse_provider_and_model_presets_are_listed():
         "Muse Spark 1.3 (свой ключ)": "muse-spark-1.3",
         "Muse Spark 1.2 (свой ключ)": "muse-spark-1.2",
     }
-    assert "muse" in PROVIDER_CHOICES
+    assert "muse" in KNOWN_PROVIDERS
 
 
 def test_opencode_presets_are_correct():

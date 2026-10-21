@@ -680,15 +680,6 @@ def test_opencode_model_presets_exist():
     assert "opencode/minimax-m2.5-free" in values
 
 
-def test_opencode_context_windows():
-    """Model context windows are defined for opencode models."""
-    from src.config import get_context_window
-
-    assert get_context_window("opencode/mimo-v2-pro-free") == 131_072
-    assert get_context_window("opencode/minimax-m2.5-free") == 262_144
-    assert get_context_window("openrouter/moonshotai/kimi-k2:free") == 131_072
-    assert get_context_window("opencode/nemotron-3-super-free") == 131_072
-
 
 def test_opencode_create_provider():
     """create_provider('opencode') returns an OpenCodeProvider instance."""
@@ -748,20 +739,6 @@ def test_fallback_menu_accepts_muse_player(monkeypatch):
     assert config.player_provider == "muse"
     assert config.player_model == "muse-spark-1.3"
 
-
-def test_fallback_menu_accepts_opencode_coach(monkeypatch):
-    """Plain-text fallback menu should let users choose opencode for coach."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["c", "opencode", "mimo-omni", "high", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config())
-
-    assert config is not None
-    assert config.coach_provider == "opencode"
-    assert config.coach_model == "opencode/mimo-v2-omni-free"
 
 
 def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
@@ -862,14 +839,14 @@ def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["f", "opencode", "kimi-k2", "high", ""])
+    answers = iter(["e", "opencode", "kimi-k2", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
 
     assert config is not None
-    assert config.coach_fallback_provider == "opencode"
-    assert config.coach_fallback_model == "openrouter/moonshotai/kimi-k2:free"
+    assert config.escalation_provider == "opencode"
+    assert config.escalation_model == "openrouter/moonshotai/kimi-k2:free"
 
 
 def test_questionary_fallback_can_disable_escalation(monkeypatch):
@@ -899,102 +876,14 @@ def test_questionary_fallback_can_disable_escalation(monkeypatch):
 
     updated = _edit_setting_questionary(
         Config(
-            coach_fallback_provider="claude",
-            coach_fallback_model="sonnet",
+            escalation_provider="claude",
+            escalation_model="sonnet",
         ),
-        "coach_fallback",
+        "escalation_provider",
     )
 
-    assert updated.coach_fallback_provider == ""
-    assert updated.coach_fallback_model == ""
-
-
-def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coach(monkeypatch):
-    """Changing coach should update batch pre/post when they still mirror coach."""
-    from src.menu import _edit_setting_questionary
-    from src.config import Config
-
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
-
-    class DummyPrompt:
-        def __init__(self, value):
-            self._value = value
-
-        def ask(self):
-            return self._value
-
-    class DummyQuestionary:
-        @staticmethod
-        def select(*args, **kwargs):
-            return DummyPrompt(next(prompts))
-
-        @staticmethod
-        def text(*args, **kwargs):
-            raise AssertionError("custom model prompt should not be used")
-
-    monkeypatch.setitem(_edit_setting_questionary.__globals__, "questionary", DummyQuestionary)
-
-    updated = _edit_setting_questionary(
-        Config(
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-            batch_pre_provider="muse",
-            batch_pre_model="muse-spark-1.3",
-            batch_post_provider="muse",
-            batch_post_model="muse-spark-1.3",
-        ),
-        "coach_provider",
-    )
-
-    assert updated.coach_provider == "opencode"
-    assert updated.coach_model == "opencode/minimax-m2.5-free"
-    assert updated.batch_pre_provider == "opencode"
-    assert updated.batch_pre_model == "opencode/minimax-m2.5-free"
-    assert updated.batch_post_provider == "opencode"
-    assert updated.batch_post_model == "opencode/minimax-m2.5-free"
-
-
-def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
-    """Plain-text menu should also keep batch pre/post aligned with coach."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["c", "opencode", "kimi-k2", "high", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(
-        Config(
-            coach_provider="muse",
-            coach_model="muse-spark-1.3",
-            batch_pre_provider="muse",
-            batch_pre_model="muse-spark-1.3",
-            batch_post_provider="muse",
-            batch_post_model="muse-spark-1.3",
-        )
-    )
-
-    assert config is not None
-    assert config.coach_provider == "opencode"
-    assert config.coach_model == "openrouter/moonshotai/kimi-k2:free"
-    assert config.batch_pre_provider == "opencode"
-    assert config.batch_pre_model == "openrouter/moonshotai/kimi-k2:free"
-    assert config.batch_post_provider == "opencode"
-    assert config.batch_post_model == "openrouter/moonshotai/kimi-k2:free"
-
-
-def test_fallback_menu_can_edit_batch_judge_provider(monkeypatch):
-    """Plain-text menu should expose the batch judge slot directly."""
-    from src.menu import _fallback_menu
-    from src.config import Config
-
-    answers = iter(["j", "claude", "opus", "high", ""])
-    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-
-    config = _fallback_menu(Config(batch_judge_provider="codex", batch_judge_model=""))
-
-    assert config is not None
-    assert config.batch_judge_provider == "claude"
-    assert config.batch_judge_model == "claude-opus-5"
+    assert updated.escalation_provider == ""
+    assert updated.escalation_model == ""
 
 
 def test_questionary_muse_provider_selects_spark_model(monkeypatch):

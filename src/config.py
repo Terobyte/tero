@@ -1,200 +1,81 @@
 """Configuration: defaults -> .g3/config.yaml -> env -> CLI args."""
 
-import json
+from __future__ import annotations
+
 import os
 import dataclasses
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-from src.constants import (
-    DEFAULT_MAX_TURNS,
-    DEFAULT_MAX_ROUNDS,
-    DEFAULT_PLAYER_TIMEOUT_S,
-    DEFAULT_COACH_TIMEOUT_S,
-    DEFAULT_DUEL_TIMEOUT_S,
-    DEFAULT_CHAIN_RETRY_WAIT_S,
-    DEFAULT_CHAIN_MAX_RETRIES,
-    DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS,
-    DEFAULT_BATCH_JUDGE_ATTEMPTS,
-    DEFAULT_BATCH_POST_JUDGE_ATTEMPTS,
-    DEFAULT_COACH_RETRY_MAX,
-    DEFAULT_MAX_CONTINUATION_ATTEMPTS,
-    DEFAULT_MAX_REVIEW_ITERATIONS,
-    DEFAULT_COMPACT_THRESHOLD,
-    DEFAULT_CONTEXT_LIMIT,
-    EXIT_AGENT_TIMEOUT,
-)
+KNOWN_PROVIDERS = ("muse", "claude", "codex", "gemini", "opencode", "cursor")
 
-
-_UNSAFE_GLOBAL_DEFAULT_KEYS = {
-    "code_review",
-    "claude_home",
+_ALIASES = {
+    "cursor-cli": "cursor",
+    "cursor-headless": "cursor",
+    "headless": "cursor",
 }
 
 
-def _read_export_from_zshrc(env_name: str) -> str:
-    """Best-effort fallback for keys exported only in ~/.zshrc."""
-    zshrc_path = Path.home() / ".zshrc"
-    if not zshrc_path.exists():
-        return ""
+class UnknownProviderError(ValueError):
+    """Provider name is not in the live set and is not a known alias."""
 
-    prefix = f"export {env_name}="
-    try:
-        for raw_line in reversed(zshrc_path.read_text().splitlines()):
-            line = raw_line.strip()
-            if not line.startswith(prefix):
-                continue
 
-            value = line[len(prefix) :].strip()
-            if not value:
-                return ""
+def normalize_provider(name: str) -> str:
+    raw = (name or "").strip()
+    if not raw:
+        raise UnknownProviderError("empty provider name")
+    canonical = _ALIASES.get(raw, raw)
+    if canonical not in KNOWN_PROVIDERS:
+        raise UnknownProviderError(canonical)
+    return canonical
 
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-                # Strip quotes — # inside quotes is preserved
-                value = value[1:-1]
-            elif "#" in value:
-                # Only strip comment if value is not fully quoted
-                value = value.split("#", 1)[0].rstrip()
-            return value
-    except OSError:
-        return ""
 
-    return ""
+def split_role_spec(value: str) -> tuple[str, str]:
+    """Parse ``provider`` or ``provider:model``."""
+    raw = (value or "").strip()
+    if not raw:
+        return "", ""
+    if ":" in raw:
+        provider, model = raw.split(":", 1)
+        return provider.strip(), model.strip()
+    return raw, ""
 
 
 @dataclass
 class Config:
-    """Resolved configuration.
+    """Resolved v4 configuration (spec §6.1)."""
 
-    Config update patterns (two accepted styles):
-      1. Constructor rebuild — ``Config(**filtered)`` — used in resolve_config()
-         when assembling from defaults/env/cli.
-      2. ``dataclasses.replace(cfg, field=value)`` — used in menu.py for
-         incremental edits.  Prefer this for single-field changes.
-    """
-
-    max_turns: int = DEFAULT_MAX_TURNS
-    autonomous: bool = False
-    verbose: bool = False
     plan_file: str = "requirements.md"
     working_dir: str = "."
-    player_timeout_s: int = DEFAULT_PLAYER_TIMEOUT_S
-    coach_timeout_s: int = DEFAULT_COACH_TIMEOUT_S
-    claude_home: str = "~/.claude"
-    coach_model: str = "muse-spark-1.3"
-
-    # Provider selection
     player_provider: str = "muse"
-    coach_provider: str = "muse"
     player_model: str = "muse-spark-1.3"
     player_effort: str = ""
-    coach_effort: str = ""
-    batch_pre_judge_attempts: int = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
-    batch_judge_attempts: int = DEFAULT_BATCH_JUDGE_ATTEMPTS
-    batch_post_judge_attempts: int = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
-    agent_a_workspace: str = "g"
-    agent_b_workspace: str = "g1"
-    worktree_mode: str = "auto"
-    max_rounds: int = DEFAULT_MAX_ROUNDS
-    timeout_s: int = DEFAULT_DUEL_TIMEOUT_S
-    run_tests: bool = True
-    run_bug_detection: bool = True
-    run_lint: bool = True
-    run_types: bool = True
-    run_compile: bool = True
-    judge: str = "claude"
-    agent_a: str = "muse"
-    agent_b: str = "muse"
-    ask_feedback: bool = False
-
-    # Code Review (Phase 3)
-    code_review: bool = False
-    review_provider: str = ""  # empty = follow coach_provider
-    review_model: str = ""
-    review_effort: str = ""
-
-    # Coach fallback (Phase 7)
-    coach_retry_max: int = DEFAULT_COACH_RETRY_MAX
-    coach_fallback_provider: str = "claude"
-    coach_fallback_model: str = ""
-    coach_fallback_effort: str = ""
-
-    # Context Management
-    context_limit: int = DEFAULT_CONTEXT_LIMIT
-    compact_threshold: float = DEFAULT_COMPACT_THRESHOLD
-    max_continuation_attempts: int = DEFAULT_MAX_CONTINUATION_ATTEMPTS
-
-    # Batch role providers + models (configurable per slot)
-    batch_pre_provider: str = "muse"
-    batch_pre_model: str = "muse-spark-1.3"
-    batch_pre_effort: str = ""
-    batch_judge_provider: str = "codex"
-    batch_judge_model: str = "gpt-5.6-terra"
-    batch_judge_effort: str = ""
-    batch_post_provider: str = "muse"
-    batch_post_model: str = "muse-spark-1.3"
-    batch_post_effort: str = ""
-
-    # v4 loop. Empty judge_* / escalation_* fall back to batch_judge_* / coach_fallback_*.
-    judge_provider: str = ""
-    judge_model: str = ""
+    judge_provider: str = "codex"
+    judge_model: str = "gpt-5.6-terra"
     judge_effort: str = ""
     tester_provider: str = "gemini"
     tester_model: str = "gemini-3.8-flash"
     tester_effort: str = ""
-    escalation_provider: str = ""
-    escalation_model: str = ""
+    escalation_provider: str = "claude"
+    escalation_model: str = "opus"
     escalation_effort: str = ""
     test_command: str = ""
     test_command_scoped: str = ""
-
-    # Code review loop
-    max_review_iterations: int = DEFAULT_MAX_REVIEW_ITERATIONS
-
-    # Provider fallback chain
-    player_fallback_chain: str = ""  # comma-separated: "codex,claude"
-    coach_fallback_chain: str = ""  # comma-separated: "codex,claude"
-    chain_retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S
-    chain_max_retries: int = DEFAULT_CHAIN_MAX_RETRIES
-
-
-@dataclass
-class ProviderConfig:
-    """Compatibility shim for orchestrator/provider configuration."""
-
-    name: str = ""
-    type: str = ""
-    config: dict | None = None
-
-
-ResolvedConfig = Config
+    player_timeout_s: int = 600
+    judge_timeout_s: int = 600
+    tester_timeout_s: int = 300
+    test_timeout_s: int = 900
+    max_rounds: int = 15
+    verbose: bool = False
 
 
 _ENV_MAP = {
-    "G3_MAX_TURNS": ("max_turns", int),
-    "G3_AUTONOMOUS": ("autonomous", lambda x: x.lower() == "true"),
     "G3_PLAYER_PROVIDER": ("player_provider", str),
-    "G3_COACH_PROVIDER": ("coach_provider", str),
     "G3_PLAYER_MODEL": ("player_model", str),
-    "G3_COACH_MODEL": ("coach_model", str),
-    "G3_BATCH_PRE_JUDGE_ATTEMPTS": ("batch_pre_judge_attempts", int),
-    "G3_BATCH_JUDGE_ATTEMPTS": ("batch_judge_attempts", int),
-    "G3_BATCH_POST_JUDGE_ATTEMPTS": ("batch_post_judge_attempts", int),
-    # Code Review
-    "G3_CODE_REVIEW": ("code_review", lambda x: x.lower() in ("true", "1", "yes")),
-    "G3_REVIEW_PROVIDER": ("review_provider", str),
-    "G3_REVIEW_MODEL": ("review_model", str),
-    # Coach fallback
-    "G3_COACH_RETRY_MAX": ("coach_retry_max", int),
-    "G3_COACH_FALLBACK_PROVIDER": ("coach_fallback_provider", str),
-    "G3_COACH_FALLBACK_MODEL": ("coach_fallback_model", str),
-    # Batch roles
-    "G3_BATCH_PRE_PROVIDER": ("batch_pre_provider", str),
-    "G3_BATCH_PRE_MODEL": ("batch_pre_model", str),
-    "G3_BATCH_JUDGE_PROVIDER": ("batch_judge_provider", str),
-    "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
     "G3_JUDGE_PROVIDER": ("judge_provider", str),
     "G3_JUDGE_MODEL": ("judge_model", str),
     "G3_TESTER_PROVIDER": ("tester_provider", str),
@@ -203,126 +84,25 @@ _ENV_MAP = {
     "G3_ESCALATION_MODEL": ("escalation_model", str),
     "G3_TEST_COMMAND": ("test_command", str),
     "G3_TEST_COMMAND_SCOPED": ("test_command_scoped", str),
-    "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
-    "G3_BATCH_POST_MODEL": ("batch_post_model", str),
-    "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
-    # Context management
-    "G3_CONTEXT_LIMIT": ("context_limit", int),
-    "G3_COMPACT_THRESHOLD": ("compact_threshold", float),
-    "G3_MAX_CONTINUATION_ATTEMPTS": ("max_continuation_attempts", int),
-    # Provider fallback chain
-    "G3_PLAYER_FALLBACK_CHAIN": ("player_fallback_chain", str),
-    "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
-    "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
-    "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
 }
 
+# Roles whose empty provider/model/effort means "not set, keep default".
+# Escalation is excluded: "" there is a valid value (escalation off).
+_BLANK_MEANS_UNSET_PREFIXES = ("player_", "judge_", "tester_")
 
-# Known context window sizes (tokens) by model name pattern.
-# Matched in order — first substring hit wins.
-_MODEL_CONTEXT_WINDOWS: list[tuple[str, int]] = [
-    ("claude-fable-5", 1_000_000),
-    ("claude-opus-5", 1_000_000),
-    ("claude-sonnet-5", 1_000_000),
-    ("claude-haiku-4-5", 200_000),
-    ("claude-opus-4", 1_000_000),
-    ("claude-sonnet-4", 1_000_000),
-    ("claude-haiku-4", 200_000),
-    ("claude-3-5", 200_000),
-    ("claude-3", 200_000),
-    ("glm-5.1", 204_800),
-    ("glm-4.7", 204_800),
-    ("glm-5", 98_000),
-    ("kimi-k2", 131_072),
-    ("kimi", 128_000),
-    ("gpt-6-astra", 1_048_576),
-    ("gpt-5.6", 1_048_576),
-    ("gpt-5.5", 128_000),
-    ("gpt-5", 128_000),
-    ("o3", 128_000),
-    ("o4-mini", 128_000),
-    ("gpt-4o", 128_000),
-    ("gpt-4", 128_000),
-    ("codex", 1_000_000),
-    ("xiaomi/mimo-v2-pro:free", 1_048_576),
-    ("mimo", 131_072),
-    ("minimax-m2.5", 262_144),
-    ("minimax-m2", 1_000_000),
-    ("muse-spark", 1_048_576),
-    ("composer-2.5", 200_000),
-    ("composer-2", 200_000),
-    ("composer", 200_000),
-    ("gemini-3.1-pro-preview", 1_000_000),
-    ("gemini-3.8-flash", 1_000_000),
-    ("gemini-3.5-flash-lite", 1_000_000),
-    ("gemini-3.5-flash", 1_000_000),
-    ("gemini-3-flash-preview", 1_000_000),
-    ("gemini-3.1-flash-lite", 1_000_000),
-    ("gemini-3", 1_000_000),
-    ("gemini-2.5-pro", 1_000_000),
-    ("gemini-2.5-flash", 1_000_000),
-    ("gemini-2.0", 1_000_000),
-    ("gemini", 1_000_000),
-    ("nemotron", 131_072),
-    ("minimax", 40_960),
-    # Short aliases used by _MODEL_ALIASES in claude_native.py
-    ("fable", 1_000_000),
-    ("opus", 1_000_000),
-    ("sonnet", 1_000_000),
-    ("haiku", 200_000),
-]
+_ROLE_PROVIDER_FIELDS = (
+    "player_provider",
+    "judge_provider",
+    "tester_provider",
+    "escalation_provider",
+)
 
-
-def get_context_window(model: str) -> int:
-    """Return the context window size for a model, or 0 if unknown."""
-    lower = model.lower()
-    for pattern, size in _MODEL_CONTEXT_WINDOWS:
-        if pattern == "codex":
-            if lower == "codex" or lower.startswith("codex-") or "/codex" in lower:
-                return size
-            continue
-        if pattern in lower:
-            return size
-    return 0
-
-
-# Sentinel: context_limit == this value means "auto-detect from model window"
-_DEFAULT_CONTEXT_LIMIT = DEFAULT_CONTEXT_LIMIT
-
-
-def get_effective_context_limit(
-    model: str, configured_limit: int, provider=None
-) -> int:
-    """Derive context limit from model window, unless user explicitly overrode."""
-    window = get_context_window(model)
-    if configured_limit != _DEFAULT_CONTEXT_LIMIT:
-        # User/menu set it — respect, but cap to model's actual window when known.
-        # Prevents e.g. "1M" setting from being used with a 204K z.ai model.
-        if window > 0:
-            return min(configured_limit, window)
-        return configured_limit
-    if window > 0:
-        return window  # full window — compact_threshold handles the reduction
-    # Fallback: derive from provider class name (e.g. CodexProvider → "codexprovider"
-    # contains "codex" as substring → 1M). Handles providers with empty default_model.
-    if provider is not None:
-        cls_hint = type(provider).__name__.lower()
-        if cls_hint.startswith("codex"):
-            return get_context_window("codex")
-        window = get_context_window(cls_hint)
-        if window > 0:
-            return window
-    return _DEFAULT_CONTEXT_LIMIT  # unknown model and no provider hint — safe fallback
-
-
-def _normalize_provider_name(value: str) -> str:
-    """Normalize provider shorthands onto the canonical provider name."""
-    aliases = {
-        "cursor-cli": "cursor",
-        "cursor-headless": "cursor",
-        "headless": "cursor",
-    }
-    return aliases.get(value, value)
+_CLI_SPEC_FIELDS = (
+    ("player_spec", "player_provider", "player_model"),
+    ("judge_spec", "judge_provider", "judge_model"),
+    ("tester_spec", "tester_provider", "tester_model"),
+    ("escalation_spec", "escalation_provider", "escalation_model"),
+)
 
 
 def short_model_name(model: str) -> str:
@@ -437,32 +217,11 @@ def _config_search_paths(
     return deduped
 
 
-def load_merged_settings(
-    working_dir: str | Path = ".",
-    *,
-    include_global: bool = False,
-) -> dict:
-    """Merge config defaults from bundled -> optional global -> working dir."""
-    merged: dict = {}
-    for path in _config_search_paths(working_dir, include_global=include_global):
-        merged.update(_load_yaml(path))
-    return merged
-
-
 def _load_defaults_section(path: Path) -> dict:
     """Load just the defaults section from one config file."""
     data = _load_yaml(path)
     defaults = data.get("defaults", {})
     return defaults if isinstance(defaults, dict) else {}
-
-
-def _filter_global_defaults(defaults: dict) -> dict:
-    """Drop global defaults that should not silently change per-project runtime mode."""
-    return {
-        key: value
-        for key, value in defaults.items()
-        if key not in _UNSAFE_GLOBAL_DEFAULT_KEYS
-    }
 
 
 def load_provider_configs(
@@ -483,10 +242,35 @@ def load_provider_configs(
     return providers
 
 
+def _blank_means_unset(field: str) -> bool:
+    return field.startswith(_BLANK_MEANS_UNSET_PREFIXES)
+
+
+def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
+    """Coerce a yaml/env value to the dataclass field type; "" stays ""."""
+    if value is None:
+        return fallback
+    if isinstance(value, str) and value == "":
+        return value
+    if isinstance(fallback, bool) and isinstance(value, str):
+        return value.lower() in ("true", "1", "yes")
+    if isinstance(fallback, int) and not isinstance(value, bool):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+    if isinstance(fallback, str):
+        return str(value)
+    return value
+
+
 def resolve_config(cli_args: dict) -> Config:
-    """Merge: defaults -> .g3/config.yaml -> env -> CLI args."""
-    defaults = {}
-    working_dir = cli_args.get("working_dir") or "."
+    """Merge: dataclass defaults -> bundled/global/project yaml -> env -> CLI args."""
+    valid_fields = {f.name for f in dataclasses.fields(Config)}
+    merged: dict = {}
+
+    cli = dict(cli_args or {})
+    working_dir = cli.get("working_dir") or "."
     working_dir = str(Path(working_dir).expanduser().resolve())
 
     bundled_root = Path(__file__).resolve().parent.parent
@@ -494,57 +278,91 @@ def resolve_config(cli_args: dict) -> Config:
     global_config = Path("~/.g3/config.yaml").expanduser()
     project_config = Path(working_dir) / ".g3" / "config.yaml"
 
-    # Merge defaults in source order so projects can still override global user
-    # preferences, but global execution-mode toggles do not silently alter runs.
-    defaults.update(_load_defaults_section(bundled_config))
-    defaults.update(_filter_global_defaults(_load_defaults_section(global_config)))
-    defaults.update(_load_defaults_section(project_config))
+    # Merge defaults in source order: bundled -> global -> project.
+    unknown: set[str] = set()
+    for path in (bundled_config, global_config, project_config):
+        for key, value in _load_defaults_section(path).items():
+            if key not in valid_fields:
+                unknown.add(key)
+                continue
+            if value is None:
+                continue
+            if isinstance(value, str) and value == "" and _blank_means_unset(key):
+                continue
+            merged[key] = value
 
     # Env overrides
     for env_key, (cfg_key, conv) in _ENV_MAP.items():
-        if val := os.environ.get(env_key):
-            defaults[cfg_key] = conv(val)
+        raw = os.environ.get(env_key)
+        if not raw:
+            continue
+        merged[cfg_key] = conv(raw)
 
     # CLI overrides (highest priority, skip None)
-    defaults.update({k: v for k, v in cli_args.items() if v is not None})
-    defaults["working_dir"] = working_dir
+    for key, value in cli.items():
+        if value is None or key not in valid_fields:
+            continue
+        if isinstance(value, str) and value == "" and _blank_means_unset(key):
+            continue
+        if key != "working_dir":
+            merged[key] = value
+    merged["working_dir"] = working_dir
 
-    for key in (
-        "player_provider",
-        "coach_provider",
-        "agent_a",
-        "agent_b",
-        "batch_pre_provider",
-        "batch_judge_provider",
-        "batch_post_provider",
-        "judge_provider",
-        "tester_provider",
-        "escalation_provider",
-        "coach_fallback_provider",
-        "review_provider",
-    ):
-        if key in defaults and defaults[key]:
-            defaults[key] = _normalize_provider_name(str(defaults[key]))
+    for key in _ROLE_PROVIDER_FIELDS:
+        if merged.get(key):
+            merged[key] = normalize_provider(str(merged[key]))
+    if merged.get("escalation_provider") == "":
+        merged["escalation_model"] = ""
+        merged["escalation_effort"] = ""
 
-    # Provider config
-    project = load_merged_settings(working_dir, include_global=True)
-    provider = project.get("provider", {})
-    # Any top-level key in the project config that is NOT a known section header
-    # is a candidate for a user typo (e.g. "runn_tests" instead of "run_tests").
-    # Collect them into defaults so the unknown-key warning can catch them.
-    _KNOWN_SECTIONS = {"defaults", "provider"}
-    for key, val in project.items():
-        if key not in _KNOWN_SECTIONS and key not in defaults:
-            defaults[key] = val
-
-    valid_fields = {f.name for f in dataclasses.fields(Config)}
-    unknown = set(defaults) - valid_fields
+    # Unknown keys: warn once with the list and ignore (legacy yaml tolerated).
     if unknown:
-        import warnings
-
         warnings.warn(
             f"Unknown config keys (possible typos): {sorted(unknown)}",
             UserWarning,
             stacklevel=2,
         )
-    return Config(**{k: v for k, v in defaults.items() if k in valid_fields})
+
+    base = Config()
+    coerced = {k: _coerce_value(k, v, getattr(base, k)) for k, v in merged.items() if k in valid_fields}
+    return Config(**{**dataclasses.asdict(base), **coerced})
+
+
+def apply_cli_args(config: Config, args: Any) -> Config:
+    """Apply argparse role/test/plan flags on top of an already-resolved Config."""
+    cfg = config
+    plan = getattr(args, "plan", None)
+    if plan:
+        cfg = dataclasses.replace(cfg, plan_file=plan)
+    verbose = getattr(args, "verbose", None)
+    if verbose:
+        cfg = dataclasses.replace(cfg, verbose=True)
+    test_command = getattr(args, "test_command", None)
+    if test_command is not None:
+        cfg = dataclasses.replace(cfg, test_command=test_command)
+    test_command_scoped = getattr(args, "test_command_scoped", None)
+    if test_command_scoped is not None:
+        cfg = dataclasses.replace(cfg, test_command_scoped=test_command_scoped)
+    max_rounds = getattr(args, "max_rounds", None)
+    if max_rounds:
+        cfg = dataclasses.replace(cfg, max_rounds=int(max_rounds))
+
+    if getattr(args, "no_escalation", False):
+        cfg = dataclasses.replace(cfg, escalation_provider="", escalation_model="", escalation_effort="")
+
+    for spec_attr, provider_field, model_field in _CLI_SPEC_FIELDS:
+        if spec_attr == "escalation_spec" and getattr(args, "no_escalation", False):
+            continue
+        provider, model = split_role_spec(getattr(args, spec_attr, None) or "")
+        if provider:
+            effort_field = provider_field.replace("_provider", "_effort")
+            cfg = dataclasses.replace(
+                cfg, **{provider_field: normalize_provider(provider), effort_field: ""}
+            )
+        # Model without provider keeps whatever resolve_config/menu already set.
+        if model:
+            cfg = dataclasses.replace(cfg, **{model_field: model})
+        elif provider and not getattr(cfg, model_field):
+            # The role was off; fall back to its default model so it actually runs.
+            cfg = dataclasses.replace(cfg, **{model_field: getattr(Config(), model_field)})
+    return cfg
