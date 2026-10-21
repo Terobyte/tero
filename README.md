@@ -1,152 +1,204 @@
 # tero
 
-The latest commit in this repo reads:
+**One model writes the code. A different model judges it. Code decides who wins.**
+
+tero walks a markdown plan phase by phase over the coding-agent CLIs you already have installed. A *player* model implements the phase, your repo's own test suite gates it, a *different* model judges the diff and must answer in schema-validated JSON, a *tester* writes failing tests for what the judge found, and if the player stalls the loop swaps in a stronger model once. No model grades its own homework, and no verdict is ever scraped out of prose.
+
+The loop is plain Python: phases, rounds, test gates, git checkpoints, a JSON-schema'd verdict and a fuse on rounds. Agents are interchangeable workers behind one provider interface: `muse`, `claude`, `codex`, `gemini`, `opencode`, `cursor`.
+
+## One round, where the gates sit
 
 ```
-7ec906f  ldb fix: 4 bug(s) via block-level runtime debugger
+             ┌──────────────────────────────────────────────────────────┐
+             ▼                                                          │
+ player ──▶ protected tests ──▶ test gate ──▶ judge (read-only) ──▶ verdict
+ (edits)    untouched?          (exit code)    sees diff + raw          │
+             │ no → restore      │ red → back    test output            ├─ SHIP       → tick plan boxes, commit phase
+             └──▶ next round     └──▶ player                            ├─ NO_SHIP    → findings to player,
+                                                                        │               or to tester → red test
+                                                                        └─ NEEDS_USER → stop, ask you
+ no progress (same red tests, nothing resolved, bad JSON):
+   1st time → escalate player to the escalation model
+   2nd time → roll the phase back to its checkpoint, stop the run
 ```
 
-Those four bugs were in tero's own `src/config.py` and `src/menu.py`, and
-they were found by `tero ldb` — the newest subsystem here — which decomposed
-the functions into basic blocks, ran them with synthesized inputs, watched
-variable values at block boundaries, and pointed at the first block where
-the values went wrong. That is the bet this project explores: **coding
-agents you don't babysit, kept honest by other agents and by actually
-running the code — not by reading it and vibing.**
+Details that are enforced in code, not asked for in a prompt:
 
-tero is a personal research bench for multi-agent coding loops. It treats
-locally installed agent CLIs — Muse Code (Spark), Claude Code, Codex,
-Gemini, OpenCode, and Cursor Headless — as interchangeable
-workers behind one provider interface, then wires them into adversarial
-pipelines: one model implements, a different model reviews, a third judges.
-124 Python files, ~37,000 lines (16.8k source / 20.1k tests), heavily
-dogfooded: the commit log carries the tool's own auto-commits
-(`fix(debugger): iteration 3 — 29 bug(s) fixed`), and the plan file in the
-repo root is the plan tero executed to build `ldb` into itself.
+- **Checkpoint per phase.** Each phase starts from `HEAD`; a stopped phase is reset to it.
+- **The judge is read-only.** If its run changes the working tree anyway, tero restores the tree and logs `judge_tamper`.
+- **The tester only writes tests.** Anything it touches outside test paths is reverted. Each test must fail (red) on the current code. If it passes, it is deleted. Red tests become *protected*: if the player edits one, tero restores it. If a tracked test file is deleted, tero puts it back.
+- **The judge must close every open finding by id** (`F1`, `F2`, …) as `resolved` or `still_open`, and can drop a wrong red test with `route: discard_test`.
+- **A bad reply gets one repair attempt.** After that it counts as an invalid answer. Provider errors get one retry.
+- **The fuse:** a phase that hits `max_rounds` (default 15) stops with reason `fuse`.
+- **Secrets guard:** a phase whose staged diff includes `.env`, `*.pem`, `id_rsa`, `*secret*` and similar files is rolled back, not committed.
 
-## Two loops
+## A run
 
-| Command | What it does |
-|---|---|
-| `tero go` | Coach–player plan execution. Parses a markdown checklist plan (default: `requirements.md`), batches steps into phases, has a **player** agent implement each phase and a **coach/judge** agent review it, with retry feedback, provider fallback chains, context compaction, and an optional code-review pass. Run history lands in `.g3/knowledge` (`tero history`). |
-| `tero ldb` | Runtime bug hunt — the interesting one. See below. |
+A plan is markdown. Each `##` section that has checkboxes is one phase. Sections without checkboxes are skipped. Text above the first `##` is a preamble that every prompt gets. A plan with no `##` headings treats each checkbox as its own phase.
 
-Roles are freely mixable across providers, and the point is that they
-differ: the default wiring has Muse Spark 1.3 implementing and Codex
-(pinned to `gpt-5.6-terra` at max reasoning) judging the batches, so no
-model grades its own homework. LDB tester defaults to Gemini 3.8 Flash.
-OpenCode remains for free models (MIMO, Kimi) when the work is cheap.
+```markdown
+# Parser
 
-## ldb: verify by execution, not by reading
+Python 3.11, no new dependencies.
 
-Static LLM code review — the kind this repo used to ship as a `tero debug`
-loop, now removed — has a blind spot: bugs that are invisible in the text
-and only exist at runtime — off-by-ones in non-obvious
-formulas, swallowed exceptions hiding real values. `tero ldb` is a
-production-code adaptation of the LDB debugger from the ACL'24 paper
-([FloridSleeves/LLMDebugger](https://github.com/FloridSleeves/LLMDebugger)):
+## First phase
 
-```
- target function
-      │
-      ▼
- 1. decompose into basic blocks        (vendored staticfg CFG builder)
-      │
-      ▼
- 2. synthesize inputs with an LLM      (or take yours via --test "assert f(1,2)==3")
-      │
-      ▼
- 3. execute in a subprocess,           (python -m trace + instrumented prints;
-    capture variable values             logs in .ldb-trace/)
-    at every block boundary
-      │
-      ▼
- 4. Player LLM reads *values*, flags   ──▶  Tester writes a failing test
-    the first incorrect block               ──▶  Fixer repairs + auto-commits (mode 3)
+Do the parser.
+
+- [ ] write parse()
+- [ ] empty string returns []
+
+## Second phase
+
+- [x] already done
+- [ ] still open
 ```
 
-The LLM never has to guess what the code does — it sees what the code *did*.
-Mode 2 stops after find+test (read-only); mode 3 adds fix and auto-commit.
-Scope is either one function (`--file f.py --entry func`) or every public
-function in the project (`--all`, nested classes included). Found bugs are
-appended to `bugs.md` as feedback memory, so later runs know what earlier
-runs already caught. On the paper's HumanEval benchmark this technique hit
-98.2% with GPT-4o; this repo makes **no** such claim for production code —
-the in-repo integration plan (`requirements.md`) explicitly expects less.
+Phases whose boxes are all `[x]` are skipped, so re-running a half-done plan resumes it.
+
+Before the first round tero checks that every role's CLI is ready, that the worktree is clean, and that your test suite is **green at the start**. A red start stops the run. Then it checks out `tero/<plan-slug>` (or reuses it) and works phase by phase. On `SHIP` it ticks that phase's boxes in the plan and commits with the phase title in lowercase as the message. Your main branch is never touched.
+
+The console prints one line per loop event. Each agent call also gets one line per tool call (and a "still working" line after 30 s of silence). `-v` adds snippets of the agent's text:
+
+```
+  [раунд 1] player muse(muse-spark-1.3) …
+    · Read src/parse.py
+    · Edit src/parse.py
+  player: done, изменений 2
+  тесты …
+  тесты: зелёные (код 0, 3.4 с)
+  [раунд 1] judge codex(gpt-5.6-terra) …
+  judge: NO_SHIP, blocking 1, advisory 0
+    - src/parse.py:42: parse('') raises IndexError
+  [раунд 1] tester gemini(gemini-3.8-flash) …
+  tester: тестов написано 1, red-подтверждено 1
+  [раунд 2] player muse(muse-spark-1.3) …
+```
+
+Every run leaves a ledger in `.tero/runs/<timestamp>-<slug>/`: `ledger.jsonl` (append-only events) plus per-round `player.json`, `judge.json`, `tester.json` and `tests.log` under `phase-NN/round-NN/`. tero adds `.tero/` to `.git/info/exclude`, so none of this gets committed.
 
 ## Install
 
-Requires Python 3.11+ and, for anything beyond `--help`, at least one agent
-CLI installed and authenticated on your machine (`claude`, `codex`,
-`opencode`, `gemini`, `muse`, or `agent`).
+Requires Python ≥ 3.11. Dependencies: `pyyaml`, `psutil`, `questionary`, `jsonschema`.
 
 ```bash
 git clone https://github.com/Terobyte/tero.git
 cd tero
-python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-`pip install -e .` pulls everything `tero ldb` needs, including the `astor`
-and `graphviz` that the vendored `staticfg` CFG builder imports and the
-`questionary` behind the interactive menus.
+This installs the `tero` command.
+
+## Quickstart
 
 ```bash
-# runtime-debug one function, with your own assert as the input
-tero ldb --no-menu --file src/thing.py --entry compute --test "assert compute(2) == 4"
-
-# runtime-debug every public function in a project
-tero ldb --no-menu --all -w /path/to/project
-
-# execute a markdown plan against a working dir
-tero go --no-menu -p plan.md -w /path/to/project
+cd your-repo                       # a git repo with a clean worktree and green tests
+tero go -p plan.md                 # interactive menu, then the loop
+tero go -p plan.md --no-menu       # straight to the loop
+tero history                       # recent runs: slug, stop reason, phases shipped/total, plan
 ```
 
-Omit `--no-menu` to get an interactive settings menu instead.
+```
+tero go [--plan PLAN] [--working-dir DIR] [--no-menu] [--verbose]
+        [--player P[:MODEL]] [--judge P[:MODEL]] [--tester P[:MODEL]]
+        [--escalation P[:MODEL]] [--no-escalation]
+        [--test-command CMD] [--test-command-scoped CMD]
+        [--max-rounds N]
+tero history [--limit N] [--working-dir DIR]
+```
+
+Short forms: `-p`, `-w`, `-v`, `-l`. The plan path is relative to `--working-dir` (default `.`). The default plan file is `requirements.md`. `tero history` shows 10 runs by default.
+
+Role flags take `provider` or `provider:model`, for example `--judge claude:opus` or `--player cursor`. When no test command is set, tero auto-detects one: pytest (`pyproject.toml`, `pytest.ini`, `conftest.py` or `tests/*.py`), then npm (a `test` script), then `cargo test`, then `go test ./...`. The tester needs a *scoped* command, one that can run single files. pytest and npm have one, and you can set your own with `--test-command-scoped` (use `{files}` as the placeholder). Without one, findings meant for the tester go to the player.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | every phase shipped, or nothing left to do |
+| `1` | startup error: unknown provider, CLI not ready, not a git repo, dirty worktree, plan not found, red tests at start |
+| `2` | stopped mid-run: `stuck`, `fuse`, `user` (judge asked a question), `provider_unavailable`, `secrets` |
+| `130` | Ctrl+C. The tree is left as is so you can inspect it. |
+
+A dirty `tero/*` branch blocks the next start. tero prints the reset command for you to run. It does not run it.
+
+## Configuration
+
+Resolution order, later wins:
+
+1. `Config` dataclass defaults
+2. `<tero install>/.tero/config.yaml`
+3. `~/.tero/config.yaml`
+4. `<working-dir>/.tero/config.yaml`
+5. `TERO_*` environment variables
+6. CLI flags, then the interactive menu
+
+Default roles:
+
+| Role | Provider | Model |
+|---|---|---|
+| player | `muse` | `muse-spark-1.3` |
+| judge | `codex` | `gpt-5.6-terra` |
+| tester | `gemini` | `gemini-3.8-flash` |
+| escalation | `claude` | `opus` (an empty provider turns escalation off) |
+
+Timeouts: player 600 s, judge 600 s, tester 300 s, test gate 900 s. `max_rounds` is 15.
+
+YAML files use a `defaults:` section with `Config` field names (including `player_effort`, `judge_effort`, … which are only settable here or in the menu). A `providers:` section overrides per-provider settings such as `command`, `default_model` or `type` (for running several accounts of one CLI):
+
+```yaml
+defaults:
+  judge_provider: claude
+  judge_model: opus
+  test_command: "python -m pytest -q"
+providers:
+  codex:
+    command: /opt/homebrew/bin/codex
+```
+
+Environment variables: `TERO_PLAYER_PROVIDER`, `TERO_PLAYER_MODEL`, `TERO_JUDGE_PROVIDER`, `TERO_JUDGE_MODEL`, `TERO_TESTER_PROVIDER`, `TERO_TESTER_MODEL`, `TERO_ESCALATION_PROVIDER`, `TERO_ESCALATION_MODEL`, `TERO_TEST_COMMAND`, `TERO_TEST_COMMAND_SCOPED`.
+
+The interactive menu (`tero go` without `--no-menu`) lets you pick provider and model for each role, the plan file and the test command. **«Запустить» writes the whole current config to `~/.tero/config.yaml`**, so your last choices become the global defaults for the next run.
+
+## Requirements
+
+tero runs agent CLIs as subprocesses. Each one must be installed, on `PATH` and logged in. tero checks this before the first round.
+
+| Provider | CLI it runs |
+|---|---|
+| `claude` | `claude` (Claude Code, `claude auth status` must pass) |
+| `muse` | `claude`, pointed at the Muse API. The key comes from `MODEL_API_KEY` or that line in `~/.tero/secrets.env` |
+| `codex` | `codex` |
+| `gemini` | `gemini` |
+| `opencode` | `opencode` |
+| `cursor` | `agent` (Cursor CLI); aliases `cursor-cli`, `cursor-headless`, `headless` |
+
+You only need the CLIs for the roles you actually assign.
 
 ## Tests
 
 ```bash
-pip install pytest
-python -m pytest tests/ -q
+python3 -m pytest -q -p no:warnings tests
 ```
 
-Result at HEAD: **1004 passed, 2 failed, 5 skipped in ~20 s** — offline,
-no API keys needed. The failures are the repo's known-bug backlog, not your
-environment: this workflow writes "bug-proof" tests that *demonstrate* each
-confirmed-but-unfixed bug (the backlog lives in `bugs.md`), so the suite
-stays red until a bug is actually fixed and a bug can't silently be
-declared dead.
+353 passed at the time of writing. The suite needs no agent CLIs: the loop runs against scripted fake agents and throwaway git repos.
 
-## Configuration
+## Limitations
 
-Resolution order: dataclass defaults → `.g3/config.yaml` in the working dir →
-environment variables → CLI flags. Every knob is a field on `Config` in
-`src/config.py` — provider/model per role, fallback chains, context limits
-and compaction thresholds, debug intensity, ldb mode/timeouts. The design
-docs, specs, and plans that drove each subsystem are in `docs/superpowers/`.
+- **This is a personal research bench, not a product.** The defaults reflect one person's set of accounts and models.
+- **You bring the agents.** tero orchestrates CLIs you have already installed and authenticated. It has no API clients of its own.
+- **The UI is in Russian:** menu, status lines and stop messages. Flags, exit codes and the ledger's event names are English.
+- **The status lines are flat.** They are tagged `[раунд N]`, without the spec's `[фаза i/n · раунд r]` prefix, and there is no per-phase "SHIP in N rounds → commit" summary line yet. Use `ledger.jsonl` for that.
+- **Known gap in the test gate:** tero hashes only the suite files tracked at the phase checkpoint. If a player *adds* a new `conftest.py` or `pytest.ini`, it can change gate results without being flagged. The judge still sees the file in the diff. A fix is tracked.
+- **"Different model" is a default, not a rule.** Nothing stops you from setting player and judge to the same model.
 
-## Honest limitations
+## Docs
 
-- **Research prototype, sample size: one.** This is a personal bench, built
-  and validated by running it on itself and on its author's projects. No CI,
-  no releases, no stability promises. The architecture is mid-simplification —
-  `docs/superpowers/specs/2026-05-01-tero-simplification-design.md` strips it
-  down to the player + coach + batch core — so expect churn.
-- **The UI speaks Russian.** Menus, prompts to the user, and CLI status
-  messages are partly in Russian ("Прервано.", "История пуста."). The agent
-  prompts themselves are English.
-- **Naming drift.** The package is `g3-coach`, the CLI is `tero`, state lives
-  in `.g3/` — "g3" is the project's earlier codename and never got renamed.
-- **Stowaway files from a different project.** `.env.example`,
-  `config/settings.json`, and `src/ai/resume_tailor.py` belong to a job-application
-  bot that was once developed in the same tree. They do **not** describe this
-  project's configuration — ignore them.
-- **Single-machine assumptions.** Config resolution will fall back to
-  grepping `~/.zshrc` for exported keys; provider defaults assume specific
-  CLIs and accounts installed the way the author has them.
-- **ldb is Python-only** and needs code it can actually execute; functions
-  whose inputs can't be synthesized or that touch heavy external state won't
-  trace.
-- **MIT licensed**; the vendored CFG builder in `src/ldb/staticfg/` carries
-  its own Apache-2.0 license.
+- Design spec: [`docs/superpowers/specs/2026-09-13-tero-v4-design.md`](docs/superpowers/specs/2026-09-13-tero-v4-design.md) (in Russian)
+- Implementation plan: [`docs/superpowers/plans/2026-09-13-tero-v4-loop.md`](docs/superpowers/plans/2026-09-13-tero-v4-loop.md)
+
+Older specs in the same folders are history. v4 replaced the earlier g3 coach/player orchestrator with this loop.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
