@@ -143,11 +143,6 @@ def list_worktree_files(repo: str | Path) -> list[str]:
     return _names(repo, "ls-files", "-co", "--exclude-standard")
 
 
-def list_files_unignored(repo: str | Path, pathspecs: list[str]) -> list[str]:
-    # no --exclude-standard: a gitignored file is still on disk and still gets loaded
-    return _names(repo, "ls-files", "-co", "--", *pathspecs)
-
-
 def current_branch(repo: str | Path) -> str:
     return _git(repo, "branch", "--show-current").strip()
 

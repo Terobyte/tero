@@ -325,3 +325,45 @@ async def test_guard_keeps_preexisting_symlinked_config_dir(tmp_path: Path):
     assert (repo / ".claude").is_symlink()
     assert (shared / "settings.json").read_text() == '{"user": 1}'
     assert _kinds(ledger, "agent_config_violation") == []
+
+
+@pytest.mark.asyncio
+async def test_guard_keeps_tracked_conftest(tmp_path: Path):
+    repo = _repo(tmp_path)
+    write_file(repo, "tests/conftest.py", "X = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "conftest")
+    agents = FakeAgents(repo, [_player_greets(repo), judge_returns(ship())])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert (repo / "tests/conftest.py").read_text() == "X = 1\n"
+    assert _kinds(ledger, "suite_violation") == []
+    assert "tests/conftest.py" in _git(repo, "ls-files")
+
+
+@pytest.mark.asyncio
+async def test_guard_never_writes_through_symlinked_parent(tmp_path: Path):
+    import shutil
+
+    repo = _repo(tmp_path)
+    write_file(repo, "pkg/.claude/settings.json", '{"user": 1}')
+    outside = tmp_path.parent / f"{tmp_path.name}-victim"
+    (outside / ".claude").mkdir(parents=True)
+    (outside / ".claude/settings.json").write_text("VICTIM\n")
+    seen: dict[str, object] = {}
+
+    def swap():
+        shutil.rmtree(repo / "pkg")
+        (repo / "pkg").symlink_to(outside, target_is_directory=True)
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["pkg_link"] = (repo / "pkg").is_symlink()
+        seen["settings"] = (repo / "pkg/.claude/settings.json").read_text()
+        return ship()
+
+    agents = FakeAgents(repo, [_player_greets(repo, swap), check_judge])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert (outside / ".claude/settings.json").read_text() == "VICTIM\n", "guard wrote outside the repo"
+    assert seen == {"pkg_link": False, "settings": '{"user": 1}'}

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -20,7 +22,6 @@ from src.loop.git import (
     has_staged_changes,
     head,
     list_files,
-    list_files_unignored,
     list_worktree_files,
     rollback,
     secret_paths,
@@ -45,8 +46,17 @@ SUITE_CONFIG_NAMES = {
 # A new one of these can skip or rewrite tests without touching a test file.
 SUITE_HOOK_NAMES = {"conftest.py", "pytest.ini"}
 # The judge's CLI loads these from the workspace (MCP servers, hooks, permissions).
-AGENT_CONFIG_DIRS = (".claude", ".codex", ".cursor", ".gemini", ".opencode")
-GUARDED_PATHSPECS = [*(f":(glob)**/{name}" for name in sorted(SUITE_HOOK_NAMES)), *AGENT_CONFIG_DIRS]
+AGENT_CONFIG_DIRS = {".claude", ".codex", ".cursor", ".gemini", ".opencode"}
+AGENT_INSTRUCTION_NAMES = {
+    ".mcp.json",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "GEMINI.md",
+    ".cursorrules",
+}
+_GUARDED_NAMES = SUITE_HOOK_NAMES | AGENT_INSTRUCTION_NAMES
+_PRUNE_DIRS = {".git", ".tero", "node_modules"}
 
 UNAVAILABLE_PLAYER = {
     "status": "blocked",
@@ -79,11 +89,11 @@ class OpenFinding:
     line: int | None
     problem: str
     expected: str
-    test_path: str | None = None
+    test_paths: list[str] = field(default_factory=list)
     note: str = ""
 
     def as_prompt(self) -> str:
-        extra = f" [test: {self.test_path}]" if self.test_path else ""
+        extra = f" [test: {', '.join(self.test_paths)}]" if self.test_paths else ""
         note = f" ({self.note})" if self.note else ""
         return f"{self.id}: {self.problem} → {self.expected}{extra}{note}"
 
@@ -96,7 +106,7 @@ class OpenFinding:
             "line": self.line,
             "problem": self.problem,
             "expected": self.expected,
-            "test_path": self.test_path,
+            "test_paths": self.test_paths,
         }
 
 
@@ -131,7 +141,7 @@ class _State:
     last_red_fp: frozenset[str] | None = None
     last_red_tree: str | None = None
     protected: dict[str, ProtectedTest] = field(default_factory=dict)
-    protected_by_id: dict[str, str] = field(default_factory=dict)
+    protected_by_id: dict[str, list[str]] = field(default_factory=dict)
 
 
 async def run_phase(
@@ -182,7 +192,7 @@ class _PhaseRunner:
         exclude_tero(repo)
         self.checkpoint = head(repo)
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
-        self.guarded = _read_guarded(repo, self.suite_hashes)
+        self.guarded = _guarded_entries(repo, self.suite_hashes)
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
         self._last_player = UNAVAILABLE_PLAYER
@@ -304,16 +314,38 @@ class _PhaseRunner:
                 self.state.suite_delta.append(path)
 
         # Not a burned round: the player's code still goes to the gate and judge.
-        current = set(list_files_unignored(self.repo, GUARDED_PATHSPECS)) - set(self.suite_hashes)
-        for path in sorted(current | set(self.guarded)):
+        current = _guarded_entries(self.repo, self.suite_hashes)
+        removed_dirs: set[str] = set()
+        for path in sorted(set(current) | set(self.guarded)):
+            if any(path.startswith(done + "/") for done in removed_dirs):
+                # A parent dir was already removed wholesale (rmtree) above;
+                # this entry is stale — nothing left to do for it.
+                continue
             target = self.repo / path
             original = self.guarded.get(path)
-            if original is not None and _plain_file(target) and target.read_bytes() == original:
+            now = current.get(path)
+            if original is not None and now is not None and now == original:
                 continue
-            target.unlink(missing_ok=True)
+            if target.is_dir() and not target.is_symlink():
+                removed_dirs.add(path)
+            for anc in _strip_unsafe_ancestors(self.repo, path):
+                self.ledger.event(
+                    "agent_config_violation",
+                    path=anc,
+                    round=self.state.round,
+                )
+                print(
+                    f"  конфиг агента изменён вне протокола: {anc} — откат",
+                    flush=True,
+                )
+            _remove_guarded(target)
             if original is not None:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(original)
+                kind, payload = original
+                if kind == "link":
+                    os.symlink(payload, target)
+                else:
+                    target.write_bytes(payload)
             hook = Path(path).name in SUITE_HOOK_NAMES
             self.ledger.event(
                 "suite_violation" if hook else "agent_config_violation",
@@ -450,17 +482,18 @@ class _PhaseRunner:
             if item.get("route") != "discard_test":
                 continue
             fid = item.get("id") or ""
-            path = self.state.protected_by_id.pop(fid, None)
-            if not path:
+            paths = self.state.protected_by_id.pop(fid, None)
+            if not paths:
                 continue
-            target = self.repo / path
-            target.unlink(missing_ok=True)
-            self.state.protected.pop(path, None)
             note = "тест снят, чини код"
-            self.state.discarded.append(f"{fid}: {note}")
+            for path in paths:
+                target = self.repo / path
+                target.unlink(missing_ok=True)
+                self.state.protected.pop(path, None)
+                self.state.discarded.append(f"{fid}: {note}")
             for found in self.state.open_findings:
                 if found.id == fid:
-                    found.test_path = None
+                    found.test_paths = []
                     found.note = note
 
     def _stalled(self, previous: dict[str, str]) -> bool:
@@ -498,7 +531,7 @@ class _PhaseRunner:
         routed = [
             item
             for item in self.state.open_findings
-            if item.route == "tester" and not item.test_path
+            if item.route == "tester" and not item.test_paths
         ]
         if not routed or not self.tester_enabled or self.test_command is None:
             return True
@@ -559,12 +592,12 @@ class _PhaseRunner:
             content = (self.repo / path).read_text() if (self.repo / path).exists() else ""
             digest = file_hashes(self.repo, [path]).get(path, "")
             self.state.protected[path] = ProtectedTest(digest, content)
-            # Known quirk (B53): a second test under the same finding id takes the id over,
-            # and the first stays protected with no id to discard it by.
-            self.state.protected_by_id[fid] = path
+            self.state.protected_by_id.setdefault(fid, [])
+            if path not in self.state.protected_by_id[fid]:
+                self.state.protected_by_id[fid].append(path)
             for item in self.state.open_findings:
-                if item.id == fid:
-                    item.test_path = path
+                if item.id == fid and path not in item.test_paths:
+                    item.test_paths.append(path)
         print(
             f"  tester: тестов написано {written}, red-подтверждено {red_confirmed}",
             flush=True,
@@ -743,14 +776,54 @@ def _tail(text: str, limit: int = 200) -> str:
     return "\n".join(lines[-limit:])
 
 
-def _plain_file(path: Path) -> bool:
-    return path.is_file() and not path.is_symlink()
+def _remove_guarded(target: Path) -> None:
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
 
 
-def _read_guarded(repo: Path, suite_hashes: dict[str, str]) -> dict[str, bytes]:
-    # Tracked hooks are in suite_hashes: their edits reach the judge as suite_delta.
-    return {
-        path: (repo / path).read_bytes()
-        for path in list_files_unignored(repo, GUARDED_PATHSPECS)
-        if path not in suite_hashes and _plain_file(repo / path)
-    }
+def _strip_unsafe_ancestors(repo: Path, rel: str) -> list[str]:
+    # Never resolve outside the repo: an ancestor that is a symlink (or a
+    # plain file where a dir should be) is unlinked as itself, never followed.
+    stripped: list[str] = []
+    parts = Path(rel).parts
+    for i in range(1, len(parts)):
+        anc = Path(*parts[:i])
+        full = repo / anc
+        if full.is_symlink() or (full.exists() and not full.is_dir()):
+            full.unlink()
+            stripped.append(anc.as_posix())
+    return stripped
+
+
+# kind, payload: ("file", bytes) or ("link", os.readlink target)
+Entry = tuple[str, Any]
+
+
+def _guarded_entries(
+    repo: Path, suite_hashes: dict[str, str] | None = None
+) -> dict[str, Entry]:
+    # os.walk, not git: nested repos' worktrees and gitignored paths are walked too.
+    excluded = suite_hashes or {}
+    entries: dict[str, Entry] = {}
+    for root, dirs, files in os.walk(repo, followlinks=False):
+        dirs[:] = [d for d in dirs if d not in _PRUNE_DIRS]
+        try:
+            rel_root = Path(root).relative_to(repo)
+        except ValueError:
+            continue
+        for name in [*dirs, *files]:
+            rel = rel_root / name if rel_root.parts else Path(name)
+            posix = rel.as_posix()
+            if posix in excluded:
+                continue
+            full = repo / rel
+            in_config_dir = any(part in AGENT_CONFIG_DIRS for part in rel.parts[:-1])
+            if full.is_symlink():
+                # one entry for the link itself; os.walk never descends into it
+                if in_config_dir or name in _GUARDED_NAMES or name in AGENT_CONFIG_DIRS:
+                    entries[posix] = ("link", os.readlink(full))
+            elif (in_config_dir or name in _GUARDED_NAMES) and full.is_file():
+                entries[posix] = ("file", full.read_bytes())
+    return entries
