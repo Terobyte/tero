@@ -256,11 +256,9 @@ class _PhaseRunner:
             timeout=self.cfg.player_timeout_s,
             ctx=ValidateCtx(),
         )
-        if not isinstance(data, dict) or data.get("__unavailable__"):
-            self._provider_error("player", data)
+        data = self._check_reply("player", data)
+        if data is None:
             return False
-        if data.get("__invalid__"):
-            self._invalid("player", data)
         report = data if data.get("status") in {"done", "blocked"} else UNAVAILABLE_PLAYER
         self.ledger.event("player", phase=self.phase.title, round=self.state.round, model=model)
         self.ledger.artifact(self._round_file("player.json"), _dump(report))
@@ -401,11 +399,10 @@ class _PhaseRunner:
             self.ledger.event("judge_tamper", round=self.state.round)
             print("  judge изменил рабочее дерево — откат", flush=True)
 
-        if not isinstance(data, dict) or data.get("__unavailable__"):
-            self._provider_error("judge", data)
+        data = self._check_reply("judge", data)
+        if data is None:
             return _Next.UNAVAILABLE
         if data.get("__invalid__"):
-            self._invalid("judge", data)
             return _Next.INVALID
 
         self.ledger.event(
@@ -518,11 +515,9 @@ class _PhaseRunner:
             timeout=self.cfg.tester_timeout_s,
             ctx=ValidateCtx(),
         )
-        if not isinstance(data, dict) or data.get("__unavailable__"):
-            self._provider_error("tester", data)
+        data = self._check_reply("tester", data)
+        if data is None:
             return False
-        if data.get("__invalid__"):
-            self._invalid("tester", data)
         self.ledger.event("tester", round=self.state.round)
         self.ledger.artifact(self._round_file("tester.json"), _dump(data))
         self._revert_non_test(before_tree, before_files)
@@ -614,6 +609,15 @@ class _PhaseRunner:
 
     def _round_file(self, name: str) -> str:
         return f"phase-{self.phase.index:02d}/round-{self.state.round:02d}/{name}"
+
+    def _check_reply(self, role: str, data: Any) -> dict[str, Any] | None:
+        """None when the provider is unavailable. An invalid reply is logged and still returned."""
+        if not isinstance(data, dict) or data.get("__unavailable__"):
+            self._provider_error(role, data)
+            return None
+        if data.get("__invalid__"):
+            self._invalid(role, data)
+        return data
 
     def _invalid(self, role: str, data: dict[str, Any]) -> None:
         errors = [str(item) for item in data.get("errors") or []]
