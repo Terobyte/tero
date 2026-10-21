@@ -1,23 +1,12 @@
 """Tests for CLI integration behavior."""
 
-import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
-import g3
+from src import cli_entry
 from src.config import resolve_config
-
-
-def _load_packaged_g3_module():
-    module_path = Path(__file__).resolve().parent.parent / "g3.py"
-    spec = importlib.util.spec_from_file_location("packaged_g3_for_test", module_path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
@@ -55,7 +44,7 @@ def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
 
     import asyncio
 
-    asyncio.run(g3.run_go(args))
+    asyncio.run(cli_entry.run_go(args))
 
     assert captured["plan"] == "plan.md"
     assert captured["player"] == "muse"
@@ -109,7 +98,7 @@ def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatc
 
     import asyncio
 
-    asyncio.run(g3.run_go(args, config=config))
+    asyncio.run(cli_entry.run_go(args, config=config))
 
     cfg = captured["cfg"]
     assert cfg.player_provider == "opencode"
@@ -156,7 +145,7 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
 
     import asyncio
 
-    asyncio.run(g3.run_go(args))
+    asyncio.run(cli_entry.run_go(args))
 
     assert exit_codes == [0]
 
@@ -199,7 +188,7 @@ def test_prepare_go_config_still_opens_menu_when_autonomous_comes_from_defaults(
 
     monkeypatch.setattr("src.menu.run_settings_menu", fake_menu)
 
-    config = g3._prepare_go_config(args)
+    config = cli_entry.prepare_go_config(args)
 
     assert seen["autonomous"] is True
     assert config.autonomous is True
@@ -293,8 +282,7 @@ def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
 @pytest.mark.parametrize(
     ("module", "module_name"),
     [
-        (g3, "root"),
-        (_load_packaged_g3_module(), "packaged"),
+        (cli_entry, "packaged"),
     ],
 )
 def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module, module_name):
@@ -306,6 +294,7 @@ def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
+            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -315,7 +304,7 @@ def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module
     def fake_asyncio_run(coro):
         coro.close()
 
-    monkeypatch.setattr(module, "_prepare_go_config", fake_prepare)
+    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
     monkeypatch.setattr(module, "run_go", fake_run_go)
     monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
     monkeypatch.setattr(
@@ -349,8 +338,7 @@ def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module
 @pytest.mark.parametrize(
     ("module", "module_name"),
     [
-        (g3, "root"),
-        (_load_packaged_g3_module(), "packaged"),
+        (cli_entry, "packaged"),
     ],
 )
 def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, module_name):
@@ -362,6 +350,7 @@ def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, mo
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
+            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -371,7 +360,7 @@ def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, mo
     def fake_asyncio_run(coro):
         coro.close()
 
-    monkeypatch.setattr(module, "_prepare_go_config", fake_prepare)
+    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
     monkeypatch.setattr(module, "run_go", fake_run_go)
     monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
     monkeypatch.setattr(
@@ -403,8 +392,7 @@ def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, mo
 @pytest.mark.parametrize(
     ("module", "module_name"),
     [
-        (g3, "root"),
-        (_load_packaged_g3_module(), "packaged"),
+        (cli_entry, "packaged"),
     ],
 )
 def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, module_name):
@@ -416,6 +404,7 @@ def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, 
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
+            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -425,7 +414,7 @@ def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, 
     def fake_asyncio_run(coro):
         coro.close()
 
-    monkeypatch.setattr(module, "_prepare_go_config", fake_prepare)
+    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
     monkeypatch.setattr(module, "run_go", fake_run_go)
     monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
     monkeypatch.setattr(
@@ -452,12 +441,6 @@ def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, 
     assert captured["args"].coach_provider == "gemini", module_name
     assert captured["args"].player_model == "gemini-3.8-flash", module_name
     assert captured["args"].coach_model == "gemini-3.1-pro-preview", module_name
-
-
-def test_importing_g3_outside_repo_root_resolves_packaged_entrypoint():
-    """Document current import behavior outside the repo root."""
-    packaged = _load_packaged_g3_module()
-    assert packaged.__file__.endswith("/g3.py")
 
 
 def test_installed_script_points_at_package_entrypoint():
