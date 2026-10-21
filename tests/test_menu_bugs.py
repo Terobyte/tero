@@ -65,7 +65,7 @@ class TestSaveDefault:
 
         _save_global_default(config)
 
-        saved = yaml.safe_load((tmp_path / ".g3" / "config.yaml").read_text())
+        saved = yaml.safe_load((tmp_path / ".tero" / "config.yaml").read_text())
         defaults = saved["defaults"]
         assert defaults["player_provider"] == "codex"
         assert defaults["player_model"] == "gpt-5.6-terra"

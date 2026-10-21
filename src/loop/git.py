@@ -83,16 +83,16 @@ def commit(repo: str | Path, msg: str) -> str:
     return head(repo)
 
 
-def exclude_g3(repo: str | Path) -> None:
+def exclude_tero(repo: str | Path) -> None:
     exclude = Path(repo) / ".git" / "info" / "exclude"
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text() if exclude.exists() else ""
-    if ".g3/" in existing.splitlines() or existing.rstrip().endswith(".g3/"):
+    if ".tero/" in existing.splitlines() or existing.rstrip().endswith(".tero/"):
         return
-    if ".g3/" in {line.strip() for line in existing.splitlines()}:
+    if ".tero/" in {line.strip() for line in existing.splitlines()}:
         return
     prefix = "" if not existing or existing.endswith("\n") else "\n"
-    exclude.write_text(existing + f"{prefix}.g3/\n")
+    exclude.write_text(existing + f"{prefix}.tero/\n")
 
 
 def status_short(repo: str | Path) -> str:

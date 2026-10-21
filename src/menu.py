@@ -456,14 +456,14 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
 
 
 def _save_global_default(config: Config) -> None:
-    """Save current settings to ~/.g3/config.yaml as global defaults."""
-    global_config_path = Path.home() / ".g3" / "config.yaml"
+    """Save current settings to ~/.tero/config.yaml as global defaults."""
+    global_config_path = Path.home() / ".tero" / "config.yaml"
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = {"defaults": dataclasses.asdict(config)}
     global_config_path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
     wd = config.working_dir.replace(str(Path.home()), "~")
-    print(f"\n  Сохранено в ~/.g3/config.yaml (рабочая папка: {wd})\n")
+    print(f"\n  Сохранено в ~/.tero/config.yaml (рабочая папка: {wd})\n")
 
 
 def _fallback_menu(config: Config) -> Config | None:

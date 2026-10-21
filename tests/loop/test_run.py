@@ -195,4 +195,4 @@ async def test_all_phases_done_is_nothing_to_do(tmp_path: Path):
     assert outcome.exit_code == 0
     assert outcome.reason == "nothing_to_do"
     assert outcome.phases_total == 1
-    assert not (repo / ".g3" / "runs").exists()
+    assert not (repo / ".tero" / "runs").exists()

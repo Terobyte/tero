@@ -14,7 +14,7 @@ from src.loop.git import (
     checkout_run_branch,
     current_branch,
     ensure_clean,
-    exclude_g3,
+    exclude_tero,
     is_repo,
     status_short,
 )
@@ -109,7 +109,7 @@ async def run(
 
     slug = slugify(Path(cfg.plan_file).stem)
     checkout_run_branch(repo, slug)
-    exclude_g3(repo)
+    exclude_tero(repo)
     run_dir = new_run_dir(repo, slug)
     ledger = Ledger(run_dir)
     ledger.event("run_start", plan=cfg.plan_file, slug=slug)

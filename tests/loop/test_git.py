@@ -9,7 +9,7 @@ from src.loop.git import (
     checkout_run_branch,
     commit,
     ensure_clean,
-    exclude_g3,
+    exclude_tero,
     file_hashes,
     head,
     rollback,
@@ -121,13 +121,13 @@ def test_commit_and_status_short(tmp_path: Path):
     assert status_short(repo) == ""
 
 
-def test_exclude_g3_does_not_show_in_status(tmp_path: Path):
+def test_exclude_tero_does_not_show_in_status(tmp_path: Path):
     repo = _init(tmp_path)
-    exclude_g3(repo)
-    g3 = repo / ".g3" / "runs" / "x"
-    g3.mkdir(parents=True)
-    (g3 / "ledger.jsonl").write_text("{}\n")
-    assert ".g3" not in status_short(repo)
+    exclude_tero(repo)
+    run_dir = repo / ".tero" / "runs" / "x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "ledger.jsonl").write_text("{}\n")
+    assert ".tero" not in status_short(repo)
 
 
 def test_secret_paths_flags_env_and_pem(tmp_path: Path):

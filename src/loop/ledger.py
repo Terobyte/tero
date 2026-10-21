@@ -32,13 +32,13 @@ class Ledger:
 
 def new_run_dir(repo: str | Path, slug: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S%f")
-    path = Path(repo) / ".g3" / "runs" / f"{stamp}-{slug}"
+    path = Path(repo) / ".tero" / "runs" / f"{stamp}-{slug}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
-    runs = Path(repo) / ".g3" / "runs"
+    runs = Path(repo) / ".tero" / "runs"
     if not runs.is_dir():
         return []
     rows: list[dict[str, Any]] = []

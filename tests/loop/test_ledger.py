@@ -8,7 +8,7 @@ from src.loop.ledger import Ledger, history, new_run_dir
 
 def test_new_run_dir_uses_timestamp_and_slug(tmp_path: Path):
     path = new_run_dir(tmp_path, "parse-empty")
-    assert path.parent == tmp_path / ".g3" / "runs"
+    assert path.parent == tmp_path / ".tero" / "runs"
     assert path.name.endswith("-parse-empty")
     assert path.is_dir()
 

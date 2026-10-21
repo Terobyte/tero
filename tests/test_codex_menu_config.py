@@ -94,6 +94,6 @@ def test_save_global_default_persists_core_settings(tmp_path, monkeypatch):
 
     _save_global_default(cfg)
 
-    saved = (Path(tmp_path) / ".g3" / "config.yaml").read_text()
+    saved = (Path(tmp_path) / ".tero" / "config.yaml").read_text()
     assert "player_provider: codex" in saved
     assert "player_model: gpt-5.4" in saved

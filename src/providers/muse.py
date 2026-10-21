@@ -22,7 +22,7 @@ from .claude_native import ClaudeNativeProvider
 
 KEY_ENV = "MODEL_API_KEY"
 DEFAULT_BASE_URL = "https://api.meta.ai"
-DEFAULT_SECRETS_FILE = "~/.g3/secrets.env"
+DEFAULT_SECRETS_FILE = "~/.tero/secrets.env"
 
 _MODEL_ENV_VARS = (
     "ANTHROPIC_MODEL",
@@ -45,7 +45,7 @@ class MuseConfig:
 
 
 def muse_from_config(provider_config: dict) -> "MuseProvider":
-    """Build a MuseProvider from a `.g3/config.yaml` providers entry."""
+    """Build a MuseProvider from a `.tero/config.yaml` providers entry."""
     return MuseProvider(
         MuseConfig(
             command=provider_config.get("command", "claude"),

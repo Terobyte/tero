@@ -124,7 +124,7 @@ async def run_go(args, config: Config | None = None):
 
 
 def run_history(args):
-    """Show recent v4 runs from .g3/runs."""
+    """Show recent v4 runs from .tero/runs."""
     from src.loop.ledger import history
 
     rows = history(Path(args.working_dir).resolve(), limit=args.limit)

@@ -13,7 +13,7 @@ from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_fi
 from src.loop.git import (
     checkout_paths,
     commit,
-    exclude_g3,
+    exclude_tero,
     file_hashes,
     head,
     list_files,
@@ -156,7 +156,7 @@ class _PhaseRunner:
         self.agents = agents
         self.test_command = test_command
         self.ledger = ledger
-        exclude_g3(repo)
+        exclude_tero(repo)
         self.checkpoint = head(repo)
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
         self.state = _State()

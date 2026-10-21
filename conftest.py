@@ -17,7 +17,7 @@ def pytest_configure(config) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path_factory, monkeypatch):
-    """Keep every test away from the real ~/.g3 (the menu saves there on start)."""
+    """Keep every test away from the real ~/.tero (the menu saves there on start)."""
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     return home

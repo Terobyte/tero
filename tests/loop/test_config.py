@@ -141,7 +141,7 @@ def test_resolve_config_ignores_legacy_keys(tmp_path, monkeypatch):
     """(a) Old coach_*/batch_*/context_limit yaml keys don't break startup."""
     home_dir = _isolate_home(tmp_path, monkeypatch)
     _write_yaml(
-        home_dir / ".g3" / "config.yaml",
+        home_dir / ".tero" / "config.yaml",
         "defaults:\n"
         "  coach_provider: muse\n"
         "  batch_judge_provider: claude\n"
@@ -165,7 +165,7 @@ def test_resolve_config_escalation_empty_is_off(tmp_path, monkeypatch):
     """(b) yaml escalation_provider: '' disables escalation."""
     home_dir = _isolate_home(tmp_path, monkeypatch)
     _write_yaml(
-        home_dir / ".g3" / "config.yaml",
+        home_dir / ".tero" / "config.yaml",
         "defaults:\n  escalation_provider: ''\n",
     )
     workspace = tmp_path / "workspace"
@@ -182,7 +182,7 @@ def test_resolve_config_judge_empty_keeps_default(tmp_path, monkeypatch):
     """(c) yaml judge_provider: '' keeps the codex default."""
     home_dir = _isolate_home(tmp_path, monkeypatch)
     _write_yaml(
-        home_dir / ".g3" / "config.yaml",
+        home_dir / ".tero" / "config.yaml",
         "defaults:\n  judge_provider: ''\n  judge_model: ''\n",
     )
     workspace = tmp_path / "workspace"
@@ -197,7 +197,7 @@ def test_resolve_config_judge_empty_keeps_default(tmp_path, monkeypatch):
 def test_resolve_config_unknown_provider_rejected(tmp_path, monkeypatch):
     """(d) yaml player_provider: nope raises UnknownProviderError."""
     home_dir = _isolate_home(tmp_path, monkeypatch)
-    _write_yaml(home_dir / ".g3" / "config.yaml", "defaults:\n  player_provider: nope\n")
+    _write_yaml(home_dir / ".tero" / "config.yaml", "defaults:\n  player_provider: nope\n")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
@@ -209,7 +209,7 @@ def test_apply_cli_args_judge_overrides_yaml(tmp_path, monkeypatch):
     """(e) CLI --judge claude:opus wins over yaml judge."""
     home_dir = _isolate_home(tmp_path, monkeypatch)
     _write_yaml(
-        home_dir / ".g3" / "config.yaml",
+        home_dir / ".tero" / "config.yaml",
         "defaults:\n  judge_provider: codex\n  judge_model: gpt-5.6-terra\n",
     )
     workspace = tmp_path / "workspace"
@@ -242,7 +242,7 @@ def test_go_rejects_unknown_provider_with_exit_1(tmp_path, monkeypatch, capsys):
     from src import cli_entry
 
     _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.delenv("G3_PLAYER_PROVIDER", raising=False)
+    monkeypatch.delenv("TERO_PLAYER_PROVIDER", raising=False)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "plan.md").write_text("## One\n\n- [ ] do it\n")

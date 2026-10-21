@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "g3-coach"
+name = "tero"
 version = "0.1.0"
-description = "G3 Coach-Player: dual-agent orchestration system"
+description = "tero: plan-driven player → judge loop over coding-agent CLIs"
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0",
@@ -19,7 +19,7 @@ tero = "src.cli_entry:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*", "g3*"]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

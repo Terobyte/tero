@@ -10,7 +10,7 @@ from src.config import resolve_config
 
 
 def _isolate_home(tmp_path, monkeypatch) -> Path:
-    """Point HOME at an empty temp dir so ~/.g3 does not leak in."""
+    """Point HOME at an empty temp dir so ~/.tero does not leak in."""
     home_dir = tmp_path / "home"
     home_dir.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home_dir))
@@ -149,10 +149,10 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
 
 
 def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
-    """Settings saved to ~/.g3/config.yaml should be applied on later runs."""
+    """Settings saved to ~/.tero/config.yaml should be applied on later runs."""
     home_dir = tmp_path / "home"
     home_dir.mkdir()
-    global_config_dir = home_dir / ".g3"
+    global_config_dir = home_dir / ".tero"
     global_config_dir.mkdir()
     (global_config_dir / "config.yaml").write_text(
         "defaults:\n"
@@ -176,10 +176,10 @@ def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
 
 
 def test_resolve_config_project_overrides_global(tmp_path, monkeypatch):
-    """Project .g3/config.yaml must win over the global ~/.g3/config.yaml."""
+    """Project .tero/config.yaml must win over the global ~/.tero/config.yaml."""
     home_dir = tmp_path / "home"
     home_dir.mkdir()
-    global_config_dir = home_dir / ".g3"
+    global_config_dir = home_dir / ".tero"
     global_config_dir.mkdir()
     (global_config_dir / "config.yaml").write_text(
         "defaults:\n"
@@ -188,7 +188,7 @@ def test_resolve_config_project_overrides_global(tmp_path, monkeypatch):
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    project_config_dir = workspace / ".g3"
+    project_config_dir = workspace / ".tero"
     project_config_dir.mkdir()
     (project_config_dir / "config.yaml").write_text(
         "defaults:\n"

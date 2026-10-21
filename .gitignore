@@ -34,9 +34,8 @@ env/
 .DS_Store
 Thumbs.db
 
-# G3 sessions (local only)
-g3/.g3/sessions/
-.g3/
+# tero run state (local only)
+.tero/
 
 # Git worktrees (isolated development)
 .worktrees/

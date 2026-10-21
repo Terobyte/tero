@@ -27,7 +27,7 @@ def create_provider(
 
     Args:
         provider_name: "claude", "codex", "opencode", "gemini", "muse", or "cursor"
-        provider_config: Optional config dict from .g3/config.yaml providers section
+        provider_config: Optional config dict from .tero/config.yaml providers section
                         Supports "type" key to override provider type
 
     Returns:

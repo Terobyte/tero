@@ -1,4 +1,4 @@
-"""Configuration: defaults -> .g3/config.yaml -> env -> CLI args."""
+"""Configuration: defaults -> .tero/config.yaml -> env -> CLI args."""
 
 from __future__ import annotations
 
@@ -74,16 +74,16 @@ class Config:
 
 
 _ENV_MAP = {
-    "G3_PLAYER_PROVIDER": ("player_provider", str),
-    "G3_PLAYER_MODEL": ("player_model", str),
-    "G3_JUDGE_PROVIDER": ("judge_provider", str),
-    "G3_JUDGE_MODEL": ("judge_model", str),
-    "G3_TESTER_PROVIDER": ("tester_provider", str),
-    "G3_TESTER_MODEL": ("tester_model", str),
-    "G3_ESCALATION_PROVIDER": ("escalation_provider", str),
-    "G3_ESCALATION_MODEL": ("escalation_model", str),
-    "G3_TEST_COMMAND": ("test_command", str),
-    "G3_TEST_COMMAND_SCOPED": ("test_command_scoped", str),
+    "TERO_PLAYER_PROVIDER": ("player_provider", str),
+    "TERO_PLAYER_MODEL": ("player_model", str),
+    "TERO_JUDGE_PROVIDER": ("judge_provider", str),
+    "TERO_JUDGE_MODEL": ("judge_model", str),
+    "TERO_TESTER_PROVIDER": ("tester_provider", str),
+    "TERO_TESTER_MODEL": ("tester_model", str),
+    "TERO_ESCALATION_PROVIDER": ("escalation_provider", str),
+    "TERO_ESCALATION_MODEL": ("escalation_model", str),
+    "TERO_TEST_COMMAND": ("test_command", str),
+    "TERO_TEST_COMMAND_SCOPED": ("test_command_scoped", str),
 }
 
 # Roles whose empty provider/model/effort means "not set, keep default".
@@ -200,11 +200,11 @@ def _config_search_paths(
     bundled_root = Path(__file__).resolve().parent.parent
 
     candidates = [
-        bundled_root / ".g3" / "config.yaml",
-        working_path / ".g3" / "config.yaml",
+        bundled_root / ".tero" / "config.yaml",
+        working_path / ".tero" / "config.yaml",
     ]
     if include_global:
-        candidates.insert(1, Path("~/.g3/config.yaml").expanduser())
+        candidates.insert(1, Path("~/.tero/config.yaml").expanduser())
 
     deduped: list[Path] = []
     seen: set[Path] = set()
@@ -274,9 +274,9 @@ def resolve_config(cli_args: dict) -> Config:
     working_dir = str(Path(working_dir).expanduser().resolve())
 
     bundled_root = Path(__file__).resolve().parent.parent
-    bundled_config = bundled_root / ".g3" / "config.yaml"
-    global_config = Path("~/.g3/config.yaml").expanduser()
-    project_config = Path(working_dir) / ".g3" / "config.yaml"
+    bundled_config = bundled_root / ".tero" / "config.yaml"
+    global_config = Path("~/.tero/config.yaml").expanduser()
+    project_config = Path(working_dir) / ".tero" / "config.yaml"
 
     # Merge defaults in source order: bundled -> global -> project.
     unknown: set[str] = set()
