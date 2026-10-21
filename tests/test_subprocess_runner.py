@@ -223,6 +223,31 @@ class TestRunSubprocessJsonl:
         assert proc.killed
 
     @pytest.mark.asyncio
+    async def test_early_close_closes_stdout_reader(self, monkeypatch):
+        """Closing early must close the inner stdout reader right away, not leave it to GC."""
+        proc = self._make_proc([b'{"a":1}\n', b'{"b":2}\n'])
+        closed = []
+
+        async def mock_create(*args, **kwargs):
+            return proc
+
+        async def tracking_iter(stdout, **kwargs):
+            try:
+                async for line in stdout:
+                    yield line
+            finally:
+                closed.append(True)
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", mock_create)
+        monkeypatch.setattr("src.providers.subprocess_runner._iter_stdout", tracking_iter)
+
+        gen = run_subprocess_jsonl(["cmd"], "/tmp")
+        await gen.__anext__()
+        await gen.aclose()
+
+        assert closed == [True]
+
+    @pytest.mark.asyncio
     async def test_empty_stdout_yields_only_exit(self, monkeypatch):
         proc = self._make_proc([])
 

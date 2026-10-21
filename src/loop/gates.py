@@ -19,6 +19,7 @@ _PYTEST_FAILED = re.compile(
 
 @dataclass(frozen=True)
 class TestCommand:
+    __test__ = False
     name: str
     run_all: list[str]
     run_files: list[str] | None

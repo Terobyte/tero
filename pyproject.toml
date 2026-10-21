@@ -23,3 +23,8 @@ include = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    # pytest-asyncio 0.24 calls asyncio APIs deprecated in 3.14 (iscoroutinefunction, *_event_loop_policy)
+    "ignore::DeprecationWarning:pytest_asyncio.plugin",
+]

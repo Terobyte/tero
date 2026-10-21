@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import signal
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
@@ -141,16 +142,21 @@ async def run_subprocess_jsonl(
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
-        async for line_bytes in _iter_stdout(
-            proc.stdout, stall_timeout=stall_timeout, on_stall=lambda: _kill_group(proc)
-        ):
-            line = line_bytes.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                pass
+        # aclosing: an early close of this generator closes the reader too,
+        # instead of leaving it to GC after the event loop is gone.
+        async with aclosing(
+            _iter_stdout(
+                proc.stdout, stall_timeout=stall_timeout, on_stall=lambda: _kill_group(proc)
+            )
+        ) as lines:
+            async for line_bytes in lines:
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    pass
 
         await proc.wait()
         _kill_group(proc)
