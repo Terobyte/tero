@@ -425,8 +425,26 @@ class _PhaseRunner:
             self.state.user_question = data.get("user_question", "")
             return _Next.USER
 
+        findings = data.get("findings") or []
+        self._discard_tests(findings)
+        previous = {row["id"]: row["state"] for row in data.get("previous") or []}
+        if self._stalled(previous) and self._no_progress():
+            return _Next.STOP
+
+        still_open = [
+            item
+            for item in self.state.open_findings
+            if previous.get(item.id) != "resolved"
+        ]
+        new_blocking = self._new_blocking(findings)
+        self.state.open_findings = still_open + new_blocking
+        if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
+            return _Next.TESTER
+        return _Next.NEXT
+
+    def _discard_tests(self, findings: list[dict[str, Any]]) -> None:
         self.state.discarded = []
-        for item in data.get("findings") or []:
+        for item in findings:
             if item.get("route") != "discard_test":
                 continue
             fid = item.get("id") or ""
@@ -444,23 +462,17 @@ class _PhaseRunner:
                     found.test_path = None
                     found.note = note
 
-        previous = {row["id"]: row["state"] for row in data.get("previous") or []}
+    def _stalled(self, previous: dict[str, str]) -> bool:
         # discard_test changes the tree; that is progress, not a stall.
-        stall = (
+        return (
             bool(self.state.open_findings)
             and not any(previous.get(item.id) == "resolved" for item in self.state.open_findings)
             and not self.state.discarded
         )
-        if stall and self._no_progress():
-            return _Next.STOP
 
-        still_open = [
-            item
-            for item in self.state.open_findings
-            if previous.get(item.id) != "resolved"
-        ]
+    def _new_blocking(self, findings: list[dict[str, Any]]) -> list[OpenFinding]:
         new_blocking: list[OpenFinding] = []
-        for item in data.get("findings") or []:
+        for item in findings:
             if item.get("severity") != "blocking":
                 continue
             if item.get("route") == "discard_test":
@@ -479,10 +491,7 @@ class _PhaseRunner:
             )
             self.state.next_id += 1
             new_blocking.append(found)
-        self.state.open_findings = still_open + new_blocking
-        if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
-            return _Next.TESTER
-        return _Next.NEXT
+        return new_blocking
 
     async def _tester(self) -> bool:
         routed = [
