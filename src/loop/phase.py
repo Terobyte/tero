@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -55,6 +56,16 @@ UNAVAILABLE_PLAYER = {
 }
 
 
+class _Next(Enum):
+    SHIP = auto()
+    USER = auto()
+    STOP = auto()
+    TESTER = auto()
+    NEXT = auto()
+    INVALID = auto()
+    UNAVAILABLE = auto()
+
+
 class AgentRunner(Protocol):
     async def run_role(self, role: str, **kwargs: Any) -> dict[str, Any] | None: ...
 
@@ -103,7 +114,6 @@ class PhaseOutcome:
 class _State:
     round: int = 0
     escalated: bool = False
-    stop_reason: str = ""
     user_question: str = ""
     open_findings: list[OpenFinding] = field(default_factory=list)
     next_id: int = 1
@@ -187,13 +197,13 @@ class _PhaseRunner:
                 return self._halt("provider_unavailable")
             if self._protect_tests():
                 if self._no_progress():
-                    return self._halt(self.state.stop_reason)
+                    return self._halt("stuck")
                 continue
             gate = self._gate()
             if gate is not None and not gate.ok:
                 if self._same_red(gate):
                     if self._no_progress():
-                        return self._halt(self.state.stop_reason)
+                        return self._halt("stuck")
                 self.state.gate_output = gate.output
                 continue
             self.state.gate_output = gate.output if gate else "тесты не обнаружены"
@@ -203,24 +213,28 @@ class _PhaseRunner:
                 flush=True,
             )
             verdict = await self._judge()
-            if verdict == "unavailable":
-                return self._halt("provider_unavailable")
-            if verdict == "invalid":
-                if self._no_progress():
-                    return self._halt(self.state.stop_reason)
-                continue
-            if self.state.stop_reason:
-                return self._halt(self.state.stop_reason)
-            if verdict == "ship":
-                return self._ship()
-            if verdict == "tester":
-                print(
-                    f"  [раунд {self.state.round}] tester "
-                    f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
-                    flush=True,
-                )
-                if not await self._tester():
+            match verdict:
+                case _Next.UNAVAILABLE:
                     return self._halt("provider_unavailable")
+                case _Next.INVALID:
+                    if self._no_progress():
+                        return self._halt("stuck")
+                case _Next.USER:
+                    return self._halt("user")
+                case _Next.STOP:
+                    return self._halt("stuck")
+                case _Next.SHIP:
+                    return self._ship()
+                case _Next.TESTER:
+                    print(
+                        f"  [раунд {self.state.round}] tester "
+                        f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
+                        flush=True,
+                    )
+                    if not await self._tester():
+                        return self._halt("provider_unavailable")
+                case _Next.NEXT:
+                    pass
 
     async def _player(self) -> bool:
         model, provider, effort = self._player_identity()
@@ -353,7 +367,7 @@ class _PhaseRunner:
         self.state.last_red_tree = tree_now
         return same
 
-    async def _judge(self) -> str:
+    async def _judge(self) -> _Next:
         tree_before = write_tree(self.repo)
         diff = stage_and_diff(self.repo, self.checkpoint)
         status = status_short(self.repo)
@@ -389,10 +403,10 @@ class _PhaseRunner:
 
         if not isinstance(data, dict) or data.get("__unavailable__"):
             self._provider_error("judge", data)
-            return "unavailable"
+            return _Next.UNAVAILABLE
         if data.get("__invalid__"):
             self._invalid("judge", data)
-            return "invalid"
+            return _Next.INVALID
 
         self.ledger.event(
             "judge",
@@ -403,14 +417,13 @@ class _PhaseRunner:
         _print_verdict(data)
         return self._apply_verdict(data)
 
-    def _apply_verdict(self, data: dict[str, Any]) -> str:
+    def _apply_verdict(self, data: dict[str, Any]) -> _Next:
         verdict = data.get("verdict")
         if verdict == "SHIP":
-            return "ship"
+            return _Next.SHIP
         if verdict == "NEEDS_USER":
-            self.state.stop_reason = "user"
             self.state.user_question = data.get("user_question", "")
-            return "user"
+            return _Next.USER
 
         self.state.discarded = []
         for item in data.get("findings") or []:
@@ -439,7 +452,7 @@ class _PhaseRunner:
             and not self.state.discarded
         )
         if stall and self._no_progress():
-            return "stop"
+            return _Next.STOP
 
         still_open = [
             item
@@ -468,8 +481,8 @@ class _PhaseRunner:
             new_blocking.append(found)
         self.state.open_findings = still_open + new_blocking
         if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
-            return "tester"
-        return "next"
+            return _Next.TESTER
+        return _Next.NEXT
 
     async def _tester(self) -> bool:
         routed = [
@@ -588,7 +601,6 @@ class _PhaseRunner:
             )
             return False
         print("  нет прогресса → откат фазы", flush=True)
-        self.state.stop_reason = "stuck"
         return True
 
     def _round_file(self, name: str) -> str:
