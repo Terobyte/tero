@@ -16,7 +16,7 @@ from src.loop.ledger import Ledger, new_run_dir
 from src.loop.phase import run_phase
 from src.loop.plan import load_phases, load_preamble
 from src.loop.run import run
-from tests.loop.fakes import FakeAgents, finding, judge_returns, no_ship, player_writes, ship, write_file
+from tests.loop.fakes import FakeAgents, finding, git as _git, init_repo, judge_returns, no_ship, player_writes, ship, write_file
 
 PLAN = """# Demo
 
@@ -37,22 +37,8 @@ PLAN_TWO = """# Demo
 """
 
 
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout
-
-
 def _repo(tmp_path: Path, plan: str = PLAN) -> Path:
-    _git(tmp_path, "init")
-    _git(tmp_path, "config", "user.email", "tero@test")
-    _git(tmp_path, "config", "user.name", "tero")
-    write_file(tmp_path, "plan.md", plan)
-    write_file(tmp_path, "src/__init__.py", "")
-    write_file(tmp_path, "tests/test_smoke.py", "def test_smoke():\n    assert True\n")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-m", "init")
-    return tmp_path
+    return init_repo(tmp_path, plan)
 
 
 def _cfg(**overrides) -> Config:

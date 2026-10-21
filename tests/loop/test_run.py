@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,7 +12,7 @@ from tests.loop import fakes as scripted
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    scripted.git(repo, *args)
 
 
 def _init(tmp_path: Path, plan: str, *, failing: bool = False) -> Path:

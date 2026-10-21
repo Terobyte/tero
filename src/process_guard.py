@@ -9,11 +9,6 @@ import psutil
 
 
 class ProcessGuard:
-    """Manages subprocess lifecycle around agent turns."""
-
-    def __init__(self, *, verbose: bool = False) -> None:
-        self.verbose = verbose
-
     def snapshot_pids(self) -> set[int]:
         """Snapshot child PIDs of this process.
 
@@ -32,9 +27,6 @@ class ProcessGuard:
         after = self.snapshot_pids()
         new_pids = after - before - {os.getpid()}
 
-        if not new_pids:
-            return
-
         for pid in new_pids:
             try:
                 proc = psutil.Process(pid)
@@ -47,6 +39,3 @@ class ProcessGuard:
                 os.kill(pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
                 pass
-
-        if self.verbose:
-            print(f"  [cleanup] убито процессов: {len(new_pids)}")

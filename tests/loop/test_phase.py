@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,6 +15,7 @@ from tests.loop import fakes as scripted
 
 FakeAgents = scripted.FakeAgents
 finding = scripted.finding
+_git = scripted.git
 judge_returns = scripted.judge_returns
 no_ship = scripted.no_ship
 player_writes = scripted.player_writes
@@ -34,26 +34,8 @@ Preamble.
 """
 
 
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-
 def _repo(tmp_path: Path) -> Path:
-    _git(tmp_path, "init")
-    _git(tmp_path, "config", "user.email", "tero@test")
-    _git(tmp_path, "config", "user.name", "tero")
-    write_file(tmp_path, "plan.md", PLAN)
-    write_file(tmp_path, "src/__init__.py", "")
-    write_file(tmp_path, "tests/test_smoke.py", "def test_smoke():\n    assert True\n")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-m", "init")
-    return tmp_path
+    return scripted.init_repo(tmp_path, PLAN)
 
 
 def _cfg(**overrides) -> Config:

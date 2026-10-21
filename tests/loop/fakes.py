@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -76,6 +77,24 @@ def write_file(repo: Path, rel: str, content: str) -> None:
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def init_repo(tmp_path: Path, plan: str) -> Path:
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.email", "tero@test")
+    git(tmp_path, "config", "user.name", "tero")
+    write_file(tmp_path, "plan.md", plan)
+    write_file(tmp_path, "src/__init__.py", "")
+    write_file(tmp_path, "tests/test_smoke.py", "def test_smoke():\n    assert True\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-m", "init")
+    return tmp_path
 
 
 def player_writes(repo: Path, rel: str, content: str, report: dict[str, Any] | None = None) -> Step:

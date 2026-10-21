@@ -118,19 +118,14 @@ def _provider_model_label(
 
 def _model_presets_for_provider(provider: str) -> dict[str, str]:
     """Return menu presets for a selectable provider."""
-    if provider == "claude":
-        return CLAUDE_MODEL_PRESETS
-    if provider == "codex":
-        return CODEX_MODEL_PRESETS
-    if provider == "opencode":
-        return OPENCODE_MODEL_PRESETS
-    if provider == "gemini":
-        return GEMINI_MODEL_PRESETS
-    if provider == "muse":
-        return MUSE_MODEL_PRESETS
-    if provider == "cursor":
-        return CURSOR_MODEL_PRESETS
-    return {}
+    return {
+        "claude": CLAUDE_MODEL_PRESETS,
+        "codex": CODEX_MODEL_PRESETS,
+        "opencode": OPENCODE_MODEL_PRESETS,
+        "gemini": GEMINI_MODEL_PRESETS,
+        "muse": MUSE_MODEL_PRESETS,
+        "cursor": CURSOR_MODEL_PRESETS,
+    }.get(provider, {})
 
 
 def _custom_model_allowed(provider: str) -> bool:
@@ -166,14 +161,9 @@ def _questionary_select_provider_model(
     prompt_label: str,
     provider_choices: dict[str, str] | None = None,
 ) -> Config:
-    """Shared questionary provider/model picker.
-
-    Works with *any* pair of ``<role>_provider`` / ``<role>_model`` field names
-    on Config — ``getattr`` + ``dataclasses.replace`` make the function agnostic
-    to the specific field, so it supports player, judge, tester, escalation
-    without special-casing.
-    """
-    choices = list((provider_choices or PROVIDER_PRESETS).keys())
+    """Shared questionary provider/model picker."""
+    presets = provider_choices or PROVIDER_PRESETS
+    choices = list(presets.keys())
     current = getattr(config, provider_field)
     choice = questionary.select(
         f"Провайдер для {prompt_label} (текущий: {current or 'выкл'}):",
@@ -182,7 +172,7 @@ def _questionary_select_provider_model(
     if not choice:
         return config
 
-    provider = (provider_choices or PROVIDER_PRESETS)[choice]
+    provider = presets[choice]
     switched = provider != current
     next_model = getattr(config, model_field) if not switched else ""
     updates: dict = {
@@ -233,12 +223,13 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         model = (
             input(f"  {prompt_label} model [sonnet]: ").strip().lower() or "sonnet"
         )
-        return {
-            "fable": "claude-fable-5-1",
-            "opus": "claude-opus-5",
-            "sonnet": "claude-sonnet-5",
-            "haiku": "claude-haiku-4-5",
-        }.get(model, model)
+        claude_map = {
+            "fable": CLAUDE_MODEL_PRESETS["Fable 5.1"],
+            "opus": CLAUDE_MODEL_PRESETS["Opus 5"],
+            "sonnet": CLAUDE_MODEL_PRESETS["Sonnet 5"],
+            "haiku": CLAUDE_MODEL_PRESETS["Haiku 4.5"],
+        }
+        return claude_map.get(model, model)
 
     if provider == "codex":
         print("  Модели: default, gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna")
@@ -253,11 +244,11 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
             input(f"  {prompt_label} model [mimo]: ").strip().lower() or "mimo"
         )
         model_map = {
-            "spark-1.3-free": "opencode/muse-spark-1.3-contributor-free",
-            "spark-free": "opencode/muse-spark-1.3-contributor-free",
-            "mimo": "opencode/mimo-v2.6-flash-free",
-            "minimax": "opencode/minimax-m3.1-flash-free",
-            "kimi-k2": "openrouter/moonshotai/kimi-k2:free",
+            "spark-1.3-free": OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"],
+            "spark-free": OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"],
+            "mimo": OPENCODE_MODEL_PRESETS["MIMO v2.6 Flash (free)"],
+            "minimax": OPENCODE_MODEL_PRESETS["MiniMax M3.1 Flash (free)"],
+            "kimi-k2": OPENCODE_MODEL_PRESETS["Kimi K2 (free)"],
         }
         return model_map.get(model, model)
 
@@ -401,10 +392,7 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer is None or answer == "quit":
             return None
         if answer == "start":
-            try:
-                _save_global_default(config)
-            except OSError:
-                pass
+            _try_save_defaults(config)
             return config
 
         config = _edit_setting_questionary(config, answer)
@@ -467,6 +455,13 @@ _PROJECT_SCOPED_FIELDS = {
 }
 
 
+def _try_save_defaults(config: Config) -> None:
+    try:
+        _save_global_default(config)
+    except OSError:
+        pass
+
+
 def _save_global_default(config: Config) -> None:
     """Save current settings to ~/.tero/config.yaml as global defaults."""
     global_config_path = Path.home() / ".tero" / "config.yaml"
@@ -512,10 +507,7 @@ def _fallback_menu(config: Config) -> Config | None:
         answer = input("  › ").strip().lower()
 
         if answer == "":
-            try:
-                _save_global_default(config)
-            except OSError:
-                pass
+            _try_save_defaults(config)
             return config
         if answer == "q":
             return None

@@ -21,17 +21,7 @@ from src.loop.git import (
 )
 
 
-def _git(repo: Path, *args: str) -> str:
-    import subprocess
-
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return proc.stdout
+from tests.loop.fakes import git as _git
 
 
 def _init(tmp_path: Path) -> Path:

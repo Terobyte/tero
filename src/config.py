@@ -255,6 +255,12 @@ def _blank_means_unset(field: str) -> bool:
     return field.startswith(_BLANK_MEANS_UNSET_PREFIXES)
 
 
+def _is_unset(key: str, value: Any) -> bool:
+    return value is None or (
+        isinstance(value, str) and value == "" and _blank_means_unset(key)
+    )
+
+
 _POSITIVE_FIELDS = {
     "max_rounds",
     "player_timeout_s",
@@ -308,9 +314,7 @@ def resolve_config(cli_args: dict) -> Config:
             if key not in valid_fields:
                 unknown.add(key)
                 continue
-            if value is None:
-                continue
-            if isinstance(value, str) and value == "" and _blank_means_unset(key):
+            if _is_unset(key, value):
                 continue
             merged[key] = value
 
@@ -331,7 +335,7 @@ def resolve_config(cli_args: dict) -> Config:
     for key, value in cli.items():
         if value is None or key not in valid_fields:
             continue
-        if isinstance(value, str) and value == "" and _blank_means_unset(key):
+        if _is_unset(key, value):
             continue
         if key != "working_dir":
             merged[key] = value

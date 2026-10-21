@@ -7,24 +7,24 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
+from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, load_provider_configs, resolve_config
 
 
-def resolve_go_config(args) -> Config:
-    """Resolve config for `tero go` from CLI-like args."""
-    return resolve_config(
+def _config_from_args(args) -> Config:
+    """Resolve config for `tero go` from CLI-like args, then apply CLI flags."""
+    config = resolve_config(
         {
             "working_dir": args.working_dir,
             "plan_file": args.plan,
             "verbose": args.verbose,
         }
     )
+    return apply_cli_args(config, args)
 
 
 def prepare_go_config(args) -> Config:
     """Resolve config, apply CLI flags, then prompt for interactive settings."""
-    config = resolve_go_config(args)
-    config = apply_cli_args(config, args)
+    config = _config_from_args(args)
     no_menu = getattr(args, "no_menu", False)
 
     if no_menu:
@@ -73,7 +73,7 @@ async def run_go(args, config: Config | None = None):
     from src.loop.agents import LiveAgents
     from src.loop.run import run as run_loop
 
-    loop_cfg = config if config is not None else apply_cli_args(resolve_go_config(args), args)
+    loop_cfg = config if config is not None else _config_from_args(args)
 
     plan_path = Path(loop_cfg.working_dir) / loop_cfg.plan_file
     if not plan_path.exists():
@@ -93,7 +93,6 @@ async def run_go(args, config: Config | None = None):
     print(f"тесты {loop_cfg.test_command or 'автодетект'}", flush=True)
 
     def _ready(provider: str, model: str) -> tuple[bool, str]:
-        from src.config import load_provider_configs
         from src.providers import create_provider
 
         try:
