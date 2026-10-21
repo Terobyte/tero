@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from src.config import Config
 from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_files
 from src.loop.git import (
+    GitError,
     checkout_paths,
     commit,
     exclude_tero,
@@ -480,6 +481,9 @@ class _PhaseRunner:
             if not path:
                 continue
             written += 1
+            if not self._inside_repo(path):
+                self._note_finding(fid, "tester wrote a path outside the repo")
+                continue
             if not is_test_path(path):
                 self._revert_path(before_tree, before_files, path)
                 self._note_finding(fid, "tester wrote a non-test path")
@@ -512,6 +516,10 @@ class _PhaseRunner:
         )
         return True
 
+    def _inside_repo(self, path: str) -> bool:
+        root = self.repo.resolve()
+        return (root / path).resolve().is_relative_to(root)
+
     def _revert_non_test(self, before_tree: str, before_files: set[str]) -> None:
         for path in list_worktree_files(self.repo):
             if is_test_path(path):
@@ -532,9 +540,14 @@ class _PhaseRunner:
                 item.route = "player"
 
     def _no_progress(self) -> bool:
-        if not self.state.escalated and self.cfg.escalation_model:
+        if not self.state.escalated and self.cfg.escalation_provider:
             self.state.escalated = True
-            self.ledger.event("escalate", round=self.state.round, model=self.cfg.escalation_model)
+            self.ledger.event(
+                "escalate",
+                round=self.state.round,
+                provider=self.cfg.escalation_provider,
+                model=self.cfg.escalation_model,
+            )
             print(
                 "  нет прогресса → эскалация: "
                 f"{self.cfg.escalation_provider}({self.cfg.escalation_model})",
@@ -565,7 +578,7 @@ class _PhaseRunner:
         print(f"  {role}: провайдер недоступен — {error}", flush=True)
 
     def _player_identity(self) -> tuple[str, str, str]:
-        if self.state.escalated and self.cfg.escalation_model:
+        if self.state.escalated and self.cfg.escalation_provider:
             return (
                 self.cfg.escalation_model,
                 self.cfg.escalation_provider,
@@ -574,7 +587,6 @@ class _PhaseRunner:
         return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
 
     def _ship(self) -> PhaseOutcome:
-        mark_phase_done(self.plan_path, self.phase)
         stage_and_diff(self.repo, self.checkpoint)
         secrets = secret_paths(self.repo)
         if secrets:
@@ -586,7 +598,14 @@ class _PhaseRunner:
                 rounds=self.state.round,
                 escalated=self.state.escalated,
             )
-        sha = commit(self.repo, self.phase.title.lower()[:60])
+        plan_bytes = self.plan_path.read_bytes()
+        mark_phase_done(self.plan_path, self.phase)
+        stage_and_diff(self.repo, self.checkpoint)
+        try:
+            sha = commit(self.repo, self.phase.title.lower()[:60])
+        except GitError:
+            self.plan_path.write_bytes(plan_bytes)
+            raise
         self.ledger.event("ship", commit=sha, rounds=self.state.round)
         return PhaseOutcome(
             status="ship",

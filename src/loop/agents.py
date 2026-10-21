@@ -23,19 +23,20 @@ _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 def extract_json(text: str) -> dict[str, Any] | None:
     """Last JSON object in the assistant text: fenced block, else bare `{...}`."""
-    fenced: list[dict[str, Any]] = []
+    fenced: list[tuple[int, dict[str, Any]]] = []
     for match in _FENCE.finditer(text or ""):
         parsed = _loads_object(match.group(1))
         if parsed is not None:
-            fenced.append(parsed)
-    if fenced:
-        return fenced[-1]
-    return _last_bare_object(text or "")
+            fenced.append((match.start(), parsed))
+    bare = _bare_objects(text or "")
+    if fenced and (not bare or fenced[-1][0] > bare[-1][0]):
+        return fenced[-1][1]
+    return bare[-1][1] if bare else None
 
 
-def _last_bare_object(text: str) -> dict[str, Any] | None:
+def _bare_objects(text: str) -> list[tuple[int, dict[str, Any]]]:
     decoder = json.JSONDecoder()
-    last: dict[str, Any] | None = None
+    found: list[tuple[int, dict[str, Any]]] = []
     index = 0
     while index < len(text):
         start = text.find("{", index)
@@ -47,9 +48,9 @@ def _last_bare_object(text: str) -> dict[str, Any] | None:
             index = start + 1
             continue
         if isinstance(obj, dict):
-            last = obj
+            found.append((start, obj))
         index = end
-    return last
+    return found
 
 
 def _loads_object(text: str) -> dict[str, Any] | None:

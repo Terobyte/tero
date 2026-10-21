@@ -1,6 +1,7 @@
 """Interactive TUI settings menu for tero go (spec §6.2)."""
 
 import dataclasses
+import os
 from pathlib import Path
 import yaml
 
@@ -455,13 +456,39 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
     return config
 
 
+# Path/command values follow the working dir; the rest are global defaults.
+# (max_rounds stays: TestSaveDefault pins it in the saved defaults.)
+_PROJECT_SCOPED_FIELDS = {
+    "plan_file",
+    "working_dir",
+    "test_command",
+    "test_command_scoped",
+}
+
+
 def _save_global_default(config: Config) -> None:
     """Save current settings to ~/.tero/config.yaml as global defaults."""
     global_config_path = Path.home() / ".tero" / "config.yaml"
     global_config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = {"defaults": dataclasses.asdict(config)}
-    global_config_path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False))
+    try:
+        with open(global_config_path) as fh:
+            data = yaml.safe_load(fh) or {}
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, yaml.YAMLError):
+        data = {}
+    defaults = data.get("defaults")
+    if not isinstance(defaults, dict):
+        defaults = {}
+    for field in dataclasses.asdict(config):
+        if field not in _PROJECT_SCOPED_FIELDS:
+            defaults[field] = getattr(config, field)
+    data["defaults"] = defaults
+    tmp_path = global_config_path.with_suffix(".tmp")
+    with open(tmp_path, "w") as fh:
+        yaml.dump(data, fh, allow_unicode=True, sort_keys=False)
+    os.replace(tmp_path, global_config_path)
     wd = config.working_dir.replace(str(Path.home()), "~")
     print(f"\n  Сохранено в ~/.tero/config.yaml (рабочая папка: {wd})\n")
 

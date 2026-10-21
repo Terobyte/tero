@@ -16,6 +16,7 @@ from src.loop.git import (
     ensure_clean,
     exclude_tero,
     is_repo,
+    run_branch_exists,
     status_short,
 )
 from src.loop.ledger import Ledger, new_run_dir
@@ -81,7 +82,18 @@ async def run(
     if not plan_path.is_file():
         return RunOutcome(status="error", exit_code=1, reason=f"plan not found: {plan_path}")
 
+    slug = slugify(Path(cfg.plan_file).stem)
+    if run_branch_exists(repo, slug):
+        # Resume: the [x] marks live on the run branch, not on the branch we started from.
+        checkout_run_branch(repo, slug)
+
     phases = load_phases(plan_path)
+    if not any(phase.checkboxes for phase in phases):
+        return RunOutcome(
+            status="error",
+            exit_code=1,
+            reason=f"no '- [ ]' checkboxes under '## ' headings in {plan_path}",
+        )
     if all(phase.done for phase in phases):
         # No branch, no run dir, no test gate: there is nothing to judge.
         return RunOutcome(
@@ -107,7 +119,6 @@ async def run(
                 print(f"    {line}", flush=True)
             return RunOutcome(status="error", exit_code=1, reason="red_start")
 
-    slug = slugify(Path(cfg.plan_file).stem)
     checkout_run_branch(repo, slug)
     exclude_tero(repo)
     run_dir = new_run_dir(repo, slug)

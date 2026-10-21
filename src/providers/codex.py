@@ -321,6 +321,8 @@ class CodexProvider:
         - [x] turn.completed → result with usage stats
         - [x] error / turn.failed → error text
         """
+        if not isinstance(event, dict):
+            return None
         etype = event.get("type", "")
 
         # Thread / Turn lifecycle
@@ -377,6 +379,8 @@ class CodexProvider:
 
     def _adapt_item(self, item: dict, event_type: str) -> AdaptedMessage | None:
         """Convert a single Codex item to AdaptedMessage."""
+        if not isinstance(item, dict):
+            return None
         item_type = item.get("type", "")
 
         # Agent message (text response)

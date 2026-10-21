@@ -34,12 +34,20 @@ def ensure_clean(repo: str | Path) -> None:
 
 
 def checkout_run_branch(repo: str | Path, slug: str) -> str:
-    name = slug if slug.startswith("tero/") else f"tero/{slug}"
+    name = _run_branch(slug)
     if _branch_exists(repo, name):
         _git(repo, "checkout", name)
     else:
         _git(repo, "checkout", "-b", name)
     return name
+
+
+def run_branch_exists(repo: str | Path, slug: str) -> bool:
+    return _branch_exists(repo, _run_branch(slug))
+
+
+def _run_branch(slug: str) -> str:
+    return slug if slug.startswith("tero/") else f"tero/{slug}"
 
 
 def head(repo: str | Path) -> str:
@@ -84,7 +92,7 @@ def commit(repo: str | Path, msg: str) -> str:
 
 
 def exclude_tero(repo: str | Path) -> None:
-    exclude = Path(repo) / ".git" / "info" / "exclude"
+    exclude = Path(repo) / _git(repo, "rev-parse", "--git-path", "info/exclude").strip()
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text() if exclude.exists() else ""
     if ".tero/" in existing.splitlines() or existing.rstrip().endswith(".tero/"):
@@ -100,11 +108,7 @@ def status_short(repo: str | Path) -> str:
 
 
 def secret_paths(repo: str | Path) -> list[str]:
-    names = [
-        line
-        for line in _git(repo, "diff", "--cached", "--name-only").splitlines()
-        if line
-    ]
+    names = _names(repo, "diff", "--cached", "--name-only")
     return [name for name in names if is_secret_path(name)]
 
 
@@ -126,15 +130,11 @@ def checkout_paths(repo: str | Path, base: str, paths: list[str]) -> None:
 
 
 def list_files(repo: str | Path) -> list[str]:
-    return [line for line in _git(repo, "ls-files").splitlines() if line]
+    return _names(repo, "ls-files")
 
 
 def list_worktree_files(repo: str | Path) -> list[str]:
-    return [
-        line
-        for line in _git(repo, "ls-files", "-co", "--exclude-standard").splitlines()
-        if line
-    ]
+    return _names(repo, "ls-files", "-co", "--exclude-standard")
 
 
 def current_branch(repo: str | Path) -> str:
@@ -155,6 +155,11 @@ def _branch_exists(repo: str | Path, name: str) -> bool:
         return True
     except GitError:
         return False
+
+
+def _names(repo: str | Path, *args: str) -> list[str]:
+    # -z: git quotes non-ASCII, tab and quote characters in plain path output
+    return [name for name in _git(repo, *args, "-z").split("\0") if name]
 
 
 def _git(repo: str | Path, *args: str) -> str:

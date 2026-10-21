@@ -226,8 +226,12 @@ class OpenCodeProvider:
           - step_finish → store tokens (no message yielded)
           - error      → assistant TextBlock with error
         """
+        if not isinstance(event, dict):
+            return None
         t = event.get("type")
         part = event.get("part", {})
+        if not isinstance(part, dict):
+            part = {}
 
         if t == "text":
             text = part.get("text", "")

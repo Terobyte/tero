@@ -296,6 +296,12 @@ def resolve_config(cli_args: dict) -> Config:
         raw = os.environ.get(env_key)
         if not raw:
             continue
+        if cfg_key.endswith("_provider"):
+            current = merged.get(cfg_key, Config.__dataclass_fields__[cfg_key].default)
+            if conv(raw) != current:
+                # Same as the menu: a new provider does not inherit the old model.
+                # The matching TERO_*_MODEL comes next in _ENV_MAP and wins.
+                merged[cfg_key.replace("_provider", "_model")] = ""
         merged[cfg_key] = conv(raw)
 
     # CLI overrides (highest priority, skip None)
@@ -356,13 +362,19 @@ def apply_cli_args(config: Config, args: Any) -> Config:
         provider, model = split_role_spec(getattr(args, spec_attr, None) or "")
         if provider:
             effort_field = provider_field.replace("_provider", "_effort")
-            cfg = dataclasses.replace(
-                cfg, **{provider_field: normalize_provider(provider), effort_field: ""}
-            )
+            new_provider = normalize_provider(provider)
+            updates = {provider_field: new_provider, effort_field: ""}
+            if new_provider != getattr(cfg, provider_field):
+                # Same as the menu: a new provider does not inherit the old model.
+                updates[model_field] = ""
+            cfg = dataclasses.replace(cfg, **updates)
         # Model without provider keeps whatever resolve_config/menu already set.
         if model:
             cfg = dataclasses.replace(cfg, **{model_field: model})
         elif provider and not getattr(cfg, model_field):
-            # The role was off; fall back to its default model so it actually runs.
-            cfg = dataclasses.replace(cfg, **{model_field: getattr(Config(), model_field)})
+            # The role's own provider gets its default model; another provider
+            # keeps "" and runs on that CLI's default.
+            defaults = Config()
+            if getattr(cfg, provider_field) == getattr(defaults, provider_field):
+                cfg = dataclasses.replace(cfg, **{model_field: getattr(defaults, model_field)})
     return cfg

@@ -39,10 +39,14 @@ def new_run_dir(repo: str | Path, slug: str) -> Path:
 
 def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
     runs = Path(repo) / ".tero" / "runs"
-    if not runs.is_dir():
+    if limit <= 0 or not runs.is_dir():
         return []
     rows: list[dict[str, Any]] = []
-    for directory in sorted(runs.iterdir(), reverse=True):
+    try:
+        entries = sorted(runs.iterdir(), reverse=True)
+    except OSError:
+        return []
+    for directory in entries:
         if not directory.is_dir():
             continue
         ledger = directory / "ledger.jsonl"
@@ -50,15 +54,27 @@ def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
             continue
         start: dict[str, Any] = {}
         end: dict[str, Any] = {}
-        for line in ledger.read_text().splitlines():
+        try:
+            lines = ledger.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
             if not line.strip():
                 continue
-            event = json.loads(line)
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
             if event.get("kind") == "run_start":
                 start = event
             elif event.get("kind") == "run_end":
                 end = event
-        _, _, slug = directory.name.split("-", 2)
+        parts = directory.name.split("-", 2)
+        if len(parts) < 3:
+            continue
+        slug = parts[2]
         rows.append(
             {
                 "slug": slug,

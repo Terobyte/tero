@@ -99,7 +99,7 @@ def fingerprint(result: GateResult) -> frozenset[str] | None:
     ids = []
     for match in _PYTEST_FAILED.finditer(result.output):
         ids.append(match.group(1) or match.group(2))
-    return frozenset(ids)
+    return frozenset(ids) or None
 
 
 def _has_pytest(root: Path) -> bool:
@@ -143,7 +143,7 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as exc:
-        output = (exc.stdout or "") + (exc.stderr or "")
+        output = _text(exc.stdout) + _text(exc.stderr)
         return GateResult(
             ok=False,
             exit_code=124,
@@ -158,6 +158,13 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
         output=output,
         command_name=name,
     )
+
+
+def _text(stream: bytes | str | None) -> str:
+    # TimeoutExpired carries raw bytes even when run() was called with text=True
+    if isinstance(stream, bytes):
+        return stream.decode(errors="replace")
+    return stream or ""
 
 
 def _resolve_python(token: str) -> str:

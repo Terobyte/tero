@@ -95,14 +95,15 @@ async def run_subprocess_jsonl(
 
     Notes:
         - Non-JSON lines are silently skipped.
-        - Stderr is drained concurrently (before proc.wait()) to avoid the OS
-          pipe-buffer deadlock: if the child writes >64 KB to stderr and the
-          parent calls proc.wait() first, both sides block.
+        - Stderr is drained concurrently from process start to avoid the OS
+          pipe-buffer deadlock: a child that writes >64 KB to stderr before
+          closing stdout blocks until someone reads it.
         - The subprocess is killed in the finally block if it has not exited.
         - stall_timeout: if > 0, stop reading stdout if no bytes arrive within
           that many seconds (useful for providers that hang silently).
     """
     proc = None
+    stderr_task = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -113,6 +114,12 @@ async def run_subprocess_jsonl(
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
             env=env,
+        )
+        # Drain stderr from the start: a child that fills the stderr pipe
+        # before closing stdout would block forever, and proc.wait() would
+        # never return because asyncio waits for every pipe to hit EOF.
+        stderr_task = asyncio.create_task(
+            proc.stderr.read() if proc.stderr is not None else _empty_bytes()
         )
 
         if stdin_data is not None and proc.stdin is not None:
@@ -138,11 +145,6 @@ async def run_subprocess_jsonl(
             except json.JSONDecodeError:
                 pass
 
-        # Drain stderr concurrently with proc.wait() to prevent OS pipe deadlock.
-        if proc.stderr is not None:
-            stderr_task = asyncio.create_task(proc.stderr.read())
-        else:
-            stderr_task = asyncio.create_task(_empty_bytes())
         await proc.wait()
         stderr_bytes = await stderr_task
 
@@ -150,8 +152,10 @@ async def run_subprocess_jsonl(
 
     finally:
         if proc and proc.returncode is None:
-            proc.kill()
+            _safe_kill(proc)
             await proc.wait()
+        if stderr_task is not None and not stderr_task.done():
+            stderr_task.cancel()
 
 
 async def _empty_bytes() -> bytes:

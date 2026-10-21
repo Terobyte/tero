@@ -77,7 +77,7 @@ def test_apply_cli_args_player_spec():
     assert cfg.max_rounds == 12
 
 
-def test_apply_cli_args_provider_switch_keeps_current_model():
+def test_apply_cli_args_provider_switch_drops_previous_model():
     cfg = apply_cli_args(
         Config(player_provider="muse", player_model="muse-spark-1.2"),
         SimpleNamespace(
@@ -94,7 +94,7 @@ def test_apply_cli_args_provider_switch_keeps_current_model():
         ),
     )
     assert cfg.player_provider == "codex"
-    assert cfg.player_model == "muse-spark-1.2"
+    assert cfg.player_model == ""
 
 
 def test_apply_cli_args_unknown_provider_rejected():

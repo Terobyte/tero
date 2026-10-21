@@ -128,6 +128,8 @@ class GeminiProvider:
         6. ``{"type":"error","message":"..."}``
             — error from the CLI.  Raised as ProviderError so the loop can stop the round.
         """
+        if not isinstance(event, dict):
+            return None
         t = event.get("type", "")
 
         if t == "message":
