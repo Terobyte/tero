@@ -32,8 +32,6 @@ def test_codex_config_defaults_and_names_use_native_models():
     assert cfg.coach_provider == "muse"
     assert cfg.batch_judge_provider == "codex"
     assert cfg.batch_judge_model == "gpt-5.6-terra"
-    assert cfg.ldb_tester_provider == "gemini"
-    assert cfg.ldb_tester_model == "gemini-3.8-flash"
     assert short_model_name("") == "DEFAULT"
     assert short_model_name("gpt-5.6-sol") == "SOL"
     assert short_model_name("gpt-5.6-terra") == "TERRA"

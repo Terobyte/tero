@@ -294,7 +294,6 @@ def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -350,7 +349,6 @@ def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, mo
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):
@@ -404,7 +402,6 @@ def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, 
         return SimpleNamespace(
             working_dir=".",
             plan_file="requirements.md",
-            ldb_run_requested=False,
         )
 
     async def fake_run_go(args, config=None):

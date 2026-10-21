@@ -252,7 +252,7 @@ def _questionary_select_provider_model(
 
     Works with *any* pair of ``<role>_provider`` / ``<role>_model`` field names
     on Config — ``getattr`` + ``dataclasses.replace`` make the function agnostic
-    to the specific field, so it supports player, coach, debug_*, ldb_*, etc.
+    to the specific field, so it supports player, coach, debug_*, etc.
     without special-casing.
     """
     choices = list((provider_choices or PROVIDER_PRESETS).keys())
@@ -495,9 +495,6 @@ def _questionary_menu(config: Config) -> Config | None:
         )
         choices = [
             questionary.Choice("▶   Запустить", value="start"),
-            questionary.Separator("─── инструменты ─────────────────────────"),
-            questionary.Choice("🧪  Run LDB", value="run_ldb"),
-            questionary.Choice("⚙   LDB settings →", value="ldb_settings"),
             questionary.Separator("─── роли ────────────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
@@ -554,15 +551,6 @@ def _questionary_menu(config: Config) -> Config | None:
             except OSError:
                 pass
             return config
-        if answer == "run_ldb":
-            return dataclasses.replace(config, ldb_run_requested=True)
-        if answer == "ldb_settings":
-            result = run_ldb_menu(config)
-            if result is not None and result.ldb_run_requested:
-                return result
-            if result is not None:
-                config = result
-            continue
 
         config = _edit_setting_questionary(config, answer)
 
@@ -711,8 +699,6 @@ def _fallback_menu(config: Config) -> Config | None:
         print(f"  [s] Тесты:         {_tests_label(config)}")
         print(f"  [2] Макс. попыток: {config.max_turns}")
         print(f"  [3] Context Limit: {_format_context_limit(config.context_limit)}")
-        print(f"  [l] Run LDB")
-        print(f"  [d] LDB settings →")
         print(f"  [Enter] Запустить (сохраняет настройки)")
         print(f"  [q] Выход\n")
 
@@ -761,12 +747,6 @@ def _fallback_menu(config: Config) -> Config | None:
         elif answer == "s":
             val = input(f"  Тесты [{_tests_label(config)}]: ").strip()
             config = dataclasses.replace(config, test_command=val)
-        elif answer == "l":
-            return dataclasses.replace(config, ldb_run_requested=True)
-        elif answer == "d":
-            result = _fallback_ldb_menu(config)
-            if result is not None:
-                config = result
         elif answer == "1":
             val = input(f"  Файл [{config.plan_file}]: ").strip()
             if val:
@@ -792,103 +772,5 @@ def _fallback_menu(config: Config) -> Config | None:
                 raw = input("  Лимит в токенах: ").strip()
                 if raw.isdigit():
                     config = dataclasses.replace(config, context_limit=int(raw))
-
-        print()
-
-
-# ── LDB menu ──────────────────────────────────────────────────────────────────
-
-LDB_MODE_PRESETS = {
-    "Mode 2 — Find bugs + Write tests (no fix)": 2,
-    "Mode 3 — Find + Test + Fix (architectural-first)": 3,
-}
-
-
-def run_ldb_menu(config: "Config") -> "Config":
-    """Interactive LDB settings menu (issue #5: also requires _fallback_ldb_menu below)."""
-    if not QUESTIONARY_AVAILABLE:
-        return _fallback_ldb_menu(config)
-
-    import questionary
-
-    while True:
-        scope_summary = (
-            "every public function"
-            if config.ldb_scope_all
-            else f"functions changed vs {config.ldb_diff_base or 'HEAD'}"
-        )
-        choices = [
-            questionary.Choice(f"▶   Run LDB ({scope_summary})", value="start"),
-            questionary.Separator("─── Target ─────────────────────"),
-            questionary.Choice(f"    Scope:  {scope_summary}  (toggle)", value="scope"),
-            questionary.Choice(f"    Test:   {config.ldb_test_input or '(LLM-synthesized)'}", value="test"),
-            questionary.Separator("─── Pipeline ───────────────────"),
-            questionary.Choice(f"    Mode:   {config.ldb_mode}", value="mode"),
-            questionary.Separator("─── Agents (each its own provider/model) ─────"),
-            questionary.Choice(f"    Input:  {_provider_model_label(config.ldb_input_provider, config.ldb_input_model, effort=config.ldb_input_effort)}", value="input"),
-            questionary.Choice(f"    Player: {_provider_model_label(config.ldb_player_provider, config.ldb_player_model, effort=config.ldb_player_effort)}", value="player"),
-            questionary.Choice(f"    Tester: {_provider_model_label(config.ldb_tester_provider, config.ldb_tester_model, effort=config.ldb_tester_effort)}", value="tester"),
-            questionary.Choice(f"    Fixer:  {_provider_model_label(config.ldb_fixer_provider, config.ldb_fixer_model, effort=config.ldb_fixer_effort)}", value="fixer"),
-            questionary.Separator("───────────────────────────────"),
-            questionary.Choice("←   Back", value="back"),
-        ]
-        ans = questionary.select("🧪 LDB — settings", choices=choices).ask()
-        if ans in (None, "back"):
-            return None
-        if ans == "start":
-            return dataclasses.replace(config, ldb_run_requested=True)
-        if ans == "scope":
-            config = dataclasses.replace(config, ldb_scope_all=not config.ldb_scope_all)
-        elif ans == "test":
-            v = questionary.text("Explicit assert (empty = LLM synthesize):", default=config.ldb_test_input).ask()
-            config = dataclasses.replace(config, ldb_test_input=v or "")
-        elif ans == "mode":
-            v = questionary.select("Pipeline mode:", choices=list(LDB_MODE_PRESETS.keys())).ask()
-            if v: config = dataclasses.replace(config, ldb_mode=LDB_MODE_PRESETS[v])
-        elif ans in ("input", "player", "tester", "fixer"):
-            field = f"ldb_{ans}_provider"
-            mfield = f"ldb_{ans}_model"
-            config = _questionary_select_provider_model(config, field, mfield, ans.capitalize())
-
-
-def _fallback_ldb_menu(config: "Config") -> "Config":
-    """Plain-text menu when questionary is unavailable (issue #5).
-
-    Mirrors `_fallback_debugger_menu` pattern in src/menu.py.
-    """
-    print("\n🧪 LDB — settings (questionary not installed, plain text mode)")
-    while True:
-        scope_label = (
-            "every public function"
-            if config.ldb_scope_all
-            else f"functions changed vs {config.ldb_diff_base or 'HEAD'}"
-        )
-        print(f"  [1] Scope:    {scope_label}  (toggle)")
-        print(f"  [2] Test:     {config.ldb_test_input or '(LLM-synthesized)'}")
-        print(f"  [3] Mode:     {config.ldb_mode}")
-        print(f"  [4] Input  agent: {config.ldb_input_provider}/{config.ldb_input_model or 'default'}")
-        print(f"  [5] Player agent: {config.ldb_player_provider}/{config.ldb_player_model or 'default'}")
-        print(f"  [6] Tester agent: {config.ldb_tester_provider}/{config.ldb_tester_model or 'default'}")
-        print(f"  [7] Fixer  agent: {config.ldb_fixer_provider}/{config.ldb_fixer_model or 'default'}")
-        print(f"  [Enter] Run ({scope_label})    [q] Quit")
-        ans = input("  › ").strip().lower()
-        if ans == "":
-            return dataclasses.replace(config, ldb_run_requested=True)
-        if ans == "q":
-            return None
-        if ans == "1":
-            config = dataclasses.replace(config, ldb_scope_all=not config.ldb_scope_all)
-        elif ans == "2":
-            v = input("  Explicit assert (empty = synthesize): ").strip()
-            config = dataclasses.replace(config, ldb_test_input=v)
-        elif ans == "3":
-            v = input("  Mode (2 or 3): ").strip()
-            if v in ("2", "3"):
-                config = dataclasses.replace(config, ldb_mode=int(v))
-        elif ans in ("4", "5", "6", "7"):
-            role = {"4": "input", "5": "player", "6": "tester", "7": "fixer"}[ans]
-            config = _fallback_select_provider_model(
-                config, f"ldb_{role}_provider", f"ldb_{role}_model", role.capitalize()
-            )
 
         print()

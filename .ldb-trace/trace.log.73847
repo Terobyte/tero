@@ -1,0 +1,6 @@
+Trace:
+(4):      s = a + b(5):      return s
+
+Value Profile Output:
+Value_After:3|a=2|b=3
+Value_After:5|a=2|b=3|s=5|_ret=5

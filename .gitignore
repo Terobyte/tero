@@ -48,8 +48,7 @@ g3/.g3/sessions/
 *.key
 credentials.json
 
-# ldb run traces and scratch harnesses (generated)
-.ldb-trace/
+# scratch harnesses (generated)
 test_agent/
 test_env/
 reproduce_*.py

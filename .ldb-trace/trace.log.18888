@@ -1,0 +1,8 @@
+Trace:
+(4):      if n > 0:(5):          label = "positive"(8):      return label
+
+Value Profile Output:
+Value_After:3|n=5
+Value_After:4|n=5
+Value_After:5|n=5|label=positive
+Value_After:8|n=5|label=positive|_ret=positive

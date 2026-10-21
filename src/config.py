@@ -24,8 +24,6 @@ from src.constants import (
     DEFAULT_MAX_REVIEW_ITERATIONS,
     DEFAULT_COMPACT_THRESHOLD,
     DEFAULT_CONTEXT_LIMIT,
-    DEFAULT_LDB_LIMIT_VALUE,
-    DEFAULT_LDB_TIMEOUT_S,
     EXIT_AGENT_TIMEOUT,
 )
 
@@ -160,35 +158,6 @@ class Config:
     coach_fallback_chain: str = ""  # comma-separated: "codex,claude"
     chain_retry_wait_s: float = DEFAULT_CHAIN_RETRY_WAIT_S
     chain_max_retries: int = DEFAULT_CHAIN_MAX_RETRIES
-    ldb_input_provider: str = "claude"
-    ldb_player_provider: str = "claude"
-    ldb_tester_provider: str = "gemini"
-    ldb_fixer_provider: str = "codex"
-    ldb_input_model: str = ""
-    ldb_player_model: str = ""
-    ldb_tester_model: str = "gemini-3.8-flash"
-    ldb_fixer_model: str = ""
-    ldb_input_effort: str = ""
-    ldb_player_effort: str = ""
-    ldb_tester_effort: str = ""
-    ldb_fixer_effort: str = ""
-    ldb_mode: int = 2
-    ldb_target_file: str = ""
-    ldb_target_entry: str = ""
-    ldb_test_input: str = ""
-    ldb_scope_all: bool = False  # opt-in: scan every public function
-    ldb_diff_base: str = "HEAD"   # git ref the --changed scope diffs against
-    ldb_max_iterations: int = DEFAULT_LDB_LIMIT_VALUE
-    ldb_timeout_s: int = DEFAULT_LDB_TIMEOUT_S
-    ldb_run_requested: bool = False
-
-    def __post_init__(self) -> None:
-        # Resolve the historical "--all and --file/--entry are mutually exclusive"
-        # error: when both are set, an explicit --file/--entry pair wins (since it
-        # is a more specific intent).  All other combinations are left intact, so
-        # tests and config files that pin only one of the two still work.
-        if self.ldb_scope_all and self.ldb_target_file:
-            object.__setattr__(self, "ldb_scope_all", False)
 
 
 @dataclass
@@ -246,22 +215,6 @@ _ENV_MAP = {
     "G3_COACH_FALLBACK_CHAIN": ("coach_fallback_chain", str),
     "G3_CHAIN_RETRY_WAIT_S": ("chain_retry_wait_s", float),
     "G3_CHAIN_MAX_RETRIES": ("chain_max_retries", int),
-    "G3_LDB_INPUT_PROVIDER": ("ldb_input_provider", str),
-    "G3_LDB_PLAYER_PROVIDER": ("ldb_player_provider", str),
-    "G3_LDB_TESTER_PROVIDER": ("ldb_tester_provider", str),
-    "G3_LDB_FIXER_PROVIDER": ("ldb_fixer_provider", str),
-    "G3_LDB_INPUT_MODEL": ("ldb_input_model", str),
-    "G3_LDB_PLAYER_MODEL": ("ldb_player_model", str),
-    "G3_LDB_TESTER_MODEL": ("ldb_tester_model", str),
-    "G3_LDB_FIXER_MODEL": ("ldb_fixer_model", str),
-    "G3_LDB_MODE": ("ldb_mode", int),
-    "G3_LDB_TARGET_FILE": ("ldb_target_file", str),
-    "G3_LDB_TARGET_ENTRY": ("ldb_target_entry", str),
-    "G3_LDB_TEST_INPUT": ("ldb_test_input", str),
-    "G3_LDB_SCOPE_ALL": ("ldb_scope_all", lambda x: x.lower() in ("true", "1", "yes")),
-    "G3_LDB_DIFF_BASE": ("ldb_diff_base", str),
-    "G3_LDB_MAX_ITERATIONS": ("ldb_max_iterations", int),
-    "G3_LDB_TIMEOUT_S": ("ldb_timeout_s", int),
 }
 
 
@@ -556,14 +509,6 @@ def resolve_config(cli_args: dict) -> Config:
     defaults.update({k: v for k, v in cli_args.items() if v is not None})
     defaults["working_dir"] = working_dir
 
-    # Coerce int ldb fields — YAML loads numbers as strings when quoted
-    for _int_field in ("ldb_mode", "ldb_max_iterations", "ldb_timeout_s"):
-        if _int_field in defaults and isinstance(defaults[_int_field], str):
-            try:
-                defaults[_int_field] = int(defaults[_int_field])
-            except ValueError:
-                pass
-
     for key in (
         "player_provider",
         "coach_provider",
@@ -577,10 +522,6 @@ def resolve_config(cli_args: dict) -> Config:
         "escalation_provider",
         "coach_fallback_provider",
         "review_provider",
-        "ldb_input_provider",
-        "ldb_player_provider",
-        "ldb_tester_provider",
-        "ldb_fixer_provider",
     ):
         if key in defaults and defaults[key]:
             defaults[key] = _normalize_provider_name(str(defaults[key]))

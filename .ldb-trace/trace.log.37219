@@ -1,0 +1,6 @@
+Trace:
+(3):      s = a - b(4):      return s
+
+Value Profile Output:
+Value_After:2|a=2|b=3
+Value_After:4|a=2|b=3|s=-1|_ret=-1

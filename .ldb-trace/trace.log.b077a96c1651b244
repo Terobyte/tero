@@ -1,0 +1,4 @@
+Trace:
+(12):      test_dir = Path("test_knowledge")(13):      if test_dir.exists():(16):      recorder = RunRecorder(knowledge_dir=str(test_dir))(18):      num_records = 100(20):      def writer():(34):      def updater():(41):      def reader():(49):      t1 = threading.Thread(target=writer)(50):      t2 = threading.Thread(target=updater)(51):      t3 = threading.Thread(target=reader)
+
+Value Profile Output:

@@ -1,8 +1,7 @@
 """Smoke tests for the interactive TUI menu (src/menu.py).
 
-Verifies that the menu module loads, all entry points exist, preset
-dictionaries are populated, and key interactions (especially LDB Mode 2/3
-switching) work correctly — both with and without questionary.
+Verifies that the menu module loads, all entry points exist, and preset
+dictionaries are populated.
 """
 
 import dataclasses
@@ -18,7 +17,6 @@ from src.menu import (
     CODEX_MODEL_PRESETS,
     FALLBACK_PROVIDER_PRESETS,
     GEMINI_MODEL_PRESETS,
-    LDB_MODE_PRESETS,
     MUSE_MODEL_PRESETS,
     OPENCODE_MODEL_PRESETS,
     PROVIDER_PRESETS,
@@ -26,7 +24,6 @@ from src.menu import (
     _custom_model_allowed,
     _effective_provider_model,
     _fallback_effective_slot_label,
-    _fallback_ldb_menu,
     _fallback_menu,
     _fallback_select_provider_model,
     _fixed_model_for_provider,
@@ -35,7 +32,6 @@ from src.menu import (
     _provider_model_label,
     _questionary_menu,
     _sync_batch_roles_with_coach,
-    run_ldb_menu,
     run_settings_menu,
 )
 
@@ -77,9 +73,6 @@ class TestMenuModuleLoads:
     def test_run_settings_menu_exists(self):
         assert callable(run_settings_menu)
 
-    def test_run_ldb_menu_exists(self):
-        assert callable(run_ldb_menu)
-
 
 # ── 2. Preset dictionaries are populated ─────────────────────────────────────
 
@@ -115,10 +108,6 @@ class TestPresetsPopulated:
 
     def test_gemini_model_presets(self):
         assert any("gemini" in v.lower() for v in GEMINI_MODEL_PRESETS.values())
-
-    def test_ldb_mode_presets_contain_2_and_3(self):
-        """LDB menu must offer Mode 2 and Mode 3."""
-        assert set(LDB_MODE_PRESETS.values()) == {2, 3}
 
 
 # ── 3. Helper functions ──────────────────────────────────────────────────────
@@ -245,69 +234,6 @@ class TestQuestionarySettingsMenu:
         assert result is None  # quit
 
 
-# ── 6. Questionary LDB menu smoke ────────────────────────────────────────────
-
-class TestQuestionaryLdbMenu:
-    def test_back_returns_none(self, monkeypatch):
-        mock_q = _fake_questionary(["back"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config())
-        assert result is None
-
-    def test_start_returns_config(self, monkeypatch):
-        mock_q = _fake_questionary(["start"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config())
-        assert isinstance(result, Config)
-
-    def test_mode_2_switching(self, monkeypatch):
-        """Switching to Mode 2 should set ldb_mode=2."""
-        mode2_key = next(k for k, v in LDB_MODE_PRESETS.items() if v == 2)
-        mock_q = _fake_questionary(["mode", mode2_key, "start"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_mode=3))
-        assert result.ldb_mode == 2
-
-    def test_mode_3_switching(self, monkeypatch):
-        """Switching to Mode 3 should set ldb_mode=3."""
-        mode3_key = next(k for k, v in LDB_MODE_PRESETS.items() if v == 3)
-        mock_q = _fake_questionary(["mode", mode3_key, "start"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_mode=2))
-        assert result.ldb_mode == 3
-
-    def test_test_input_update(self, monkeypatch):
-        """Editing test input should persist the value."""
-        mock_q = _fake_questionary(["test", "assert foo == bar", "start"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_test_input=""))
-        assert result.ldb_test_input == "assert foo == bar"
-
-    def test_scope_toggle_flips_in_place(self, monkeypatch):
-        """Picking 'scope' toggles ldb_scope_all without any extra prompt."""
-        mock_q = _fake_questionary(["scope", "start"])
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_scope_all=False))
-        assert result.ldb_scope_all is True
-
-    def test_agent_provider_editing(self, monkeypatch):
-        """Editing the input agent provider should update config."""
-        mock_q = _fake_questionary(
-            ["input", "Claude Pro (native)", "Sonnet 5", "High", "start"]
-        )
-        monkeypatch.setitem(sys.modules, "questionary", mock_q)
-        monkeypatch.setattr("src.menu.questionary", mock_q)
-        result = run_ldb_menu(Config(ldb_input_provider="muse"))
-        assert result.ldb_input_provider == "claude"
-        assert result.ldb_input_model == "claude-sonnet-5"
-
-
 # ── 8. Fallback menu (no questionary) smoke ──────────────────────────────────
 
 class TestFallbackMenu:
@@ -333,54 +259,6 @@ class TestFallbackMenu:
         monkeypatch.setattr("builtins.input", lambda *_: next(answers))
         result = run_settings_menu(Config())
         assert result is None
-
-
-# ── 9. Fallback LDB menu smoke ───────────────────────────────────────────────
-
-class TestFallbackLdbMenu:
-    def test_quit_returns_none(self, monkeypatch):
-        answers = iter(["q"])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config())
-        assert result is None
-
-    def test_enter_returns_config(self, monkeypatch):
-        answers = iter([""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config())
-        assert isinstance(result, Config)
-
-    def test_mode_2_switching(self, monkeypatch):
-        # Menu indices: [1] Scope toggle, [2] Test, [3] Mode, [4-7] agents.
-        answers = iter(["3", "2", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_mode=3))
-        assert result.ldb_mode == 2
-
-    def test_mode_3_switching(self, monkeypatch):
-        answers = iter(["3", "3", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_mode=2))
-        assert result.ldb_mode == 3
-
-    def test_test_input_update(self, monkeypatch):
-        answers = iter(["2", "assert bar == baz", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_test_input=""))
-        assert result.ldb_test_input == "assert bar == baz"
-
-    def test_scope_toggle_changed_to_all(self, monkeypatch):
-        """Picking [1] flips ldb_scope_all without any extra prompt."""
-        answers = iter(["1", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_scope_all=False))
-        assert result.ldb_scope_all is True
-
-    def test_scope_toggle_all_to_changed(self, monkeypatch):
-        answers = iter(["1", ""])
-        monkeypatch.setattr("builtins.input", lambda *_: next(answers))
-        result = _fallback_ldb_menu(Config(ldb_scope_all=True))
-        assert result.ldb_scope_all is False
 
 
 # ── 10. Fallback effective slot label ────────────────────────────────────────

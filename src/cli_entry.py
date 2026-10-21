@@ -216,80 +216,6 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
 
-    ldb_parser = subparsers.add_parser("ldb", help="Run ldb bug-finder")
-    ldb_parser.add_argument(
-        "--working-dir", "-w", type=str, default=".", dest="working_dir"
-    )
-    ldb_parser.add_argument(
-        "--input-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="ldb_input_provider",
-    )
-    ldb_parser.add_argument(
-        "--player-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="ldb_player_provider",
-    )
-    ldb_parser.add_argument(
-        "--tester-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="ldb_tester_provider",
-    )
-    ldb_parser.add_argument(
-        "--fixer-provider",
-        type=str,
-        choices=PROVIDER_CHOICES,
-        default=None,
-        dest="ldb_fixer_provider",
-    )
-    ldb_parser.add_argument(
-        "--input-model", type=str, default=None, dest="ldb_input_model"
-    )
-    ldb_parser.add_argument(
-        "--player-model", type=str, default=None, dest="ldb_player_model"
-    )
-    ldb_parser.add_argument(
-        "--tester-model", type=str, default=None, dest="ldb_tester_model"
-    )
-    ldb_parser.add_argument(
-        "--fixer-model", type=str, default=None, dest="ldb_fixer_model"
-    )
-    ldb_parser.add_argument(
-        "--mode", type=int, choices=[2, 3], default=None, dest="ldb_mode"
-    )
-    ldb_parser.add_argument("--file", type=str, default=None, dest="ldb_target_file")
-    ldb_parser.add_argument("--entry", type=str, default=None, dest="ldb_target_entry")
-    ldb_parser.add_argument(
-        "--all", action="store_true", default=False, dest="ldb_scope_all",
-        help="scan every public function (default: only functions touched in git diff)",
-    )
-    ldb_parser.add_argument(
-        "--diff-base", type=str, default=None, dest="ldb_diff_base",
-        help="git ref the --changed scope diffs against (default: HEAD = staged + unstaged)",
-    )
-    ldb_parser.add_argument(
-        "--max-iterations", type=int, default=None, dest="ldb_max_iterations"
-    )
-    ldb_parser.add_argument("--timeout", type=int, default=None, dest="ldb_timeout_s")
-    ldb_parser.add_argument(
-        "--test", type=str, default=None, dest="ldb_test_input",
-        help="Explicit test/assert input (e.g. 'assert add(1,2)==3')",
-    )
-    ldb_parser.add_argument(
-        "--no-menu", action="store_true", default=False,
-        help="(deprecated; default) skip the LDB settings menu and run directly",
-    )
-    ldb_parser.add_argument(
-        "--menu", action="store_true", default=False,
-        help="open the LDB settings menu before running (default: run directly)",
-    )
-
     return parser
 
 
@@ -351,81 +277,6 @@ async def run_go(args, config=None):
     sys.exit(outcome.exit_code)
 
 
-def run_ldb(args) -> None:
-    from src.config import resolve_config
-
-    cli_overrides: dict = {"working_dir": args.working_dir}
-
-    _LDB_FIELDS = [
-        "ldb_input_provider",
-        "ldb_player_provider",
-        "ldb_tester_provider",
-        "ldb_fixer_provider",
-        "ldb_input_model",
-        "ldb_player_model",
-        "ldb_tester_model",
-        "ldb_fixer_model",
-        "ldb_mode",
-        "ldb_target_file",
-        "ldb_target_entry",
-        "ldb_scope_all",
-        "ldb_diff_base",
-        "ldb_max_iterations",
-        "ldb_timeout_s",
-        "ldb_test_input",
-    ]
-    for field in _LDB_FIELDS:
-        val = getattr(args, field, None)
-        if val is not None:
-            if isinstance(val, bool) and not val:
-                # Skip False for store_true flags to allow config.yaml defaults
-                continue
-            cli_overrides[field] = val
-
-    config = resolve_config(cli_overrides)
-
-    # Default = run automatically. The settings menu is opt-in via --menu;
-    # the legacy --no-menu flag is kept for backward compatibility but no
-    # longer needed (it is now the default behaviour).
-    if getattr(args, "menu", False):
-        from src.menu import run_ldb_menu
-
-        menu_result = run_ldb_menu(config)
-        if menu_result is None:
-            print("Выход.")
-            sys.exit(0)
-        config = menu_result
-
-    _execute_ldb(config)
-
-
-def _execute_ldb(config) -> None:
-    """Run LDB with a fully resolved Config (no menu interaction).
-
-    Scope is decided automatically by Config.__post_init__:
-      - ldb_target_file set → single-target mode
-      - otherwise          → scan every public function (--all default)
-    """
-    from src.ldb import LdbRunner
-
-    if config.ldb_target_file and not config.ldb_target_entry:
-        print("Error: --file requires --entry <function_name>")
-        sys.exit(1)
-
-    runner = LdbRunner(config)
-    try:
-        result = runner.run_sync()
-    except Exception as exc:
-        print(f"ldb error: {exc}", file=sys.stderr)
-        sys.exit(1)
-    print(
-        f"ldb done: bugs_found={result.bugs_found} "
-        f"tests_written={result.tests_written} "
-        f"bugs_fixed={result.bugs_fixed}"
-    )
-    sys.exit(0 if result.success else 1)
-
-
 def run_history(args):
     """Show recent v4 runs from .g3/runs."""
     from src.loop.ledger import history
@@ -449,13 +300,6 @@ def main():
 
     if args.command == "go":
         config = prepare_go_config(args)
-        if config.ldb_run_requested:
-            try:
-                _execute_ldb(config)
-            except KeyboardInterrupt:
-                print("\nПрервано.")
-                sys.exit(130)
-            return
         try:
             asyncio.run(run_go(args, config=config))
         except KeyboardInterrupt:
@@ -463,9 +307,3 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
-    elif args.command == "ldb":
-        try:
-            run_ldb(args)
-        except KeyboardInterrupt:
-            print("\nПрервано.")
-            sys.exit(130)

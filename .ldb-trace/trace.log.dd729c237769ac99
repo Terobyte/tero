@@ -1,0 +1,5 @@
+Trace:
+(57):      parser = argparse.ArgumentParser((58):          prog="tero",(59):          description="Coach-player feedback loop for implementation",(57):      parser = argparse.ArgumentParser((61):      subparsers = parser.add_subparsers(dest="command", required=True)(64):      go_parser = subparsers.add_parser("go", help="Run coach-player loop")(65):      go_parser.add_argument((66):          "--max-turns", "-n",(67):          type=int,(68):          default=None,
+
+Value Profile Output:
+Value_After:56|
