@@ -20,64 +20,102 @@ def _load_packaged_g3_module():
     return module
 
 
-def test_run_go_respects_project_config_defaults_when_flags_omitted(tmp_path, monkeypatch):
-    """Argparse defaults should not clobber values from .g3/config.yaml."""
-    home_dir = tmp_path / "home"
-    home_dir.mkdir()
-    monkeypatch.setenv("HOME", str(home_dir))
-
-    config_dir = tmp_path / ".g3"
-    config_dir.mkdir()
-    (config_dir / "config.yaml").write_text(
-        "defaults:\n"
-        "  max_turns: 3\n"
-        "  plan_file: custom.md\n"
-        "  player_provider: muse\n"
-        "  coach_provider: muse\n"
-    )
-    (tmp_path / "custom.md").write_text("1. Build it\n")
-
+def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
+    """tero go calls the v4 loop, not the old batch executor."""
+    (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
     captured = {}
 
-    class FakeSession:
-        def __init__(self, config, requirements, plan_file_path=""):
-            captured["config"] = config
-            captured["requirements"] = requirements
-            self.plan_file_path = plan_file_path
-            self.router = object()
+    async def fake_run(cfg, *, agents, check_ready=None):
+        captured["plan"] = cfg.plan_file
+        captured["player"] = cfg.player_provider
+        from src.loop.run import RunOutcome
 
-    class FakeBatchExecutor:
-        def __init__(self, session, tracker, router):
-            captured["tracker"] = tracker
-
-        async def run(self):
-            captured["batch_ran"] = True
+        return RunOutcome(status="ok", exit_code=0, reason="ship")
 
     exit_codes = []
-
-    monkeypatch.setattr(g3, "CoachPlayerSession", FakeSession)
-    monkeypatch.setattr("src.cli_entry.BatchExecutor", FakeBatchExecutor)
-    monkeypatch.setattr(g3.sys, "exit", exit_codes.append)
+    monkeypatch.setattr("src.loop.run.run", fake_run)
+    monkeypatch.setattr("src.cli_entry.sys.exit", exit_codes.append)
 
     args = SimpleNamespace(
         working_dir=str(tmp_path),
-        max_turns=None,
-        plan=None,
-        verbose=None,
-        autonomous=None,
+        plan="plan.md",
+        verbose=False,
+        no_menu=True,
+        player_spec="muse:muse-spark-1.3",
+        judge_spec=None,
+        tester_spec=None,
+        escalation_spec=None,
+        no_escalation=False,
+        test_command=None,
+        test_command_scoped=None,
+        max_rounds=None,
         player_provider=None,
-        coach_provider=None,
         player_model=None,
-        coach_model=None,
     )
 
     import asyncio
 
     asyncio.run(g3.run_go(args))
 
-    assert captured["config"].max_turns == 3
-    assert captured["config"].plan_file == "custom.md"
-    assert captured["requirements"] == "1. Build it\n"
+    assert captured["plan"] == "plan.md"
+    assert captured["player"] == "muse"
+    assert exit_codes == [0]
+
+
+def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatch):
+    """▶ Запустить must copy Judge/tests from the menu, even if -p was passed."""
+    (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
+    captured = {}
+
+    async def fake_run(cfg, *, agents, check_ready=None):
+        captured["cfg"] = cfg
+        from src.loop.run import RunOutcome
+
+        return RunOutcome(status="ok", exit_code=0, reason="ship")
+
+    exit_codes = []
+    monkeypatch.setattr("src.loop.run.run", fake_run)
+    monkeypatch.setattr("src.cli_entry.sys.exit", exit_codes.append)
+
+    from src.config import Config
+
+    args = SimpleNamespace(
+        working_dir=str(tmp_path),
+        plan="plan.md",
+        verbose=False,
+        no_menu=False,
+        player_spec=None,
+        judge_spec=None,
+        tester_spec=None,
+        escalation_spec=None,
+        no_escalation=False,
+        test_command=None,
+        test_command_scoped=None,
+        max_rounds=None,
+        player_provider=None,
+        player_model=None,
+    )
+    config = Config(
+        working_dir=str(tmp_path),
+        plan_file="plan.md",
+        player_provider="opencode",
+        player_model="opencode/muse-spark-1.3-contributor-free",
+        batch_judge_provider="claude",
+        batch_judge_model="claude-opus-5",
+        tester_provider="gemini",
+        tester_model="gemini-3.8-flash",
+        test_command="./scripts/test.sh",
+    )
+
+    import asyncio
+
+    asyncio.run(g3.run_go(args, config=config))
+
+    cfg = captured["cfg"]
+    assert cfg.player_provider == "opencode"
+    assert cfg.judge_provider == "claude"
+    assert cfg.judge_model == "claude-opus-5"
+    assert cfg.test_command == "./scripts/test.sh"
     assert exit_codes == [0]
 
 
@@ -89,25 +127,15 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
 
     (tmp_path / "requirements.md").write_text("1. Build it\n")
 
-    class FakeSession:
-        def __init__(self, config, requirements, plan_file_path=""):
-            self.config = config
-            self.requirements = requirements
-            self.plan_file_path = plan_file_path
-            self.router = object()
+    async def fake_run(cfg, *, agents, check_ready=None):
+        from src.loop.run import RunOutcome
 
-    class FakeBatchExecutor:
-        def __init__(self, session, tracker, router):
-            pass
-
-        async def run(self):
-            pass
+        return RunOutcome(status="ok", exit_code=0, reason="ship")
 
     exit_codes = []
 
-    monkeypatch.setattr(g3, "CoachPlayerSession", FakeSession)
-    monkeypatch.setattr("src.cli_entry.BatchExecutor", FakeBatchExecutor)
-    monkeypatch.setattr(g3.sys, "exit", exit_codes.append)
+    monkeypatch.setattr("src.loop.run.run", fake_run)
+    monkeypatch.setattr("src.cli_entry.sys.exit", exit_codes.append)
     monkeypatch.setattr(
         "src.menu.run_settings_menu",
         lambda config: (_ for _ in ()).throw(AssertionError("menu should not be opened")),

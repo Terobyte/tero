@@ -73,11 +73,14 @@ class CodexProvider:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         self._temp_instructions_path: str | None = None
+        self._temp_schema_path: str | None = None
+        self._codex_started_ids: set[str] = set()
 
     def _reset_usage(self) -> None:
         """Clear usage counters before starting a new Codex subprocess."""
         self._last_input_tokens = 0
         self._last_output_tokens = 0
+        self._codex_started_ids = set()
 
     async def run(
         self,
@@ -87,6 +90,9 @@ class CodexProvider:
         max_turns: int = 30,
         model: str = "",
         disable_tools: bool = False,
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ) -> AsyncIterator:
         """Run Codex agent via CLI and yield adapted messages.
 
@@ -107,7 +113,9 @@ class CodexProvider:
         cmd = self._build_command(
             model=model,
             working_dir=working_dir,
-            disable_tools=disable_tools,
+            disable_tools=disable_tools or read_only,
+            output_schema=output_schema,
+            effort=effort,
         )
         env = self._build_env(system_prompt)
 
@@ -128,14 +136,19 @@ class CodexProvider:
         finally:
             await _gen.aclose()
             self._cleanup_temp_instructions()
+            self._cleanup_temp_schema()
 
     def _build_command(
         self,
         model: str = "",
         working_dir: str = "",
         disable_tools: bool = False,
+        output_schema: dict | None = None,
+        effort: str = "",
     ) -> list[str]:
         """Build codex exec CLI command."""
+        from .effort import normalize_effort
+
         resolved_model = model or self.config.default_model
 
         cmd = [
@@ -151,16 +164,17 @@ class CodexProvider:
             cmd.extend(["-C", working_dir])
 
         # Sandbox mode. Text-only runs should never need command execution.
+        # Codex 0.147 dropped `-a <policy>` on `exec`; use `-s` / `-c` instead.
         if disable_tools:
             cmd.extend(["-s", "read-only"])
-            cmd.extend(["-a", "never"])
         elif self.config.bypass_approvals:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         elif self.config.full_auto:
             cmd.append("--full-auto")
         else:
             cmd.extend(["-s", self.config.sandbox_mode])
-            cmd.extend(["-a", self.config.approval_policy])
+            if self.config.approval_policy:
+                cmd.extend(["-c", f"approval_policy={self.config.approval_policy}"])
 
         if self.config.ephemeral:
             cmd.append("--ephemeral")
@@ -180,13 +194,25 @@ class CodexProvider:
         for key, value in self.config.config_overrides.items():
             cmd.extend(["-c", f"{key}={value}"])
 
-        if self.config.model_reasoning_effort:
-            cmd.extend(
-                ["-c", f"model_reasoning_effort={self.config.model_reasoning_effort}"]
-            )
+        resolved_effort = normalize_effort(effort) or self.config.model_reasoning_effort
+        if resolved_effort:
+            cmd.extend(["-c", f"model_reasoning_effort={resolved_effort}"])
 
         # Extra args
         cmd.extend(self.config.extra_args)
+
+        if output_schema:
+            self._cleanup_temp_schema()  # a previous build's file, if any
+            schema_file = tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".json",
+                prefix="tero-codex-schema-",
+                delete=False,
+            )
+            json.dump(output_schema, schema_file)
+            schema_file.close()
+            self._temp_schema_path = schema_file.name
+            cmd.extend(["--output-schema", schema_file.name])
 
         # Prompt from stdin
         cmd.append("-")
@@ -232,6 +258,20 @@ class CodexProvider:
             self._temp_instructions_path = None
             try:
                 os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _cleanup_temp_schema(self) -> None:
+        """Remove the --output-schema temp file if it exists.
+
+        Kept separate from _cleanup_temp_instructions: _build_env() calls that
+        one right after _build_command() has written the schema file.
+        """
+        schema = self._temp_schema_path
+        if schema is not None:
+            self._temp_schema_path = None
+            try:
+                os.unlink(schema)
             except OSError:
                 pass
 
@@ -396,6 +436,44 @@ class CodexProvider:
                     ],
                     type="tool_result",
                 )
+
+        # Codex 0.147 real item types: file_change / mcp_tool_call / web_search.
+        # Emit a ToolUseBlock on item.started; file_change may arrive with
+        # only item.completed (no started seen), so emit there too in that
+        # case, but never emit twice for the same item id.
+        if item_type in ("file_change", "mcp_tool_call", "web_search"):
+            item_id = item.get("id", "")
+            started = event_type == "item.started"
+            if started:
+                self._codex_started_ids.add(item_id)
+            elif item_id in self._codex_started_ids:
+                return None  # already reported on item.started
+
+            if item_type == "file_change":
+                paths = [c.get("path", "") for c in item.get("changes") or [] if c.get("path")]
+                name = "edit"
+                tool_input: dict = {"path": ", ".join(paths)}
+            elif item_type == "mcp_tool_call":
+                server = item.get("server", "")
+                tool = item.get("tool", "")
+                name = f"{server}.{tool}"
+                args = item.get("arguments")
+                if isinstance(args, dict):
+                    tool_input = dict(args)
+                elif args is None:
+                    tool_input = {}
+                else:
+                    tool_input = {"arguments": str(args)}
+            else:  # web_search
+                name = "web_search"
+                tool_input = {"query": item.get("query", "")}
+
+            return AdaptedMessage(
+                role="assistant",
+                content=[ToolUseBlock(name=name, input=tool_input, id=item_id)],
+                stop_reason="tool_use",
+                type="tool_use",
+            )
 
         # File edit operations (if Codex emits these)
         if item_type in ("file_edit", "file_write", "file_read"):

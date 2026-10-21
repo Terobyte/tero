@@ -62,6 +62,7 @@ class TestProviderModelCarryover:
 
         assert result.player_provider == "codex"
         assert result.player_model == ""
+        assert result.player_effort == ""
 
 
 class TestFallbackEffectiveSlotLabel:
@@ -187,12 +188,52 @@ class TestBatchRolePrompts:
         assert "codex (GPT-5.4)" in judge_lines[0]
 
 
+class TestV4MenuRoles:
+    def test_questionary_menu_shows_tester_and_tests(self, monkeypatch):
+        import src.menu as menu
+        from src.config import Config
+
+        captured_titles = []
+
+        def fake_select(_message, choices=None, **kwargs):
+            if choices is not None:
+                for choice in choices:
+                    if hasattr(choice, "value"):
+                        captured_titles.append(choice.title)
+            return DummyPrompt("quit")
+
+        dummy_questionary = SimpleNamespace(
+            Choice=lambda title, value: SimpleNamespace(title=title, value=value),
+            Separator=lambda text: SimpleNamespace(separator=text),
+            select=fake_select,
+        )
+
+        monkeypatch.setitem(sys.modules, "questionary", dummy_questionary)
+        monkeypatch.setattr(menu, "QUESTIONARY_AVAILABLE", True)
+
+        menu._questionary_menu(
+            Config(
+                batch_judge_provider="codex",
+                batch_judge_model="gpt-5.6-terra",
+                tester_provider="gemini",
+                tester_model="gemini-3.8-flash",
+                test_command="./scripts/test.sh",
+            )
+        )
+
+        titles = "\n".join(captured_titles)
+        assert "Tester:" in titles
+        assert "Тесты:" in titles
+        assert "./scripts/test.sh" in titles
+        assert "gemini" in titles.lower()
+
+
 class TestMuseModelPresets:
     def test_muse_has_selectable_presets(self):
         from src.menu import _fixed_model_for_provider, _model_presets_for_provider
 
         assert _fixed_model_for_provider("muse") == ""
-        assert _model_presets_for_provider("muse")["Muse Spark 1.3"] == "muse-spark-1.3"
+        assert _model_presets_for_provider("muse")["Muse Spark 1.3 (свой ключ)"] == "muse-spark-1.3"
 
     def test_selecting_muse_prompts_for_model(self):
         from src.config import Config
@@ -203,8 +244,10 @@ class TestMuseModelPresets:
         def mock_select(*args, **kwargs):
             select_calls.append(kwargs.get("choices", args[1] if len(args) > 1 else None))
             if len(select_calls) == 1:
-                return DummyPrompt("Muse Code (Spark)")
-            return DummyPrompt("Muse Spark 1.3")
+                return DummyPrompt("Muse API (свой ключ)")
+            if len(select_calls) == 2:
+                return DummyPrompt("Muse Spark 1.3 (свой ключ)")
+            return DummyPrompt("High")
 
         with patch("src.menu.questionary", MagicMock(select=mock_select)):
             result = _questionary_select_provider_model(
@@ -216,7 +259,8 @@ class TestMuseModelPresets:
 
         assert result.player_provider == "muse"
         assert result.player_model == "muse-spark-1.3"
-        assert len(select_calls) == 2
+        assert result.player_effort == "high"
+        assert len(select_calls) == 3
 
 
 class TestCustomModelHandling:
@@ -234,3 +278,41 @@ class TestCustomModelHandling:
                 )
 
         assert result.coach_model == "sonnet"
+
+
+class TestEffortPicker:
+    def test_gemini_skips_effort_window(self):
+        from src.config import Config
+        from src.menu import _questionary_select_provider_model
+
+        calls = []
+
+        def mock_select(*args, **kwargs):
+            calls.append(kwargs.get("choices") or (args[1] if len(args) > 1 else None))
+            if len(calls) == 1:
+                return DummyPrompt("Gemini (Google CLI)")
+            return DummyPrompt("Gemini 3.8 Flash")
+
+        with patch("src.menu.questionary", MagicMock(select=mock_select)):
+            result = _questionary_select_provider_model(
+                Config(player_provider="muse", player_model="muse-spark-1.3", player_effort="high"),
+                "player_provider",
+                "player_model",
+                "player",
+            )
+
+        assert result.player_provider == "gemini"
+        assert result.player_model == "gemini-3.8-flash"
+        assert result.player_effort == ""
+        assert len(calls) == 2
+
+    def test_cursor_presets_include_grok(self):
+        from src.menu import CURSOR_MODEL_PRESETS
+
+        assert CURSOR_MODEL_PRESETS["Grok 4.6"] == "cursor-grok-4.6"
+        assert CURSOR_MODEL_PRESETS["Composer 2.5"] == "composer-2.5"
+
+    def test_label_appends_effort(self):
+        from src.menu import _provider_model_label
+
+        assert "high" in _provider_model_label("cursor", "cursor-grok-4.6", effort="high")

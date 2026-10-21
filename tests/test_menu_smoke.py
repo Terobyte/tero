@@ -237,7 +237,7 @@ class TestQuestionarySettingsMenu:
     def test_player_provider_editing(self, monkeypatch):
         """Selecting player_provider then quit should update provider."""
         mock_q = _fake_questionary(
-            ["player_provider", "Muse Code (Spark)", "Muse Spark 1.3", "quit"]
+            ["player_provider", "Muse API (свой ключ)", "Muse Spark 1.3 (свой ключ)", "High", "quit"]
         )
         monkeypatch.setitem(sys.modules, "questionary", mock_q)
         monkeypatch.setattr("src.menu.questionary", mock_q)
@@ -299,7 +299,7 @@ class TestQuestionaryLdbMenu:
     def test_agent_provider_editing(self, monkeypatch):
         """Editing the input agent provider should update config."""
         mock_q = _fake_questionary(
-            ["input", "Claude Pro (native)", "Sonnet 5", "start"]
+            ["input", "Claude Pro (native)", "Sonnet 5", "High", "start"]
         )
         monkeypatch.setitem(sys.modules, "questionary", mock_q)
         monkeypatch.setattr("src.menu.questionary", mock_q)

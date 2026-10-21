@@ -15,6 +15,7 @@ dependencies = [
     "astor>=0.8",
     "graphviz>=0.20",
     "questionary>=2.0",
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -23,3 +24,6 @@ tero = "src.cli_entry:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*", "g3*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

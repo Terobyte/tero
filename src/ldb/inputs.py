@@ -106,6 +106,7 @@ async def _collect_text(
     working_dir: str,
     max_turns: int = 1,
     model: str = "",
+    effort: str = "",
 ) -> str:
     """Collect full text output from a provider call.
 
@@ -136,6 +137,8 @@ async def _collect_text(
     )
     if "context_limit" in params or accepts_kwargs:
         run_kwargs["context_limit"] = effective_limit
+    if "effort" in params or accepts_kwargs:
+        run_kwargs["effort"] = effort
 
     parts: list[str] = []
     async for message in provider.run(**run_kwargs):
@@ -177,6 +180,7 @@ async def synthesize_inputs_llm(
     working_dir: str = ".",
     model: str = "",
     n: int = 5,
+    effort: str = "",
 ) -> List[str]:
     """Use an LLM to synthesize test inputs for a function.
 
@@ -208,6 +212,7 @@ async def synthesize_inputs_llm(
         working_dir=working_dir,
         max_turns=1,
         model=model,
+        effort=effort,
     )
 
     entries = parse_inputs_response(raw, entry)

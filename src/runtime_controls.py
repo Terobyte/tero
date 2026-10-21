@@ -242,7 +242,9 @@ class StatusBar:
 MODEL_PRESETS: list[tuple[str, str, str]] = [
     ("Spark 1.3", "muse", "muse-spark-1.3"),
     ("Spark 1.2", "muse", "muse-spark-1.2"),
+    ("Spark 1.3 free", "opencode", "opencode/muse-spark-1.3-contributor-free"),
     ("Composer 2.5", "cursor", "composer-2.5"),
+    ("Grok 4.6", "cursor", "cursor-grok-4.6"),
     ("Composer 2", "cursor", "composer-2"),
     ("Fable 5.1", "claude", "claude-fable-5-1"),
     ("Opus 5", "claude", "claude-opus-5"),

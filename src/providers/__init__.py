@@ -7,7 +7,7 @@ from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
 from .gemini import GeminiConfig, GeminiProvider
-from .muse import MuseConfig, MuseProvider
+from .muse import MuseConfig, MuseProvider, muse_from_config
 from .cursor import CursorConfig, CursorProvider
 from .message_adapter import (
     AdaptedMessage,
@@ -91,15 +91,8 @@ def create_provider(
         )
         return CursorProvider(cursor_cfg)
 
-    if provider_type in ("muse", "muse_code"):
-        muse_cfg = MuseConfig(
-            command=provider_config.get("command", "muse"),
-            default_model=provider_config.get("default_model", "muse-spark-1.3"),
-            display_name=provider_config.get("display_name", "Muse"),
-            yolo=provider_config.get("yolo", True),
-            trust_workspace=provider_config.get("trust_workspace", True),
-        )
-        return MuseProvider(muse_cfg)
+    if provider_type == "muse":
+        return muse_from_config(provider_config)
 
     if provider_type == "codex":
         codex_cfg = CodexConfig(

@@ -8,7 +8,7 @@ claude_native.py, codex.py, and opencode.py.
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from src.constants import STDOUT_READ_CHUNK_SIZE, STREAM_READER_LIMIT
 
@@ -26,7 +26,9 @@ class SubprocessExit:
     stderr: bytes
 
 
-async def _iter_stdout(stdout, stall_timeout: float = 0) -> AsyncIterator[bytes]:
+async def _iter_stdout(
+    stdout, stall_timeout: float = 0, on_stall: Callable[[], None] | None = None
+) -> AsyncIterator[bytes]:
     """Yield raw line bytes from a subprocess stdout stream.
 
     Supports two modes:
@@ -36,6 +38,8 @@ async def _iter_stdout(stdout, stall_timeout: float = 0) -> AsyncIterator[bytes]
       through to a plain `async for` loop.
 
     stall_timeout: if > 0, abort if no bytes arrive within that many seconds.
+    on_stall: called when a stall is detected, so the caller can kill the
+        still-running process instead of hanging on proc.wait().
     """
     if stdout is None:
         return
@@ -51,7 +55,9 @@ async def _iter_stdout(stdout, stall_timeout: float = 0) -> AsyncIterator[bytes]
                 else:
                     chunk = await stdout.read(STDOUT_READ_CHUNK_SIZE)
             except asyncio.TimeoutError:
-                return  # stall detected — stop reading, let proc.wait() handle cleanup
+                if on_stall is not None:
+                    on_stall()
+                return  # stall detected — process killed, stop reading
             if not chunk:
                 break
             buffer += chunk
@@ -121,7 +127,9 @@ async def run_subprocess_jsonl(
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
-        async for line_bytes in _iter_stdout(proc.stdout, stall_timeout=stall_timeout):
+        async for line_bytes in _iter_stdout(
+            proc.stdout, stall_timeout=stall_timeout, on_stall=lambda: _safe_kill(proc)
+        ):
             line = line_bytes.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -148,3 +156,11 @@ async def run_subprocess_jsonl(
 
 async def _empty_bytes() -> bytes:
     return b""
+
+
+def _safe_kill(proc) -> None:
+    """Kill a subprocess, ignoring a race where it already exited."""
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass

@@ -46,12 +46,15 @@ class GeminiProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ) -> AsyncIterator:
         """Run Gemini CLI and yield adapted messages."""
         self._reset_usage()
         env = self._build_env(system_prompt)
         full_prompt = self._combine_prompt(system_prompt, prompt)
-        cmd = self._build_command(model, full_prompt)
+        cmd = self._build_command(model, full_prompt, effort=effort)
 
         _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
         try:
@@ -65,7 +68,10 @@ class GeminiProvider:
         finally:
             await _gen.aclose()
 
-    def _build_command(self, model: str = "", prompt: str = "") -> list[str]:
+    def _build_command(
+        self, model: str = "", prompt: str = "", effort: str = ""
+    ) -> list[str]:
+        # Gemini CLI has no effort/thinking flag; `effort` is accepted and ignored.
         resolved_model = model or self.config.default_model
         cmd = [
             self.config.command,

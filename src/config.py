@@ -91,6 +91,8 @@ class Config:
     player_provider: str = "muse"
     coach_provider: str = "muse"
     player_model: str = "muse-spark-1.3"
+    player_effort: str = ""
+    coach_effort: str = ""
     batch_pre_judge_attempts: int = DEFAULT_BATCH_PRE_JUDGE_ATTEMPTS
     batch_judge_attempts: int = DEFAULT_BATCH_JUDGE_ATTEMPTS
     batch_post_judge_attempts: int = DEFAULT_BATCH_POST_JUDGE_ATTEMPTS
@@ -113,11 +115,13 @@ class Config:
     code_review: bool = False
     review_provider: str = ""  # empty = follow coach_provider
     review_model: str = ""
+    review_effort: str = ""
 
     # Coach fallback (Phase 7)
     coach_retry_max: int = DEFAULT_COACH_RETRY_MAX
     coach_fallback_provider: str = "claude"
     coach_fallback_model: str = ""
+    coach_fallback_effort: str = ""
 
     # Context Management
     context_limit: int = DEFAULT_CONTEXT_LIMIT
@@ -127,10 +131,26 @@ class Config:
     # Batch role providers + models (configurable per slot)
     batch_pre_provider: str = "muse"
     batch_pre_model: str = "muse-spark-1.3"
+    batch_pre_effort: str = ""
     batch_judge_provider: str = "codex"
     batch_judge_model: str = "gpt-5.6-terra"
+    batch_judge_effort: str = ""
     batch_post_provider: str = "muse"
     batch_post_model: str = "muse-spark-1.3"
+    batch_post_effort: str = ""
+
+    # v4 loop. Empty judge_* / escalation_* fall back to batch_judge_* / coach_fallback_*.
+    judge_provider: str = ""
+    judge_model: str = ""
+    judge_effort: str = ""
+    tester_provider: str = "gemini"
+    tester_model: str = "gemini-3.8-flash"
+    tester_effort: str = ""
+    escalation_provider: str = ""
+    escalation_model: str = ""
+    escalation_effort: str = ""
+    test_command: str = ""
+    test_command_scoped: str = ""
 
     # Code review loop
     max_review_iterations: int = DEFAULT_MAX_REVIEW_ITERATIONS
@@ -148,6 +168,10 @@ class Config:
     ldb_player_model: str = ""
     ldb_tester_model: str = "gemini-3.8-flash"
     ldb_fixer_model: str = ""
+    ldb_input_effort: str = ""
+    ldb_player_effort: str = ""
+    ldb_tester_effort: str = ""
+    ldb_fixer_effort: str = ""
     ldb_mode: int = 2
     ldb_target_file: str = ""
     ldb_target_entry: str = ""
@@ -202,6 +226,14 @@ _ENV_MAP = {
     "G3_BATCH_PRE_MODEL": ("batch_pre_model", str),
     "G3_BATCH_JUDGE_PROVIDER": ("batch_judge_provider", str),
     "G3_BATCH_JUDGE_MODEL": ("batch_judge_model", str),
+    "G3_JUDGE_PROVIDER": ("judge_provider", str),
+    "G3_JUDGE_MODEL": ("judge_model", str),
+    "G3_TESTER_PROVIDER": ("tester_provider", str),
+    "G3_TESTER_MODEL": ("tester_model", str),
+    "G3_ESCALATION_PROVIDER": ("escalation_provider", str),
+    "G3_ESCALATION_MODEL": ("escalation_model", str),
+    "G3_TEST_COMMAND": ("test_command", str),
+    "G3_TEST_COMMAND_SCOPED": ("test_command_scoped", str),
     "G3_BATCH_POST_PROVIDER": ("batch_post_provider", str),
     "G3_BATCH_POST_MODEL": ("batch_post_model", str),
     "G3_MAX_REVIEW_ITERATIONS": ("max_review_iterations", int),
@@ -333,9 +365,6 @@ def get_effective_context_limit(
 def _normalize_provider_name(value: str) -> str:
     """Normalize provider shorthands onto the canonical provider name."""
     aliases = {
-        "spark": "muse",
-        "muse-code": "muse",
-        "musecode": "muse",
         "cursor-cli": "cursor",
         "cursor-headless": "cursor",
         "headless": "cursor",
@@ -352,10 +381,14 @@ def short_model_name(model: str) -> str:
         return "o3"
     if m == "o4-mini":
         return "o4-mini"
+    if "contributor-free" in m or "spark-1.3-contributor" in m:
+        return "SPARK$0"
     if "muse-spark" in m or "spark-1" in m:
         return "SPARK"
     if "composer" in m:
         return "COMPOSER"
+    if "grok" in m:
+        return "GROK"
     if "fable" in m:
         return "FABLE"
     if "opus" in m:
@@ -539,6 +572,9 @@ def resolve_config(cli_args: dict) -> Config:
         "batch_pre_provider",
         "batch_judge_provider",
         "batch_post_provider",
+        "judge_provider",
+        "tester_provider",
+        "escalation_provider",
         "coach_fallback_provider",
         "review_provider",
         "ldb_input_provider",

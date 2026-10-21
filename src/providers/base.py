@@ -30,6 +30,9 @@ class AgentProvider(Protocol):
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ) -> AsyncIterator:
         """Run an agent and return an async stream of messages.
 

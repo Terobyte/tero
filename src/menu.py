@@ -5,6 +5,12 @@ from pathlib import Path
 import yaml
 
 from src.config import Config, short_model_name, _DEFAULT_CONTEXT_LIMIT
+from src.providers.effort import (
+    EFFORT_LABELS,
+    effort_field_for,
+    normalize_effort,
+    provider_supports_effort,
+)
 
 try:
     import questionary
@@ -14,8 +20,7 @@ except ImportError:
     QUESTIONARY_AVAILABLE = False
 
 # Codex model IDs (OpenAI GPT-5.6 family + GPT-6 Astra).
-# Reasoning effort is forced to "max" by the codex provider factory
-# (see providers/registry.py) so the default Terra judge runs at max.
+# Per-role effort from the menu overrides the Codex factory default of "max".
 CODEX_MODEL_PRESETS = {
     "GPT-6 Astra": "gpt-6-astra",
     "GPT-5.6 Sol": "gpt-5.6-sol",
@@ -26,6 +31,7 @@ CODEX_MODEL_PRESETS = {
 
 # OpenCode model IDs
 OPENCODE_MODEL_PRESETS = {
+    "Muse Spark 1.3 (free $0)": "opencode/muse-spark-1.3-contributor-free",
     "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
     "MIMO Pro (free)": "opencode/mimo-v2-pro-free",
     "MIMO Omni (free)": "opencode/mimo-v2-omni-free",
@@ -39,14 +45,58 @@ GEMINI_MODEL_PRESETS = {
 }
 
 MUSE_MODEL_PRESETS = {
-    "Muse Spark 1.3": "muse-spark-1.3",
-    "Muse Spark 1.2": "muse-spark-1.2",
+    "Muse Spark 1.3 (свой ключ)": "muse-spark-1.3",
+    "Muse Spark 1.2 (свой ключ)": "muse-spark-1.2",
 }
 
 CURSOR_MODEL_PRESETS = {
     "Composer 2.5": "composer-2.5",
+    "Grok 4.6": "cursor-grok-4.6",
     "Composer 2": "composer-2",
 }
+
+
+def _tests_label(config: Config) -> str:
+    cmd = (getattr(config, "test_command", "") or "").strip()
+    return cmd if cmd else "автодетект"
+
+
+def _judge_pair(config: Config) -> tuple[str, str]:
+    return (
+        config.judge_provider or config.batch_judge_provider,
+        config.judge_model or config.batch_judge_model,
+    )
+
+
+def _tester_pair(config: Config) -> tuple[str, str]:
+    return (
+        getattr(config, "tester_provider", "") or "gemini",
+        getattr(config, "tester_model", "") or "gemini-3.8-flash",
+    )
+
+
+def _escalation_pair(config: Config) -> tuple[str, str]:
+    provider = config.escalation_provider or config.coach_fallback_provider
+    model = config.escalation_model or config.coach_fallback_model
+    return provider, model
+
+
+def _sync_judge(config: Config) -> Config:
+    return dataclasses.replace(
+        config,
+        judge_provider=config.batch_judge_provider,
+        judge_model=config.batch_judge_model,
+        judge_effort=config.batch_judge_effort,
+    )
+
+
+def _sync_escalation(config: Config) -> Config:
+    return dataclasses.replace(
+        config,
+        escalation_provider=config.coach_fallback_provider,
+        escalation_model=config.coach_fallback_model,
+        escalation_effort=config.coach_fallback_effort,
+    )
 
 
 def _format_context_limit(limit: int) -> str:
@@ -62,7 +112,7 @@ def _format_context_limit(limit: int) -> str:
 
 # Provider choices
 PROVIDER_PRESETS = {
-    "Muse Code (Spark)": "muse",
+    "Muse API (свой ключ)": "muse",
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
     "Gemini (Google CLI)": "gemini",
@@ -86,12 +136,15 @@ FALLBACK_PROVIDER_PRESETS = {
 
 
 def _provider_model_label(
-    provider: str, model: str, default_text: str = "по умолчанию"
+    provider: str, model: str, default_text: str = "по умолчанию", effort: str = ""
 ) -> str:
     """Render provider/model pair for compact menu display."""
     if not provider:
         return "выкл"
-    return f"{provider} ({short_model_name(model) if model else default_text})"
+    name = short_model_name(model) if model else default_text
+    if effort:
+        name = f"{name} {effort}"
+    return f"{provider} ({name})"
 
 
 def _fixed_model_for_provider(provider: str) -> str:
@@ -171,6 +224,7 @@ def _sync_batch_roles_with_coach(
             config,
             batch_pre_provider=config.coach_provider,
             batch_pre_model=config.coach_model,
+            batch_pre_effort=config.coach_effort,
         )
 
     if (
@@ -181,6 +235,7 @@ def _sync_batch_roles_with_coach(
             config,
             batch_post_provider=config.coach_provider,
             batch_post_model=config.coach_model,
+            batch_post_effort=config.coach_effort,
         )
 
     return config
@@ -210,24 +265,52 @@ def _questionary_select_provider_model(
         return config
 
     provider = (provider_choices or PROVIDER_PRESETS)[choice]
-    next_model = getattr(config, model_field) if provider == current else ""
-    config = dataclasses.replace(
-        config,
-        **{provider_field: provider, model_field: "" if not provider else next_model},
-    )
+    switched = provider != current
+    next_model = getattr(config, model_field) if not switched else ""
+    updates: dict = {
+        provider_field: provider,
+        model_field: "" if not provider else next_model,
+    }
+    effort_field = effort_field_for(model_field)
+    if effort_field:
+        updates[effort_field] = (
+            "" if switched or not provider else getattr(config, effort_field, "")
+        )
+    config = dataclasses.replace(config, **updates)
 
     if not provider:
-        return dataclasses.replace(config, **{model_field: ""})
+        return config
 
     fixed_model = _fixed_model_for_provider(provider)
     if fixed_model:
-        return dataclasses.replace(config, **{model_field: fixed_model})
+        config = dataclasses.replace(config, **{model_field: fixed_model})
+        return _apply_effort_choice(config, provider, model_field)
 
     model_choice = questionary.select(
         f"Модель для {prompt_label}:",
         choices=list(_model_presets_for_provider(provider).keys()),
     ).ask()
-    return _resolve_model_choice(config, provider, model_field, model_choice)
+    if not model_choice:
+        return config
+    config = _resolve_model_choice(config, provider, model_field, model_choice)
+    return _apply_effort_choice(config, provider, model_field)
+
+
+def _apply_effort_choice(config: Config, provider: str, model_field: str) -> Config:
+    """Third picker window: thinking/effort, skipped for Gemini."""
+    effort_field = effort_field_for(model_field)
+    if not effort_field:
+        return config
+    if not provider_supports_effort(provider):
+        return dataclasses.replace(config, **{effort_field: ""})
+    choice = questionary.select(
+        f"Effort ({', '.join(EFFORT_LABELS.values())}):",
+        choices=list(EFFORT_LABELS.values()),
+    ).ask()
+    if not choice:
+        return dataclasses.replace(config, **{effort_field: ""})
+    level = next((key for key, label in EFFORT_LABELS.items() if label == choice), "")
+    return dataclasses.replace(config, **{effort_field: level})
 
 
 def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
@@ -255,12 +338,14 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
 
     if provider == "opencode":
         print(
-            "  Модели: mimo-pro, mimo-omni, minimax-m2.5, kimi-k2"
+            "  Модели: spark-free, mimo-pro, mimo-omni, minimax-m2.5, kimi-k2"
         )
         model = (
             input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
         )
         model_map = {
+            "spark-1.3-free": "opencode/muse-spark-1.3-contributor-free",
+            "spark-free": "opencode/muse-spark-1.3-contributor-free",
             "mimo-pro": "opencode/mimo-v2-pro-free",
             "mimo-omni": "opencode/mimo-v2-omni-free",
             "minimax-m2.5": "opencode/minimax-m2.5-free",
@@ -277,18 +362,19 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return model
 
     if provider == "muse":
-        print("  Модели: muse-spark-1.3, muse-spark-1.2")
+        print("  Модели: muse-spark-1.3 (свой ключ), muse-spark-1.2")
         return (
             input(f"  {prompt_label} model [muse-spark-1.3]: ").strip().lower()
             or "muse-spark-1.3"
         )
 
     if provider == "cursor":
-        print("  Модели: composer-2.5, composer-2")
-        return (
+        print("  Модели: composer-2.5, grok-4.6, composer-2")
+        raw = (
             input(f"  {prompt_label} model [composer-2.5]: ").strip().lower()
             or "composer-2.5"
         )
+        return {"grok-4.6": "cursor-grok-4.6", "grok": "cursor-grok-4.6"}.get(raw, raw)
 
     return ""
 
@@ -323,10 +409,26 @@ def _fallback_select_provider_model(
 
     config = dataclasses.replace(config, **{provider_field: provider})
     if not provider:
-        return dataclasses.replace(config, **{model_field: ""})
+        cleared = {model_field: ""}
+        effort_field = effort_field_for(model_field)
+        if effort_field:
+            cleared[effort_field] = ""
+        return dataclasses.replace(config, **cleared)
 
     model = _fallback_prompt_model(provider, prompt_label)
-    return dataclasses.replace(config, **{model_field: model})
+    updates = {model_field: model}
+    effort_field = effort_field_for(model_field)
+    if effort_field:
+        updates[effort_field] = _fallback_prompt_effort(provider)
+    return dataclasses.replace(config, **updates)
+
+
+def _fallback_prompt_effort(provider: str) -> str:
+    if not provider_supports_effort(provider):
+        return ""
+    print("  Effort: low, medium, high, xhigh, max")
+    raw = input("  effort [high]: ").strip().lower() or "high"
+    return normalize_effort(raw)
 
 
 def _fallback_effective_slot_label(
@@ -341,7 +443,11 @@ def _fallback_effective_slot_label(
         fallback_provider=config.coach_provider,
         fallback_model=config.coach_model,
     )
-    return _provider_model_label(provider, model)
+    return _provider_model_label(
+        provider,
+        model,
+        effort=getattr(config, effort_field_for(model_field), "") or "",
+    )
 
 
 def run_settings_menu(config: Config) -> Config | None:
@@ -364,26 +470,35 @@ def _questionary_menu(config: Config) -> Config | None:
             if config.coach_model
             else "по умолчанию"
         )
+        if config.coach_effort:
+            coach_display = f"{coach_display} {config.coach_effort}"
         player_display = (
             short_model_name(config.player_model)
             if config.player_model
             else "по умолчанию"
         )
+        if config.player_effort:
+            player_display = f"{player_display} {config.player_effort}"
         fallback_display = _provider_model_label(
-            config.coach_fallback_provider,
-            config.coach_fallback_model,
+            *_escalation_pair(config),
+            effort=config.escalation_effort or config.coach_fallback_effort,
         )
-        judge_provider, judge_model = _effective_provider_model(
-            config.batch_judge_provider,
-            config.batch_judge_model,
+        judge_provider, judge_model = _effective_provider_model(*_judge_pair(config))
+        judge_display = _provider_model_label(
+            judge_provider,
+            judge_model,
+            effort=config.judge_effort or config.batch_judge_effort,
         )
-        judge_display = _provider_model_label(judge_provider, judge_model)
+        tester_display = _provider_model_label(
+            *_tester_pair(config),
+            effort=config.tester_effort,
+        )
         choices = [
             questionary.Choice("▶   Запустить", value="start"),
             questionary.Separator("─── инструменты ─────────────────────────"),
             questionary.Choice("🧪  Run LDB", value="run_ldb"),
             questionary.Choice("⚙   LDB settings →", value="ldb_settings"),
-            questionary.Separator("─── провайдеры ──────────────────────────"),
+            questionary.Separator("─── роли ────────────────────────────────"),
             questionary.Choice(
                 f"    Player:         {config.player_provider} ({player_display})",
                 value="player_provider",
@@ -400,9 +515,17 @@ def _questionary_menu(config: Config) -> Config | None:
                 f"    Judge:          {judge_display}",
                 value="batch_judge",
             ),
+            questionary.Choice(
+                f"    Tester:         {tester_display}",
+                value="tester",
+            ),
             questionary.Separator("─── настройки ───────────────────────────"),
             questionary.Choice(
                 f"    Файл плана:     {config.plan_file}", value="plan_file"
+            ),
+            questionary.Choice(
+                f"    Тесты:          {_tests_label(config)}",
+                value="test_command",
             ),
             questionary.Choice(
                 f"    Макс. попыток:  {config.max_turns} (на шаг)", value="max_turns"
@@ -425,6 +548,7 @@ def _questionary_menu(config: Config) -> Config | None:
         if answer is None or answer == "quit":
             return None
         if answer == "start":
+            config = _sync_judge(_sync_escalation(config))
             try:
                 _save_global_default(config)
             except OSError:
@@ -466,6 +590,7 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             "fallback coach",
             provider_choices=FALLBACK_PROVIDER_PRESETS,
         )
+        config = _sync_escalation(config)
 
     elif setting == "coach_model":
         _, current_model = _effective_provider_model(
@@ -502,6 +627,22 @@ def _edit_setting_questionary(config: Config, setting: str) -> Config:
             "batch_judge_model",
             "Judge",
         )
+        config = _sync_judge(config)
+
+    elif setting == "tester":
+        config = _questionary_select_provider_model(
+            config,
+            "tester_provider",
+            "tester_model",
+            "Tester",
+        )
+
+    elif setting == "test_command":
+        val = questionary.text(
+            f"Команда тестов (пусто = автодетект, текущая: {_tests_label(config)}):"
+        ).ask()
+        if val is not None:
+            config = dataclasses.replace(config, test_command=val.strip())
 
     elif setting == "context_limit":
         choices = [
@@ -549,24 +690,25 @@ def _fallback_menu(config: Config) -> Config | None:
             if config.coach_model
             else "по умолчанию"
         )
+        if config.coach_effort:
+            coach_display = f"{coach_display} {config.coach_effort}"
         player_display = (
             short_model_name(config.player_model)
             if config.player_model
             else "по умолчанию"
         )
-        fallback_display = _provider_model_label(
-            config.coach_fallback_provider,
-            config.coach_fallback_model,
-        )
-        judge_display = _provider_model_label(
-            config.batch_judge_provider,
-            config.batch_judge_model,
-        )
+        if config.player_effort:
+            player_display = f"{player_display} {config.player_effort}"
+        fallback_display = _provider_model_label(*_escalation_pair(config))
+        judge_display = _provider_model_label(*_judge_pair(config))
+        tester_display = _provider_model_label(*_tester_pair(config))
         print(f"  [p] Player:        {config.player_provider} ({player_display})")
         print(f"  [c] Coach:         {config.coach_provider} ({coach_display})")
         print(f"  [f] Escalation:    {fallback_display}")
         print(f"  [j] Judge:         {judge_display}")
+        print(f"  [t] Tester:        {tester_display}")
         print(f"  [1] Файл плана:    {config.plan_file}")
+        print(f"  [s] Тесты:         {_tests_label(config)}")
         print(f"  [2] Макс. попыток: {config.max_turns}")
         print(f"  [3] Context Limit: {_format_context_limit(config.context_limit)}")
         print(f"  [l] Run LDB")
@@ -577,6 +719,7 @@ def _fallback_menu(config: Config) -> Config | None:
         answer = input("  › ").strip().lower()
 
         if answer == "":
+            config = _sync_judge(_sync_escalation(config))
             try:
                 _save_global_default(config)
             except OSError:
@@ -605,10 +748,19 @@ def _fallback_menu(config: Config) -> Config | None:
                 "Fallback",
                 provider_choices=FALLBACK_PROVIDER_PRESETS,
             )
+            config = _sync_escalation(config)
         elif answer == "j":
             config = _fallback_select_provider_model(
                 config, "batch_judge_provider", "batch_judge_model", "Judge"
             )
+            config = _sync_judge(config)
+        elif answer == "t":
+            config = _fallback_select_provider_model(
+                config, "tester_provider", "tester_model", "Tester"
+            )
+        elif answer == "s":
+            val = input(f"  Тесты [{_tests_label(config)}]: ").strip()
+            config = dataclasses.replace(config, test_command=val)
         elif answer == "l":
             return dataclasses.replace(config, ldb_run_requested=True)
         elif answer == "d":
@@ -673,10 +825,10 @@ def run_ldb_menu(config: "Config") -> "Config":
             questionary.Separator("─── Pipeline ───────────────────"),
             questionary.Choice(f"    Mode:   {config.ldb_mode}", value="mode"),
             questionary.Separator("─── Agents (each its own provider/model) ─────"),
-            questionary.Choice(f"    Input:  {_provider_model_label(config.ldb_input_provider, config.ldb_input_model)}", value="input"),
-            questionary.Choice(f"    Player: {_provider_model_label(config.ldb_player_provider, config.ldb_player_model)}", value="player"),
-            questionary.Choice(f"    Tester: {_provider_model_label(config.ldb_tester_provider, config.ldb_tester_model)}", value="tester"),
-            questionary.Choice(f"    Fixer:  {_provider_model_label(config.ldb_fixer_provider, config.ldb_fixer_model)}", value="fixer"),
+            questionary.Choice(f"    Input:  {_provider_model_label(config.ldb_input_provider, config.ldb_input_model, effort=config.ldb_input_effort)}", value="input"),
+            questionary.Choice(f"    Player: {_provider_model_label(config.ldb_player_provider, config.ldb_player_model, effort=config.ldb_player_effort)}", value="player"),
+            questionary.Choice(f"    Tester: {_provider_model_label(config.ldb_tester_provider, config.ldb_tester_model, effort=config.ldb_tester_effort)}", value="tester"),
+            questionary.Choice(f"    Fixer:  {_provider_model_label(config.ldb_fixer_provider, config.ldb_fixer_model, effort=config.ldb_fixer_effort)}", value="fixer"),
             questionary.Separator("───────────────────────────────"),
             questionary.Choice("←   Back", value="back"),
         ]

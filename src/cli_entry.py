@@ -90,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--autonomous", action="store_true", default=None)
     go_parser.add_argument("--no-menu", action="store_true", default=False)
     go_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    go_parser.add_argument("--player", dest="player_spec", default=None)
+    go_parser.add_argument("--judge", dest="judge_spec", default=None)
+    go_parser.add_argument("--tester", dest="tester_spec", default=None)
+    go_parser.add_argument("--escalation", dest="escalation_spec", default=None)
+    go_parser.add_argument("--no-escalation", action="store_true", default=False)
+    go_parser.add_argument("--test-command", default=None)
+    go_parser.add_argument("--test-command-scoped", default=None)
+    go_parser.add_argument("--max-rounds", type=int, default=None)
 
     go_parser.add_argument(
         "--player-provider",
@@ -290,28 +298,61 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run_go(args, config=None, *, session_cls=CoachPlayerSession):
-    """Run the coach-player session."""
-    if config is None:
-        config = resolve_go_config(args)
+    """Run the v4 player → judge loop."""
+    from src.loop.agents import LiveAgents
+    from src.loop.config import apply_saved_config, config_from_namespace
+    from src.loop.run import run as run_loop
 
-    plan_path = Path(config.working_dir) / config.plan_file
+    loop_cfg = config_from_namespace(args)
+    if config is not None:
+        loop_cfg = apply_saved_config(loop_cfg, config, args)
+
+    plan_path = Path(loop_cfg.working_dir) / loop_cfg.plan_file
     if not plan_path.exists():
         print(f"Ошибка: файл плана не найден: {plan_path}")
         sys.exit(1)
 
-    requirements = plan_path.read_text()
-    print(f"\nПлан: {plan_path} ({len(requirements)} байт)")
+    print(f"\nПлан: {plan_path}", flush=True)
+    print(
+        f"player {loop_cfg.player_provider}({loop_cfg.player_model}"
+        f"{' ' + loop_cfg.player_effort if loop_cfg.player_effort else ''})  "
+        f"judge {loop_cfg.judge_provider}({loop_cfg.judge_model}"
+        f"{' ' + loop_cfg.judge_effort if loop_cfg.judge_effort else ''})  "
+        f"tester {loop_cfg.tester_provider}({loop_cfg.tester_model}"
+        f"{' ' + loop_cfg.tester_effort if loop_cfg.tester_effort else ''})",
+        flush=True,
+    )
+    print(f"тесты {loop_cfg.test_command or 'автодетект'}", flush=True)
 
-    try:
-        session = session_cls(config, requirements, str(plan_path))
-        items = parse_requirements(requirements)
-        tracker = PlanTracker(items)
-        executor = BatchExecutor(session, tracker, session.router)
-        await executor.run()
-        sys.exit(0)
-    except RuntimeError as exc:
-        print(f"\nОшибка: {exc}")
-        sys.exit(1)
+    def _ready(provider: str, model: str) -> tuple[bool, str]:
+        from src.config import load_provider_configs
+        from src.providers import create_provider
+
+        try:
+            inst = create_provider(
+                provider, load_provider_configs(loop_cfg.working_dir).get(provider)
+            )
+        except Exception as exc:
+            return False, str(exc)
+        return inst.check_ready()
+
+    agents = LiveAgents(loop_cfg.working_dir, verbose=loop_cfg.verbose)
+    outcome = await run_loop(loop_cfg, agents=agents, check_ready=_ready)
+    if outcome.reason == "nothing_to_do":
+        print(
+            f"делать нечего: все фазы плана ({outcome.phases_total}) уже отмечены [x]",
+            flush=True,
+        )
+    elif outcome.exit_code == 0:
+        print(
+            f"готово: закрыто фаз {outcome.phases_shipped} из {outcome.phases_total}",
+            flush=True,
+        )
+    elif outcome.reason:
+        print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
+    if outcome.run_dir:
+        print(f"журнал: {outcome.run_dir}", flush=True)
+    sys.exit(outcome.exit_code)
 
 
 def run_ldb(args) -> None:
@@ -390,23 +431,19 @@ def _execute_ldb(config) -> None:
 
 
 def run_history(args):
-    """Show run history."""
-    working_dir = Path(args.working_dir).resolve()
-    recorder = RunRecorder(f"{working_dir}/.g3/knowledge")
-    records = recorder.history(limit=args.limit)
+    """Show recent v4 runs from .g3/runs."""
+    from src.loop.ledger import history
 
-    if not records:
+    rows = history(Path(args.working_dir).resolve(), limit=args.limit)
+    if not rows:
         print("История пуста.")
         return
-
-    print(f"\n--- История ({len(records)} запусков) ---\n")
-    for record in records:
-        icon = "✓" if record.status == "approved" else "✗"
-        print(f"  {icon} {record.timestamp}")
-        print(f"      Ходов: {record.turns_used}/{record.max_turns}")
-        print(f"      Время: {record.total_duration_s:.0f}s")
-        print(f"      Статус: {record.status}")
-        print()
+    print(f"\n--- История ({len(rows)} запусков) ---\n")
+    for row in rows:
+        print(
+            f"  {row['slug']}: {row['reason'] or '?'}  "
+            f"{row['phases_shipped']}/{row['phases_total']}  {row['plan']}"
+        )
 
 
 def main():

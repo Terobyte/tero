@@ -32,6 +32,7 @@ def test_runtime_controls_offer_native_codex_presets():
     assert "GPT-5.6 Luna" in preset_labels
     assert "GPT-6 Astra" in preset_labels
     assert "Spark 1.3" in preset_labels
+    assert "Spark 1.3 free" in preset_labels
     assert "GLM-5.1" not in preset_labels
 
 
@@ -70,7 +71,7 @@ def test_provider_presets_drop_zai_and_kilo():
     assert "kilo" not in PROVIDER_PRESETS.values()
     assert "black" not in PROVIDER_PRESETS.values()
     assert "turbo" not in PROVIDER_PRESETS.values()
-    assert PROVIDER_PRESETS["Muse Code (Spark)"] == "muse"
+    assert PROVIDER_PRESETS["Muse API (свой ключ)"] == "muse"
     assert PROVIDER_PRESETS["Cursor Headless"] == "cursor"
     assert PROVIDER_CHOICES == [
         "muse",
@@ -83,18 +84,26 @@ def test_provider_presets_drop_zai_and_kilo():
 
 
 def test_muse_provider_and_model_presets_are_listed():
-    assert PROVIDER_PRESETS["Muse Code (Spark)"] == "muse"
+    assert PROVIDER_PRESETS["Muse API (свой ключ)"] == "muse"
     assert MUSE_MODEL_PRESETS == {
-        "Muse Spark 1.3": "muse-spark-1.3",
-        "Muse Spark 1.2": "muse-spark-1.2",
+        "Muse Spark 1.3 (свой ключ)": "muse-spark-1.3",
+        "Muse Spark 1.2 (свой ключ)": "muse-spark-1.2",
     }
     assert "muse" in PROVIDER_CHOICES
 
 
 def test_opencode_presets_are_correct():
     assert PROVIDER_PRESETS["OpenCode (MIMO/Kimi)"] == "opencode"
+    assert OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"] == (
+        "opencode/muse-spark-1.3-contributor-free"
+    )
     assert OPENCODE_MODEL_PRESETS["MiniMax M2.5 (free)"] == "opencode/minimax-m2.5-free"
     assert "zai/glm-5.1" not in OPENCODE_MODEL_PRESETS.values()
+
+
+def test_spark_free_short_name_differs_from_key_path():
+    assert short_model_name("muse-spark-1.3") == "SPARK"
+    assert short_model_name("opencode/muse-spark-1.3-contributor-free") == "SPARK$0"
 
 
 def test_save_global_default_persists_core_settings(tmp_path, monkeypatch):

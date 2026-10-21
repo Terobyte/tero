@@ -44,6 +44,9 @@ class CursorProvider:
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ) -> AsyncIterator:
         """Run Cursor CLI and yield adapted messages."""
         self._reset_usage()
@@ -53,6 +56,7 @@ class CursorProvider:
             model=model,
             working_dir=working_dir,
             prompt=full_prompt,
+            effort=effort,
         )
 
         _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
@@ -72,8 +76,11 @@ class CursorProvider:
         model: str = "",
         working_dir: str = "",
         prompt: str = "",
+        effort: str = "",
     ) -> list[str]:
-        resolved_model = model or self.config.default_model
+        from .effort import cursor_model_arg
+
+        resolved_model = cursor_model_arg(model or self.config.default_model, effort)
         cmd = [self.config.command, "-p"]
         if self.config.force:
             cmd.append("--force")

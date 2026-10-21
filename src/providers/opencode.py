@@ -58,6 +58,9 @@ class OpenCodeProvider:
         max_turns: int = 30,
         model: str = "",
         context_limit: int = 0,
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ):
         """Run OpenCode agent via CLI and yield adapted messages.
 
@@ -72,7 +75,7 @@ class OpenCodeProvider:
             AdaptedMessage objects for each relevant event
         """
         self._reset_usage()
-        cmd = self._build_command(model, working_dir)
+        cmd = self._build_command(model, working_dir, effort=effort)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
 
         _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=full_prompt.encode("utf-8"), stall_timeout=120.0)
@@ -93,9 +96,14 @@ class OpenCodeProvider:
         finally:
             await _gen.aclose()
 
-    def _build_command(self, model: str = "", working_dir: str = "") -> list[str]:
+    def _build_command(
+        self, model: str = "", working_dir: str = "", effort: str = ""
+    ) -> list[str]:
         """Build opencode run CLI command."""
+        from .effort import normalize_effort
+
         resolved_model = model or self.config.default_model
+        resolved_effort = normalize_effort(effort)
 
         cmd = [
             self.config.command,
@@ -110,6 +118,9 @@ class OpenCodeProvider:
 
         if resolved_model:
             cmd.extend(["-m", resolved_model])
+
+        if resolved_effort:
+            cmd.extend(["--variant", resolved_effort])
 
         cmd.append("-")  # read from stdin
 
@@ -161,11 +172,18 @@ class OpenCodeProvider:
         raise ProviderError(f"opencode exited with code {returncode}: {detail}")
 
     def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
-        """Build separate tool-use and tool-result messages for one command."""
+        """Build separate tool-use and tool-result messages for one command.
+
+        Pass the real `state.input` dict through (e.g. `{"filePath": ...}` for
+        a read, `{"command": ...}` for bash) so `_activity` can show the real
+        argument instead of a stringified dict.
+        """
         state = part.get("state", {})
         call_id = part.get("callID", "")
-        inp = state.get("input", {})
-        cmd = inp.get("command") or inp.get("description") or str(inp)
+        tool = part.get("tool", "bash")
+        inp = dict(state.get("input") or {})
+        if tool == "bash" and "command" not in inp:
+            inp["command"] = inp.get("description") or str(inp)
         output = state.get("output", "")
         exit_code = state.get("metadata", {}).get("exit")
         result_text = output[:MAX_TOOL_OUTPUT]
@@ -176,8 +194,8 @@ class OpenCodeProvider:
                 content=[
                     ToolUseBlock(
                         id=call_id,
-                        name=part.get("tool", "bash"),
-                        input={"command": cmd},
+                        name=tool,
+                        input=inp,
                     )
                 ],
                 stop_reason="tool_use",

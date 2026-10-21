@@ -58,6 +58,7 @@ async def _collect_text(
     model: str = "",
     context_limit: int = 0,
     compact_threshold: float = 0.6,
+    effort: str = "",
 ) -> str:
     """Collect full text output from a provider call.
 
@@ -85,6 +86,8 @@ async def _collect_text(
         run_kwargs["context_limit"] = effective_limit
     if "compact_threshold" in params or accepts_kwargs:
         run_kwargs["compact_threshold"] = compact_threshold
+    if "effort" in params or accepts_kwargs:
+        run_kwargs["effort"] = effort
 
     parts: list[str] = []
     async for message in provider.run(**run_kwargs):
@@ -432,6 +435,7 @@ class LdbRunner:
             entry,
             working_dir=self.working_dir,
             model=self.config.ldb_input_model,
+            effort=self.config.ldb_input_effort,
         )
 
         func_name = entry.rpartition(".")[2] if "." in entry else entry
@@ -496,6 +500,7 @@ class LdbRunner:
             working_dir=self.working_dir,
             max_turns=1,
             model=self.config.ldb_player_model,
+            effort=self.config.ldb_player_effort,
         )
 
         if not raw.strip():
@@ -523,6 +528,7 @@ class LdbRunner:
             working_dir=self.working_dir,
             max_turns=30,
             model=self.config.ldb_tester_model,
+            effort=self.config.ldb_tester_effort,
         )
 
         if not raw.strip():
@@ -570,6 +576,7 @@ class LdbRunner:
                 working_dir=self.working_dir,
                 max_turns=50,
                 model=self.config.ldb_fixer_model,
+                effort=self.config.ldb_fixer_effort,
             )
         except Exception:
             return None

@@ -178,12 +178,36 @@ def test_adapt_tool_use_event():
     tool_result = tool_result_msg.content[0]
     assert tool_use.type == "tool_use"
     assert tool_use.name == "bash"
-    assert tool_use.input == {"command": "ls -la"}
+    assert tool_use.input == {"command": "ls -la", "description": "List files"}
     assert tool_use.id == "call-001"
     assert tool_result.type == "tool_result"
     assert tool_result.tool_use_id == "call-001"
     assert tool_result.is_error is False
     assert "total 42" in tool_result.content
+
+
+def test_adapt_tool_use_event_non_bash_keeps_real_input_dict():
+    """Non-bash tools (e.g. read) pass the real input dict through, so
+    `_activity` can show `read src/foo.py` instead of `read {'filePath': ...}`."""
+    provider = OpenCodeProvider(OpenCodeConfig())
+    event = {
+        "type": "tool_use",
+        "part": {
+            "type": "tool",
+            "tool": "read",
+            "callID": "call-003",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "src/foo.py"},
+                "output": "file contents",
+                "metadata": {"exit": 0},
+            },
+        },
+    }
+    messages = provider._adapt_opencode_event(event)
+    tool_use = messages[0].content[0]
+    assert tool_use.name == "read"
+    assert tool_use.input == {"filePath": "src/foo.py"}
 
 
 def test_adapt_tool_use_event_nonzero_exit():
@@ -711,7 +735,7 @@ def test_fallback_menu_accepts_opencode_player(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["p", "opencode", "kimi-k2", ""])
+    answers = iter(["p", "opencode", "kimi-k2", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
@@ -726,7 +750,7 @@ def test_fallback_menu_accepts_muse_player(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["p", "muse", "muse-spark-1.3", ""])
+    answers = iter(["p", "muse", "muse-spark-1.3", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
@@ -741,7 +765,7 @@ def test_fallback_menu_accepts_opencode_coach(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["c", "opencode", "mimo-omni", ""])
+    answers = iter(["c", "opencode", "mimo-omni", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
@@ -756,7 +780,7 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -787,7 +811,7 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -818,7 +842,7 @@ def test_questionary_player_muse_uses_muse_model_presets(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["Muse Code (Spark)", "Muse Spark 1.3"])
+    prompts = iter(["Muse API (свой ключ)", "Muse Spark 1.3 (свой ключ)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -849,7 +873,7 @@ def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["f", "opencode", "kimi-k2", ""])
+    answers = iter(["f", "opencode", "kimi-k2", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
@@ -901,7 +925,7 @@ def test_questionary_coach_change_syncs_batch_pre_and_post_when_they_follow_coac
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -946,7 +970,7 @@ def test_fallback_menu_coach_change_syncs_batch_pre_and_post(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["c", "opencode", "kimi-k2", ""])
+    answers = iter(["c", "opencode", "kimi-k2", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(
@@ -974,7 +998,7 @@ def test_fallback_menu_can_edit_batch_judge_provider(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["j", "claude", "opus", ""])
+    answers = iter(["j", "claude", "opus", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config(batch_judge_provider="codex", batch_judge_model=""))
@@ -988,7 +1012,7 @@ def test_questionary_muse_provider_selects_spark_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["Muse Code (Spark)", "Muse Spark 1.3"])
+    prompts = iter(["Muse API (свой ключ)", "Muse Spark 1.3 (свой ключ)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):

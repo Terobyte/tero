@@ -58,12 +58,22 @@ class ClaudeNativeProvider:
         model: str = "",
         context_limit: int = 0,
         compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ):
         """Run the native Claude CLI and yield JSON events."""
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         cmd = self._build_command(
-            model, max_turns, system_prompt, context_limit, compact_threshold
+            model,
+            max_turns,
+            system_prompt,
+            context_limit,
+            compact_threshold,
+            output_schema=output_schema,
+            read_only=read_only,
+            effort=effort,
         )
         env = self._clean_env()
 
@@ -143,10 +153,16 @@ class ClaudeNativeProvider:
         system_prompt: str = "",
         context_limit: int = 0,
         compact_threshold: float = DEFAULT_COMPACT_THRESHOLD,
+        output_schema: dict | None = None,
+        read_only: bool = False,
+        effort: str = "",
     ) -> list:
         """Build the CLI command with arguments."""
+        from .effort import normalize_effort
+
         resolved_model = model or self.config.default_model
         resolved_model = _MODEL_ALIASES.get(resolved_model, resolved_model)
+        resolved_effort = normalize_effort(effort)
 
         cmd = [
             self.config.command,
@@ -161,6 +177,8 @@ class ClaudeNativeProvider:
             "--output-format",
             "stream-json",
         ]
+        if resolved_effort:
+            cmd.extend(["--effort", resolved_effort])
 
         # Disable CLI auto-compact within a single player turn.
         # The CLI applies autoCompactThreshold against its own internal window
@@ -174,5 +192,11 @@ class ClaudeNativeProvider:
 
         if system_prompt:
             cmd.extend(["--system-prompt", system_prompt])
+
+        if output_schema:
+            cmd.extend(["--json-schema", json.dumps(output_schema)])
+
+        if read_only:
+            cmd.extend(["--disallowedTools", "Edit,Write,NotebookEdit"])
 
         return cmd

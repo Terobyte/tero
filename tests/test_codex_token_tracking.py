@@ -318,8 +318,8 @@ def test_build_command_includes_approval_policy_when_not_bypassing():
 
     assert "-s" in cmd
     assert "read-only" in cmd
-    assert "-a" in cmd
-    assert "on-request" in cmd
+    assert "-a" not in cmd
+    assert any("approval_policy=on-request" in part for part in cmd)
 
 
 def test_build_command_disables_tools_for_text_only_runs():
@@ -338,8 +338,7 @@ def test_build_command_disables_tools_for_text_only_runs():
     assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
     assert "-s" in cmd
     assert "read-only" in cmd
-    assert "-a" in cmd
-    assert "never" in cmd
+    assert "-a" not in cmd
     assert cmd.count("--disable") >= 4
     assert "undo" in cmd
     assert "shell_tool" in cmd

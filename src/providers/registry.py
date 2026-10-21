@@ -99,17 +99,10 @@ class ProviderRegistry:
             )
             return CursorProvider(cursor_cfg)
 
-        if provider_type in ("muse", "muse_code"):
-            from .muse import MuseProvider, MuseConfig
+        if provider_type == "muse":
+            from .muse import muse_from_config
 
-            muse_cfg = MuseConfig(
-                command=provider_config.get("command", "muse"),
-                default_model=provider_config.get("default_model", "muse-spark-1.3"),
-                display_name=provider_config.get("display_name", "Muse"),
-                yolo=provider_config.get("yolo", True),
-                trust_workspace=provider_config.get("trust_workspace", True),
-            )
-            return MuseProvider(muse_cfg)
+            return muse_from_config(provider_config)
 
         if provider_type == "codex":
             # Import here to avoid circular dependency
