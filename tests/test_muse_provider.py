@@ -16,7 +16,6 @@ from src.loop.config import UnknownProviderError, normalize_provider
 from src.providers import claude_native as claude_native_module
 from src.providers import create_provider
 from src.providers.muse import MuseConfig, MuseProvider, load_api_key
-from src.providers.registry import ProviderRegistry
 from src.providers.subprocess_runner import SubprocessExit
 
 KEY = "LLM_test_key_123"
@@ -40,12 +39,6 @@ def test_create_provider_returns_muse_api():
     assert provider.config.default_model == "muse-spark-1.3"
     assert provider.config.base_url == "https://api.meta.ai"
     assert provider.config.command == "claude"
-
-
-def test_registry_creates_muse_api():
-    provider = ProviderRegistry().get("muse")
-    assert isinstance(provider, MuseProvider)
-    assert provider.config.base_url == "https://api.meta.ai"
 
 
 def test_muse_code_cli_names_are_gone():

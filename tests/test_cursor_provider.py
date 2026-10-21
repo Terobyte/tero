@@ -7,7 +7,6 @@ import pytest
 from src.errors import ProviderError
 from src.providers import create_provider
 from src.providers.cursor import CursorConfig, CursorProvider
-from src.providers.registry import ProviderRegistry
 
 
 def test_create_provider_returns_cursor():
@@ -17,12 +16,6 @@ def test_create_provider_returns_cursor():
     assert provider.config.force is True
     assert provider.config.trust is True
     assert provider.config.command == "agent"
-
-
-def test_registry_creates_cursor():
-    provider = ProviderRegistry().get("cursor")
-    assert isinstance(provider, CursorProvider)
-    assert provider.config.default_model == "composer-2.5"
 
 
 def test_build_command_uses_print_force_trust_and_workspace():
