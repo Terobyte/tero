@@ -111,6 +111,14 @@ class PhaseOutcome:
 
 
 @dataclass
+class ProtectedTest:
+    """A tester's red test, restored byte-for-byte if the player touches it."""
+
+    digest: str
+    content: str
+
+
+@dataclass
 class _State:
     round: int = 0
     escalated: bool = False
@@ -122,8 +130,7 @@ class _State:
     gate_output: str = ""
     last_red_fp: frozenset[str] | None = None
     last_red_tree: str | None = None
-    protected: dict[str, str] = field(default_factory=dict)
-    protected_content: dict[str, str] = field(default_factory=dict)
+    protected: dict[str, ProtectedTest] = field(default_factory=dict)
     protected_by_id: dict[str, str] = field(default_factory=dict)
 
 
@@ -274,15 +281,13 @@ class _PhaseRunner:
         # (and look like no progress) for each extra file the player touched.
         self.state.suite_delta = []
         violated = False
-        for path, digest in list(self.state.protected.items()):
+        for path, test in list(self.state.protected.items()):
             current = file_hashes(self.repo, [path]).get(path)
-            if current == digest:
+            if current == test.digest:
                 continue
-            content = self.state.protected_content.get(path)
-            if content is not None:
-                target = self.repo / path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content)
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(test.content)
             self.ledger.event("protected_violation", path=path, round=self.state.round)
             print(f"  защищённый тест изменён: {path} — откат", flush=True)
             violated = True
@@ -451,7 +456,6 @@ class _PhaseRunner:
             target = self.repo / path
             target.unlink(missing_ok=True)
             self.state.protected.pop(path, None)
-            self.state.protected_content.pop(path, None)
             note = "тест снят, чини код"
             self.state.discarded.append(f"{fid}: {note}")
             for found in self.state.open_findings:
@@ -554,8 +558,9 @@ class _PhaseRunner:
             red_confirmed += 1
             content = (self.repo / path).read_text() if (self.repo / path).exists() else ""
             digest = file_hashes(self.repo, [path]).get(path, "")
-            self.state.protected[path] = digest
-            self.state.protected_content[path] = content
+            self.state.protected[path] = ProtectedTest(digest, content)
+            # Known quirk (B53): a second test under the same finding id takes the id over,
+            # and the first stays protected with no id to discard it by.
             self.state.protected_by_id[fid] = path
             for item in self.state.open_findings:
                 if item.id == fid:
