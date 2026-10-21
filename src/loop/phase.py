@@ -19,6 +19,7 @@ from src.loop.git import (
     has_staged_changes,
     head,
     list_files,
+    list_files_unignored,
     list_worktree_files,
     rollback,
     secret_paths,
@@ -42,6 +43,9 @@ SUITE_CONFIG_NAMES = {
 }
 # A new one of these can skip or rewrite tests without touching a test file.
 SUITE_HOOK_NAMES = {"conftest.py", "pytest.ini"}
+# The judge's CLI loads these from the workspace (MCP servers, hooks, permissions).
+AGENT_CONFIG_DIRS = (".claude", ".codex", ".cursor", ".gemini", ".opencode")
+GUARDED_PATHSPECS = [*(f":(glob)**/{name}" for name in sorted(SUITE_HOOK_NAMES)), *AGENT_CONFIG_DIRS]
 
 UNAVAILABLE_PLAYER = {
     "status": "blocked",
@@ -163,6 +167,7 @@ class _PhaseRunner:
         exclude_tero(repo)
         self.checkpoint = head(repo)
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
+        self.guarded = _read_guarded(repo, self.suite_hashes)
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
 
@@ -281,11 +286,25 @@ class _PhaseRunner:
             if current and current != digest:
                 self.state.suite_delta.append(path)
 
-        for path in list_worktree_files(self.repo):
-            if Path(path).name in SUITE_HOOK_NAMES and path not in self.suite_hashes:
-                (self.repo / path).unlink(missing_ok=True)
-                self.ledger.event("suite_violation", path=path, round=self.state.round)
-                print(f"  новый хук тестов вне протокола: {path} — удалён", flush=True)
+        # Not a burned round: the player's code still goes to the gate and judge.
+        current = set(list_files_unignored(self.repo, GUARDED_PATHSPECS)) - set(self.suite_hashes)
+        for path in sorted(current | set(self.guarded)):
+            target = self.repo / path
+            original = self.guarded.get(path)
+            if original is not None and _plain_file(target) and target.read_bytes() == original:
+                continue
+            target.unlink(missing_ok=True)
+            if original is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(original)
+            hook = Path(path).name in SUITE_HOOK_NAMES
+            self.ledger.event(
+                "suite_violation" if hook else "agent_config_violation",
+                path=path,
+                round=self.state.round,
+            )
+            what = "хук тестов" if hook else "конфиг агента"
+            print(f"  {what} изменён вне протокола: {path} — откат", flush=True)
         return violated
 
     def _gate(self) -> GateResult | None:
@@ -704,3 +723,16 @@ def _tail(text: str, limit: int = 200) -> str:
         return ""
     lines = text.splitlines()
     return "\n".join(lines[-limit:])
+
+
+def _plain_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
+
+
+def _read_guarded(repo: Path, suite_hashes: dict[str, str]) -> dict[str, bytes]:
+    # Tracked hooks are in suite_hashes: their edits reach the judge as suite_delta.
+    return {
+        path: (repo / path).read_bytes()
+        for path in list_files_unignored(repo, GUARDED_PATHSPECS)
+        if path not in suite_hashes and _plain_file(repo / path)
+    }

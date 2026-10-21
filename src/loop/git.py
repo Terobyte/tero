@@ -145,6 +145,11 @@ def list_worktree_files(repo: str | Path) -> list[str]:
     return _names(repo, "ls-files", "-co", "--exclude-standard")
 
 
+def list_files_unignored(repo: str | Path, pathspecs: list[str]) -> list[str]:
+    # no --exclude-standard: a gitignored file is still on disk and still gets loaded
+    return _names(repo, "ls-files", "-co", "--", *pathspecs)
+
+
 def current_branch(repo: str | Path) -> str:
     return _git(repo, "branch", "--show-current").strip()
 
@@ -166,8 +171,9 @@ def _branch_exists(repo: str | Path, name: str) -> bool:
 
 
 def _names(repo: str | Path, *args: str) -> list[str]:
-    # -z: git quotes non-ASCII, tab and quote characters in plain path output
-    return [name for name in _git(repo, *args, "-z").split("\0") if name]
+    # -z: git quotes non-ASCII, tab and quote characters in plain path output.
+    # It goes right after the subcommand so a "--" pathspec list cannot swallow it.
+    return [name for name in _git(repo, args[0], "-z", *args[1:]).split("\0") if name]
 
 
 def _git(repo: str | Path, *args: str) -> str:

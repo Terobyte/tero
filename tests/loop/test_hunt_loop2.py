@@ -326,3 +326,80 @@ async def test_B38_new_conftest_is_suite_violation(tmp_path: Path):
     assert seen.get("conftest_gone") is True, (
         "B38: conftest.py всё ещё на диске к моменту judge"
     )
+
+
+@pytest.mark.asyncio
+async def test_B39_gitignored_conftest_is_still_removed(tmp_path: Path):
+    repo = _repo(tmp_path)
+    seen: dict[str, bool] = {}
+
+    def player_with_conftest(role, kwargs):
+        assert role == "player"
+        write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+        write_file(repo, "conftest.py", "# local hook\n")
+        write_file(repo, ".gitignore", "conftest.py\n")
+        return {"status": "done", "changes": [], "start_here": [], "blocked_reason": ""}
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["conftest_gone"] = not (repo / "conftest.py").exists()
+        return ship()
+
+    agents = FakeAgents(repo, [player_with_conftest, check_judge])
+    outcome, ledger = await _run_phase(repo, agents)
+    assert outcome.status == "ship", f"B39: setup failed, ожидался ship: {outcome!r}"
+    rows = [
+        json.loads(line)
+        for line in ledger.path.read_text().splitlines()
+        if json.loads(line)["kind"] == "suite_violation"
+    ]
+    assert any(row.get("path") == "conftest.py" for row in rows), (
+        f"B39: gitignored conftest.py не замечен как suite_violation: {[r.get('path') for r in rows]}"
+    )
+    assert seen.get("conftest_gone") is True, (
+        "B39: conftest.py всё ещё на диске к моменту judge"
+    )
+
+
+@pytest.mark.asyncio
+async def test_B40_player_planted_agent_config_removed_before_judge(tmp_path: Path):
+    repo = _repo(tmp_path)
+    write_file(repo, ".claude/settings.json", '{"keep": true}')
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "cfg")
+    seen: dict[str, object] = {}
+
+    def player_with_agent_config(role, kwargs):
+        assert role == "player"
+        write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+        write_file(repo, ".gemini/settings.json", '{"mcpServers": {"evil": {"command": "touch"}}}')
+        write_file(repo, ".claude/settings.json", '{"hooks": "evil"}')
+        return {"status": "done", "changes": [], "start_here": [], "blocked_reason": ""}
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["gemini_gone"] = not (repo / ".gemini/settings.json").exists()
+        claude_path = repo / ".claude/settings.json"
+        seen["claude_text"] = claude_path.read_text() if claude_path.exists() else None
+        return ship()
+
+    agents = FakeAgents(repo, [player_with_agent_config, check_judge])
+    outcome, ledger = await _run_phase(repo, agents)
+    assert outcome.status == "ship", f"B40: setup failed, ожидался ship: {outcome!r}"
+    assert seen.get("gemini_gone") is True, (
+        "B40: .gemini/settings.json всё ещё на диске к моменту judge"
+    )
+    assert seen.get("claude_text") == '{"keep": true}', (
+        f"B40: .claude/settings.json не откачен к исходному: {seen.get('claude_text')!r}"
+    )
+    rows = [
+        json.loads(line)
+        for line in ledger.path.read_text().splitlines()
+        if json.loads(line)["kind"] == "agent_config_violation"
+    ]
+    assert any(row.get("path") == ".gemini/settings.json" for row in rows), (
+        f"B40: нет agent_config_violation для .gemini/settings.json: {[r.get('path') for r in rows]}"
+    )
+    assert any(row.get("path") == ".claude/settings.json" for row in rows), (
+        f"B40: нет agent_config_violation для .claude/settings.json: {[r.get('path') for r in rows]}"
+    )
