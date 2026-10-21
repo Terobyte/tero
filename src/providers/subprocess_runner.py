@@ -7,6 +7,8 @@ claude_native.py, codex.py, and opencode.py.
 
 import asyncio
 import json
+import os
+import signal
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
@@ -98,7 +100,8 @@ async def run_subprocess_jsonl(
         - Stderr is drained concurrently from process start to avoid the OS
           pipe-buffer deadlock: a child that writes >64 KB to stderr before
           closing stdout blocks until someone reads it.
-        - The subprocess is killed in the finally block if it has not exited.
+        - The subprocess runs in its own process group; the whole group is
+          killed when the run ends, times out or is cancelled.
         - stall_timeout: if > 0, stop reading stdout if no bytes arrive within
           that many seconds (useful for providers that hang silently).
     """
@@ -114,6 +117,9 @@ async def run_subprocess_jsonl(
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
             env=env,
+            # Own process group: background jobs the CLI started (`npm run dev &`)
+            # die with it instead of holding the pipes or outliving the run.
+            start_new_session=True,
         )
         # Drain stderr from the start: a child that fills the stderr pipe
         # before closing stdout would block forever, and proc.wait() would
@@ -135,7 +141,7 @@ async def run_subprocess_jsonl(
                     pass
 
         async for line_bytes in _iter_stdout(
-            proc.stdout, stall_timeout=stall_timeout, on_stall=lambda: _safe_kill(proc)
+            proc.stdout, stall_timeout=stall_timeout, on_stall=lambda: _kill_group(proc)
         ):
             line = line_bytes.decode("utf-8", errors="replace").strip()
             if not line:
@@ -146,14 +152,16 @@ async def run_subprocess_jsonl(
                 pass
 
         await proc.wait()
+        _kill_group(proc)
         stderr_bytes = await stderr_task
 
         yield SubprocessExit(returncode=proc.returncode, stderr=stderr_bytes)
 
     finally:
-        if proc and proc.returncode is None:
-            _safe_kill(proc)
-            await proc.wait()
+        if proc is not None:
+            _kill_group(proc)
+            if proc.returncode is None:
+                await proc.wait()
         if stderr_task is not None and not stderr_task.done():
             stderr_task.cancel()
 
@@ -162,9 +170,17 @@ async def _empty_bytes() -> bytes:
     return b""
 
 
-def _safe_kill(proc) -> None:
-    """Kill a subprocess, ignoring a race where it already exited."""
-    try:
-        proc.kill()
-    except ProcessLookupError:
-        pass
+def _kill_group(proc) -> None:
+    """Kill the subprocess and everything left in its process group."""
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int):
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass

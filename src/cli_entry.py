@@ -7,7 +7,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.config import Config, UnknownProviderError, apply_cli_args, resolve_config
+from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
 
 
 def resolve_go_config(args) -> Config:
@@ -149,6 +149,9 @@ def main():
             config = prepare_go_config(args)
         except UnknownProviderError as exc:
             print(f"Ошибка: неизвестный провайдер: {exc}")
+            sys.exit(1)
+        except ConfigError as exc:
+            print(f"Ошибка: {exc}")
             sys.exit(1)
         try:
             asyncio.run(run_go(args, config=config))

@@ -396,8 +396,8 @@ async def test_run_tool_use_and_result():
 
 
 @pytest.mark.asyncio
-async def test_stderr_is_emitted():
-    """OpenCode stderr surfaces as non-fatal assistant message."""
+async def test_stderr_stays_out_of_the_answer_text():
+    """OpenCode stderr on a clean exit is not part of the answer and does not crash."""
     provider = OpenCodeProvider(OpenCodeConfig())
     events = [
         {"type": "text", "part": {"type": "text", "text": "ok"}},
@@ -415,7 +415,8 @@ async def test_stderr_is_emitted():
         async for c in provider.run("hi", "", ".", 10):
             chunks.append(c)
 
-    assert any("some warning" in c.get_text_content() for c in chunks)
+    assert any("ok" in c.get_text_content() for c in chunks)
+    assert not any("some warning" in c.get_text_content() for c in chunks)
 
 
 @pytest.mark.asyncio
@@ -677,7 +678,7 @@ def test_opencode_model_presets_exist():
     from src.menu import OPENCODE_MODEL_PRESETS
 
     values = list(OPENCODE_MODEL_PRESETS.values())
-    assert "opencode/minimax-m2.5-free" in values
+    assert "opencode/minimax-m3.1-flash-free" in values
 
 
 
@@ -746,7 +747,7 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M3.1 Flash (free)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -769,7 +770,7 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     updated = _edit_setting_questionary(Config(), "player_provider")
 
     assert updated.player_provider == "opencode"
-    assert updated.player_model == "opencode/minimax-m2.5-free"
+    assert updated.player_model == "opencode/minimax-m3.1-flash-free"
 
 
 def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
@@ -777,7 +778,7 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M2.5 (free)", "High"])
+    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M3.1 Flash (free)", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -800,7 +801,7 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     updated = _edit_setting_questionary(Config(), "player_provider")
 
     assert updated.player_provider == "opencode"
-    assert updated.player_model == "opencode/minimax-m2.5-free"
+    assert updated.player_model == "opencode/minimax-m3.1-flash-free"
 
 
 def test_questionary_player_muse_uses_muse_model_presets(monkeypatch):

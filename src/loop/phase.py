@@ -16,6 +16,7 @@ from src.loop.git import (
     commit,
     exclude_tero,
     file_hashes,
+    has_staged_changes,
     head,
     list_files,
     list_worktree_files,
@@ -39,6 +40,8 @@ SUITE_CONFIG_NAMES = {
     "Cargo.toml",
     "go.mod",
 }
+# A new one of these can skip or rewrite tests without touching a test file.
+SUITE_HOOK_NAMES = {"conftest.py", "pytest.ini"}
 
 UNAVAILABLE_PLAYER = {
     "status": "blocked",
@@ -250,7 +253,10 @@ class _PhaseRunner:
         return True
 
     def _protect_tests(self) -> bool:
+        # Restore every violation in one pass: one per round would burn a round
+        # (and look like no progress) for each extra file the player touched.
         self.state.suite_delta = []
+        violated = False
         for path, digest in list(self.state.protected.items()):
             current = file_hashes(self.repo, [path]).get(path)
             if current == digest:
@@ -262,18 +268,25 @@ class _PhaseRunner:
                 target.write_text(content)
             self.ledger.event("protected_violation", path=path, round=self.state.round)
             print(f"  защищённый тест изменён: {path} — откат", flush=True)
-            return True
+            violated = True
 
         for path, digest in self.suite_hashes.items():
             if not (self.repo / path).exists():
                 checkout_paths(self.repo, self.checkpoint, [path])
                 self.ledger.event("suite_violation", path=path, round=self.state.round)
                 print(f"  тест удалён вне протокола: {path} — восстановлен", flush=True)
-                return True
+                violated = True
+                continue
             current = file_hashes(self.repo, [path]).get(path)
             if current and current != digest:
                 self.state.suite_delta.append(path)
-        return False
+
+        for path in list_worktree_files(self.repo):
+            if Path(path).name in SUITE_HOOK_NAMES and path not in self.suite_hashes:
+                (self.repo / path).unlink(missing_ok=True)
+                self.ledger.event("suite_violation", path=path, round=self.state.round)
+                print(f"  новый хук тестов вне протокола: {path} — удалён", flush=True)
+        return violated
 
     def _gate(self) -> GateResult | None:
         if self.test_command is None:
@@ -445,7 +458,11 @@ class _PhaseRunner:
         return "next"
 
     async def _tester(self) -> bool:
-        routed = [item for item in self.state.open_findings if item.route == "tester"]
+        routed = [
+            item
+            for item in self.state.open_findings
+            if item.route == "tester" and not item.test_path
+        ]
         if not routed or not self.tester_enabled or self.test_command is None:
             return True
         before_tree = write_tree(self.repo)
@@ -487,6 +504,9 @@ class _PhaseRunner:
             if not is_test_path(path):
                 self._revert_path(before_tree, before_files, path)
                 self._note_finding(fid, "tester wrote a non-test path")
+                continue
+            if not (self.repo / path).is_file():
+                self._note_finding(fid, "tester reported a file it did not write")
                 continue
             result = run_files(
                 self.test_command,
@@ -602,7 +622,12 @@ class _PhaseRunner:
         mark_phase_done(self.plan_path, self.phase)
         stage_and_diff(self.repo, self.checkpoint)
         try:
-            sha = commit(self.repo, self.phase.title.lower()[:60])
+            # Nothing to commit when the phase was already done and the plan
+            # lives outside the repo: the phase still ships, on the current HEAD.
+            if has_staged_changes(self.repo):
+                sha = commit(self.repo, self.phase.title.lower()[:60])
+            else:
+                sha = head(self.repo)
         except GitError:
             self.plan_path.write_bytes(plan_bytes)
             raise

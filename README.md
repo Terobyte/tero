@@ -189,15 +189,7 @@ python3 -m pytest -q -p no:warnings tests
 - **You bring the agents.** tero orchestrates CLIs you have already installed and authenticated. It has no API clients of its own.
 - **The UI is in Russian:** menu, status lines and stop messages. Flags, exit codes and the ledger's event names are English.
 - **The status lines are flat.** They are tagged `[раунд N]`, without the spec's `[фаза i/n · раунд r]` prefix, and there is no per-phase "SHIP in N rounds → commit" summary line yet. Use `ledger.jsonl` for that.
-- **Known gap in the test gate:** tero hashes only the suite files tracked at the phase checkpoint. If a player *adds* a new `conftest.py` or `pytest.ini`, it can change gate results without being flagged. The judge still sees the file in the diff. A fix is tracked.
 - **"Different model" is a default, not a rule.** Nothing stops you from setting player and judge to the same model.
-
-## Docs
-
-- Design spec: [`docs/superpowers/specs/2026-09-13-tero-v4-design.md`](docs/superpowers/specs/2026-09-13-tero-v4-design.md) (in Russian)
-- Implementation plan: [`docs/superpowers/plans/2026-09-13-tero-v4-loop.md`](docs/superpowers/plans/2026-09-13-tero-v4-loop.md)
-
-Older specs in the same folders are history. v4 replaced the earlier g3 coach/player orchestrator with this loop.
 
 ## License
 

@@ -80,7 +80,7 @@ def test_opencode_command_passes_variant():
 
 
 def test_gemini_command_ignores_effort():
-    cmd = GeminiProvider()._build_command(model="gemini-3.8-flash", prompt="hi", effort="high")
+    cmd = GeminiProvider()._build_command(model="gemini-3.8-flash", effort="high")
     assert "--effort" not in cmd
     assert "--variant" not in cmd
     joined = " ".join(cmd)

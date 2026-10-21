@@ -113,9 +113,10 @@ class CodexProvider:
         cmd = self._build_command(
             model=model,
             working_dir=working_dir,
-            disable_tools=disable_tools or read_only,
+            disable_tools=disable_tools,
             output_schema=output_schema,
             effort=effort,
+            read_only=read_only,
         )
         env = self._build_env(system_prompt)
 
@@ -125,9 +126,6 @@ class CodexProvider:
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
-                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
-                    if stderr_message is not None:
-                        yield stderr_message
                     self._raise_for_returncode(event.returncode, event.stderr)
                 else:
                     adapted = self._adapt_codex_event(event)
@@ -145,6 +143,7 @@ class CodexProvider:
         disable_tools: bool = False,
         output_schema: dict | None = None,
         effort: str = "",
+        read_only: bool = False,
     ) -> list[str]:
         """Build codex exec CLI command."""
         from .effort import normalize_effort
@@ -163,9 +162,10 @@ class CodexProvider:
         if working_dir:
             cmd.extend(["-C", working_dir])
 
-        # Sandbox mode. Text-only runs should never need command execution.
+        # Sandbox mode. Text-only runs should never need command execution;
+        # read-only runs (the judge) keep the shell so they can read the code.
         # Codex 0.147 dropped `-a <policy>` on `exec`; use `-s` / `-c` instead.
-        if disable_tools:
+        if disable_tools or read_only:
             cmd.extend(["-s", "read-only"])
         elif self.config.bypass_approvals:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
@@ -274,25 +274,6 @@ class CodexProvider:
                 os.unlink(schema)
             except OSError:
                 pass
-
-    async def _stderr_message_from_bytes(
-        self, stderr_data: bytes
-    ) -> AdaptedMessage | None:
-        """Convert stderr bytes into a non-fatal assistant message."""
-        if isinstance(stderr_data, bytes):
-            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-        elif isinstance(stderr_data, str):
-            stderr_text = stderr_data.strip()
-        else:
-            return None
-        if not stderr_text:
-            return None
-
-        return AdaptedMessage(
-            role="assistant",
-            content=[TextBlock(text=f"[codex stderr] {stderr_text}")],
-            type="text",
-        )
 
     def _raise_for_returncode(
         self, returncode: int | None, stderr_data: bytes | str

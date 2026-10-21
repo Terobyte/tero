@@ -24,6 +24,10 @@ class UnknownProviderError(ValueError):
     """Provider name is not in the live set and is not a known alias."""
 
 
+class ConfigError(ValueError):
+    """A config file or setting is invalid."""
+
+
 def normalize_provider(name: str) -> str:
     raw = (name or "").strip()
     if not raw:
@@ -184,9 +188,14 @@ def short_model_name(model: str) -> str:
 
 def _load_yaml(path: Path) -> dict:
     if path.exists():
-        with open(path) as f:
-            data = yaml.safe_load(f)
-            return data if isinstance(data, dict) else {}
+        try:
+            with open(path) as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            where = f" (line {mark.line + 1})" if mark else ""
+            raise ConfigError(f"{path}: invalid YAML{where}") from exc
+        return data if isinstance(data, dict) else {}
     return {}
 
 
@@ -246,6 +255,15 @@ def _blank_means_unset(field: str) -> bool:
     return field.startswith(_BLANK_MEANS_UNSET_PREFIXES)
 
 
+_POSITIVE_FIELDS = {
+    "max_rounds",
+    "player_timeout_s",
+    "judge_timeout_s",
+    "tester_timeout_s",
+    "test_timeout_s",
+}
+
+
 def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
     """Coerce a yaml/env value to the dataclass field type; "" stays ""."""
     if value is None:
@@ -254,11 +272,16 @@ def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
         return value
     if isinstance(fallback, bool) and isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
-    if isinstance(fallback, int) and not isinstance(value, bool):
+    if isinstance(fallback, int) and not isinstance(fallback, bool):
+        if isinstance(value, bool):
+            raise ConfigError(f"{field}: expected a number, got {value!r}")
         try:
-            return int(value)
+            number = int(value)
         except (TypeError, ValueError):
-            return fallback
+            raise ConfigError(f"{field}: expected a number, got {value!r}") from None
+        if field in _POSITIVE_FIELDS and number < 1:
+            raise ConfigError(f"{field}: must be at least 1, got {number}")
+        return number
     if isinstance(fallback, str):
         return str(value)
     return value
@@ -350,8 +373,8 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     if test_command_scoped is not None:
         cfg = dataclasses.replace(cfg, test_command_scoped=test_command_scoped)
     max_rounds = getattr(args, "max_rounds", None)
-    if max_rounds:
-        cfg = dataclasses.replace(cfg, max_rounds=int(max_rounds))
+    if max_rounds is not None:
+        cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
 
     if getattr(args, "no_escalation", False):
         cfg = dataclasses.replace(cfg, escalation_provider="", escalation_model="", escalation_effort="")

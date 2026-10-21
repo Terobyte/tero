@@ -19,6 +19,7 @@ def test_codex_menu_presets_match_native_cli_models():
         "GPT-5.6 Terra": "gpt-5.6-terra",
         "GPT-5.6 Luna": "gpt-5.6-luna",
         "Default (~/.codex/config.toml)": "",
+        "Свой model ID…": "__custom__",
     }
     assert PROVIDER_PRESETS["Codex (native CLI)"] == "codex"
 
@@ -74,7 +75,7 @@ def test_opencode_presets_are_correct():
     assert OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"] == (
         "opencode/muse-spark-1.3-contributor-free"
     )
-    assert OPENCODE_MODEL_PRESETS["MiniMax M2.5 (free)"] == "opencode/minimax-m2.5-free"
+    assert OPENCODE_MODEL_PRESETS["MiniMax M3.1 Flash (free)"] == "opencode/minimax-m3.1-flash-free"
     assert "zai/glm-5.1" not in OPENCODE_MODEL_PRESETS.values()
 
 

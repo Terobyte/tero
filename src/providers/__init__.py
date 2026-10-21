@@ -42,12 +42,13 @@ def create_provider(
         opencode_cfg = OpenCodeConfig(
             command=provider_config.get("command", "opencode"),
             default_model=provider_config.get(
-                "default_model", "opencode/mimo-v2-pro-free"
+                "default_model", OpenCodeConfig.default_model
             ),
             default_timeout=provider_config.get(
                 "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
             ),
             display_name=provider_config.get("display_name", "OpenCode"),
+            stall_timeout_s=provider_config.get("stall_timeout_s", 0),
         )
         return OpenCodeProvider(opencode_cfg)
 

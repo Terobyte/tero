@@ -28,8 +28,10 @@ class OpenCodeConfig:
     """Configuration for OpenCode CLI provider."""
 
     command: str = "opencode"
-    default_model: str = "opencode/mimo-v2-pro-free"
+    default_model: str = "opencode/mimo-v2.6-flash-free"
     default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
+    # Seconds without stdout before the run is killed; 0 = off, the role timeout governs.
+    stall_timeout_s: float = 0
     display_name: str = "OpenCode"
 
 
@@ -75,18 +77,23 @@ class OpenCodeProvider:
             AdaptedMessage objects for each relevant event
         """
         self._reset_usage()
-        cmd = self._build_command(model, working_dir, effort=effort)
+        cmd = self._build_command(model, working_dir, effort=effort, read_only=read_only)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=full_prompt.encode("utf-8"), stall_timeout=120.0)
+        _gen = run_subprocess_jsonl(
+            cmd,
+            working_dir,
+            stdin_data=full_prompt.encode("utf-8"),
+            stall_timeout=self.config.stall_timeout_s,
+        )
+        errors: list[str] = []
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
-                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
-                    if stderr_message is not None:
-                        yield stderr_message
-                    self._raise_for_returncode(event.returncode, event.stderr)
+                    self._raise_for_returncode(event.returncode, event.stderr, errors)
                 else:
+                    if isinstance(event, dict) and event.get("type") == "error":
+                        errors.append(self._error_text(event))
                     adapted = self._adapt_opencode_event(event)
                     if adapted is None:
                         continue
@@ -97,7 +104,7 @@ class OpenCodeProvider:
             await _gen.aclose()
 
     def _build_command(
-        self, model: str = "", working_dir: str = "", effort: str = ""
+        self, model: str = "", working_dir: str = "", effort: str = "", read_only: bool = False
     ) -> list[str]:
         """Build opencode run CLI command."""
         from .effort import normalize_effort
@@ -110,8 +117,9 @@ class OpenCodeProvider:
             "run",
             "--format",
             "json",
-            "--dangerously-skip-permissions",
         ]
+        # The built-in plan agent cannot edit files or run shell commands.
+        cmd.extend(["--agent", "plan"] if read_only else ["--dangerously-skip-permissions"])
 
         if working_dir:
             cmd.extend(["--dir", working_dir])
@@ -139,25 +147,8 @@ class OpenCodeProvider:
             )
         return user_prompt
 
-    async def _stderr_message_from_bytes(
-        self, stderr_data: bytes
-    ) -> AdaptedMessage | None:
-        """Convert stderr bytes into a non-fatal assistant message."""
-        if isinstance(stderr_data, bytes):
-            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-        else:
-            stderr_text = (stderr_data or "").strip()
-        if not stderr_text:
-            return None
-
-        return AdaptedMessage(
-            role="assistant",
-            content=[TextBlock(text=f"[opencode stderr] {stderr_text}")],
-            type="text",
-        )
-
     def _raise_for_returncode(
-        self, returncode: int | None, stderr_data: bytes | str
+        self, returncode: int | None, stderr_data: bytes | str, errors: list[str] | None = None
     ) -> None:
         """Raise when the OpenCode subprocess exits unsuccessfully."""
         if returncode in (None, 0):
@@ -168,7 +159,8 @@ class OpenCodeProvider:
         else:
             stderr_text = (stderr_data or "").strip()
 
-        detail = stderr_text or "subprocess exited without stderr output"
+        parts = [*(errors or []), stderr_text] if stderr_text else list(errors or [])
+        detail = "; ".join(parts) or "subprocess exited without stderr output"
         raise ProviderError(f"opencode exited with code {returncode}: {detail}")
 
     def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
@@ -247,14 +239,21 @@ class OpenCodeProvider:
             self._last_output_tokens = tokens.get("output", 0)
 
         elif t == "error":
-            err = event.get("error", {})
-            msg = err.get("data", {}).get("message") or err.get("name", "unknown error")
             return AdaptedMessage(
                 role="assistant",
-                content=[TextBlock(text=f"[OpenCode error: {msg}]")],
+                content=[TextBlock(text=f"[OpenCode error: {self._error_text(event)}]")],
             )
 
         return None
+
+    @staticmethod
+    def _error_text(event: dict) -> str:
+        err = event.get("error")
+        if not isinstance(err, dict):
+            return str(err or "unknown error")
+        data = err.get("data")
+        message = data.get("message") if isinstance(data, dict) else None
+        return message or err.get("name") or "unknown error"
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if opencode CLI is installed and available."""

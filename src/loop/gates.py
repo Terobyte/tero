@@ -142,6 +142,13 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             text=True,
             timeout=timeout_s,
         )
+    except OSError as exc:
+        return GateResult(
+            ok=False,
+            exit_code=127,
+            output=f"{resolved[0]}: {exc}",
+            command_name=name,
+        )
     except subprocess.TimeoutExpired as exc:
         output = _text(exc.stdout) + _text(exc.stderr)
         return GateResult(

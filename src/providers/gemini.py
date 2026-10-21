@@ -54,35 +54,59 @@ class GeminiProvider:
         self._reset_usage()
         env = self._build_env(system_prompt)
         full_prompt = self._combine_prompt(system_prompt, prompt)
-        cmd = self._build_command(model, full_prompt, effort=effort)
+        cmd = self._build_command(model, effort=effort, read_only=read_only)
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
+        # The prompt goes through stdin: a judge prompt carries the whole diff
+        # and would overflow the per-argument limit (128 KB on Linux) in argv.
+        _gen = run_subprocess_jsonl(
+            cmd, working_dir, env=env, stdin_data=full_prompt.encode("utf-8")
+        )
+        # Delta chunks are pieces of one text; yielding them separately makes
+        # the caller join them with newlines, which breaks JSON inside strings.
+        pending: list[str] = []
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
+                    if pending:
+                        yield self._text_message("".join(pending))
                     self._raise_for_returncode(event.returncode, event.stderr)
-                else:
-                    adapted = self._adapt_gemini_event(event)
-                    if adapted is not None:
-                        yield adapted
+                    continue
+                adapted = self._adapt_gemini_event(event)
+                if adapted is None:
+                    continue
+                if event.get("delta") and adapted.type == "text":
+                    pending.append(adapted.get_text_content())
+                    continue
+                if pending:
+                    yield self._text_message("".join(pending))
+                    pending = []
+                yield adapted
         finally:
             await _gen.aclose()
 
+    @staticmethod
+    def _text_message(text: str) -> AdaptedMessage:
+        return AdaptedMessage(role="assistant", content=[TextBlock(text=text)], type="text")
+
     def _build_command(
-        self, model: str = "", prompt: str = "", effort: str = ""
+        self, model: str = "", effort: str = "", read_only: bool = False
     ) -> list[str]:
         # Gemini CLI has no effort/thinking flag; `effort` is accepted and ignored.
         resolved_model = model or self.config.default_model
         cmd = [
             self.config.command,
+            # -p text is appended to the prompt read from stdin
             "-p",
-            prompt,
+            "Answer the input above.",
             "--output-format",
             "stream-json",
             "-m",
             resolved_model,
+            "--skip-trust",
         ]
-        if self.config.yolo:
+        if read_only:
+            cmd.extend(["--approval-mode", "plan"])
+        elif self.config.yolo:
             cmd.append("--yolo")
         return cmd
 

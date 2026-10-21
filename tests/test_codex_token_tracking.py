@@ -231,8 +231,8 @@ async def test_tool_execution_becomes_tool_use_and_result():
 
 
 @pytest.mark.asyncio
-async def test_stderr_is_emitted_without_crashing_session():
-    """Codex stderr should surface as a non-fatal assistant message."""
+async def test_stderr_stays_out_of_the_answer_text():
+    """Codex stderr on a clean exit is not part of the answer and does not crash."""
     provider = CodexProvider(CodexConfig())
     lines = _make_jsonl_lines("hello", input_tokens=12)
     mock_process = MockProcess(lines, stderr_text="warning: config fallback")
@@ -245,10 +245,8 @@ async def test_stderr_is_emitted_without_crashing_session():
         async for chunk in provider.run("hi", "", ".", 10):
             chunks.append(chunk)
 
-    assert any(
-        "[codex stderr] warning: config fallback" in chunk.get_text_content()
-        for chunk in chunks
-    )
+    assert any("hello" in chunk.get_text_content() for chunk in chunks)
+    assert not any("config fallback" in chunk.get_text_content() for chunk in chunks)
 
 
 @pytest.mark.asyncio

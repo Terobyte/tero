@@ -86,6 +86,14 @@ def rollback(repo: str | Path, base: str) -> None:
     _git(repo, "clean", "-fd")
 
 
+def has_staged_changes(repo: str | Path) -> bool:
+    try:
+        _git(repo, "diff", "--cached", "--quiet")
+    except GitError:
+        return True
+    return False
+
+
 def commit(repo: str | Path, msg: str) -> str:
     _git(repo, "commit", "-m", msg)
     return head(repo)

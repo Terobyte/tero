@@ -13,6 +13,8 @@ from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 # Variables that MUST NOT be passed through to native Claude.
 _BLOCKED_ENV_VARS = [
+    # an API key would silently bill the API instead of the subscription
+    "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL",
@@ -96,13 +98,18 @@ class ClaudeNativeProvider:
         if not shutil.which(self.config.command):
             return False, f"'{self.config.command}' not found in PATH"
 
-        result = subprocess.run(
-            [self.config.command, "auth", "status"],
-            capture_output=True,
-            text=True,
-            env=self._clean_env(),
-            timeout=10,
-        )
+        try:
+            result = subprocess.run(
+                [self.config.command, "auth", "status"],
+                capture_output=True,
+                text=True,
+                env=self._clean_env(),
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "claude auth status timed out"
+        except OSError as exc:
+            return False, f"claude auth status failed: {exc}"
         if result.returncode != 0:
             return (
                 False,
@@ -196,6 +203,7 @@ class ClaudeNativeProvider:
             cmd.extend(["--json-schema", json.dumps(output_schema)])
 
         if read_only:
-            cmd.extend(["--disallowedTools", "Edit,Write,NotebookEdit"])
+            # Bash can write too (sed -i, rm); the judge reads with Read/Grep/Glob.
+            cmd.extend(["--disallowedTools", "Edit,Write,NotebookEdit,Bash"])
 
         return cmd

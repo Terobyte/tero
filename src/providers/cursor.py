@@ -57,6 +57,7 @@ class CursorProvider:
             working_dir=working_dir,
             prompt=full_prompt,
             effort=effort,
+            read_only=read_only,
         )
 
         _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
@@ -77,12 +78,15 @@ class CursorProvider:
         working_dir: str = "",
         prompt: str = "",
         effort: str = "",
+        read_only: bool = False,
     ) -> list[str]:
         from .effort import cursor_model_arg
 
         resolved_model = cursor_model_arg(model or self.config.default_model, effort)
         cmd = [self.config.command, "-p"]
-        if self.config.force:
+        if read_only:
+            cmd.extend(["--mode", "ask"])
+        elif self.config.force:
             cmd.append("--force")
         if self.config.trust:
             cmd.append("--trust")

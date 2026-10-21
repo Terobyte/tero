@@ -43,7 +43,10 @@ def load_phases(path: str | Path) -> list[Phase]:
 def mark_phase_done(path: str | Path, phase: Phase) -> None:
     """Check every checkbox that belongs to ``phase``. Temp-file + rename."""
     target = Path(path)
-    lines = target.read_text().splitlines(keepends=True)
+    # newline="" keeps \r\n: read_text() would translate it and the rewrite
+    # would turn a CRLF plan into LF on every ship
+    with open(target, newline="") as f:
+        lines = f.read().splitlines(keepends=True)
     changed: list[str] = []
     for i, line in enumerate(lines):
         newline = _line_ending(line)
@@ -126,5 +129,6 @@ def _line_ending(line: str) -> str:
 
 def _atomic_write(path: Path, content: str) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(content)
+    with open(tmp, "w", newline="") as f:
+        f.write(content)
     tmp.replace(path)

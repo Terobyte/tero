@@ -35,10 +35,9 @@ class TestGeminiConfig:
 class TestBuildCommand:
     def test_default_command(self):
         p = _make_provider()
-        cmd = p._build_command(prompt="hello")
+        cmd = p._build_command()
         assert cmd[0] == "gemini"
         assert "-p" in cmd
-        assert "hello" in cmd
         assert "--output-format" in cmd
         assert "stream-json" in cmd
         assert "-m" in cmd
@@ -47,39 +46,33 @@ class TestBuildCommand:
 
     def test_custom_model(self):
         p = _make_provider()
-        cmd = p._build_command(model="gemini-2.5-flash", prompt="hi")
+        cmd = p._build_command(model="gemini-2.5-flash")
         idx = cmd.index("-m")
         assert cmd[idx + 1] == "gemini-2.5-flash"
 
     def test_yolo_disabled(self):
         p = _make_provider(yolo=False)
-        cmd = p._build_command(prompt="hi")
+        cmd = p._build_command()
         assert "--yolo" not in cmd
 
-    def test_long_prompt_passed_directly(self):
+    def test_read_only_uses_plan_mode(self):
         p = _make_provider()
-        long_prompt = "x" * (LARGE_PROMPT_THRESHOLD_BYTES + 1)
-        cmd = p._build_command(prompt=long_prompt)
-        idx = cmd.index("-p")
-        assert cmd[idx + 1] == long_prompt  # always inline, no stdin workaround
-
-    def test_short_prompt_inlined(self):
-        p = _make_provider()
-        cmd = p._build_command(prompt="short prompt")
-        idx = cmd.index("-p")
-        assert cmd[idx + 1] == "short prompt"
+        cmd = p._build_command(read_only=True)
+        assert cmd[cmd.index("--approval-mode") + 1] == "plan"
+        assert "--yolo" not in cmd
 
     def test_command_order(self):
         p = _make_provider()
-        cmd = p._build_command(prompt="test")
+        cmd = p._build_command()
         assert cmd == [
             "gemini",
             "-p",
-            "test",
+            "Answer the input above.",
             "--output-format",
             "stream-json",
             "-m",
             "gemini-3.1-pro-preview",
+            "--skip-trust",
             "--yolo",
         ]
 
@@ -251,11 +244,7 @@ class TestRunIntegration:
                 msgs.append(msg)
             assert len(msgs) == 1
             assert msgs[0].get_text_content() == "hello"
-            call_kwargs = mock_run.call_args
-            assert (
-                call_kwargs[1].get("stdin_data") is None
-                or call_kwargs.kwargs.get("stdin_data") is None
-            )
+            assert b"test prompt" in mock_run.call_args.kwargs["stdin_data"]
 
     @pytest.mark.asyncio
     async def test_run_raises_on_nonzero_exit(self):
@@ -277,8 +266,8 @@ class TestRunIntegration:
                     pass
 
     @pytest.mark.asyncio
-    async def test_run_long_prompt_passed_inline(self):
-        """Large prompts are always inlined via -p, never via stdin."""
+    async def test_run_long_prompt_passed_via_stdin(self):
+        """Prompts go through stdin, never argv (per-argument size limit)."""
         p = _make_provider()
         long_prompt = "x" * (LARGE_PROMPT_THRESHOLD_BYTES + 1)
 
@@ -299,12 +288,9 @@ class TestRunIntegration:
                 msgs.append(msg)
             assert len(msgs) == 1
             call_kwargs = mock_run.call_args
-            # No stdin_data — Gemini CLI reads prompt only from -p
-            stdin_data = call_kwargs.kwargs.get("stdin_data")
-            assert stdin_data is None
+            assert long_prompt.encode() in call_kwargs.kwargs["stdin_data"]
             cmd = call_kwargs.args[0] if call_kwargs.args else call_kwargs[0][0]
-            assert long_prompt in cmd
-            assert "see stdin" not in " ".join(str(x) for x in cmd)
+            assert long_prompt not in cmd
 
 
 class TestCheckReady:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,7 +93,7 @@ async def run(
         return RunOutcome(
             status="error",
             exit_code=1,
-            reason=f"no '- [ ]' checkboxes under '## ' headings in {plan_path}",
+            reason=f"no '- [ ]' checkboxes found in {plan_path}",
         )
     if all(phase.done for phase in phases):
         # No branch, no run dir, no test gate: there is nothing to judge.
@@ -158,7 +159,8 @@ async def run(
                 phases_total=len(phases),
                 run_dir=str(run_dir),
             )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError) as exc:
+        # Under asyncio.run, Ctrl+C reaches this coroutine as CancelledError.
         ledger.event("interrupted")
         ledger.event(
             "run_end",
@@ -166,6 +168,8 @@ async def run(
             phases_shipped=shipped,
             phases_total=len(phases),
         )
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         return RunOutcome(
             status="interrupted",
             exit_code=130,

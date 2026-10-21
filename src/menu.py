@@ -28,15 +28,16 @@ CODEX_MODEL_PRESETS = {
     "GPT-5.6 Terra": "gpt-5.6-terra",
     "GPT-5.6 Luna": "gpt-5.6-luna",
     "Default (~/.codex/config.toml)": "",
+    "Свой model ID…": "__custom__",
 }
 
 # OpenCode model IDs
 OPENCODE_MODEL_PRESETS = {
     "Muse Spark 1.3 (free $0)": "opencode/muse-spark-1.3-contributor-free",
-    "MiniMax M2.5 (free)": "opencode/minimax-m2.5-free",
-    "MIMO Pro (free)": "opencode/mimo-v2-pro-free",
-    "MIMO Omni (free)": "opencode/mimo-v2-omni-free",
+    "MIMO v2.6 Flash (free)": "opencode/mimo-v2.6-flash-free",
+    "MiniMax M3.1 Flash (free)": "opencode/minimax-m3.1-flash-free",
     "Kimi K2 (free)": "openrouter/moonshotai/kimi-k2:free",
+    "Свой model ID…": "__custom__",
 }
 
 GEMINI_MODEL_PRESETS = {
@@ -54,6 +55,7 @@ CURSOR_MODEL_PRESETS = {
     "Composer 2.5": "composer-2.5",
     "Grok 4.6": "cursor-grok-4.6",
     "Composer 2": "cursor-2",
+    "Свой model ID…": "__custom__",
 }
 
 
@@ -245,17 +247,16 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
 
     if provider == "opencode":
         print(
-            "  Модели: spark-free, mimo-pro, mimo-omni, minimax-m2.5, kimi-k2"
+            "  Модели: spark-free, mimo, minimax, kimi-k2"
         )
         model = (
-            input(f"  {prompt_label} model [mimo-pro]: ").strip().lower() or "mimo-pro"
+            input(f"  {prompt_label} model [mimo]: ").strip().lower() or "mimo"
         )
         model_map = {
             "spark-1.3-free": "opencode/muse-spark-1.3-contributor-free",
             "spark-free": "opencode/muse-spark-1.3-contributor-free",
-            "mimo-pro": "opencode/mimo-v2-pro-free",
-            "mimo-omni": "opencode/mimo-v2-omni-free",
-            "minimax-m2.5": "opencode/minimax-m2.5-free",
+            "mimo": "opencode/mimo-v2.6-flash-free",
+            "minimax": "opencode/minimax-m3.1-flash-free",
             "kimi-k2": "openrouter/moonshotai/kimi-k2:free",
         }
         return model_map.get(model, model)
