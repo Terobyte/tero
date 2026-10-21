@@ -36,7 +36,6 @@ _MODEL_ALIASES = {
 class ClaudeNativeConfig:
     """Configuration for native Claude CLI provider."""
 
-    claude_home: str = "~/.claude"
     command: str = "claude"
     default_model: str = "claude-sonnet-5"
 

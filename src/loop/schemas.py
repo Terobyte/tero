@@ -117,7 +117,7 @@ _VALIDATORS = {
 
 @dataclass
 class ValidateCtx:
-    """Orchestrator context the JSON schema cannot see."""
+    """Loop context the JSON schema cannot see."""
 
     open_ids: list[str] = field(default_factory=list)
     protected_ids: set[str] = field(default_factory=set)

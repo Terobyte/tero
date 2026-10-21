@@ -1,1 +1,1 @@
-"""tero — coach-player feedback loop via Claude Agent SDK."""
+"""tero — plan-driven player → judge loop over coding-agent CLIs."""

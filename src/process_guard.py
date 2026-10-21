@@ -1,8 +1,4 @@
-"""Process Guard — snapshot and clean up child processes spawned during agent turns.
-
-Extracted from CoachPlayerSession so the logic can be reused by BatchExecutor
-and other subsystems without needing a full session object.
-"""
+"""Process Guard — snapshot and clean up child processes spawned during agent turns."""
 
 from __future__ import annotations
 

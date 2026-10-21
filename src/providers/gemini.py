@@ -126,7 +126,7 @@ class GeminiProvider:
            — tool execution result.  ``status != "success"`` indicates failure.
 
         6. ``{"type":"error","message":"..."}``
-           — error from the CLI.  Raised as ProviderError so orchestration can retry/fail.
+            — error from the CLI.  Raised as ProviderError so the loop can stop the round.
         """
         t = event.get("type", "")
 

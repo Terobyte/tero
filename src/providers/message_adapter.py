@@ -1,4 +1,4 @@
-"""Message adapter for converting between SDK objects and native CLI JSON."""
+"""Message adapter: normalize CLI provider events to a common message format."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass
 class TextBlock:
-    """Text content block, compatible with SDK TextBlock."""
+    """Text content block."""
 
     text: str
     type: str = "text"
@@ -14,7 +14,7 @@ class TextBlock:
 
 @dataclass
 class ToolUseBlock:
-    """Tool use block, compatible with SDK ToolUseBlock."""
+    """Tool use block."""
 
     name: str
     input: dict = field(default_factory=dict)
@@ -24,7 +24,7 @@ class ToolUseBlock:
 
 @dataclass
 class ToolResultBlock:
-    """Tool result block, compatible with SDK ToolResultBlock."""
+    """Tool result block."""
 
     tool_use_id: str
     content: str
@@ -34,10 +34,7 @@ class ToolResultBlock:
 
 @dataclass
 class AdaptedMessage:
-    """Lightweight wrapper compatible with SDK interface.
-
-    Uses duck-typing so existing code that checks __class_name__ works.
-    """
+    """Common message format for CLI provider events."""
 
     role: str  # "assistant" or "tool" or "user"
     content: list  # [TextBlock, ToolUseBlock, ...]
@@ -45,17 +42,8 @@ class AdaptedMessage:
     model: str = ""  # Model that generated this message
     type: str = ""  # Event type: "text", "assistant", "tool_use", "tool_result", "result"
 
-    @property
-    def __class_name__(self) -> str:
-        """Duck-typing compatibility with SDK message types."""
-        if self.role == "assistant":
-            return "AssistantMessage"
-        if self.role == "tool":
-            return "ToolResultMessage"
-        return "UserMessage"
-
     def __getitem__(self, key: str) -> Any:
-        """Dict-like access for backward compatibility."""
+        """Dict-like access to message fields."""
         if key == "text":
             return self.get_text_content()
         return getattr(self, key)
@@ -77,10 +65,10 @@ class AdaptedMessage:
 
 
 def adapt_claude_event(event: dict) -> AdaptedMessage | None:
-    """Convert JSON event from claude CLI to SDK-compatible object.
+    """Convert JSON event from claude CLI to the common message format.
 
     Claude CLI with --output-format stream-json emits JSON objects.
-    This function adapts them to match SDK message interface.
+    This function adapts them to the common message format.
 
     Args:
         event: JSON event dict from claude CLI
@@ -193,10 +181,10 @@ def adapt_claude_event(event: dict) -> AdaptedMessage | None:
 
 
 def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
-    """Convert SDK message object to AdaptedMessage if needed.
+    """Convert a message object to AdaptedMessage if needed.
 
-    This is a pass-through for already-compatible objects.
-    Used to normalize both native CLI and SDK sources.
+    Pass-through for already-adapted objects. Also handles message
+    objects with .content/.role attributes and raw CLI event dicts.
 
     Args:
         msg: SDK message object or dict
@@ -236,7 +224,7 @@ def adapt_sdk_message(msg: Any) -> AdaptedMessage | None:
     if type_name == "ResultMessage":
         return None
 
-    # Legacy SDK objects that do have a .role attribute
+    # Message objects that do have a .role attribute
     if hasattr(msg, "role"):
         content = []
         if hasattr(msg, "content"):
@@ -286,7 +274,7 @@ def normalize_message(msg: Any) -> "AdaptedMessage | None":
 
     Single entry point for all message format conversion. Handles:
     - AdaptedMessage — passthrough (already adapted)
-    - SDK objects (AssistantMessage, ResultMessage, role-bearing objects)
+    - Message objects (assistant/result/role-bearing objects)
     - Raw dicts from claude CLI (stream-json events)
     - Raw dicts from codex JSONL
     - Bare strings — wrapped in a text-only AdaptedMessage

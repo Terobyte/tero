@@ -45,7 +45,7 @@ class CodexConfig:
     # Reasoning effort override (passed via -c model_reasoning_effort=<value>).
     # Empty string = inherit from ~/.codex/config.toml. Use "medium" to clamp
     # the model down from the user's global setting (e.g. "xhigh") for cheap
-    # roles like judge/coach.
+    # roles like judge.
     model_reasoning_effort: str = ""
     # Feature flags (passed via --enable/--disable or -c features.<name>=true/false)
     enabled_features: list[str] = field(
@@ -97,7 +97,7 @@ class CodexProvider:
         """Run Codex agent via CLI and yield adapted messages.
 
         Launches `codex exec --json` as subprocess, reads JSONL from stdout,
-        and yields AdaptedMessage objects compatible with tero's streaming UI.
+        and yields AdaptedMessage objects.
 
         Args:
             prompt: User prompt
@@ -517,78 +517,6 @@ class CodexProvider:
             )
 
         return None
-
-    async def run_review(
-        self,
-        working_dir: str,
-        review_prompt: str = "",
-        model: str = "",
-        uncommitted: bool = True,
-    ) -> AsyncIterator:
-        """Run codex exec review --json for native code review.
-
-        Uses Codex CLI's native code review functionality instead of
-        manual prompt-based review.
-
-        Args:
-            working_dir: Working directory
-            review_prompt: Optional custom review instructions
-            model: Optional model override
-            uncommitted: Review uncommitted changes (vs last commit)
-
-        Yields:
-            AdaptedMessage objects for each relevant event
-        """
-        self._reset_usage()
-        resolved_model = model or self.config.default_model
-
-        cmd = [
-            self.config.command,
-            "exec",
-            "review",
-            "--json",
-        ]
-
-        if resolved_model:
-            cmd.extend(["-m", resolved_model])
-
-        if uncommitted:
-            cmd.append("--uncommitted")
-
-        if self.config.ephemeral:
-            cmd.append("--ephemeral")
-
-        if self.config.bypass_approvals:
-            cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        elif self.config.full_auto:
-            cmd.append("--full-auto")
-
-        cmd.append("--skip-git-repo-check")
-
-        if self.config.model_reasoning_effort:
-            cmd.extend(
-                ["-c", f"model_reasoning_effort={self.config.model_reasoning_effort}"]
-            )
-
-        if review_prompt:
-            cmd.append("-")  # Read from stdin
-
-        stdin_data = review_prompt.encode("utf-8") if review_prompt else None
-        _gen = run_subprocess_jsonl(cmd, working_dir, stdin_data=stdin_data)
-        try:
-            async for event in _gen:
-                if isinstance(event, SubprocessExit):
-                    stderr_message = await self._stderr_message_from_bytes(event.stderr)
-                    if stderr_message is not None:
-                        yield stderr_message
-                    self._raise_for_returncode(event.returncode, event.stderr)
-                else:
-                    adapted = self._adapt_codex_event(event)
-                    if adapted is not None:
-                        yield adapted
-        finally:
-            await _gen.aclose()
-            self._cleanup_temp_instructions()
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if Codex CLI is installed and available."""

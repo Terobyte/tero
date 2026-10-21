@@ -1,8 +1,7 @@
-"""Provider implementations for Claude Agent SDK."""
+"""Provider factory for coding-agent CLI providers."""
 
 from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
-from .base import AgentProvider
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
@@ -23,25 +22,9 @@ def create_provider(
     provider_name: str,
     provider_config: dict | None = None,
 ):
-    """Create provider by name from config.
+    """Create a provider by name ("claude", "codex", "opencode", "gemini", "muse", "cursor").
 
-    Args:
-        provider_name: "claude", "codex", "opencode", "gemini", "muse", or "cursor"
-        provider_config: Optional config dict from .tero/config.yaml providers section
-                        Supports "type" key to override provider type
-
-    Returns:
-        Provider instance (ClaudeNativeProvider, CodexProvider, or OpenCodeProvider)
-
-    Raises:
-        ProviderError: If provider type is unknown
-
-    NOTE: Config keys like ``default_model`` are *provider-specific*, not universal.
-    Not every provider reads ``default_model`` from the config dict — some derive it
-    from the provider type (e.g. Codex defaults to ``gpt-5.6-terra``, Muse to
-    ``muse-spark-1.3``). When extending ``create_provider()``, check the target
-    Config dataclass for the actual field names rather than assuming
-    ``default_model`` is always accepted.
+    provider_config is an optional dict from .tero/config.yaml providers section.
     """
     provider_config = provider_config or {}
 
@@ -50,7 +33,6 @@ def create_provider(
 
     if provider_type in ("claude_native", "claude"):
         native_cfg = ClaudeNativeConfig(
-            claude_home=provider_config.get("claude_home", "~/.claude"),
             command=provider_config.get("command", "claude"),
             default_model=provider_config.get("default_model", "claude-sonnet-5"),
         )
@@ -124,33 +106,5 @@ def create_provider(
 
 
 __all__ = [
-    # Base
-    "AgentProvider",
-    # Claude Native
-    "ClaudeNativeConfig",
-    "ClaudeNativeProvider",
-    # Codex
-    "CodexConfig",
-    "CodexProvider",
-    # OpenCode
-    "OpenCodeConfig",
-    "OpenCodeProvider",
-    # Gemini
-    "GeminiConfig",
-    "GeminiProvider",
-    # Muse
-    "MuseConfig",
-    "MuseProvider",
-    # Cursor
-    "CursorConfig",
-    "CursorProvider",
-    # Message adapter
-    "AdaptedMessage",
-    "TextBlock",
-    "ToolUseBlock",
-    "ToolResultBlock",
-    "adapt_claude_event",
-    "adapt_sdk_message",
-    # Factory
     "create_provider",
 ]

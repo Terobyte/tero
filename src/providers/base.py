@@ -1,27 +1,11 @@
 """Base protocol for agent providers."""
 
-from dataclasses import dataclass
 from typing import AsyncIterator, Protocol, runtime_checkable
-
-
-@dataclass
-class AgentResult:
-    """Compatibility result object used by duel/orchestrator flows."""
-
-    success: bool
-    exit_code: int
-    stdout: str
-    stderr: str
-    duration_s: float
 
 
 @runtime_checkable
 class AgentProvider(Protocol):
-    """Minimal contract for any provider.
-
-    Uses Protocol instead of ABC because structural subtyping is sufficient.
-    No registration or inheritance needed - just match the interface.
-    """
+    """Minimal contract for any provider."""
 
     async def run(
         self,

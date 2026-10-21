@@ -345,28 +345,3 @@ def test_build_command_disables_tools_for_text_only_runs():
     assert "multi_agent" in cmd
     assert "apps" in cmd
 
-
-@pytest.mark.asyncio
-async def test_review_usage_counters_reset_between_runs():
-    """Native review should also clear stale usage when the next run has no usage event."""
-    provider = CodexProvider(CodexConfig())
-    first_process = MockProcess(_make_jsonl_lines("review ok", input_tokens=321))
-    second_process = MockProcess([
-        (json.dumps({
-            "type": "item.completed",
-            "item": {"type": "agent_message", "text": "partial review"},
-        }) + "\n").encode(),
-    ])
-    processes = [first_process, second_process]
-
-    async def mock_create_subprocess(*args, **kwargs):
-        return processes.pop(0)
-
-    with patch("asyncio.create_subprocess_exec", mock_create_subprocess):
-        async for _chunk in provider.run_review(".", "first review"):
-            pass
-        async for _chunk in provider.run_review(".", "second review"):
-            pass
-
-    assert provider._last_input_tokens == 0
-    assert provider._last_output_tokens == 0

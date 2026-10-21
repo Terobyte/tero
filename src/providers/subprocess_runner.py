@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
-from src.constants import STDOUT_READ_CHUNK_SIZE, STREAM_READER_LIMIT
+from src.constants import STDOUT_READ_CHUNK_SIZE
 
 
 @dataclass

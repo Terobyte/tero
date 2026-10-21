@@ -43,11 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the canonical CLI parser."""
     parser = argparse.ArgumentParser(
         prog="tero",
-        description="Coach-player feedback loop for implementation",
+        description="Plan-driven player → judge loop over coding-agent CLIs",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    go_parser = subparsers.add_parser("go", help="Run coach-player loop")
+    go_parser = subparsers.add_parser("go", help="Run the player → judge loop over a plan")
     go_parser.add_argument("--plan", "-p", type=str, default=None)
     go_parser.add_argument("--working-dir", "-w", type=str, default=".")
     go_parser.add_argument("--no-menu", action="store_true", default=False)
