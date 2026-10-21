@@ -485,7 +485,9 @@ def _save_global_default(config: Config) -> None:
     with open(tmp_path, "w") as fh:
         yaml.dump(data, fh, allow_unicode=True, sort_keys=False)
     os.replace(tmp_path, global_config_path)
-    wd = config.working_dir.replace(str(Path.home()), "~")
+    home = str(Path.home())
+    wd = config.working_dir
+    wd = "~" + wd[len(home):] if wd == home or wd.startswith(home + "/") else wd
     print(f"\n  Сохранено в ~/.tero/config.yaml (рабочая папка: {wd})\n")
 
 

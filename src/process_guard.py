@@ -37,5 +37,10 @@ class ProcessGuard:
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
                 os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, psutil.NoSuchProcess):
+            except (
+                ProcessLookupError,
+                PermissionError,
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+            ):
                 pass

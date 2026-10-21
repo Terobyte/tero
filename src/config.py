@@ -256,9 +256,19 @@ def _blank_means_unset(field: str) -> bool:
 
 
 def _is_unset(key: str, value: Any) -> bool:
-    return value is None or (
-        isinstance(value, str) and value == "" and _blank_means_unset(key)
-    )
+    if value is None:
+        return True
+    if isinstance(value, str) and value == "":
+        if _blank_means_unset(key):
+            return True
+        field = Config.__dataclass_fields__.get(key)
+        if (
+            field is not None
+            and isinstance(field.default, int)
+            and not isinstance(field.default, bool)
+        ):
+            return True
+    return False
 
 
 _POSITIVE_FIELDS = {
@@ -275,6 +285,8 @@ def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
     if value is None:
         return fallback
     if isinstance(value, str) and value == "":
+        if isinstance(fallback, int) and not isinstance(fallback, bool):
+            return fallback
         return value
     if isinstance(fallback, bool) and isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
@@ -325,7 +337,11 @@ def resolve_config(cli_args: dict) -> Config:
             continue
         if cfg_key.endswith("_provider"):
             current = merged.get(cfg_key, Config.__dataclass_fields__[cfg_key].default)
-            if raw != current:
+            try:
+                same = normalize_provider(raw) == normalize_provider(str(current))
+            except UnknownProviderError:
+                same = raw == current
+            if not same:
                 # Same as the menu: a new provider does not inherit the old model.
                 # The matching TERO_*_MODEL comes next in _ENV_MAP and wins.
                 merged[cfg_key.replace("_provider", "_model")] = ""

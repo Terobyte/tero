@@ -103,8 +103,6 @@ def exclude_tero(repo: str | Path) -> None:
     exclude = Path(repo) / _git(repo, "rev-parse", "--git-path", "info/exclude").strip()
     exclude.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude.read_text() if exclude.exists() else ""
-    if ".tero/" in existing.splitlines() or existing.rstrip().endswith(".tero/"):
-        return
     if ".tero/" in {line.strip() for line in existing.splitlines()}:
         return
     prefix = "" if not existing or existing.endswith("\n") else "\n"
