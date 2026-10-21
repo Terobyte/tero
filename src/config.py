@@ -78,16 +78,16 @@ class Config:
 
 
 _ENV_MAP = {
-    "TERO_PLAYER_PROVIDER": ("player_provider", str),
-    "TERO_PLAYER_MODEL": ("player_model", str),
-    "TERO_JUDGE_PROVIDER": ("judge_provider", str),
-    "TERO_JUDGE_MODEL": ("judge_model", str),
-    "TERO_TESTER_PROVIDER": ("tester_provider", str),
-    "TERO_TESTER_MODEL": ("tester_model", str),
-    "TERO_ESCALATION_PROVIDER": ("escalation_provider", str),
-    "TERO_ESCALATION_MODEL": ("escalation_model", str),
-    "TERO_TEST_COMMAND": ("test_command", str),
-    "TERO_TEST_COMMAND_SCOPED": ("test_command_scoped", str),
+    "TERO_PLAYER_PROVIDER": "player_provider",
+    "TERO_PLAYER_MODEL": "player_model",
+    "TERO_JUDGE_PROVIDER": "judge_provider",
+    "TERO_JUDGE_MODEL": "judge_model",
+    "TERO_TESTER_PROVIDER": "tester_provider",
+    "TERO_TESTER_MODEL": "tester_model",
+    "TERO_ESCALATION_PROVIDER": "escalation_provider",
+    "TERO_ESCALATION_MODEL": "escalation_model",
+    "TERO_TEST_COMMAND": "test_command",
+    "TERO_TEST_COMMAND_SCOPED": "test_command_scoped",
 }
 
 # Roles whose empty provider/model/effort means "not set, keep default".
@@ -315,17 +315,17 @@ def resolve_config(cli_args: dict) -> Config:
             merged[key] = value
 
     # Env overrides
-    for env_key, (cfg_key, conv) in _ENV_MAP.items():
+    for env_key, cfg_key in _ENV_MAP.items():
         raw = os.environ.get(env_key)
         if not raw:
             continue
         if cfg_key.endswith("_provider"):
             current = merged.get(cfg_key, Config.__dataclass_fields__[cfg_key].default)
-            if conv(raw) != current:
+            if raw != current:
                 # Same as the menu: a new provider does not inherit the old model.
                 # The matching TERO_*_MODEL comes next in _ENV_MAP and wins.
                 merged[cfg_key.replace("_provider", "_model")] = ""
-        merged[cfg_key] = conv(raw)
+        merged[cfg_key] = raw
 
     # CLI overrides (highest priority, skip None)
     for key, value in cli.items():
