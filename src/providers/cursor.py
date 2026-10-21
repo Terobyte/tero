@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from src.errors import ProviderError
-from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock
-from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
+from .effort import cursor_model_arg
+from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock, wrap_system_prompt
+from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 
 @dataclass
@@ -80,8 +81,6 @@ class CursorProvider:
         effort: str = "",
         read_only: bool = False,
     ) -> list[str]:
-        from .effort import cursor_model_arg
-
         resolved_model = cursor_model_arg(model or self.config.default_model, effort)
         cmd = [self.config.command, "-p"]
         if read_only:
@@ -101,12 +100,7 @@ class CursorProvider:
 
     @staticmethod
     def _combine_prompt(system_prompt: str, user_prompt: str) -> str:
-        if system_prompt:
-            return (
-                f"<SYSTEM INSTRUCTIONS>\n{system_prompt}\n</SYSTEM INSTRUCTIONS>"
-                f"\n\n{user_prompt}"
-            )
-        return user_prompt
+        return wrap_system_prompt(system_prompt, user_prompt)
 
     def _adapt_cursor_event(self, event: dict) -> AdaptedMessage | None:
         """Adapt a Cursor stream-json event."""
@@ -181,13 +175,9 @@ class CursorProvider:
         """Skip duplicate assistant flushes from --stream-partial-output."""
         has_ts = "timestamp_ms" in event
         has_call = "model_call_id" in event
-        if has_ts and has_call:
-            return False
-        if not has_ts and not has_call:
-            # Final flush without --stream-partial-output is the real message.
-            # With --stream-partial-output the same shape is a duplicate.
-            return True
-        return True
+        # Final flush without --stream-partial-output is the real message.
+        # With --stream-partial-output the same shape is a duplicate.
+        return not (has_ts and has_call)
 
     @staticmethod
     def _extract_assistant_text(event: dict) -> str:
@@ -217,8 +207,6 @@ class CursorProvider:
             fn = payload["function"]
             name = str(fn.get("name") or "function")
             args = fn.get("arguments") or fn.get("args") or {}
-            if isinstance(args, str):
-                args = {"value": args}
             if not isinstance(args, dict):
                 args = {"value": args}
             return name, args, call_id
@@ -245,10 +233,8 @@ class CursorProvider:
                 continue
             if "success" in result:
                 success = result["success"]
-                if isinstance(success, dict):
-                    if "content" in success:
-                        return str(success["content"]), False
-                    return str(success), False
+                if isinstance(success, dict) and "content" in success:
+                    return str(success["content"]), False
                 return str(success), False
             if "error" in result or "failure" in result:
                 err = result.get("error") or result.get("failure")
@@ -258,14 +244,7 @@ class CursorProvider:
     def _raise_for_returncode(
         self, returncode: int | None, stderr_data: bytes | str
     ) -> None:
-        if returncode in (None, 0):
-            return
-        if isinstance(stderr_data, bytes):
-            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-        else:
-            stderr_text = (stderr_data or "").strip()
-        detail = stderr_text or "subprocess exited without stderr output"
-        raise ProviderError(f"cursor exited with code {returncode}: {detail}")
+        raise_for_exit("cursor", returncode, stderr_data)
 
     def check_ready(self) -> tuple[bool, str]:
         if shutil.which(self.config.command) is None:

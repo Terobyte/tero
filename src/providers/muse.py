@@ -48,11 +48,11 @@ def muse_from_config(provider_config: dict) -> "MuseProvider":
     """Build a MuseProvider from a `.tero/config.yaml` providers entry."""
     return MuseProvider(
         MuseConfig(
-            command=provider_config.get("command", "claude"),
-            default_model=provider_config.get("default_model", "muse-spark-1.3"),
+            command=provider_config.get("command", MuseConfig.command),
+            default_model=provider_config.get("default_model", MuseConfig.default_model),
             base_url=provider_config.get("base_url", DEFAULT_BASE_URL),
             secrets_file=provider_config.get("secrets_file", DEFAULT_SECRETS_FILE),
-            display_name=provider_config.get("display_name", "Muse API"),
+            display_name=provider_config.get("display_name", MuseConfig.display_name),
         )
     )
 

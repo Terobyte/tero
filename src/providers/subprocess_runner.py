@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
 from src.constants import STDOUT_READ_CHUNK_SIZE
+from src.errors import ProviderError
 
 
 @dataclass
@@ -168,6 +169,36 @@ async def run_subprocess_jsonl(
 
 async def _empty_bytes() -> bytes:
     return b""
+
+
+def raise_for_exit(
+    name: str,
+    returncode: int | None,
+    stderr_data: bytes | str,
+    errors: list[str] | None = None,
+) -> None:
+    """Raise when a provider CLI subprocess exits unsuccessfully.
+
+    Shared decode/fallback logic for all providers: stderr bytes are
+    decoded with errors="replace", empty output falls back to
+    "subprocess exited without stderr output". When `errors` are given
+    (opencode collects in-stream error events), they are prepended to
+    the stderr text, joined with "; ".
+    """
+    if returncode in (None, 0):
+        return
+
+    if isinstance(stderr_data, bytes):
+        stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+    else:
+        stderr_text = (stderr_data or "").strip()
+
+    if errors is None:
+        detail = stderr_text or "subprocess exited without stderr output"
+    else:
+        parts = [*(errors or []), stderr_text] if stderr_text else list(errors or [])
+        detail = "; ".join(parts) or "subprocess exited without stderr output"
+    raise ProviderError(f"{name} exited with code {returncode}: {detail}")
 
 
 def _kill_group(proc) -> None:

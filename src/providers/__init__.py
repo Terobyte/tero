@@ -6,16 +6,8 @@ from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
 from .gemini import GeminiConfig, GeminiProvider
-from .muse import MuseConfig, MuseProvider, muse_from_config
+from .muse import muse_from_config
 from .cursor import CursorConfig, CursorProvider
-from .message_adapter import (
-    AdaptedMessage,
-    TextBlock,
-    ToolUseBlock,
-    ToolResultBlock,
-    adapt_claude_event,
-    adapt_sdk_message,
-)
 
 
 def create_provider(

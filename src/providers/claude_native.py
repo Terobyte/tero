@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from src.constants import DEFAULT_COMPACT_THRESHOLD
 from src.errors import ProviderError
+from .effort import normalize_effort
 from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 
@@ -82,7 +83,7 @@ class ClaudeNativeProvider:
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
-                    if event.returncode is None or event.returncode != 0:
+                    if event.returncode != 0:
                         raise ProviderError(
                             f"claude CLI exited with code {event.returncode}: "
                             f"{(event.stderr or b'').decode()}"
@@ -163,9 +164,6 @@ class ClaudeNativeProvider:
         read_only: bool = False,
         effort: str = "",
     ) -> list:
-        """Build the CLI command with arguments."""
-        from .effort import normalize_effort
-
         resolved_model = model or self.config.default_model
         resolved_model = _MODEL_ALIASES.get(resolved_model, resolved_model)
         resolved_effort = normalize_effort(effort)

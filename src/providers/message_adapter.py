@@ -42,17 +42,6 @@ class AdaptedMessage:
     model: str = ""  # Model that generated this message
     type: str = ""  # Event type: "text", "assistant", "tool_use", "tool_result", "result"
 
-    def __getitem__(self, key: str) -> Any:
-        """Dict-like access to message fields."""
-        if key == "text":
-            return self.get_text_content()
-        return getattr(self, key)
-
-    @property
-    def text(self) -> str:
-        """Convenience property for text content."""
-        return self.get_text_content()
-
     def get_text_content(self) -> str:
         """Extract all text from content blocks."""
         texts = []
@@ -62,6 +51,16 @@ class AdaptedMessage:
             elif hasattr(block, "text"):
                 texts.append(block.text)
         return "\n".join(texts)
+
+
+def wrap_system_prompt(system: str, user: str) -> str:
+    """Prepend a system prompt inside <SYSTEM INSTRUCTIONS> tags."""
+    if system:
+        return (
+            f"<SYSTEM INSTRUCTIONS>\n{system}\n</SYSTEM INSTRUCTIONS>"
+            f"\n\n{user}"
+        )
+    return user
 
 
 def adapt_claude_event(event: dict) -> AdaptedMessage | None:

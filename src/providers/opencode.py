@@ -1,9 +1,6 @@
 """OpenCode provider — MIMO, Kimi, and other free models via opencode CLI."""
 
-import json
-import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 
 from .message_adapter import (
@@ -11,16 +8,15 @@ from .message_adapter import (
     TextBlock,
     ToolUseBlock,
     ToolResultBlock,
+    wrap_system_prompt,
 )
-from src.errors import ProviderError
-from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
+from .effort import normalize_effort
+from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 from src.constants import (
     MAX_TOOL_OUTPUT_CHARS,
     DEFAULT_PROVIDER_TIMEOUT_S,
 )
-
-MAX_TOOL_OUTPUT = MAX_TOOL_OUTPUT_CHARS
 
 
 @dataclass
@@ -64,18 +60,7 @@ class OpenCodeProvider:
         read_only: bool = False,
         effort: str = "",
     ):
-        """Run OpenCode agent via CLI and yield adapted messages.
-
-        Args:
-            prompt: User prompt
-            system_prompt: System instructions (wrapped in <SYSTEM INSTRUCTIONS> tags)
-            working_dir: Working directory for subprocess
-            max_turns: Maximum turns (metadata)
-            model: Optional model override
-
-        Yields:
-            AdaptedMessage objects for each relevant event
-        """
+        """Run OpenCode agent via CLI and yield adapted messages."""
         self._reset_usage()
         cmd = self._build_command(model, working_dir, effort=effort, read_only=read_only)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
@@ -107,8 +92,6 @@ class OpenCodeProvider:
         self, model: str = "", working_dir: str = "", effort: str = "", read_only: bool = False
     ) -> list[str]:
         """Build opencode run CLI command."""
-        from .effort import normalize_effort
-
         resolved_model = model or self.config.default_model
         resolved_effort = normalize_effort(effort)
 
@@ -135,35 +118,15 @@ class OpenCodeProvider:
         return cmd
 
     def _build_system_prompt(self, system_prompt: str, user_prompt: str) -> str:
-        """Format prompt with system instructions wrapping.
-
-        OpenCode has no CODEX_INSTRUCTIONS env var — we prepend the system
-        prompt inside <SYSTEM INSTRUCTIONS> tags.
-        """
-        if system_prompt:
-            return (
-                f"<SYSTEM INSTRUCTIONS>\n{system_prompt}\n</SYSTEM INSTRUCTIONS>"
-                f"\n\n{user_prompt}"
-            )
-        return user_prompt
+        return wrap_system_prompt(system_prompt, user_prompt)
 
     def _raise_for_returncode(
         self, returncode: int | None, stderr_data: bytes | str, errors: list[str] | None = None
     ) -> None:
         """Raise when the OpenCode subprocess exits unsuccessfully."""
-        if returncode in (None, 0):
-            return
+        raise_for_exit("opencode", returncode, stderr_data, errors)
 
-        if isinstance(stderr_data, bytes):
-            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-        else:
-            stderr_text = (stderr_data or "").strip()
-
-        parts = [*(errors or []), stderr_text] if stderr_text else list(errors or [])
-        detail = "; ".join(parts) or "subprocess exited without stderr output"
-        raise ProviderError(f"opencode exited with code {returncode}: {detail}")
-
-    def _build_command_messages(self, part: dict) -> list[AdaptedMessage]:
+    def _tool_messages(self, part: dict) -> list[AdaptedMessage]:
         """Build separate tool-use and tool-result messages for one command.
 
         Pass the real `state.input` dict through (e.g. `{"filePath": ...}` for
@@ -178,7 +141,7 @@ class OpenCodeProvider:
             inp["command"] = inp.get("description") or str(inp)
         output = state.get("output", "")
         exit_code = state.get("metadata", {}).get("exit")
-        result_text = output[:MAX_TOOL_OUTPUT]
+        result_text = output[:MAX_TOOL_OUTPUT_CHARS]
 
         return [
             AdaptedMessage(
@@ -231,7 +194,7 @@ class OpenCodeProvider:
                 return AdaptedMessage(role="assistant", content=[TextBlock(text=text)])
 
         elif t == "tool_use":
-            return self._build_command_messages(part)
+            return self._tool_messages(part)
 
         elif t == "step_finish":
             tokens = part.get("tokens", {})
@@ -263,6 +226,5 @@ class OpenCodeProvider:
 
     @property
     def display_name(self) -> str:
-        """Human-readable name for UI."""
         model = self.config.default_model or "default"
         return f"{self.config.display_name} ({model})"

@@ -5,7 +5,8 @@ import json
 from unittest.mock import patch
 
 import pytest
-from src.providers.opencode import OpenCodeProvider, OpenCodeConfig, MAX_TOOL_OUTPUT
+from src.constants import MAX_TOOL_OUTPUT_CHARS
+from src.providers.opencode import OpenCodeProvider, OpenCodeConfig
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +281,9 @@ def test_adapt_unknown_event_returns_none():
 
 
 def test_adapt_tool_output_truncated():
-    """Tool output exceeding MAX_TOOL_OUTPUT is truncated."""
+    """Tool output exceeding MAX_TOOL_OUTPUT_CHARS is truncated."""
     provider = OpenCodeProvider(OpenCodeConfig())
-    huge_output = "X" * (MAX_TOOL_OUTPUT + 5000)
+    huge_output = "X" * (MAX_TOOL_OUTPUT_CHARS + 5000)
     event = {
         "type": "tool_use",
         "part": {
@@ -299,7 +300,7 @@ def test_adapt_tool_output_truncated():
     }
     messages = provider._adapt_opencode_event(event)
     assert isinstance(messages, list)
-    assert len(messages[1].content[0].content) <= MAX_TOOL_OUTPUT
+    assert len(messages[1].content[0].content) <= MAX_TOOL_OUTPUT_CHARS
 
 
 # ---------------------------------------------------------------------------

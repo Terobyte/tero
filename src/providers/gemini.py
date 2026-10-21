@@ -8,8 +8,8 @@ from typing import AsyncIterator
 
 from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
-from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock
-from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
+from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock, wrap_system_prompt
+from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 
 @dataclass
@@ -118,12 +118,7 @@ class GeminiProvider:
 
     @staticmethod
     def _combine_prompt(system_prompt: str, user_prompt: str) -> str:
-        if system_prompt:
-            return (
-                f"<SYSTEM INSTRUCTIONS>\n{system_prompt}\n</SYSTEM INSTRUCTIONS>"
-                f"\n\n{user_prompt}"
-            )
-        return user_prompt
+        return wrap_system_prompt(system_prompt, user_prompt)
 
     def _adapt_gemini_event(self, event: dict) -> AdaptedMessage | None:
         """Adapt a single Gemini CLI stream-json event into an AdaptedMessage.
@@ -134,9 +129,9 @@ class GeminiProvider:
            — session metadata; ignored (returns None).
 
         2. ``{"type":"message","role":"assistant","content":"...","delta":true}``
-           — streamed text chunk from the model.  The ``delta`` field is present
-           but not used for routing; all ``type:"message"`` events with
-           ``role:"assistant"`` and non-empty ``content`` are yielded as text.
+           — streamed text chunk from the model.  All ``type:"message"``
+           events with ``role:"assistant"`` and non-empty ``content``
+           are yielded as text.
 
         3. ``{"type":"result","status":"success","stats":{...}}``
            — final event.  ``stats`` may contain ``input_tokens`` and
@@ -159,7 +154,6 @@ class GeminiProvider:
         if t == "message":
             role = event.get("role", "")
             content = event.get("content", "")
-            is_delta = event.get("delta", False)
 
             if role == "assistant" and content:
                 return AdaptedMessage(
@@ -223,14 +217,7 @@ class GeminiProvider:
     def _raise_for_returncode(
         self, returncode: int | None, stderr_data: bytes | str
     ) -> None:
-        if returncode in (None, 0):
-            return
-        if isinstance(stderr_data, bytes):
-            stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-        else:
-            stderr_text = (stderr_data or "").strip()
-        detail = stderr_text or "subprocess exited without stderr output"
-        raise ProviderError(f"gemini exited with code {returncode}: {detail}")
+        raise_for_exit("gemini", returncode, stderr_data)
 
     def check_ready(self) -> tuple[bool, str]:
         if shutil.which(self.config.command) is not None:
