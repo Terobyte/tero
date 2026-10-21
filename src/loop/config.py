@@ -105,11 +105,6 @@ def config_from_namespace(args) -> LoopConfig:
         if escalation[1]:
             cfg.escalation_model = escalation[1]
 
-    # Legacy flags still accepted so old wrappers keep working.
-    if getattr(args, "player_provider", None) and not player[0]:
-        cfg.player_provider = normalize_provider(args.player_provider)
-    if getattr(args, "player_model", None) and not player[1]:
-        cfg.player_model = args.player_model
     return cfg
 
 
@@ -124,7 +119,7 @@ def apply_saved_config(loop: LoopConfig, saved: Any, args: Any | None = None) ->
         if plan:
             loop.plan_file = plan
 
-    if not getattr(args, "player_spec", None) and not getattr(args, "player_provider", None):
+    if not getattr(args, "player_spec", None):
         provider = getattr(saved, "player_provider", "") or ""
         if provider:
             loop.player_provider = normalize_provider(provider)

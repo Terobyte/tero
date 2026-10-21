@@ -2,9 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
-from src.cli_entry import build_parser
 from src.config import resolve_config
 
 
@@ -35,18 +32,3 @@ def test_project_defaults_preserve_canonical_provider_names(tmp_path, monkeypatc
     assert cfg.player_provider == "muse"
     assert cfg.coach_provider == "muse"
 
-
-def test_cli_parser_rejects_invalid_provider_names():
-    """CLI should only accept configured canonical provider names."""
-    parser = build_parser()
-
-    with pytest.raises(SystemExit):
-        parser.parse_args(
-            [
-                "go",
-                "--player-provider",
-                "not-a-provider",
-                "--coach-provider",
-                "still-not-a-provider",
-            ]
-        )

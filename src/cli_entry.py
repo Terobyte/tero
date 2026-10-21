@@ -18,37 +18,8 @@ def resolve_go_config(args):
     return resolve_config(
         {
             "working_dir": args.working_dir,
-            "max_turns": args.max_turns,
             "plan_file": args.plan,
             "verbose": args.verbose,
-            "autonomous": args.autonomous,
-            "coach_model": getattr(args, "coach_model", None),
-            "player_provider": getattr(args, "player_provider", None),
-            "coach_provider": getattr(args, "coach_provider", None),
-            "player_model": getattr(args, "player_model", None),
-            "code_review": getattr(args, "code_review", None),
-            "review_provider": getattr(args, "review_provider", None),
-            "review_model": getattr(args, "review_model", None),
-            "coach_retry_max": getattr(args, "coach_retry_max", None),
-            "coach_fallback_provider": getattr(args, "coach_fallback_provider", None),
-            "coach_fallback_model": getattr(args, "coach_fallback_model", None),
-            "context_limit": getattr(args, "context_limit", None),
-            "compact_threshold": getattr(args, "compact_threshold", None),
-            "max_continuation_attempts": getattr(
-                args, "max_continuation_attempts", None
-            ),
-            "batch_judge_provider": getattr(args, "batch_judge_provider", None),
-            "batch_judge_model": getattr(args, "batch_judge_model", None),
-            "batch_pre_provider": getattr(args, "batch_pre_provider", None),
-            "batch_pre_model": getattr(args, "batch_pre_model", None),
-            "batch_post_provider": getattr(args, "batch_post_provider", None),
-            "batch_post_model": getattr(args, "batch_post_model", None),
-            "max_review_iterations": getattr(args, "max_review_iterations", None),
-            # Provider fallback chain
-            "player_fallback_chain": getattr(args, "player_fallback_chain", None),
-            "coach_fallback_chain": getattr(args, "coach_fallback_chain", None),
-            "chain_retry_wait_s": getattr(args, "chain_retry_wait_s", None),
-            "chain_max_retries": getattr(args, "chain_max_retries", None),
         }
     )
 
@@ -57,9 +28,8 @@ def prepare_go_config(args):
     """Resolve config and, when requested, prompt for interactive settings."""
     config = resolve_go_config(args)
     no_menu = getattr(args, "no_menu", False)
-    autonomous_requested = bool(getattr(args, "autonomous", False))
 
-    if no_menu or autonomous_requested:
+    if no_menu:
         return config
 
     from src.menu import run_settings_menu
@@ -80,12 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     go_parser = subparsers.add_parser("go", help="Run coach-player loop")
-    go_parser.add_argument("--max-turns", "-n", type=int, default=None)
     go_parser.add_argument("--plan", "-p", type=str, default=None)
-    go_parser.add_argument("--verbose", "-v", action="store_true", default=None)
-    go_parser.add_argument("--autonomous", action="store_true", default=None)
-    go_parser.add_argument("--no-menu", action="store_true", default=False)
     go_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    go_parser.add_argument("--no-menu", action="store_true", default=False)
+    go_parser.add_argument("--verbose", "-v", action="store_true", default=None)
     go_parser.add_argument("--player", dest="player_spec", default=None)
     go_parser.add_argument("--judge", dest="judge_spec", default=None)
     go_parser.add_argument("--tester", dest="tester_spec", default=None)
@@ -94,123 +62,6 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--test-command", default=None)
     go_parser.add_argument("--test-command-scoped", default=None)
     go_parser.add_argument("--max-rounds", type=int, default=None)
-
-    go_parser.add_argument(
-        "--player-provider",
-        "-pp",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-    )
-    go_parser.add_argument(
-        "--coach-provider",
-        "-cp",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-    )
-    go_parser.add_argument("--player-model", "-pm", type=str, default=None)
-    go_parser.add_argument(
-        "--coach-model", "-cm", type=str, default=None, dest="coach_model"
-    )
-    go_parser.add_argument("--code-review", action="store_true", default=None)
-    go_parser.add_argument(
-        "--review-provider",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-    )
-    go_parser.add_argument("--review-model", type=str, default=None)
-
-    go_parser.add_argument("--coach-retry-max", type=int, default=None)
-    go_parser.add_argument(
-        "--coach-fallback-provider",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-    )
-    go_parser.add_argument("--coach-fallback-model", type=str, default=None)
-
-    go_parser.add_argument("--context-limit", type=int, default=None)
-    go_parser.add_argument("--compact-threshold", type=float, default=None)
-    go_parser.add_argument(
-        "--max-continuation",
-        type=int,
-        default=None,
-        dest="max_continuation_attempts",
-    )
-
-    go_parser.add_argument(
-        "--batch-judge-provider",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-        dest="batch_judge_provider",
-    )
-    go_parser.add_argument(
-        "--batch-judge-model",
-        type=str,
-        default=None,
-        dest="batch_judge_model",
-    )
-    go_parser.add_argument(
-        "--batch-pre-provider",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-        dest="batch_pre_provider",
-    )
-    go_parser.add_argument(
-        "--batch-pre-model",
-        type=str,
-        default=None,
-        dest="batch_pre_model",
-    )
-    go_parser.add_argument(
-        "--batch-post-provider",
-        type=str,
-        default=None,
-        choices=PROVIDER_CHOICES,
-        dest="batch_post_provider",
-    )
-    go_parser.add_argument(
-        "--batch-post-model",
-        type=str,
-        default=None,
-        dest="batch_post_model",
-    )
-    go_parser.add_argument(
-        "--max-review-iterations",
-        type=int,
-        default=None,
-        dest="max_review_iterations",
-    )
-
-    # Provider fallback chain
-    go_parser.add_argument(
-        "--player-fallback-chain",
-        type=str,
-        default=None,
-        dest="player_fallback_chain",
-    )
-    go_parser.add_argument(
-        "--coach-fallback-chain",
-        type=str,
-        default=None,
-        dest="coach_fallback_chain",
-    )
-    go_parser.add_argument(
-        "--chain-retry-wait",
-        type=float,
-        default=None,
-        dest="chain_retry_wait_s",
-    )
-    go_parser.add_argument(
-        "--chain-max-retries",
-        type=int,
-        default=None,
-        dest="chain_max_retries",
-    )
 
     history_parser = subparsers.add_parser("history", help="Show run history")
     history_parser.add_argument("--limit", "-l", type=int, default=10)

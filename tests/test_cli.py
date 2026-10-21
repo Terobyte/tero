@@ -38,8 +38,6 @@ def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
         test_command=None,
         test_command_scoped=None,
         max_rounds=None,
-        player_provider=None,
-        player_model=None,
     )
 
     import asyncio
@@ -81,8 +79,6 @@ def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatc
         test_command=None,
         test_command_scoped=None,
         max_rounds=None,
-        player_provider=None,
-        player_model=None,
     )
     config = Config(
         working_dir=str(tmp_path),
@@ -132,15 +128,9 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
 
     args = SimpleNamespace(
         working_dir=str(tmp_path),
-        max_turns=None,
         plan=None,
         verbose=None,
-        autonomous=None,
         no_menu=False,
-        player_provider=None,
-        coach_provider=None,
-        player_model=None,
-        coach_model=None,
     )
 
     import asyncio
@@ -148,50 +138,6 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
     asyncio.run(cli_entry.run_go(args))
 
     assert exit_codes == [0]
-
-
-def test_prepare_go_config_still_opens_menu_when_autonomous_comes_from_defaults(
-    tmp_path, monkeypatch
-):
-    """Saved defaults must not make the menu unreachable."""
-    config_dir = tmp_path / ".g3"
-    config_dir.mkdir()
-    (config_dir / "config.yaml").write_text("defaults:\n  autonomous: true\n")
-
-    args = SimpleNamespace(
-        working_dir=str(tmp_path),
-        max_turns=None,
-        plan=None,
-        verbose=None,
-        autonomous=None,
-        no_menu=False,
-        player_provider=None,
-        coach_provider=None,
-        player_model=None,
-        coach_model=None,
-        code_review=None,
-        review_provider=None,
-        review_model=None,
-        coach_retry_max=None,
-        coach_fallback_provider=None,
-        coach_fallback_model=None,
-        context_limit=None,
-        compact_threshold=None,
-        max_continuation_attempts=None,
-    )
-
-    seen = {}
-
-    def fake_menu(config):
-        seen["autonomous"] = config.autonomous
-        return config
-
-    monkeypatch.setattr("src.menu.run_settings_menu", fake_menu)
-
-    config = cli_entry.prepare_go_config(args)
-
-    assert seen["autonomous"] is True
-    assert config.autonomous is True
 
 
 def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
@@ -216,10 +162,8 @@ def test_resolve_config_loads_saved_global_defaults(tmp_path, monkeypatch):
     cfg = resolve_config(
         {
             "working_dir": str(workspace),
-            "max_turns": None,
             "plan_file": None,
             "verbose": None,
-            "autonomous": None,
             "player_provider": None,
             "coach_provider": None,
             "player_model": None,
@@ -259,10 +203,8 @@ def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
     cfg = resolve_config(
         {
             "working_dir": str(workspace),
-            "max_turns": None,
             "plan_file": None,
             "verbose": None,
-            "autonomous": None,
             "player_provider": None,
             "coach_provider": None,
             "player_model": None,
@@ -279,248 +221,10 @@ def test_resolve_config_filters_opt_in_runtime_modes_from_global_defaults(
     assert not hasattr(cfg, "preplan_mode")
 
 
-@pytest.mark.parametrize(
-    ("module", "module_name"),
-    [
-        (cli_entry, "packaged"),
-    ],
-)
-def test_main_accepts_opencode_provider_for_coach_and_player(monkeypatch, module, module_name):
-    """Both entrypoints must accept opencode in CLI parsing."""
-    captured = {}
-
-    def fake_prepare(args):
-        captured["args"] = args
-        return SimpleNamespace(
-            working_dir=".",
-            plan_file="requirements.md",
-        )
-
-    async def fake_run_go(args, config=None):
-        captured["run_go_args"] = args
-        captured["run_go_config"] = config
-
-    def fake_asyncio_run(coro):
-        coro.close()
-
-    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
-    monkeypatch.setattr(module, "run_go", fake_run_go)
-    monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
-    monkeypatch.setattr(
-        module.sys,
-        "argv",
-        [
-            "tero",
-            "go",
-            "--no-menu",
-            "--player-provider",
-            "opencode",
-            "--coach-provider",
-            "opencode",
-            "--player-model",
-            "opencode/mimo-v2-pro-free",
-            "--coach-model",
-            "openrouter/moonshotai/kimi-k2:free",
-        ],
-    )
-
-    module.main()
-
-    assert captured["args"].player_provider == "opencode", module_name
-    assert captured["args"].coach_provider == "opencode", module_name
-    assert captured["args"].player_model == "opencode/mimo-v2-pro-free", module_name
-    assert (
-        captured["args"].coach_model == "openrouter/moonshotai/kimi-k2:free"
-    ), module_name
-
-
-@pytest.mark.parametrize(
-    ("module", "module_name"),
-    [
-        (cli_entry, "packaged"),
-    ],
-)
-def test_main_accepts_muse_provider_for_coach_and_player(monkeypatch, module, module_name):
-    """Both entrypoints must accept muse in CLI parsing."""
-    captured = {}
-
-    def fake_prepare(args):
-        captured["args"] = args
-        return SimpleNamespace(
-            working_dir=".",
-            plan_file="requirements.md",
-        )
-
-    async def fake_run_go(args, config=None):
-        captured["run_go_args"] = args
-        captured["run_go_config"] = config
-
-    def fake_asyncio_run(coro):
-        coro.close()
-
-    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
-    monkeypatch.setattr(module, "run_go", fake_run_go)
-    monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
-    monkeypatch.setattr(
-        module.sys,
-        "argv",
-        [
-            "tero",
-            "go",
-            "--no-menu",
-            "--player-provider",
-            "muse",
-            "--coach-provider",
-            "muse",
-            "--player-model",
-            "muse-spark-1.3",
-            "--coach-model",
-            "muse-spark-1.3",
-        ],
-    )
-
-    module.main()
-
-    assert captured["args"].player_provider == "muse", module_name
-    assert captured["args"].coach_provider == "muse", module_name
-    assert captured["args"].player_model == "muse-spark-1.3", module_name
-    assert captured["args"].coach_model == "muse-spark-1.3", module_name
-
-
-@pytest.mark.parametrize(
-    ("module", "module_name"),
-    [
-        (cli_entry, "packaged"),
-    ],
-)
-def test_main_accepts_gemini_provider_for_coach_and_player(monkeypatch, module, module_name):
-    """Both entrypoints must accept gemini in CLI parsing."""
-    captured = {}
-
-    def fake_prepare(args):
-        captured["args"] = args
-        return SimpleNamespace(
-            working_dir=".",
-            plan_file="requirements.md",
-        )
-
-    async def fake_run_go(args, config=None):
-        captured["run_go_args"] = args
-        captured["run_go_config"] = config
-
-    def fake_asyncio_run(coro):
-        coro.close()
-
-    monkeypatch.setattr(module, "prepare_go_config", fake_prepare)
-    monkeypatch.setattr(module, "run_go", fake_run_go)
-    monkeypatch.setattr(module.asyncio, "run", fake_asyncio_run)
-    monkeypatch.setattr(
-        module.sys,
-        "argv",
-        [
-            "tero",
-            "go",
-            "--no-menu",
-            "--player-provider",
-            "gemini",
-            "--coach-provider",
-            "gemini",
-            "--player-model",
-            "gemini-3.8-flash",
-            "--coach-model",
-            "gemini-3.1-pro-preview",
-        ],
-    )
-
-    module.main()
-
-    assert captured["args"].player_provider == "gemini", module_name
-    assert captured["args"].coach_provider == "gemini", module_name
-    assert captured["args"].player_model == "gemini-3.8-flash", module_name
-    assert captured["args"].coach_model == "gemini-3.1-pro-preview", module_name
-
-
 def test_installed_script_points_at_package_entrypoint():
     """The console script should resolve inside the installed package."""
     pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
     assert 'tero = "src.cli_entry:main"' in pyproject
-
-
-def test_smoke_build_parser_and_parse_go_without_error():
-    """build_parser() must parse `go` with no flags without error."""
-    from src.cli_entry import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args(["go"])
-
-    assert args.command == "go"
-    assert args.max_turns is None
-    assert args.plan is None
-    assert args.verbose is None
-    assert args.autonomous is None
-    assert args.working_dir == "."
-    assert args.player_provider is None
-    assert args.coach_provider is None
-    assert args.player_model is None
-    assert args.coach_model is None
-
-
-def test_smoke_parse_go_with_common_flags():
-    """build_parser() must parse `go` with typical flag combinations."""
-    from src.cli_entry import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args([
-        "go",
-        "-n", "5",
-        "-p", "plan.md",
-        "-v",
-        "--autonomous",
-        "--no-menu",
-        "-w", "/tmp/project",
-        "--player-provider", "claude",
-        "--coach-provider", "muse",
-        "--player-model", "claude-sonnet",
-        "--code-review",
-        "--context-limit", "8000",
-    ])
-
-    assert args.command == "go"
-    assert args.max_turns == 5
-    assert args.plan == "plan.md"
-    assert args.verbose is True
-    assert args.autonomous is True
-    assert args.no_menu is True
-    assert args.working_dir == "/tmp/project"
-    assert args.player_provider == "claude"
-    assert args.coach_provider == "muse"
-    assert args.player_model == "claude-sonnet"
-    assert args.code_review is True
-    assert args.context_limit == 8000
-
-
-def test_smoke_parse_go_with_short_flags():
-    """build_parser() must accept short flag aliases."""
-    from src.cli_entry import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args([
-        "go",
-        "-n", "3",
-        "-p", "req.md",
-        "-w", ".",
-        "-pp", "muse",
-        "-cp", "muse",
-        "-pm", "muse-spark-1.3",
-        "-cm", "muse-spark-1.2",
-    ])
-
-    assert args.max_turns == 3
-    assert args.plan == "req.md"
-    assert args.player_provider == "muse"
-    assert args.coach_provider == "muse"
-    assert args.player_model == "muse-spark-1.3"
-    assert args.coach_model == "muse-spark-1.2"
 
 
 def test_smoke_parse_history_without_error():
@@ -545,31 +249,6 @@ def test_smoke_parse_history_with_flags():
     assert args.command == "history"
     assert args.limit == 5
     assert args.working_dir == "/tmp/proj"
-
-
-def test_smoke_parse_go_with_fallback_chain_flags():
-    """build_parser() must parse fallback-chain flags."""
-    from src.cli_entry import build_parser
-
-    parser = build_parser()
-    args = parser.parse_args([
-        "go",
-        "--player-fallback-chain", "claude,muse",
-        "--coach-fallback-chain", "muse,claude",
-        "--chain-retry-wait", "2.5",
-        "--chain-max-retries", "3",
-        "--compact-threshold", "0.8",
-        "--max-continuation", "5",
-        "--max-review-iterations", "2",
-    ])
-
-    assert args.player_fallback_chain == "claude,muse"
-    assert args.coach_fallback_chain == "muse,claude"
-    assert args.chain_retry_wait_s == 2.5
-    assert args.chain_max_retries == 3
-    assert args.compact_threshold == 0.8
-    assert args.max_continuation_attempts == 5
-    assert args.max_review_iterations == 2
 
 
 def test_removed_go_mode_flags_are_rejected():

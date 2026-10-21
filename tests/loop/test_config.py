@@ -60,8 +60,6 @@ def test_config_from_namespace_player_spec():
             max_rounds=12,
             verbose=False,
             no_menu=True,
-            player_provider=None,
-            player_model=None,
         )
     )
     assert cfg.player_provider == "muse"
@@ -88,8 +86,6 @@ def test_apply_saved_config_copies_menu_judge_and_tests():
     args = SimpleNamespace(
         plan="requirements.md",
         player_spec=None,
-        player_provider=None,
-        player_model=None,
         judge_spec=None,
         tester_spec=None,
         escalation_spec=None,
@@ -130,8 +126,6 @@ def test_apply_saved_config_copies_effort():
     args = SimpleNamespace(
         plan=None,
         player_spec=None,
-        player_provider=None,
-        player_model=None,
         judge_spec=None,
         tester_spec=None,
         escalation_spec=None,
@@ -153,8 +147,6 @@ def test_apply_saved_config_cli_judge_wins():
         verbose=False,
         no_menu=True,
         player_spec=None,
-        player_provider=None,
-        player_model=None,
         judge_spec="codex:gpt-5.6-terra",
         tester_spec=None,
         escalation_spec=None,
