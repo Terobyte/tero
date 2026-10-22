@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.config import Config, UnknownProviderError, family_of, normalize_provider
+from src.config import Config, ConfigError, UnknownProviderError, family_key, normalize_provider
+from src.loop.free import resolve_free_models
 from src.loop.gates import detect, print_red_tail, run_all
 from src.loop.git import (
     DirtyWorktreeError,
@@ -23,6 +24,7 @@ from src.loop.git import (
 from src.loop.ledger import Ledger, new_run_dir
 from src.loop.phase import AgentRunner, PhaseOutcome, run_phase
 from src.loop.plan import Phase, load_phases, load_preamble
+from src.providers import free_models
 
 _SLUG = re.compile(r"[^a-zA-Z0-9]+")
 
@@ -42,6 +44,7 @@ async def run(
     *,
     agents: AgentRunner,
     check_ready: Callable[[str, str], tuple[bool, str]] | None = None,
+    list_models: Callable[[], list[str]] | None = None,
 ) -> RunOutcome:
     repo = Path(cfg.working_dir).expanduser().resolve()
     try:
@@ -49,18 +52,16 @@ async def run(
     except UnknownProviderError as exc:
         return RunOutcome(status="error", exit_code=1, reason=str(exc))
 
-    player_family = family_of(f"{cfg.player_provider}:{cfg.player_model}")
-    judge_family = family_of(f"{cfg.judge_provider}:{cfg.judge_model}")
-    if player_family == judge_family:
-        return RunOutcome(
-            status="error",
-            exit_code=1,
-            reason=(
-                f"судья из семьи исполнителя ({judge_family}): "
-                f"player {cfg.player_provider}:{cfg.player_model}, "
-                f"judge {cfg.judge_provider}:{cfg.judge_model}"
-            ),
-        )
+    try:
+        cfg, notes = resolve_free_models(cfg, list_models or free_models.list_models)
+    except ConfigError as exc:
+        return RunOutcome(status="error", exit_code=1, reason=str(exc))
+    for note in notes:
+        print(note, flush=True)
+
+    same_family = _same_family_as_judge(cfg)
+    if same_family:
+        return RunOutcome(status="error", exit_code=1, reason=same_family)
 
     if check_ready:
         print("проверка провайдеров …", flush=True)
@@ -238,6 +239,22 @@ def _print_phase_summary(phase: Phase, outcome: PhaseOutcome, *, total: int) -> 
 def slugify(name: str) -> str:
     text = _SLUG.sub("-", name).strip("-").lower()
     return text or "plan"
+
+
+def _same_family_as_judge(cfg: Config) -> str:
+    """Why the judge shares a family with a model that writes code, or ""."""
+    judge = f"{cfg.judge_provider}:{cfg.judge_model}"
+    judge_family = family_key(judge)
+    for role, provider, model in _roles(cfg):
+        if role not in ("player", "escalation"):
+            continue
+        if family_key(f"{provider}:{model}") == judge_family:
+            # escalation swaps the player mid-phase, so it counts as the player
+            return (
+                f"судья из семьи исполнителя ({judge_family}): "
+                f"{role} {provider}:{model}, judge {judge}"
+            )
+    return ""
 
 
 def _validate_providers(cfg: Config) -> None:

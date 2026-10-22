@@ -278,6 +278,47 @@ async def test_judge_same_family_other_rejected(tmp_path: Path):
     assert agents.calls == []
 
 
+@pytest.mark.asyncio
+async def test_escalation_same_family_as_judge_rejected(tmp_path: Path):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(repo, [])
+    outcome = await run(
+        _cfg(
+            repo,
+            player_provider="codex",
+            player_model="gpt-5.6-terra",
+            judge_provider="claude",
+            judge_model="opus",
+            escalation_provider="claude",
+            escalation_model="sonnet",
+        ),
+        agents=agents,
+    )
+    assert outcome.exit_code == 1
+    assert "escalation" in outcome.reason and "claude" in outcome.reason
+    assert agents.calls == []
+
+
+@pytest.mark.asyncio
+async def test_free_judge_without_free_models_rejected(tmp_path: Path):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(repo, [])
+    outcome = await run(
+        _cfg(
+            repo,
+            player_provider="codex",
+            player_model="gpt-5.6-terra",
+            judge_provider="opencode",
+            judge_model="free",
+        ),
+        agents=agents,
+        list_models=lambda: [],
+    )
+    assert outcome.exit_code == 1
+    assert "бесплатн" in outcome.reason
+    assert agents.calls == []
+
+
 PLAN_DONE = """# Demo
 
 ## Done already

@@ -31,6 +31,17 @@ def _isolated_home(tmp_path_factory, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def _no_real_opencode_models(monkeypatch):
+    """`opencode models` on the real CLI is a network call; tests pass their own command."""
+    from src.providers import free_models
+
+    real = free_models.list_models
+    monkeypatch.setattr(
+        free_models, "list_models", lambda command="opencode": [] if command == "opencode" else real(command)
+    )
+
+
 def pytest_pyfunc_call(pyfuncitem):
     if "asyncio" not in pyfuncitem.keywords:
         return None

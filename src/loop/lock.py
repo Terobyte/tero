@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import os
 from pathlib import Path
 
 
@@ -24,8 +25,6 @@ class Lock:
             pass
         finally:
             try:
-                import os
-
                 os.close(self._fd)
             except OSError:
                 pass
@@ -39,8 +38,6 @@ class Lock:
 
 def acquire(repo: str | Path) -> Lock | None:
     """Take the run lock for repo, or return None if another owner holds it."""
-    import os
-
     lock_path = Path(repo) / ".tero" / "run.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)

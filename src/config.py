@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import dataclasses
+import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,7 +57,9 @@ _FAMILY_BY_PROVIDER = {
     "muse": "muse",
 }
 
-_CLAUDE_BARE_MODELS = {"opus", "sonnet", "haiku", "fable"}
+_CLAUDE_BARE = re.compile(r"(?<![a-z])(opus|sonnet|haiku|fable)(?![a-z])")
+_OPENAI_O_SERIES = re.compile(r"(?<![a-z0-9])o\d+(?![a-z0-9])")
+_FREE_SUFFIX = re.compile(r"[-:]free$")
 
 
 def family_of(spec: str) -> str:
@@ -68,17 +71,35 @@ def family_of(spec: str) -> str:
     """
     provider, model = split_role_spec(spec or "")
     m = model.strip().lower()
-    if "claude" in m or m in _CLAUDE_BARE_MODELS:
+    if "claude" in m or _CLAUDE_BARE.search(m):
         return "claude"
     if "gemini" in m:
         return "gemini"
-    if "gpt" in m or "openai" in m or m in ("o3", "o4-mini"):
+    if "gpt" in m or "openai" in m or _OPENAI_O_SERIES.search(m):
         return "openai"
     if "glm" in m:
         return "glm"
     if "muse" in m or "spark" in m:
         return "muse"
     return _FAMILY_BY_PROVIDER.get(provider.strip().lower(), "other")
+
+
+def family_key(spec: str) -> str:
+    """What "same family" compares: the family, or ``other:<vendor>`` for the rest.
+
+    Free models rotate, so the vendor comes from the model name itself
+    (``mimo-v2.6-flash-free`` → ``mimo``), not from a list of known names.
+    """
+    family = family_of(spec)
+    if family != "other":
+        return family
+    provider, model = split_role_spec(spec or "")
+    p = provider.strip().lower()
+    name = _FREE_SUFFIX.sub("", model.strip().lower().rsplit("/", 1)[-1])
+    if name.startswith(p + "-"):
+        name = name[len(p) + 1 :]
+    vendor = re.match(r"[a-z]+", name)
+    return f"other:{vendor.group(0) if vendor else p}"
 
 
 @dataclass

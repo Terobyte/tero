@@ -32,7 +32,10 @@ CODEX_MODEL_PRESETS = {
 }
 
 # OpenCode model IDs
+# The free list rotates: "free" picks from `opencode models` at run start,
+# and a pinned free model that left the list is replaced the same way.
 OPENCODE_MODEL_PRESETS = {
+    "Любая бесплатная (выбор на старте)": "free",
     "Muse Spark 1.3 (free $0)": "opencode/muse-spark-1.3-contributor-free",
     "MIMO v2.6 Flash (free)": "opencode/mimo-v2.6-flash-free",
     "MiniMax M3.1 Flash (free)": "opencode/minimax-m3.1-flash-free",
@@ -238,10 +241,10 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
 
     if provider == "opencode":
         print(
-            "  Модели: spark-free, mimo, minimax, kimi-k2"
+            "  Модели: free (любая бесплатная), spark-free, mimo, minimax, kimi-k2"
         )
         model = (
-            input(f"  {prompt_label} model [mimo]: ").strip().lower() or "mimo"
+            input(f"  {prompt_label} model [free]: ").strip().lower() or "free"
         )
         model_map = {
             "spark-1.3-free": OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"],

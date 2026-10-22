@@ -8,6 +8,7 @@ from src.config import (
     Config,
     UnknownProviderError,
     apply_cli_args,
+    family_key,
     family_of,
     normalize_provider,
     resolve_config,
@@ -377,3 +378,17 @@ def test_family_of_muse():
 def test_family_of_other():
     assert family_of("cursor:composer-2.5") == "other"
 
+
+def test_family_of_claude_bare_name_with_version():
+    assert family_of("cursor:sonnet-4.5") == "claude"
+
+
+def test_family_of_openai_o_series():
+    assert family_of("cursor:o3-pro") == "openai"
+
+
+def test_family_key_splits_other_by_vendor():
+    assert family_key("opencode:opencode/mimo-v2.6-flash-free") != family_key("cursor:composer-2.5")
+    assert family_key("cursor:composer-2.5") == family_key("cursor:composer-9")
+    assert family_key("cursor:cursor-grok-4.6") == family_key("opencode:openrouter/x-ai/grok-4:free")
+    assert family_key("codex:gpt-5.6-terra") == "openai"
