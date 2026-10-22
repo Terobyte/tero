@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -21,8 +23,10 @@ from src.loop.git import (
     status_short,
 )
 from src.loop.ledger import Ledger, new_run_dir
+from src.loop.lock import acquire
 from src.loop.phase import AgentRunner, PhaseOutcome, run_phase
 from src.loop.plan import Phase, load_phases, load_preamble
+from src.loop.state import RunState, Status
 
 _SLUG = re.compile(r"[^a-zA-Z0-9]+")
 
@@ -44,38 +48,55 @@ async def run(
     check_ready: Callable[[str, str], tuple[bool, str]] | None = None,
 ) -> RunOutcome:
     repo = Path(cfg.working_dir).expanduser().resolve()
-    try:
-        _validate_providers(cfg)
-    except UnknownProviderError as exc:
-        return RunOutcome(status="error", exit_code=1, reason=str(exc))
-
-    player_family = family_of(f"{cfg.player_provider}:{cfg.player_model}")
-    judge_family = family_of(f"{cfg.judge_provider}:{cfg.judge_model}")
-    if player_family == judge_family:
-        return RunOutcome(
-            status="error",
-            exit_code=1,
-            reason=(
-                f"судья из семьи исполнителя ({judge_family}): "
-                f"player {cfg.player_provider}:{cfg.player_model}, "
-                f"judge {cfg.judge_provider}:{cfg.judge_model}"
-            ),
-        )
-
-    if check_ready:
-        print("проверка провайдеров …", flush=True)
-        for role, provider, model in _roles(cfg):
-            ok, why = check_ready(provider, model)
-            if not ok:
-                return RunOutcome(
-                    status="error",
-                    exit_code=1,
-                    reason=f"{role} provider ({provider}) not ready: {why}",
-                )
-
     if not is_repo(repo):
         return RunOutcome(status="error", exit_code=1, reason="not a git repo")
 
+    # exclude_tero() before any write into .tero/ (incl. run.lock, state.json):
+    # a fresh clone without ".tero/" in exclude would otherwise read
+    # "?? .tero/" as a dirty tree on every start.
+    exclude_tero(repo)
+    lock = acquire(repo)
+    if lock is None:
+        return RunOutcome(
+            status="error", exit_code=1, reason="another run holds this repo"
+        )
+
+    # State dir exists before the dirty-tree check, so a failed start can
+    # leave state.json=stopped for the HUD while history() still skips it
+    # (history only lists dirs with ledger.jsonl, created below on success).
+    slug = slugify(Path(cfg.plan_file).stem)
+    run_dir = new_run_dir(repo, slug)
+    state = RunState(run_dir / "state.json")
+    try:
+        state.update(
+            status=Status.STARTING.value,
+            pid=os.getpid(),
+            plan=cfg.plan_file,
+            doing="старт",
+        )
+    except Exception:
+        pass
+
+    def _fail_start(reason: str, doing: str = "") -> RunOutcome:
+        try:
+            state.update(
+                status=Status.STOPPED.value,
+                reason=reason,
+                text=reason,
+                doing=doing or "стоп",
+            )
+        except Exception:
+            pass
+        try:
+            lock.release()
+        except Exception:
+            pass
+        return RunOutcome(status="error", exit_code=1, reason=reason)
+
+    try:
+        state.update(doing="проверяю дерево …")
+    except Exception:
+        pass
     dirty_status = status_short(repo)
     if dirty_status:
         branch = current_branch(repo)
@@ -83,32 +104,63 @@ async def run(
             hint = "dirty tero branch; run: git reset --hard && git clean -fd"
         else:
             hint = "dirty worktree; commit or stash before running tero go"
-        return RunOutcome(status="error", exit_code=1, reason=_dirty_reason(hint, dirty_status))
+        return _fail_start(_dirty_reason(hint, dirty_status))
 
     try:
         ensure_clean(repo)
     except DirtyWorktreeError:
-        return RunOutcome(
-            status="error", exit_code=1, reason=_dirty_reason("dirty worktree", status_short(repo))
+        return _fail_start(_dirty_reason("dirty worktree", status_short(repo)))
+
+    try:
+        state.update(doing="проверяю провайдеров …")
+    except Exception:
+        pass
+    try:
+        _validate_providers(cfg)
+    except UnknownProviderError as exc:
+        return _fail_start(str(exc))
+
+    player_family = family_of(f"{cfg.player_provider}:{cfg.player_model}")
+    judge_family = family_of(f"{cfg.judge_provider}:{cfg.judge_model}")
+    if player_family == judge_family:
+        return _fail_start(
+            f"судья из семьи исполнителя ({judge_family}): "
+            f"player {cfg.player_provider}:{cfg.player_model}, "
+            f"judge {cfg.judge_provider}:{cfg.judge_model}",
         )
 
+    if check_ready:
+        print("проверка провайдеров …", flush=True)
+        for role, provider, model in _roles(cfg):
+            ok, why = check_ready(provider, model)
+            if not ok:
+                return _fail_start(f"{role} provider ({provider}) not ready: {why}")
+
+    try:
+        state.update(doing="проверяю план …")
+    except Exception:
+        pass
     plan_path = repo / cfg.plan_file
     if not plan_path.is_file():
-        return RunOutcome(status="error", exit_code=1, reason=f"plan not found: {plan_path}")
+        return _fail_start(f"plan not found: {plan_path}")
 
-    slug = slugify(Path(cfg.plan_file).stem)
     if run_branch_exists(repo, slug):
         # Resume: the [x] marks live on the run branch, not on the branch we started from.
         checkout_run_branch(repo, slug)
 
     phases = load_phases(plan_path)
     if not any(phase.checkboxes for phase in phases):
-        return RunOutcome(
-            status="error",
-            exit_code=1,
-            reason=f"no '- [ ]' checkboxes found in {plan_path}",
-        )
+        return _fail_start(f"no '- [ ]' checkboxes found in {plan_path}")
     if all(phase.done for phase in phases):
+        try:
+            lock.release()
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            run_dir.parent.rmdir()
+        except Exception:
+            pass
         # No branch, no run dir, no test gate: there is nothing to judge.
         return RunOutcome(
             status="ok",
@@ -117,6 +169,10 @@ async def run(
             phases_total=len(phases),
         )
 
+    try:
+        state.update(doing="стартовые тесты …")
+    except Exception:
+        pass
     command = detect(
         repo,
         test_command=cfg.test_command,
@@ -130,11 +186,13 @@ async def run(
         if not gate.ok:
             print(f"стартовый прогон тестов: КРАСНЫЕ (код {gate.exit_code})", flush=True)
             print_red_tail(gate.output)
-            return RunOutcome(status="error", exit_code=1, reason="red_start")
+            return _fail_start("red_start")
 
     checkout_run_branch(repo, slug)
-    exclude_tero(repo)
-    run_dir = new_run_dir(repo, slug)
+    try:
+        state.update(status=Status.RUNNING.value, doing="фаза 1")
+    except Exception:
+        pass
     ledger = Ledger(run_dir)
     ledger.event("run_start", plan=cfg.plan_file, slug=slug)
 
@@ -169,6 +227,19 @@ async def run(
                 shipped += 1
                 continue
             _end(outcome.reason)
+            try:
+                state.update(
+                    status=Status.STOPPED.value,
+                    reason=outcome.reason,
+                    text=outcome.reason,
+                    doing="стоп",
+                )
+            except Exception:
+                pass
+            try:
+                lock.release()
+            except Exception:
+                pass
             return RunOutcome(
                 status="stop",
                 exit_code=2,
@@ -181,6 +252,19 @@ async def run(
         # Under asyncio.run, Ctrl+C reaches this coroutine as CancelledError.
         ledger.event("interrupted")
         _end("interrupted")
+        try:
+            state.update(
+                status=Status.STOPPED.value,
+                reason="interrupted",
+                text="interrupted",
+                doing="стоп",
+            )
+        except Exception:
+            pass
+        try:
+            lock.release()
+        except Exception:
+            pass
         if isinstance(exc, asyncio.CancelledError):
             raise
         return RunOutcome(
@@ -193,6 +277,14 @@ async def run(
         )
 
     _end("ship")
+    try:
+        state.update(status=Status.DONE.value, doing="стоп")
+    except Exception:
+        pass
+    try:
+        lock.release()
+    except Exception:
+        pass
     return RunOutcome(
         status="ok",
         exit_code=0,

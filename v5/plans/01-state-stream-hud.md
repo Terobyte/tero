@@ -54,9 +54,9 @@
 
 Порядок в `run()`: git-репо → `exclude_tero()` → `flock .tero/run.lock` → папка прогона + `state.json: starting` → проверки (дерево, провайдеры, план, тесты) с обновлением `doing` → `ledger.jsonl`.
 
-- [ ] `test_fresh_clone_starts_without_dirty_tree`: клон без `.tero/` в exclude → `run()` доходит до `status=running`, а не «грязное дерево»
-- [ ] провал старта (грязное дерево) → `status=stopped`, `reason`, код 1, папки нет в `history()`
-- [ ] поменять порядок старта
+- [x] `test_fresh_clone_starts_without_dirty_tree`: клон без `.tero/` в exclude → `run()` доходит до `status=running`, а не «грязное дерево»
+- [x] провал старта (грязное дерево) → `status=stopped`, `reason`, код 1, папки нет в `history()`
+- [x] поменять порядок старта
 
 ## Остановки пишут stopped
 

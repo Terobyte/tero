@@ -287,6 +287,69 @@ PLAN_DONE = """# Demo
 
 
 @pytest.mark.asyncio
+async def test_fresh_clone_starts_without_dirty_tree(tmp_path: Path):
+    import json
+
+    repo = _init(tmp_path, PLAN_ONE)
+    assert not (repo / ".tero").exists()
+    observed: dict = {}
+
+    def player(role: str, kwargs: dict) -> dict:
+        assert role == "player"
+        states = []
+        runs_dir = repo / ".tero" / "runs"
+        for d in sorted(runs_dir.iterdir()):
+            p = d / "state.json"
+            if p.is_file():
+                try:
+                    states.append(json.loads(p.read_text()))
+                except ValueError:
+                    pass
+        observed["states"] = states
+        scripted.write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+        return scripted.PLAYER_DONE
+
+    calls = {"n": 0}
+
+    def ready(_provider: str, _model: str) -> tuple[bool, str]:
+        calls["n"] += 1
+        return True, ""
+
+    agents = scripted.FakeAgents(
+        repo, [player, scripted.judge_returns(scripted.ship())]
+    )
+    outcome = await run(_cfg(repo), agents=agents, check_ready=ready)
+    assert outcome.exit_code == 0, outcome.reason
+    assert not outcome.reason.startswith("dirty")
+    assert observed.get("states"), "player never saw state.json"
+    assert any(s.get("status") == "running" for s in observed["states"])
+    assert calls["n"] == 4
+
+
+@pytest.mark.asyncio
+async def test_dirty_start_writes_stopped_and_skips_history(tmp_path: Path):
+    from src.loop.ledger import history
+    from src.loop.state import RunState
+
+    repo = _init(tmp_path, PLAN_ONE)
+    (repo / "README").write_text("dirty\n")
+    outcome = await run(_cfg(repo), agents=scripted.FakeAgents(repo, []))
+    assert outcome.exit_code == 1
+    assert outcome.reason.startswith("dirty")
+    runs_dir = repo / ".tero" / "runs"
+    assert runs_dir.is_dir()
+    found = []
+    for d in sorted(runs_dir.iterdir()):
+        data = RunState.read(d / "state.json")
+        if data is not None:
+            found.append(data)
+    assert found, "no state.json for failed start"
+    assert found[-1].get("status") == "stopped"
+    assert found[-1].get("reason", "").startswith("dirty")
+    assert history(repo) == []
+
+
+@pytest.mark.asyncio
 async def test_all_phases_done_is_nothing_to_do(tmp_path: Path):
     repo = _init(tmp_path, PLAN_DONE)
     outcome = await run(_cfg(repo), agents=scripted.FakeAgents(repo, []))
