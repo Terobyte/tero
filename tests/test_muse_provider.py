@@ -49,10 +49,13 @@ def test_muse_code_cli_names_are_gone():
         create_provider("muse_code")
 
 
-def test_opencode_keeps_free_muse_preset():
-    from src.menu import OPENCODE_MODEL_PRESETS
+def test_opencode_offers_free_muse_when_listed(monkeypatch):
+    from src.menu import _model_presets_for_provider
+    from src.providers import free_models
 
-    assert "opencode/muse-spark-1.3-contributor-free" in OPENCODE_MODEL_PRESETS.values()
+    model = "opencode/muse-spark-1.3-contributor-free"
+    monkeypatch.setattr(free_models, "list_models", lambda command="opencode": [model])
+    assert model in _model_presets_for_provider("opencode").values()
 
 
 def test_key_from_env_wins(monkeypatch, secrets):

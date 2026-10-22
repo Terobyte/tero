@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import subprocess
 
-# model value meaning "any free model opencode lists right now"
-FREE = "free"
-
 _LIST_TIMEOUT_S = 30
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.config import Config, ConfigError, UnknownProviderError, family_key, normalize_provider
-from src.loop.free import resolve_free_models
+from src.loop.free import check_free_models
 from src.loop.gates import detect, print_red_tail, run_all
 from src.loop.git import (
     DirtyWorktreeError,
@@ -53,11 +53,9 @@ async def run(
         return RunOutcome(status="error", exit_code=1, reason=str(exc))
 
     try:
-        cfg, notes = resolve_free_models(cfg, list_models or free_models.list_models)
+        check_free_models(cfg, list_models or free_models.list_models)
     except ConfigError as exc:
         return RunOutcome(status="error", exit_code=1, reason=str(exc))
-    for note in notes:
-        print(note, flush=True)
 
     same_family = _same_family_as_judge(cfg)
     if same_family:

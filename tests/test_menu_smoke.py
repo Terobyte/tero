@@ -15,7 +15,6 @@ from src.menu import (
     FALLBACK_PROVIDER_PRESETS,
     GEMINI_MODEL_PRESETS,
     MUSE_MODEL_PRESETS,
-    OPENCODE_MODEL_PRESETS,
     PROVIDER_PRESETS,
     QUESTIONARY_AVAILABLE,
     _custom_model_allowed,
@@ -92,8 +91,15 @@ class TestPresetsPopulated:
         assert "gpt-5.6-luna" in values
         assert "gpt-6-astra" in values
 
-    def test_opencode_model_presets(self):
-        assert any("minimax" in v.lower() for v in OPENCODE_MODEL_PRESETS.values())
+    def test_opencode_model_presets(self, monkeypatch):
+        from src.menu import _model_presets_for_provider
+        from src.providers import free_models
+
+        monkeypatch.setattr(
+            free_models, "list_models", lambda command="opencode": ["opencode/minimax-m9-free"]
+        )
+        values = _model_presets_for_provider("opencode").values()
+        assert any("minimax" in v.lower() for v in values)
 
     def test_muse_model_presets(self):
         assert "muse-spark-1.3" in MUSE_MODEL_PRESETS.values()

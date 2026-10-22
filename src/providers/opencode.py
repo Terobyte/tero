@@ -11,7 +11,6 @@ from .message_adapter import (
     wrap_system_prompt,
 )
 from .effort import normalize_effort
-from . import free_models
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 from src.constants import (
@@ -24,8 +23,8 @@ class OpenCodeConfig:
     """Configuration for OpenCode CLI provider."""
 
     command: str = "opencode"
-    # "free" = the first free model `opencode models` lists at call time
-    default_model: str = free_models.FREE
+    # free models rotate, so none is pinned: "" lets opencode use its own default
+    default_model: str = ""
     # Seconds without stdout before the run is killed; 0 = off, the role timeout governs.
     stall_timeout_s: float = 0
     display_name: str = "OpenCode"
@@ -35,15 +34,14 @@ class OpenCodeProvider:
     """OpenCode provider via CLI (opencode run --format json).
 
     Launches opencode as a subprocess and parses JSONL output.
-    Model ``free`` picks whatever free model opencode lists now; the free
-    list changes from week to week.
+    The user picks the model; the menu lists today's free ones
+    from ``opencode models``.
     """
 
     def __init__(self, config: OpenCodeConfig | None = None):
         self.config = config or OpenCodeConfig()
         self._last_input_tokens = 0
         self._last_output_tokens = 0
-        self._free_model: str | None = None
 
     def _reset_usage(self) -> None:
         self._last_input_tokens = 0
@@ -94,8 +92,6 @@ class OpenCodeProvider:
     ) -> list[str]:
         """Build opencode run CLI command."""
         resolved_model = model or self.config.default_model
-        if resolved_model.strip().lower() == free_models.FREE:
-            resolved_model = self._pick_free()
         resolved_effort = normalize_effort(effort)
 
         cmd = [
@@ -119,13 +115,6 @@ class OpenCodeProvider:
         cmd.append("-")  # read from stdin
 
         return cmd
-
-    def _pick_free(self) -> str:
-        # "" lets opencode use its own default when nothing free is listed
-        if self._free_model is None:
-            free = free_models.free_models(free_models.list_models(self.config.command))
-            self._free_model = free[0] if free else ""
-        return self._free_model
 
     def _build_system_prompt(self, system_prompt: str, user_prompt: str) -> str:
         return wrap_system_prompt(system_prompt, user_prompt)

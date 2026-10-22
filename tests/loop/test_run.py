@@ -300,7 +300,7 @@ async def test_escalation_same_family_as_judge_rejected(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_free_judge_without_free_models_rejected(tmp_path: Path):
+async def test_rotated_out_free_judge_rejected(tmp_path: Path):
     repo = _init(tmp_path, PLAN_ONE)
     agents = scripted.FakeAgents(repo, [])
     outcome = await run(
@@ -309,13 +309,13 @@ async def test_free_judge_without_free_models_rejected(tmp_path: Path):
             player_provider="codex",
             player_model="gpt-5.6-terra",
             judge_provider="opencode",
-            judge_model="free",
+            judge_model="opencode/gone-free",
         ),
         agents=agents,
-        list_models=lambda: [],
+        list_models=lambda: ["opencode/mimo-v3-free"],
     )
     assert outcome.exit_code == 1
-    assert "бесплатн" in outcome.reason
+    assert "opencode/gone-free" in outcome.reason and "opencode/mimo-v3-free" in outcome.reason
     assert agents.calls == []
 
 

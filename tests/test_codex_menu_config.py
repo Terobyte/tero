@@ -6,7 +6,6 @@ from src.config import KNOWN_PROVIDERS, Config, short_model_name
 from src.menu import (
     CODEX_MODEL_PRESETS,
     MUSE_MODEL_PRESETS,
-    OPENCODE_MODEL_PRESETS,
     PROVIDER_PRESETS,
     _save_global_default,
 )
@@ -71,12 +70,11 @@ def test_muse_provider_and_model_presets_are_listed():
 
 
 def test_opencode_presets_are_correct():
-    assert PROVIDER_PRESETS["OpenCode (MIMO/Kimi)"] == "opencode"
-    assert OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"] == (
-        "opencode/muse-spark-1.3-contributor-free"
-    )
-    assert OPENCODE_MODEL_PRESETS["MiniMax M3.1 Flash (free)"] == "opencode/minimax-m3.1-flash-free"
-    assert "zai/glm-5.1" not in OPENCODE_MODEL_PRESETS.values()
+    assert PROVIDER_PRESETS["OpenCode (бесплатные)"] == "opencode"
+    # free names rotate: nothing pinned, the menu reads `opencode models`
+    from src.menu import _model_presets_for_provider
+
+    assert list(_model_presets_for_provider("opencode").values()) == ["__custom__"]
 
 
 def test_spark_free_short_name_differs_from_key_path():

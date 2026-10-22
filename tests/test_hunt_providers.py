@@ -143,8 +143,8 @@ async def test_B22_opencode_stall_timeout_from_config(monkeypatch, tmp_path):
 
 
 def test_B31a_opencode_default_model():
-    # a pinned free model goes stale; "free" is picked from `opencode models` per run
-    assert OpenCodeConfig().default_model == "free", (
+    # a pinned free model goes stale; the user picks one from `opencode models`
+    assert OpenCodeConfig().default_model == "", (
         f"B31a: дефолтная модель opencode: {OpenCodeConfig().default_model!r}"
     )
 

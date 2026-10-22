@@ -42,26 +42,49 @@ def test_list_models_failed_cli_is_empty(tmp_path):
     assert list_models(str(tmp_path / "missing")) == []
 
 
-def test_opencode_default_model_is_any_free():
-    assert OpenCodeConfig().default_model == "free"
+def test_opencode_has_no_pinned_default_model():
+    # free names rotate; with no model chosen opencode uses its own default
+    assert OpenCodeConfig().default_model == ""
+    assert "-m" not in OpenCodeProvider()._build_command()
 
 
-def test_opencode_free_keyword_resolves_from_cli(tmp_path):
-    cli = _fake_cli(tmp_path, "print('opencode/paid')\nprint('opencode/today-free')")
-    cmd = OpenCodeProvider(OpenCodeConfig(command=cli))._build_command()
-    assert cmd[cmd.index("-m") + 1] == "opencode/today-free"
+def _menu_lists(monkeypatch, models):
+    from src.providers import free_models
+
+    monkeypatch.setattr(free_models, "list_models", lambda command="opencode": models)
 
 
-def test_opencode_free_keyword_without_list_uses_cli_default(tmp_path):
-    cli = _fake_cli(tmp_path, "sys.exit(1)")
-    cmd = OpenCodeProvider(OpenCodeConfig(command=cli))._build_command()
-    assert "-m" not in cmd
+def test_menu_offers_todays_free_models(monkeypatch):
+    from src.menu import _model_presets_for_provider
+
+    _menu_lists(monkeypatch, ["opencode/new-free", "opencode/paid", "openrouter/x:free"])
+    presets = _model_presets_for_provider("opencode")
+    assert [v for v in presets.values() if v != "__custom__"] == ["opencode/new-free", "openrouter/x:free"]
+    assert "__custom__" in presets.values()
 
 
-def test_fallback_menu_opencode_defaults_to_any_free(monkeypatch):
+def test_menu_without_list_offers_manual_id(monkeypatch):
+    from src.menu import _model_presets_for_provider
+
+    _menu_lists(monkeypatch, [])
+    assert list(_model_presets_for_provider("opencode").values()) == ["__custom__"]
+
+
+def test_fallback_menu_picks_free_model_by_number(monkeypatch):
     from src.config import Config
     from src.menu import _fallback_menu
 
-    answers = iter(["p", "opencode", "", "high", ""])
+    _menu_lists(monkeypatch, ["opencode/a-free", "opencode/b-free"])
+    answers = iter(["p", "opencode", "2", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
-    assert _fallback_menu(Config()).player_model == "free"
+    assert _fallback_menu(Config()).player_model == "opencode/b-free"
+
+
+def test_fallback_menu_takes_typed_model_id(monkeypatch):
+    from src.config import Config
+    from src.menu import _fallback_menu
+
+    _menu_lists(monkeypatch, [])
+    answers = iter(["p", "opencode", "openrouter/moonshotai/kimi-k2:free", "high", ""])
+    monkeypatch.setattr("builtins.input", lambda _="": next(answers))
+    assert _fallback_menu(Config()).player_model == "openrouter/moonshotai/kimi-k2:free"
