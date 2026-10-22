@@ -61,18 +61,19 @@ Before the first round tero checks that every role's CLI is ready, that the work
 The console prints one line per loop event. Each agent call also gets one line per tool call (and a "still working" line after 30 s of silence). `-v` adds snippets of the agent's text:
 
 ```
-  [раунд 1] player muse(muse-spark-1.3) …
+  [фаза 1/3 · раунд 1] player muse(muse-spark-1.3) …
     · Read src/parse.py
     · Edit src/parse.py
   player: done, изменений 2
   тесты …
   тесты: зелёные (код 0, 3.4 с)
-  [раунд 1] judge codex(gpt-5.6-terra) …
+  [фаза 1/3 · раунд 1] judge codex(gpt-5.6-terra) …
   judge: NO_SHIP, blocking 1, advisory 0
     - src/parse.py:42: parse('') raises IndexError
-  [раунд 1] tester gemini(gemini-3.8-flash) …
+  [фаза 1/3 · раунд 1] tester gemini(gemini-3.8-flash) …
   tester: тестов написано 1, red-подтверждено 1
-  [раунд 2] player muse(muse-spark-1.3) …
+  [фаза 1/3 · раунд 2] player muse(muse-spark-1.3) …
+фаза 1/3 «First phase»: SHIP за 2 раунда → a1b2c3d
 ```
 
 Every run leaves a ledger in `.tero/runs/<timestamp>-<slug>/`: `ledger.jsonl` (append-only events) plus per-round `player.json`, `judge.json`, `tester.json` and `tests.log` under `phase-NN/round-NN/`. tero adds `.tero/` to `.git/info/exclude`, so none of this gets committed.
@@ -173,6 +174,8 @@ tero runs agent CLIs as subprocesses. Each one must be installed, on `PATH` and 
 | `opencode` | `opencode` |
 | `cursor` | `agent` (Cursor CLI); aliases `cursor-cli`, `cursor-headless`, `headless` |
 
+The provider aliases `spark` and `muse-code` from the early spec were removed deliberately — use `muse` / `opencode`.
+
 You only need the CLIs for the roles you actually assign.
 
 ## Tests
@@ -188,7 +191,6 @@ python3 -m pytest -q -p no:warnings tests
 - **This is a personal research bench, not a product.** The defaults reflect one person's set of accounts and models.
 - **You bring the agents.** tero orchestrates CLIs you have already installed and authenticated. It has no API clients of its own.
 - **The UI is in Russian:** menu, status lines and stop messages. Flags, exit codes and the ledger's event names are English.
-- **The status lines are flat.** They are tagged `[раунд N]`, without the spec's `[фаза i/n · раунд r]` prefix, and there is no per-phase "SHIP in N rounds → commit" summary line yet. Use `ledger.jsonl` for that.
 - **"Different model" is a default, not a rule.** Nothing stops you from setting player and judge to the same model.
 
 ## License

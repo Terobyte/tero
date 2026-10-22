@@ -160,6 +160,7 @@ async def run_phase(
     agents: AgentRunner,
     test_command: TestCommand | None,
     ledger: Ledger,
+    total_phases: int = 1,
 ) -> PhaseOutcome:
     runner = _PhaseRunner(
         phase=phase,
@@ -170,6 +171,7 @@ async def run_phase(
         agents=agents,
         test_command=test_command,
         ledger=ledger,
+        total_phases=total_phases,
     )
     return await runner.run()
 
@@ -186,8 +188,10 @@ class _PhaseRunner:
         agents: AgentRunner,
         test_command: TestCommand | None,
         ledger: Ledger,
+        total_phases: int = 1,
     ) -> None:
         self.phase = phase
+        self.total_phases = total_phases
         self.repo = repo
         self.plan_path = plan_path
         self.preamble = preamble
@@ -204,6 +208,9 @@ class _PhaseRunner:
         self._last_player = UNAVAILABLE_PLAYER
         self.contract = phase.body or phase.title
 
+    def _tag(self) -> str:
+        return f"[фаза {self.phase.index + 1}/{self.total_phases} · раунд {self.state.round}]"
+
     async def run(self) -> PhaseOutcome:
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
         while True:
@@ -213,7 +220,7 @@ class _PhaseRunner:
             model, provider, effort = self._player_identity()
             extra = f" {effort}" if effort else ""
             print(
-                f"  [раунд {self.state.round}] player {provider}({model}{extra}) …",
+                f"  {self._tag()} player {provider}({model}{extra}) …",
                 flush=True,
             )
             if not await self._player():
@@ -231,7 +238,7 @@ class _PhaseRunner:
                 continue
             self.state.gate_output = gate.output if gate else "тесты не обнаружены"
             print(
-                f"  [раунд {self.state.round}] judge "
+                f"  {self._tag()} judge "
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
                 flush=True,
             )
@@ -250,7 +257,7 @@ class _PhaseRunner:
                     return self._ship()
                 case _Next.TESTER:
                     print(
-                        f"  [раунд {self.state.round}] tester "
+                        f"  {self._tag()} tester "
                         f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
                         flush=True,
                     )
@@ -394,6 +401,9 @@ class _PhaseRunner:
                 f"  тесты: зелёные (код {result.exit_code}, {duration:.1f} с)",
                 flush=True,
             )
+        elif result.timed_out:
+            print(f"  тесты: таймаут ({self.cfg.test_timeout_s} с)", flush=True)
+            print_red_tail(result.output)
         else:
             print(f"  тесты: КРАСНЫЕ (код {result.exit_code})", flush=True)
             print_red_tail(result.output)

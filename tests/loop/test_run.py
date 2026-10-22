@@ -109,6 +109,67 @@ async def test_start_gate_prints_command_and_red_tail(tmp_path: Path, capsys):
     assert "assert False" in out or "test_smoke" in out
 
 
+def test_rounds_word_declension():
+    from src.loop.run import rounds_word
+
+    assert rounds_word(1) == "раунд"
+    assert rounds_word(2) == "раунда"
+    assert rounds_word(4) == "раунда"
+    assert rounds_word(5) == "раундов"
+    assert rounds_word(11) == "раундов"
+    assert rounds_word(12) == "раундов"
+    assert rounds_word(14) == "раундов"
+    assert rounds_word(21) == "раунд"
+    assert rounds_word(22) == "раунда"
+    assert rounds_word(25) == "раундов"
+
+
+def test_phase_summary_lines_ship_and_stop():
+    from src.loop.phase import PhaseOutcome
+    from src.loop.plan import Phase
+    from src.loop.run import phase_summary_line
+
+    phase = Phase(index=0, title="Add greet", body="", checkboxes=[], start_line=0, end_line=1)
+    ship = PhaseOutcome(status="ship", reason="ship", rounds=2, commit_sha="a1b2c3d9e0")
+    stop = PhaseOutcome(status="stop", reason="stuck", rounds=1)
+    assert phase_summary_line(phase, ship, total=3) == (
+        "фаза 1/3 «Add greet»: SHIP за 2 раунда → a1b2c3d"
+    )
+    assert phase_summary_line(phase, stop, total=3) == (
+        "фаза 1/3 «Add greet»: STOP (stuck) за 1 раунд"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_prints_phase_summary_after_ship(tmp_path: Path, capsys):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            scripted.player_writes(
+                repo, "src/greet.py", "def greet():\n    return 'hello'\n"
+            ),
+            scripted.judge_returns(scripted.ship()),
+        ],
+    )
+    outcome = await run(_cfg(repo), agents=agents)
+    assert outcome.exit_code == 0
+    out = capsys.readouterr().out
+    assert "фаза 1/1 «Add greet»: SHIP за 1 раунд → " in out
+
+
+@pytest.mark.asyncio
+async def test_run_prints_phase_summary_after_stop(tmp_path: Path, capsys):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(
+        repo, [lambda _r, _k: {"__unavailable__": True, "error": "down"}]
+    )
+    outcome = await run(_cfg(repo), agents=agents)
+    assert outcome.exit_code == 2
+    out = capsys.readouterr().out
+    assert "фаза 1/1 «Add greet»: STOP (provider_unavailable) за 1 раунд" in out
+
+
 @pytest.mark.asyncio
 async def test_check_ready_prints_status_line(tmp_path: Path):
     import io

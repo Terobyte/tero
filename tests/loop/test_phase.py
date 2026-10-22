@@ -553,6 +553,69 @@ async def test_gate_red_line_and_tail_are_printed(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_round_lines_carry_phase_prefix(tmp_path: Path, capsys):
+    repo = _repo(tmp_path)
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'nope'\n"),
+            judge_returns(no_ship([finding(route="tester", problem="returns nope")])),
+            write_tester(
+                repo,
+                "tests/test_greet.py",
+                "from src.greet import greet\n\ndef test_greet():\n    assert greet() == 'hello'\n",
+                "F1",
+                "test_greet",
+            ),
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(ship(previous=[{"id": "F1", "state": "resolved"}])),
+        ],
+    )
+    outcome, _ = await _run(repo, agents)
+    assert outcome.status == "ship"
+    out = capsys.readouterr().out
+    assert "[фаза 1/1 · раунд 1] player" in out
+    assert "[фаза 1/1 · раунд 1] judge" in out
+    assert "[фаза 1/1 · раунд 1] tester" in out
+    assert "[раунд " not in out
+
+
+@pytest.mark.asyncio
+async def test_gate_timeout_line_is_printed(tmp_path: Path, capsys):
+    from src.loop.gates import GateResult
+    from src.loop import phase as phase_module
+
+    repo = _repo(tmp_path)
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(ship()),
+        ],
+    )
+
+    def fake_run_all(command, repo, timeout_s=900):
+        return GateResult(
+            ok=False,
+            exit_code=124,
+            output="partial output",
+            command_name="pytest",
+            timed_out=True,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(phase_module, "run_all", fake_run_all)
+    try:
+        outcome, _ = await _run(repo, agents, _cfg(max_rounds=1, test_timeout_s=7))
+    finally:
+        monkeypatch.undo()
+    assert outcome.status == "stop"
+    out = capsys.readouterr().out
+    assert "тесты: таймаут (7 с)" in out
+    assert "тесты: КРАСНЫЕ" not in out
+
+
+@pytest.mark.asyncio
 async def test_tester_start_and_result_lines_are_printed(tmp_path: Path, capsys):
     repo = _repo(tmp_path)
     agents = FakeAgents(

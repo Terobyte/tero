@@ -21,8 +21,8 @@ from src.loop.git import (
     status_short,
 )
 from src.loop.ledger import Ledger, new_run_dir
-from src.loop.phase import AgentRunner, run_phase
-from src.loop.plan import load_phases, load_preamble
+from src.loop.phase import AgentRunner, PhaseOutcome, run_phase
+from src.loop.plan import Phase, load_phases, load_preamble
 
 _SLUG = re.compile(r"[^a-zA-Z0-9]+")
 
@@ -149,7 +149,9 @@ async def run(
                 agents=agents,
                 test_command=command,
                 ledger=ledger,
+                total_phases=len(phases),
             )
+            _print_phase_summary(phase, outcome, total=len(phases))
             if outcome.status == "ship":
                 shipped += 1
                 continue
@@ -194,6 +196,30 @@ def _dirty_reason(hint: str, status: str) -> str:
     lines = status.splitlines()[:10]
     body = "\n".join(f"    {line}" for line in lines)
     return f"dirty: {hint}" + (f"\n{body}" if body else "")
+
+
+def rounds_word(rounds: int) -> str:
+    if 11 <= (rounds % 100) <= 14:
+        return "раундов"
+    last = rounds % 10
+    if last == 1:
+        return "раунд"
+    if 2 <= last <= 4:
+        return "раунда"
+    return "раундов"
+
+
+def phase_summary_line(phase: Phase, outcome: PhaseOutcome, *, total: int) -> str:
+    rounds = outcome.rounds
+    text = f"фаза {phase.index + 1}/{total} «{phase.title}»: "
+    if outcome.status == "ship":
+        sha = (outcome.commit_sha or "")[:7]
+        return f"{text}SHIP за {rounds} {rounds_word(rounds)} → {sha}"
+    return f"{text}STOP ({outcome.reason}) за {rounds} {rounds_word(rounds)}"
+
+
+def _print_phase_summary(phase: Phase, outcome: PhaseOutcome, *, total: int) -> None:
+    print(phase_summary_line(phase, outcome, total=total), flush=True)
 
 
 def slugify(name: str) -> str:
