@@ -15,7 +15,6 @@ from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_js
 
 from src.constants import (
     MAX_TOOL_OUTPUT_CHARS,
-    DEFAULT_PROVIDER_TIMEOUT_S,
 )
 
 
@@ -25,7 +24,6 @@ class OpenCodeConfig:
 
     command: str = "opencode"
     default_model: str = "opencode/mimo-v2.6-flash-free"
-    default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
     # Seconds without stdout before the run is killed; 0 = off, the role timeout governs.
     stall_timeout_s: float = 0
     display_name: str = "OpenCode"

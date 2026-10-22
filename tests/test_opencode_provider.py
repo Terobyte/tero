@@ -703,7 +703,6 @@ def test_opencode_create_provider_with_config():
             "type": "opencode_native",
             "command": "opencode",
             "default_model": "opencode/mimo-v2-pro-free",
-            "default_timeout": 900,
         },
     )
     from src.providers.opencode import OpenCodeProvider

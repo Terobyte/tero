@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-DEFAULT_PROVIDER_TIMEOUT_S = 900  # codex / opencode default
 DEFAULT_COMPACT_THRESHOLD = 0.85
 
 LARGE_PROMPT_THRESHOLD_BYTES = 64_000  # temp-file env threshold

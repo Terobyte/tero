@@ -6,7 +6,6 @@ import shutil
 from dataclasses import dataclass
 from typing import AsyncIterator
 
-from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
 from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock, wrap_system_prompt
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
@@ -19,7 +18,6 @@ class GeminiConfig:
     command: str = "gemini"
     default_model: str = "gemini-3.1-pro-preview"
     display_name: str = "Gemini"
-    default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
     yolo: bool = True
 
 

@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 from src.constants import (
-    DEFAULT_PROVIDER_TIMEOUT_S,
     LARGE_PROMPT_THRESHOLD_BYTES,
     MAX_TOOL_OUTPUT_CHARS,
 )
@@ -32,7 +31,6 @@ class CodexConfig:
 
     command: str = "codex"  # Path to codex binary
     default_model: str = ""  # Empty string = default from ~/.codex/config.toml
-    default_timeout: int = DEFAULT_PROVIDER_TIMEOUT_S
     sandbox_mode: str = (
         "workspace-write"  # read-only | workspace-write | danger-full-access
     )

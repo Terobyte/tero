@@ -1,6 +1,5 @@
 """Provider factory for coding-agent CLI providers."""
 
-from src.constants import DEFAULT_PROVIDER_TIMEOUT_S
 from src.errors import ProviderError
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
@@ -36,9 +35,6 @@ def create_provider(
             default_model=provider_config.get(
                 "default_model", OpenCodeConfig.default_model
             ),
-            default_timeout=provider_config.get(
-                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
-            ),
             display_name=provider_config.get("display_name", "OpenCode"),
             stall_timeout_s=provider_config.get("stall_timeout_s", 0),
         )
@@ -49,9 +45,6 @@ def create_provider(
             command=provider_config.get("command", "gemini"),
             default_model=provider_config.get("default_model", "gemini-3.1-pro-preview"),
             display_name=provider_config.get("display_name", "Gemini"),
-            default_timeout=provider_config.get(
-                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
-            ),
             yolo=provider_config.get("yolo", True),
         )
         return GeminiProvider(gemini_cfg)
@@ -74,9 +67,6 @@ def create_provider(
             command=provider_config.get("command", "codex"),
             default_model=provider_config.get(
                 "default_model", provider_config.get("model", "gpt-5.6-terra")
-            ),
-            default_timeout=provider_config.get(
-                "default_timeout", DEFAULT_PROVIDER_TIMEOUT_S
             ),
             sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
             approval_policy=provider_config.get("approval_policy", "never"),
