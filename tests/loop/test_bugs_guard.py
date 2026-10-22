@@ -456,3 +456,93 @@ async def test_guard_covers_in_repo_target_of_config_symlink(tmp_path: Path):
     assert (repo / ".claude").is_symlink() and (repo / "CLAUDE.md").is_symlink()
     paths = sorted(row["path"] for row in _kinds(ledger, "agent_config_violation"))
     assert paths == ["cfg/hooks.json", "cfg/settings.json", "notes/real.md"], paths
+
+
+@pytest.mark.asyncio
+async def test_guard_new_config_link_into_repo_keeps_target_files(tmp_path: Path):
+    # Only links present at phase start are expanded; a new `.claude -> src` is
+    # just removed, the files it points at stay.
+    repo = _repo(tmp_path)
+    write_file(repo, "src/keep.py", "K = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "keep")
+
+    def plant():
+        (repo / ".claude").symlink_to("src", target_is_directory=True)
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), judge_returns(ship())])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert not (repo / ".claude").is_symlink()
+    for rel in ("src/keep.py", "src/__init__.py", "src/greet.py"):
+        assert (repo / rel).exists(), rel
+    assert [row["path"] for row in _kinds(ledger, "agent_config_violation")] == [".claude"]
+
+
+@pytest.mark.asyncio
+async def test_guard_follows_link_inside_expanded_target(tmp_path: Path):
+    repo = _repo(tmp_path)
+    write_file(repo, "cfg/settings.json", '{"user": 1}')
+    write_file(repo, "data/note.md", "user\n")
+    (repo / "cfg/inner").symlink_to("../data/note.md")
+    (repo / ".claude").symlink_to("cfg", target_is_directory=True)
+    seen: dict[str, object] = {}
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["inner"] = (repo / ".claude/inner").read_text()
+        return ship()
+
+    agents = FakeAgents(
+        repo, [_player_greets(repo, lambda: write_file(repo, "data/note.md", "evil\n")), check_judge]
+    )
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert seen == {"inner": "user\n"}
+    assert [row["path"] for row in _kinds(ledger, "agent_config_violation")] == ["data/note.md"]
+
+
+@pytest.mark.asyncio
+async def test_guard_restores_redirected_middle_link(tmp_path: Path):
+    repo = _repo(tmp_path)
+    write_file(repo, "cfg/settings.json", '{"user": 1}')
+    write_file(repo, "notes/real.md", "user notes\n")
+    (repo / "mid").symlink_to("cfg", target_is_directory=True)
+    (repo / ".claude").symlink_to("mid", target_is_directory=True)
+    seen: dict[str, object] = {}
+
+    def redirect():
+        (repo / "mid").unlink()
+        (repo / "mid").symlink_to("notes", target_is_directory=True)
+
+    def check_judge(role, kwargs):
+        assert role == "judge"
+        seen["settings"] = (repo / ".claude/settings.json").read_text()
+        return ship()
+
+    agents = FakeAgents(repo, [_player_greets(repo, redirect), check_judge])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert seen == {"settings": '{"user": 1}'}
+    assert (repo / "notes/real.md").read_text() == "user notes\n"
+    assert [row["path"] for row in _kinds(ledger, "agent_config_violation")] == ["mid"]
+
+
+@pytest.mark.asyncio
+async def test_guard_new_link_through_user_link_keeps_user_link(tmp_path: Path):
+    # Guarded paths are fixed at phase start: a new `.claude -> shortcut` must not
+    # pull the user's own `shortcut -> notes` link into the guard and delete it.
+    repo = _repo(tmp_path)
+    write_file(repo, "notes/real.md", "user notes\n")
+    (repo / "shortcut").symlink_to("notes", target_is_directory=True)
+
+    def plant():
+        (repo / ".claude").symlink_to("shortcut", target_is_directory=True)
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), judge_returns(ship())])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert not (repo / ".claude").is_symlink()
+    assert (repo / "shortcut").is_symlink()
+    assert (repo / "notes/real.md").read_text() == "user notes\n"
+    assert [row["path"] for row in _kinds(ledger, "agent_config_violation")] == [".claude"]

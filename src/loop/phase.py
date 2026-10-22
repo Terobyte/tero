@@ -52,10 +52,16 @@ AGENT_INSTRUCTION_NAMES = {
     "CLAUDE.md",
     "CLAUDE.local.md",
     "AGENTS.md",
+    "AGENTS.override.md",
     "GEMINI.md",
     ".cursorrules",
+    "opencode.json",
+    "opencode.jsonc",
 }
 _GUARDED_NAMES = SUITE_HOOK_NAMES | AGENT_INSTRUCTION_NAMES
+_GUARDED_FOLDED = {name.casefold() for name in _GUARDED_NAMES}
+_AGENT_DIRS_FOLDED = {name.casefold() for name in AGENT_CONFIG_DIRS}
+_SUITE_HOOKS_FOLDED = {name.casefold() for name in SUITE_HOOK_NAMES}
 _PRUNE_DIRS = {".git", ".tero", "node_modules"}
 
 UNAVAILABLE_PLAYER = {
@@ -192,7 +198,7 @@ class _PhaseRunner:
         exclude_tero(repo)
         self.checkpoint = head(repo)
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
-        self.guarded = _guarded_entries(repo, self.suite_hashes)
+        self.guarded, self.link_targets = _snapshot_guarded(repo, self.suite_hashes)
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
         self._last_player = UNAVAILABLE_PLAYER
@@ -314,7 +320,9 @@ class _PhaseRunner:
                 self.state.suite_delta.append(path)
 
         # Not a burned round: the player's code still goes to the gate and judge.
-        current = _guarded_entries(self.repo, self.suite_hashes)
+        current, _ = _snapshot_guarded(
+            self.repo, self.suite_hashes, self.link_targets, set(self.guarded)
+        )
         removed_dirs: set[str] = set()
         for path in sorted(set(current) | set(self.guarded)):
             if any(path.startswith(done + "/") for done in removed_dirs):
@@ -346,7 +354,7 @@ class _PhaseRunner:
                     os.symlink(payload, target)
                 else:
                     target.write_bytes(payload)
-            hook = Path(path).name in SUITE_HOOK_NAMES
+            hook = Path(path).name.casefold() in _SUITE_HOOKS_FOLDED
             self.ledger.event(
                 "suite_violation" if hook else "agent_config_violation",
                 path=path,
@@ -799,18 +807,15 @@ def _strip_unsafe_ancestors(repo: Path, rel: str) -> list[str]:
 
 # kind, payload: ("file", bytes) or ("link", os.readlink target)
 Entry = tuple[str, Any]
-
-
-def _guarded_entries(
-    repo: Path, suite_hashes: dict[str, str] | None = None
+def _base_guarded_entries(
+    repo: Path, excluded: dict[str, str]
 ) -> dict[str, Entry]:
     # os.walk, not git: nested repos' worktrees and gitignored paths are walked too.
-    excluded = suite_hashes or {}
     entries: dict[str, Entry] = {}
-    for root, dirs, files in os.walk(repo, followlinks=False):
+    for walk_root, dirs, files in os.walk(repo, followlinks=False):
         dirs[:] = [d for d in dirs if d not in _PRUNE_DIRS]
         try:
-            rel_root = Path(root).relative_to(repo)
+            rel_root = Path(walk_root).relative_to(repo)
         except ValueError:
             continue
         for name in [*dirs, *files]:
@@ -819,11 +824,184 @@ def _guarded_entries(
             if posix in excluded:
                 continue
             full = repo / rel
-            in_config_dir = any(part in AGENT_CONFIG_DIRS for part in rel.parts[:-1])
+            folded = name.casefold()
+            in_config_dir = any(
+                part.casefold() in _AGENT_DIRS_FOLDED for part in rel.parts[:-1]
+            )
+            guarded = folded in _GUARDED_FOLDED or folded in _AGENT_DIRS_FOLDED
             if full.is_symlink():
                 # one entry for the link itself; os.walk never descends into it
-                if in_config_dir or name in _GUARDED_NAMES or name in AGENT_CONFIG_DIRS:
-                    entries[posix] = ("link", os.readlink(full))
-            elif (in_config_dir or name in _GUARDED_NAMES) and full.is_file():
+                if in_config_dir or guarded:
+                    try:
+                        entries[posix] = ("link", os.readlink(full))
+                    except OSError:
+                        continue
+            elif (in_config_dir or guarded) and full.is_file():
                 entries[posix] = ("file", full.read_bytes())
     return entries
+
+
+def _follow_link(
+    repo: Path, root: Path, link: str, excluded: dict[str, str]
+) -> str | None:
+    # One lexical step along a symlink chain; None when the chain ends here.
+    try:
+        payload = os.readlink(repo / link)
+    except OSError:
+        return None
+    if os.path.isabs(payload):
+        target = Path(os.path.normpath(payload))
+        for base in (root, repo.absolute()):
+            try:
+                rel = target.relative_to(base)
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+    else:
+        rel = Path(os.path.normpath((Path(link).parent / payload).as_posix()))
+        if not rel.parts or rel.parts[0] == "..":
+            return None
+    posix = rel.as_posix()
+    if posix == "." or posix in excluded:
+        return None
+    if any(part in _PRUNE_DIRS for part in rel.parts):
+        return None
+    return posix
+
+
+def _chain_end(
+    repo: Path, root: Path, link: str, excluded: dict[str, str]
+) -> tuple[list[str], str | None]:
+    # Step through the chain lexically via os.readlink; every intermediate
+    # link inside the repo is returned so the caller can record it. None end
+    # means a cycle or a step leaving the repo — the chain is dropped.
+    steps: list[str] = []
+    seen: set[str] = {link}
+    cur = link
+    while (repo / cur).is_symlink():
+        nxt = _follow_link(repo, root, cur, excluded)
+        if nxt is None or nxt in seen:
+            return steps, None
+        seen.add(nxt)
+        steps.append(nxt)
+        if not (repo / nxt).is_symlink():
+            return steps, nxt
+        cur = nxt
+    # The start stopped being a symlink (retargeted mid-walk).
+    return steps, (cur if steps else None)
+
+
+def _resolve_in_repo(root: Path, rel: str) -> bool:
+    # Lexically inside the repo and not the root itself; .resolve() only
+    # confirms it — nothing is written through the checked path.
+    if not rel or rel == "." or Path(rel).is_absolute():
+        return False
+    if ".." in Path(rel).parts:
+        return False
+    try:
+        under = (root / rel).resolve()
+    except OSError:
+        return False
+    return under != root and under.is_relative_to(root)
+
+
+def _walk_target(
+    repo: Path, target: str, entries: dict[str, Entry], excluded: dict[str, str]
+) -> None:
+    # Never walk or read a target through a link: neither the target itself
+    # nor any ancestor inside the repo may be a symlink.
+    probe = repo
+    for part in Path(target).parts:
+        probe = probe / part
+        if probe.is_symlink():
+            return
+    full = repo / target
+    if full.is_file():
+        if target not in excluded and target not in entries:
+            entries[target] = ("file", full.read_bytes())
+    elif full.is_dir():
+        for walk_root, walk_dirs, walk_files in os.walk(full, followlinks=False):
+            walk_dirs[:] = [d for d in walk_dirs if d not in _PRUNE_DIRS]
+            for name in [*walk_dirs, *walk_files]:
+                sub = Path(walk_root) / name
+                try:
+                    rel = (Path(target) / sub.relative_to(full)).as_posix()
+                except ValueError:
+                    continue
+                if rel in excluded or rel in entries:
+                    continue
+                if sub.is_symlink():
+                    try:
+                        entries[rel] = ("link", os.readlink(sub))
+                    except OSError:
+                        continue
+                elif sub.is_file():
+                    entries[rel] = ("file", sub.read_bytes())
+
+
+def _snapshot_guarded(
+    repo: Path,
+    suite_hashes: dict[str, str] | None = None,
+    fixed_targets: set[str] | None = None,
+    fixed_paths: set[str] | None = None,
+) -> tuple[dict[str, Entry], set[str]]:
+    excluded = suite_hashes or {}
+    entries = _base_guarded_entries(repo, excluded)
+    if fixed_targets is not None:
+        for target in sorted(fixed_targets):
+            _walk_target(repo, target, entries, excluded)
+        for path in fixed_paths or ():
+            probe = repo
+            unsafe = False
+            for part in Path(path).parts[:-1]:
+                probe = probe / part
+                if probe.is_symlink() or (probe.exists() and not probe.is_dir()):
+                    unsafe = True
+                    break
+            if unsafe:
+                entries.pop(path, None)
+                continue
+            full = repo / path
+            if full.is_symlink():
+                try:
+                    entries[path] = ("link", os.readlink(full))
+                except OSError:
+                    entries.pop(path, None)
+            elif full.is_file():
+                entries[path] = ("file", full.read_bytes())
+            else:
+                entries.pop(path, None)
+        return entries, set(fixed_targets)
+    root = repo.resolve()
+    targets: set[str] = set()
+    worklist = [posix for posix, (kind, _) in entries.items() if kind == "link"]
+    visited: set[str] = set()
+
+    def _drain() -> None:
+        # Record every intermediate link along each chain with its current
+        # payload, and pin + walk each chain end.
+        while worklist:
+            posix = worklist.pop()
+            if posix in visited:
+                continue
+            visited.add(posix)
+            steps, end = _chain_end(repo, root, posix, excluded)
+            for step in steps:
+                if step not in entries and (repo / step).is_symlink():
+                    try:
+                        entries[step] = ("link", os.readlink(repo / step))
+                    except OSError:
+                        continue
+                    worklist.append(step)
+            if end is not None and end not in targets:
+                if _resolve_in_repo(root, end):
+                    targets.add(end)
+                    _walk_target(repo, end, entries, excluded)
+                    for sub, (kind, _) in list(entries.items()):
+                        if kind == "link" and sub not in visited:
+                            worklist.append(sub)
+
+    _drain()
+    return entries, targets
