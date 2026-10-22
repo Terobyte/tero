@@ -159,3 +159,7 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
+
+
+if __name__ == "__main__":
+    main()

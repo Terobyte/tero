@@ -49,6 +49,38 @@ def split_role_spec(value: str) -> tuple[str, str]:
     return raw, ""
 
 
+_FAMILY_BY_PROVIDER = {
+    "claude": "claude",
+    "gemini": "gemini",
+    "codex": "openai",
+    "muse": "muse",
+}
+
+_CLAUDE_BARE_MODELS = {"opus", "sonnet", "haiku", "fable"}
+
+
+def family_of(spec: str) -> str:
+    """Model family for a ``provider`` or ``provider:model`` spec.
+
+    Classification follows the model first (an ``opencode``/``agy`` spec can
+    serve a model from any family) and falls back to the provider when the
+    model is empty or unrecognised (e.g. ``codex`` with its default model).
+    """
+    provider, model = split_role_spec(spec or "")
+    m = model.strip().lower()
+    if "claude" in m or m in _CLAUDE_BARE_MODELS:
+        return "claude"
+    if "gemini" in m:
+        return "gemini"
+    if "gpt" in m or "openai" in m or m in ("o3", "o4-mini"):
+        return "openai"
+    if "glm" in m:
+        return "glm"
+    if "muse" in m or "spark" in m:
+        return "muse"
+    return _FAMILY_BY_PROVIDER.get(provider.strip().lower(), "other")
+
+
 @dataclass
 class Config:
     """Resolved configuration (spec §6.1)."""

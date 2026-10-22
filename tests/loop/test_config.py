@@ -8,6 +8,7 @@ from src.config import (
     Config,
     UnknownProviderError,
     apply_cli_args,
+    family_of,
     normalize_provider,
     resolve_config,
     split_role_spec,
@@ -351,3 +352,28 @@ def test_apply_cli_args_escalation_provider_after_off_gets_default_model():
     out = apply_cli_args(cfg, ns)
 
     assert (out.escalation_provider, out.escalation_model) == ("claude", "opus")
+
+
+def test_family_of_claude():
+    assert family_of("claude:opus") == "claude"
+
+
+def test_family_of_gemini():
+    assert family_of("gemini:gemini-3.8-flash") == "gemini"
+
+
+def test_family_of_openai():
+    assert family_of("codex:gpt-5.6-terra") == "openai"
+
+
+def test_family_of_glm():
+    assert family_of("opencode:opencode/glm-5-turbo-free") == "glm"
+
+
+def test_family_of_muse():
+    assert family_of("muse:muse-spark-1.3") == "muse"
+
+
+def test_family_of_other():
+    assert family_of("cursor:composer-2.5") == "other"
+

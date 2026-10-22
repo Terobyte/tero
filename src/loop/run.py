@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.config import Config, UnknownProviderError, normalize_provider
+from src.config import Config, UnknownProviderError, family_of, normalize_provider
 from src.loop.gates import detect, print_red_tail, run_all
 from src.loop.git import (
     DirtyWorktreeError,
@@ -48,6 +48,19 @@ async def run(
         _validate_providers(cfg)
     except UnknownProviderError as exc:
         return RunOutcome(status="error", exit_code=1, reason=str(exc))
+
+    player_family = family_of(f"{cfg.player_provider}:{cfg.player_model}")
+    judge_family = family_of(f"{cfg.judge_provider}:{cfg.judge_model}")
+    if player_family == judge_family:
+        return RunOutcome(
+            status="error",
+            exit_code=1,
+            reason=(
+                f"судья из семьи исполнителя ({judge_family}): "
+                f"player {cfg.player_provider}:{cfg.player_model}, "
+                f"judge {cfg.judge_provider}:{cfg.judge_model}"
+            ),
+        )
 
     if check_ready:
         print("проверка провайдеров …", flush=True)

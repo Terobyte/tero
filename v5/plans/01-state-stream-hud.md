@@ -44,9 +44,9 @@
 
 - `config.family_of(spec) -> str` — `claude | gemini | openai | glm | muse | other`.
 
-- [ ] `test_family_of_*` по значению на семью
-- [ ] `test_judge_same_family_as_player_rejected`: `family_of(judge) == family_of(player)` → отказ на старте с понятным текстом, семья видна в выводе
-- [ ] реализовать `family_of` и проверку на старте
+- [x] `test_family_of_*` по значению на семью
+- [x] `test_judge_same_family_as_player_rejected`: `family_of(judge) == family_of(player)` → отказ на старте с понятным текстом, семья видна в выводе
+- [x] реализовать `family_of` и проверку на старте
 
 ## Порядок старта run()
 

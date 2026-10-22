@@ -240,6 +240,44 @@ async def test_stop_reports_run_dir(tmp_path: Path):
     assert (Path(outcome.run_dir) / "ledger.jsonl").is_file()
 
 
+@pytest.mark.asyncio
+async def test_judge_same_family_as_player_rejected(tmp_path: Path):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(repo, [])
+    outcome = await run(
+        _cfg(
+            repo,
+            player_provider="codex",
+            player_model="gpt-5.6-terra",
+            judge_provider="opencode",
+            judge_model="openrouter/openai/gpt-oss-120b",
+        ),
+        agents=agents,
+    )
+    assert outcome.exit_code == 1
+    assert "openai" in outcome.reason
+    assert agents.calls == []
+
+
+@pytest.mark.asyncio
+async def test_judge_same_family_other_rejected(tmp_path: Path):
+    repo = _init(tmp_path, PLAN_ONE)
+    agents = scripted.FakeAgents(repo, [])
+    outcome = await run(
+        _cfg(
+            repo,
+            player_provider="cursor",
+            player_model="composer-2.5",
+            judge_provider="cursor",
+            judge_model="composer-9",
+        ),
+        agents=agents,
+    )
+    assert outcome.exit_code == 1
+    assert "other" in outcome.reason
+    assert agents.calls == []
+
+
 PLAN_DONE = """# Demo
 
 ## Done already
