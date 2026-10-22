@@ -546,3 +546,53 @@ async def test_guard_new_link_through_user_link_keeps_user_link(tmp_path: Path):
     assert (repo / "shortcut").is_symlink()
     assert (repo / "notes/real.md").read_text() == "user notes\n"
     assert [row["path"] for row in _kinds(ledger, "agent_config_violation")] == [".claude"]
+
+
+@pytest.mark.asyncio
+async def test_guard_case_only_rename_keeps_original(tmp_path: Path):
+    # On a case-insensitive filesystem `claude.md` and `CLAUDE.md` are one file:
+    # removing the new spelling must not delete the restored original.
+    repo = _repo(tmp_path)
+    write_file(repo, "CLAUDE.md", "user rules\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "rules")
+    probe = repo / "case-probe"
+    probe.write_text("")
+    folds = (repo / "CASE-PROBE").exists()
+    probe.unlink()
+    if not folds:
+        pytest.skip("case-sensitive filesystem")
+
+    def plant():
+        (repo / "CLAUDE.md").rename(repo / "tmp-rename")
+        (repo / "tmp-rename").rename(repo / "claude.md")
+        (repo / "claude.md").write_text("evil\n")
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), judge_returns(ship())])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert (repo / "CLAUDE.md").read_text() == "user rules\n"
+
+
+@pytest.mark.asyncio
+async def test_guard_restores_link_target_dir_replaced_by_link(tmp_path: Path):
+    # `.claude -> cfg` with an empty `cfg/` at phase start: swapping `cfg` for a
+    # link to an outside dir must be caught even though no file was pinned in it.
+    repo = _repo(tmp_path)
+    (repo / "cfg").mkdir()
+    (repo / ".claude").symlink_to("cfg", target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "settings.json").write_text('{"evil": true}\n')
+
+    def plant():
+        (repo / "cfg").rmdir()
+        (repo / "cfg").symlink_to(outside, target_is_directory=True)
+
+    agents = FakeAgents(repo, [_player_greets(repo, plant), judge_returns(ship())])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship", outcome
+    assert (repo / "cfg").is_dir() and not (repo / "cfg").is_symlink()
+    assert not (repo / "cfg/settings.json").exists()
+    assert (outside / "settings.json").exists()
+    assert "cfg" in [row["path"] for row in _kinds(ledger, "agent_config_violation")]
