@@ -35,8 +35,8 @@
 
 - `lock.acquire(repo) -> Lock | None` — неблокирующий `flock` на `<repo>/.tero/run.lock`.
 
-- [ ] `test_two_owners_second_exits`: второй владелец того же репо не берёт лок и выходит
-- [ ] реализовать `acquire`
+- [x] `test_two_owners_second_exits`: второй владелец того же репо не берёт лок и выходит
+- [x] реализовать `acquire`
 
 ## family_of и запрет одной семьи
 
