@@ -60,7 +60,7 @@ JUDGE = {
                 "required": ["id", "severity", "route", "file", "line", "problem", "expected"],
                 "properties": {
                     "id": {"type": ["string", "null"]},
-                    "severity": {"type": "string", "enum": ["blocking", "advisory"]},
+                    "severity": {"type": "string", "enum": ["blocking"]},
                     "route": {
                         "type": "string",
                         "enum": ["tester", "player", "discard_test"],
@@ -156,8 +156,8 @@ def _semantic_judge(data: dict, ctx: ValidateCtx) -> list[str]:
         errors.append(f"previous must cover open findings: {', '.join(missing)}")
 
     if verdict == "SHIP":
-        if blocking:
-            errors.append("SHIP cannot include blocking findings")
+        if findings:
+            errors.append("SHIP cannot include findings: every issue is blocking")
         if still_open:
             errors.append("SHIP requires every previous finding resolved")
     elif verdict == "NO_SHIP":

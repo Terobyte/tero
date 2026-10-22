@@ -54,30 +54,55 @@ def player_prompt(
     )
 
 
+# g3 coach, verbatim (main:src/prompts.py COACH_STRICT_SYSTEM_PROMPT); only the
+# verdict format is mapped onto JudgeVerdict JSON so the v4 loop can parse it.
+G3_COACH = """You are a STRICT code reviewer (Coach). Your ONLY job is to FIND PROBLEMS.
+
+MINDSET: You are a nitpicky senior engineer who catches every flaw. You are NOT here to be encouraging.
+
+MANDATORY REVIEW PROCESS:
+1. READ the relevant source files
+2. RUN the code — actually execute it to verify it works
+3. Check the EXACT requirement — every detail must match (exact hex colors, font names, behavior)
+4. Look for any deviation from the spec, missing features, edge cases
+
+PROCESS CLEANUP (MANDATORY):
+- If you launch any GUI app or long-running process to test, you MUST kill it before finishing
+- After verifying the app works, immediately kill the process: use `kill <PID>` or `pkill -f <script_name>`
+- NEVER leave background processes running
+- Before launching, check for already-running instances: `pgrep -f <script_name>` and kill them first
+
+WHAT TO CHECK:
+- Does the code run without errors?
+- Does it EXACTLY match the requirement? (e.g., if color is #1A1A2E, verify that exact value in code)
+- Is the feature visually correct when the program runs?
+- Are there missing error cases or partially-implemented parts?
+- Is anything hardcoded wrong, off-by-one, or only roughly correct?
+
+DECISION:
+- Found ANY issue (even minor, even cosmetic)? → verdict NO_SHIP, list ALL problems as findings with severity blocking. Be specific: what is wrong and what it should be.
+- 100% satisfied with every detail? → verdict SHIP, findings empty.
+- There is no advisory. Every finding is blocking. No compromises.
+
+"Close enough" is NOT approved. EXACT match required."""
+
+
 def judge_prompt(
     *,
     preamble: str,
     contract: str,
-    player_report: dict[str, Any],
-    diff: str,
-    status_short: str,
-    suite_delta: list[str] | None = None,
-    test_output: str = "",
     open_findings: list[dict[str, Any]] | None = None,
     protected_ids: list[str] | None = None,
 ) -> str:
-    suite_delta = suite_delta or []
+    # Blind like the g3 coach: no player report, no diff, no gate output.
     open_findings = open_findings or []
     protected_ids = protected_ids or []
     return "\n".join(
         [
-            "Ты judge. Файлы не менять.",
-            "Карта player'а — навигация, не доказательство. "
-            "Её утверждения проверь по diff и коду.",
-            "Проверь контракт, регрессии, scope, suite_delta и git status.",
-            "Ослабление / skip / xfail существующих тестов без пункта контракта — blocking.",
-            "blocking — нарушение контракта, баг или регрессия. "
-            "Стиль и «можно лучше» — advisory.",
+            G3_COACH,
+            "",
+            "Do not modify files. Already-implemented code is valid: if the contract is already "
+            "satisfied, verify it and approve.",
             "route: tester — если поведение ловится автотестом.",
             "route: discard_test — если protected-тест не про ту находку "
             "(только id из open_findings с protected-файлом).",
@@ -92,20 +117,7 @@ def judge_prompt(
             "## Контракт фазы",
             contract,
             "",
-            "## Карта player (навигация)",
-            json.dumps(player_report, ensure_ascii=False, indent=2),
-            "",
-            "## git diff --cached -W",
-            diff or "(пусто)",
-            "",
-            "## git status --short",
-            status_short or "(чисто)",
-            "",
-            "## suite_delta",
-            "\n".join(suite_delta) or "(нет)",
-            "",
-            "## Вывод тестов",
-            test_output or "(нет)",
+            "Review ONLY this phase. Is it implemented EXACTLY as specified?",
             "",
             "## open_findings",
             json.dumps(open_findings, ensure_ascii=False, indent=2),

@@ -26,7 +26,6 @@ from src.loop.git import (
     rollback,
     secret_paths,
     stage_and_diff,
-    status_short,
     write_tree,
     restore_tree,
 )
@@ -205,7 +204,6 @@ class _PhaseRunner:
         self.guarded, self.link_targets = _snapshot_guarded(repo, self.suite_hashes)
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
-        self._last_player = UNAVAILABLE_PLAYER
         self.contract = phase.body or phase.title
 
     def _tag(self) -> str:
@@ -296,7 +294,6 @@ class _PhaseRunner:
         if report.get("blocked_reason"):
             line += f" — {report['blocked_reason']}"
         print(line, flush=True)
-        self._last_player = report
         return True
 
     def _protect_tests(self) -> bool:
@@ -424,8 +421,6 @@ class _PhaseRunner:
 
     async def _judge(self) -> _Next:
         tree_before = write_tree(self.repo)
-        diff = stage_and_diff(self.repo, self.checkpoint)
-        status = status_short(self.repo)
         ctx = ValidateCtx(
             open_ids=[item.id for item in self.state.open_findings],
             protected_ids=set(self.state.protected_by_id),
@@ -433,11 +428,6 @@ class _PhaseRunner:
         prompt = judge_prompt(
             preamble=self.preamble,
             contract=self.contract,
-            player_report=self._last_player,
-            diff=diff,
-            status_short=status,
-            suite_delta=self.state.suite_delta,
-            test_output=_tail(self.state.gate_output),
             open_findings=[item.as_dict() for item in self.state.open_findings],
             protected_ids=list(self.state.protected_by_id),
         )
@@ -778,8 +768,7 @@ def _print_verdict(data: dict[str, Any]) -> None:
     findings = data.get("findings") or []
     blocking = [item for item in findings if item.get("severity") == "blocking"]
     print(
-        f"  judge: {data.get('verdict')}, blocking {len(blocking)}, "
-        f"advisory {len(findings) - len(blocking)}",
+        f"  judge: {data.get('verdict')}, blocking {len(blocking)}",
         flush=True,
     )
     for item in blocking[:5]:

@@ -86,17 +86,15 @@ def test_judge_ship_rejects_blocking_finding():
     assert any("blocking" in e.lower() or "SHIP" in e for e in errors)
 
 
-def test_judge_ship_allows_advisory_only():
-    assert (
-        validate(
-            "judge",
-            _judge(
-                verdict="SHIP",
-                findings=[_finding(severity="advisory", route="player")],
-            ),
-        )
-        == []
+def test_judge_has_no_advisory():
+    errors = validate(
+        "judge",
+        _judge(
+            verdict="NO_SHIP",
+            findings=[_finding(severity="advisory", route="player")],
+        ),
     )
+    assert errors
 
 
 def test_judge_ship_rejects_still_open_previous():
@@ -130,7 +128,7 @@ def test_judge_ship_requires_all_previous_resolved():
 def test_judge_no_ship_requires_blocking_or_still_open():
     errors = validate(
         "judge",
-        _judge(verdict="NO_SHIP", findings=[_finding(severity="advisory")]),
+        _judge(verdict="NO_SHIP", findings=[]),
     )
     assert errors
 

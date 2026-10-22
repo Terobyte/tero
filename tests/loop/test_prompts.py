@@ -20,24 +20,23 @@ def test_player_prompt_forbids_commits_and_protected_edits():
     assert "tests passed" not in text.lower()
 
 
-def test_judge_prompt_says_map_is_navigation():
+def test_judge_prompt_is_g3_coach_and_blind():
     text = role_prompts.judge_prompt(
         preamble="common",
         contract="## Phase\n- [ ] parse empty",
-        player_report={"status": "done", "changes": [], "start_here": [], "blocked_reason": ""},
-        diff="diff --git a/src.py",
-        status_short=" M src.py",
-        suite_delta=["tests/test_old.py"],
-        test_output="1 passed",
         open_findings=[{"id": "F1", "problem": "raises"}],
         protected_ids=["F1"],
     )
-    assert "навигац" in text.lower() or "navigation" in text.lower()
+    assert "Your ONLY job is to FIND PROBLEMS" in text
+    assert "RUN the code" in text
+    assert "There is no advisory" in text
+    assert "parse empty" in text
     assert "JudgeVerdict" in text
     assert "discard_test" in text
     assert "F1" in text
-    assert "suite_delta" in text or "tests/test_old.py" in text
-    assert "git status" in text.lower() or " M src.py" in text
+    assert "Карта player" not in text
+    assert "Вывод тестов" not in text
+    assert "git diff" not in text
 
 
 def test_tester_prompt_one_new_file_per_finding():
