@@ -7,11 +7,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
+import src
+
+_ROOT = Path(__file__).resolve().parent
+
 
 def pytest_configure(config) -> None:
+    # an installed tero from another checkout would make red→green fake
+    if not Path(src.__file__).resolve().is_relative_to(_ROOT):
+        raise pytest.UsageError(f"src imported from {src.__file__}, not from {_ROOT}")
     config.addinivalue_line("markers", "asyncio: run async test in a local event loop")
 
 
