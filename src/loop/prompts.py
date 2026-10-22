@@ -93,9 +93,13 @@ def judge_prompt(
     contract: str,
     open_findings: list[dict[str, Any]] | None = None,
     protected_ids: list[str] | None = None,
+    suite_delta: list[str] | None = None,
 ) -> str:
     # Blind like the g3 coach: no player report, no diff, no gate output.
+    # suite_delta is a fact from the loop, not the player's story: it names
+    # existing tests the player rewrote, so the judge can't miss a weakened one.
     open_findings = open_findings or []
+    suite_delta = suite_delta or []
     protected_ids = protected_ids or []
     return "\n".join(
         [
@@ -118,6 +122,12 @@ def judge_prompt(
             contract,
             "",
             "Review ONLY this phase. Is it implemented EXACTLY as specified?",
+            "",
+            "## suite_delta",
+            "Existing tests the player modified. READ each one. Any weakening (skip, xfail, "
+            "removed or loosened assert, narrowed input) the contract does not explicitly "
+            "ask for is a blocking finding.",
+            "\n".join(suite_delta) or "(нет)",
             "",
             "## open_findings",
             json.dumps(open_findings, ensure_ascii=False, indent=2),

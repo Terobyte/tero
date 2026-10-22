@@ -430,6 +430,7 @@ class _PhaseRunner:
             contract=self.contract,
             open_findings=[item.as_dict() for item in self.state.open_findings],
             protected_ids=list(self.state.protected_by_id),
+            suite_delta=self.state.suite_delta,
         )
         data = await self.agents.run_role(
             role="judge",

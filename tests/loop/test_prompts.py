@@ -39,6 +39,23 @@ def test_judge_prompt_is_g3_coach_and_blind():
     assert "git diff" not in text
 
 
+def test_judge_prompt_lists_touched_existing_tests():
+    text = role_prompts.judge_prompt(
+        preamble="common",
+        contract="## Phase\n- [ ] parse empty",
+        suite_delta=["tests/test_old.py"],
+    )
+    assert "tests/test_old.py" in text
+    assert "skip" in text and "xfail" in text
+    assert "blocking" in text
+
+
+def test_judge_prompt_without_suite_delta_says_none():
+    text = role_prompts.judge_prompt(preamble="", contract="c")
+    assert "## suite_delta" in text
+    assert "(нет)" in text
+
+
 def test_tester_prompt_one_new_file_per_finding():
     text = role_prompts.tester_prompt(
         preamble="common",
