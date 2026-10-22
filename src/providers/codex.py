@@ -144,8 +144,12 @@ class CodexProvider:
         # Sandbox mode. Text-only runs should never need command execution;
         # read-only runs (the judge) keep the shell so they can read the code.
         # Codex 0.147 dropped `-a <policy>` on `exec`; use `-s` / `-c` instead.
-        if disable_tools or read_only:
+        # The judge runs the suite, and pytest needs a writable tmp dir, which
+        # `read-only` forbids; it gets workspace-write and is told not to edit.
+        if disable_tools:
             cmd.extend(["-s", "read-only"])
+        elif read_only:
+            cmd.extend(["-s", "workspace-write"])
         elif self.config.bypass_approvals:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         elif self.config.full_auto:
