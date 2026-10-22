@@ -221,8 +221,9 @@ async def test_B36_codex_read_only_keeps_shell(monkeypatch, tmp_path):
     seen = _patch_runner(monkeypatch, codex_mod, [])
     await _drain(CodexProvider(), "p", "sys", str(tmp_path), read_only=True)
     cmd = seen["cmd"]
-    assert "-s" in cmd and "read-only" in cmd, (
-        f"B36: нет -s read-only при read_only=True: {cmd!r}"
+    # the judge runs pytest, which needs a writable tmp dir: workspace-write, not read-only
+    assert "-s" in cmd and "workspace-write" in cmd and "read-only" not in cmd, (
+        f"B36: судье нужен -s workspace-write для pytest: {cmd!r}"
     )
     assert "--disable" not in cmd, (
         f"B36: read_only отключает shell через --disable: {cmd!r}"
