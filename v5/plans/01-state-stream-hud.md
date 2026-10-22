@@ -26,8 +26,8 @@
 - `class RunState`: `path: Path`, `update(**fields) -> None` — атомарно (temp + rename), под `threading.Lock`; ошибка записи → одно предупреждение, не исключение. `read(path) -> dict | None`.
 - Поля `state.json`: `status, reason, text, pid, pid_started, updated_at, plan, phases[{name,state}], phase, round, phase_started, role, provider, model, step_started, verdict{verdict,blocking,first{issue,file,line}}, tester, gate, snapshot_ref, base, doing`.
 
-- [ ] `test_update_is_atomic_and_never_raises`: папка недоступна → `update` не бросает, предупреждение один раз (пропуск под root)
-- [ ] реализовать `Status` и `RunState`
+- [x] `test_update_is_atomic_and_never_raises`: папка недоступна → `update` не бросает, предупреждение один раз (пропуск под root)
+- [x] реализовать `Status` и `RunState`
 
 ## Лок прогона
 
