@@ -324,7 +324,7 @@ class _PhaseRunner:
             self.repo, self.suite_hashes, self.link_targets, set(self.guarded)
         )
         removed_dirs: set[str] = set()
-        for path in sorted(set(current) | set(self.guarded)):
+        for path in sorted(set(current) | set(self.guarded), key=lambda p: (p in self.guarded, p)):
             if any(path.startswith(done + "/") for done in removed_dirs):
                 # A parent dir was already removed wholesale (rmtree) above;
                 # this entry is stale — nothing left to do for it.
@@ -352,6 +352,8 @@ class _PhaseRunner:
                 kind, payload = original
                 if kind == "link":
                     os.symlink(payload, target)
+                elif kind == "dir":
+                    target.mkdir(parents=True, exist_ok=True)
                 else:
                     target.write_bytes(payload)
             hook = Path(path).name.casefold() in _SUITE_HOOKS_FOLDED
@@ -805,7 +807,7 @@ def _strip_unsafe_ancestors(repo: Path, rel: str) -> list[str]:
     return stripped
 
 
-# kind, payload: ("file", bytes) or ("link", os.readlink target)
+# kind, payload: ("file", bytes), ("link", os.readlink target) or ("dir", b"")
 Entry = tuple[str, Any]
 def _base_guarded_entries(
     repo: Path, excluded: dict[str, str]
@@ -922,6 +924,8 @@ def _walk_target(
         if target not in excluded and target not in entries:
             entries[target] = ("file", full.read_bytes())
     elif full.is_dir():
+        if target not in excluded and target not in entries:
+            entries[target] = ("dir", b"")
         for walk_root, walk_dirs, walk_files in os.walk(full, followlinks=False):
             walk_dirs[:] = [d for d in walk_dirs if d not in _PRUNE_DIRS]
             for name in [*walk_dirs, *walk_files]:
@@ -971,6 +975,8 @@ def _snapshot_guarded(
                     entries.pop(path, None)
             elif full.is_file():
                 entries[path] = ("file", full.read_bytes())
+            elif full.is_dir() and not full.is_symlink():
+                entries[path] = ("dir", b"")
             else:
                 entries.pop(path, None)
         return entries, set(fixed_targets)
