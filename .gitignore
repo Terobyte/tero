@@ -51,3 +51,4 @@ credentials.json
 test_agent/
 test_env/
 reproduce_*.py
+.superpowers/
