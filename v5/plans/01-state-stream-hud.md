@@ -115,4 +115,4 @@
 
 Менять `src/cli_entry.py` / `src/loop/run.py`.
 
-- [ ] `tero go` запускает `tero hud --run <папка>` через `Popen(start_new_session=True, stdin=DEVNULL, stdout/stderr → .tero/hud.log)` и не ждёт; тест: `Popen` бросает → прогон идёт
+- [x] `tero go` запускает `tero hud --run <папка>` через `Popen(start_new_session=True, stdin=DEVNULL, stdout/stderr → .tero/hud.log)` и не ждёт; тест: `Popen` бросает → прогон идёт

@@ -148,6 +148,76 @@ def test_go_hud_launch_failure_does_not_raise(monkeypatch, tmp_path):
     maybe_launch_hud(_cfg(hud=True), run_dir)
 
 
+@pytest.mark.asyncio
+async def test_go_hud_launch_failure_run_still_ships(monkeypatch, tmp_path):
+    """Contract: `Popen` бросает → прогон идёт (run-level, через настоящий run())."""
+    import subprocess as sp
+
+    from src.loop.run import run
+    from tests.loop import fakes as scripted
+
+    repo = scripted.init_repo(
+        tmp_path, "# Demo\n\n## Add greet\n\n- [ ] greet() returns hello\n"
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name: object() if name == "webview" else real_find_spec(name),
+    )
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    real_popen = sp.Popen
+
+    def fake_popen(cmd, *args, **kwargs):
+        if "hud" in cmd:
+            raise OSError("no fork")
+        return real_popen(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(sp, "Popen", fake_popen)
+    cfg = Config(
+        plan_file="plan.md", working_dir=str(repo), max_rounds=8, test_timeout_s=30
+    )
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            scripted.player_writes(
+                repo, "src/greet.py", "def greet():\n    return 'hello'\n"
+            ),
+            scripted.judge_returns(scripted.ship()),
+        ],
+    )
+    outcome = await run(cfg, agents=agents)
+    assert outcome.exit_code == 0, outcome.reason
+    assert outcome.phases_shipped == 1
+
+
+def test_go_hud_output_goes_to_tero_hud_log(monkeypatch, tmp_path):
+    import subprocess
+
+    captured = {}
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(pid=123)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    run_dir = tmp_path / ".tero" / "runs" / "x-plan"
+    run_dir.mkdir(parents=True)
+    maybe_launch_hud(_cfg(hud=True), run_dir)
+    assert captured.get("start_new_session") is True
+    assert captured.get("stdin") is subprocess.DEVNULL
+    assert captured.get("stderr") is subprocess.STDOUT
+    assert Path(captured["stdout"].name).resolve() == (
+        tmp_path / ".tero" / "hud.log"
+    ).resolve()
+
+
 def test_cli_go_accepts_no_hud():
     from src.cli_entry import build_parser
 
