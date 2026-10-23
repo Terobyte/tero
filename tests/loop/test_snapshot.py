@@ -127,6 +127,47 @@ def test_deny_matching_uses_is_secret_path(tmp_path: Path, monkeypatch):
     assert "notes.txt" in seen
 
 
+def test_tree_of_matches_ref_tree_and_ignores_deny(tmp_path: Path):
+    repo = _init(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tracked.txt").write_text("v2\n")
+    (repo / "new.txt").write_text("new\n")
+    (repo / ".env").write_text("KEY=1\n")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "x.js").write_text("x\n")
+    status_before = _git(repo, "status", "--porcelain")
+    cached_before = _git(repo, "diff", "--cached")
+    ref = snapshot.ref_name("run9", 1, 5)
+    snapshot.take_snapshot(repo, base, ref)
+    assert snapshot.tree_of(repo, base) == snapshot.ref_tree(repo, ref)
+    (repo / "tracked.txt").write_text("v3\n")
+    assert snapshot.tree_of(repo, base) != snapshot.ref_tree(repo, ref)
+    assert _git(repo, "status", "--porcelain") == status_before
+    assert _git(repo, "diff", "--cached") == cached_before
+    assert list((repo / ".git").glob("tero-snapshot-*")) == []
+
+
+def test_snapshot_excludes_nested_deny_dirs(tmp_path: Path):
+    repo = _init(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    nested = repo / "vendor" / "node_modules" / "pkg"
+    nested.mkdir(parents=True)
+    (nested / "x.js").write_text("x\n")
+    nested_tero = repo / "sub" / ".tero"
+    nested_tero.mkdir(parents=True)
+    (nested_tero / "state.json").write_text("{}\n")
+    (repo / "ok.py").write_text("print(1)\n")
+    ref = snapshot.ref_name("run1", 2, 4)
+    snapshot.take_snapshot(repo, base, ref)
+    tree = _ls_tree(repo, ref)
+    assert "vendor/node_modules/pkg/x.js" not in tree
+    assert "sub/.tero/state.json" not in tree
+    assert "ok.py" in tree
+    assert snapshot.tree_of(repo, base) == snapshot.ref_tree(repo, ref)
+    snapshot.restore_snapshot(repo, ref)
+    assert (nested / "x.js").read_text() == "x\n"
+
+
 def test_diff_for_ignores_worktree(tmp_path: Path):
     repo = _init(tmp_path)
     base = _git(repo, "rev-parse", "HEAD").strip()
@@ -141,6 +182,21 @@ def test_diff_for_ignores_worktree(tmp_path: Path):
     after = snapshot.diff_for(repo, base, ref)
     assert after == before
     assert "v3" not in after
+
+
+def test_restore_snapshot_preserves_deny_list(tmp_path: Path):
+    repo = _init(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tracked.txt").write_text("v2\n")
+    ref = snapshot.ref_name("run1", 4, 1)
+    snapshot.take_snapshot(repo, base, ref)
+    (repo / "tracked.txt").write_text("v3-tamper\n")
+    (repo / ".env").write_text("KEY=1\n")
+    (repo / "key.pem").write_text("x\n")
+    snapshot.restore_snapshot(repo, ref)
+    assert (repo / "tracked.txt").read_text() == "v2\n"
+    assert (repo / ".env").read_text() == "KEY=1\n"
+    assert (repo / "key.pem").read_text() == "x\n"
 
 
 def test_restore_snapshot_brings_back_work(tmp_path: Path):

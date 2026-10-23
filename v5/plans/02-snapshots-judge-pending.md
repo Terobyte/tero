@@ -130,11 +130,11 @@
 - `state.json` во время судьи: `role=judge`, `provider`, `model`, `step_started`, `snapshot_ref`, всё до вызова.
 - Вне этой фазы: повтор судьи при сбое и `judge_pending` (фаза 6), новый исполнитель со снимка (фаза 9).
 
-- [ ] `test_judge_sees_snapshot_tree`: дерево перед судьёй совпадает с `<ref>^{tree}`; stub-судья проверяет это сам и пишет в свой ответ
-- [ ] `test_judge_tamper_restores_snapshot`: stub-судья портит файл → после судьи дерево = дерево ref, событие `judge_tamper` в ledger
-- [ ] `test_untracked_secret_is_not_tamper`: исполнитель создал `.env` и код → на входе в судью и после него нет `restore` и `judge_tamper`, `.env` на диске; стоп `secrets` из фазы 3 работает как раньше
-- [ ] `test_state_before_judge_call`: stub-судья читает `state.json` в момент вызова → `role=judge`, `provider`, `model`, `step_started`, `snapshot_ref` = ref раунда
-- [ ] реализовать
+- [x] `test_judge_sees_snapshot_tree`: дерево перед судьёй совпадает с `<ref>^{tree}`; stub-судья проверяет это сам и пишет в свой ответ
+- [x] `test_judge_tamper_restores_snapshot`: stub-судья портит файл → после судьи дерево = дерево ref, событие `judge_tamper` в ledger
+- [x] `test_untracked_secret_is_not_tamper`: исполнитель создал `.env` и код → на входе в судью и после него нет `restore` и `judge_tamper`, `.env` на диске; стоп `secrets` из фазы 3 работает как раньше
+- [x] `test_state_before_judge_call`: stub-судья читает `state.json` в момент вызова → `role=judge`, `provider`, `model`, `step_started`, `snapshot_ref` = ref раунда
+- [x] реализовать
 
 ## judge_pending после трёх сбоев судьи
 

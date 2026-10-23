@@ -24,9 +24,20 @@ def _default_deny() -> tuple[str, ...]:
 
 
 def _denied(rel: str, deny: tuple[str, ...]) -> bool:
+    parts = Path(rel).parts
     for rule in deny:
         if rule.endswith("/"):
-            if rel == rule[:-1] or rel.startswith(rule):
+            name = rule[:-1].strip("/")
+            if not name:
+                continue
+            if "/" in name:
+                # Anchored multi-component rule: only matches at the root.
+                if rel == name or rel.startswith(name + "/"):
+                    return True
+            # A bare dir name matches that component at any depth, mirroring
+            # gitignore semantics (patterns without a middle slash match at
+            # any level) used by `git clean -e` in restore_snapshot.
+            elif name in parts:
                 return True
     return git.is_secret_path(rel)
 
@@ -62,9 +73,26 @@ def verify(repo: Path, ref: str) -> bool:
     return True
 
 
-def restore_snapshot(repo: Path, ref: str) -> None:
-    """Make index and worktree the snapshot tree; HEAD does not move."""
-    git.restore_tree(Path(repo), f"{ref}^{{tree}}")
+def restore_snapshot(
+    repo: Path,
+    ref: str,
+    deny: Iterable[str] | None = None,
+) -> None:
+    """Make index and worktree the snapshot tree; HEAD does not move.
+
+    Deny-listed paths (`.env`, `*secret*`, `node_modules/`, ...) were never
+    recorded in the snapshot, so cleanup must preserve them: `git clean`
+    runs with one `-e` per deny rule.
+    """
+    rules = tuple(deny) if deny is not None else _default_deny()
+    repo = Path(repo)
+    tree = f"{ref}^{{tree}}"
+    _git_plain(repo, "read-tree", tree)
+    _git_plain(repo, "checkout-index", "-a", "-f")
+    clean: list[str] = ["clean", "-fd"]
+    for rule in rules:
+        clean += ["-e", rule]
+    _git_plain(repo, *clean)
 
 
 def _git_tmp(repo: Path, index_file: str, *args: str) -> str:
@@ -104,12 +132,17 @@ def _git_dir(repo: Path) -> Path:
     return out if out.is_absolute() else repo / out
 
 
-def take_snapshot(
+def tree_of(
     repo: Path,
     base: str,
-    ref: str,
     deny: Iterable[str] | None = None,
 ) -> str:
+    """Filtered worktree tree sha: same temp-index filter as take_snapshot.
+
+    Used to compare the live tree against a snapshot ref. Plain
+    `git write_tree` would see deny-listed files (`.env`, `*secret*`,
+    `node_modules/`) that are absent from the ref, so it can never match.
+    """
     rules = tuple(deny) if deny is not None else _default_deny()
     repo = Path(repo)
     fd, index_file = tempfile.mkstemp(prefix="tero-snapshot-", dir=str(_git_dir(repo)))
@@ -129,14 +162,29 @@ def take_snapshot(
                 "--",
                 *[f":(literal){p}" for p in denied],
             )
-        tree = _git_tmp(repo, index_file, "write-tree").strip()
-        sha = _git_tmp(
-            repo, index_file, "commit-tree", tree, "-p", base, "-m", f"tero snapshot {ref}"
-        ).strip()
-        _git_tmp(repo, index_file, "update-ref", ref, sha)
-        return sha
+        return _git_tmp(repo, index_file, "write-tree").strip()
     finally:
         try:
             os.unlink(index_file)
         except OSError:
             pass
+
+
+def ref_tree(repo: Path, ref: str) -> str:
+    """Tree sha recorded in `<ref>`: what tree_of must match on entry."""
+    return _git_plain(Path(repo), "rev-parse", f"{ref}^{{tree}}").strip()
+
+
+def take_snapshot(
+    repo: Path,
+    base: str,
+    ref: str,
+    deny: Iterable[str] | None = None,
+) -> str:
+    rules = tuple(deny) if deny is not None else _default_deny()
+    tree = tree_of(repo, base, rules)
+    sha = _git_plain(
+        Path(repo), "commit-tree", tree, "-p", base, "-m", f"tero snapshot {ref}"
+    ).strip()
+    _git_plain(Path(repo), "update-ref", ref, sha)
+    return sha

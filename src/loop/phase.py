@@ -27,7 +27,6 @@ from src.loop.git import (
     secret_paths,
     stage_and_diff,
     write_tree,
-    restore_tree,
 )
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
@@ -517,16 +516,52 @@ class _PhaseRunner:
         self.state.last_red_tree = tree_now
         return same
 
+    def _snapshot_before_judge(self) -> str | None:
+        run_id = self.ledger.run_dir.name
+        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
+        try:
+            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
+            if not snapshot_mod.verify(self.repo, ref):
+                raise RuntimeError("snapshot verify failed")
+        except Exception as exc:
+            self._update_state(snapshot_ref="")
+            self._emit(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                role="judge",
+                error=str(exc) or type(exc).__name__,
+                text=f"снимок работы не сделан (`{ref}`)",
+            )
+            self.ledger.event(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                error=str(exc) or type(exc).__name__,
+                round=self.state.round,
+            )
+            return None
+        return ref
+
     async def _judge(self) -> _Next:
         from datetime import datetime, timezone
 
+        ref = self._snapshot_before_judge()
+        if ref is None:
+            # The round tree is unverified: the judge must not review it.
+            return _Next.NEXT
         self._update_state(
             role="judge",
             provider=self.cfg.judge_provider,
             model=self.cfg.judge_model,
             step_started=datetime.now(timezone.utc).isoformat(),
+            snapshot_ref=ref,
+            base=self.checkpoint,
         )
-        tree_before = write_tree(self.repo)
+        if snapshot_mod.tree_of(self.repo, self.checkpoint) != snapshot_mod.ref_tree(
+            self.repo, ref
+        ):
+            snapshot_mod.restore_snapshot(self.repo, ref)
         ctx = ValidateCtx(
             open_ids=[item.id for item in self.state.open_findings],
             protected_ids=set(self.state.protected_by_id),
@@ -548,10 +583,11 @@ class _PhaseRunner:
             ctx=ctx,
             emit=self._emit,
         )
-        tree_after = write_tree(self.repo)
-        if tree_after != tree_before:
-            restore_tree(self.repo, tree_before)
-            self.ledger.event("judge_tamper", round=self.state.round)
+        if snapshot_mod.tree_of(
+            self.repo, self.checkpoint
+        ) != snapshot_mod.ref_tree(self.repo, ref):
+            snapshot_mod.restore_snapshot(self.repo, ref)
+            self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
             print("  judge изменил рабочее дерево — откат", flush=True)
 
         data = self._check_reply("judge", data)
