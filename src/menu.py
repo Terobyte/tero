@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from src.config import Config, short_model_name
+from src.providers import free_models
 from src.providers.effort import (
     EFFORT_LABELS,
     effort_field_for,
@@ -32,13 +33,15 @@ CODEX_MODEL_PRESETS = {
 }
 
 # OpenCode model IDs
-OPENCODE_MODEL_PRESETS = {
-    "Muse Spark 1.3 (free $0)": "opencode/muse-spark-1.3-contributor-free",
-    "MIMO v2.6 Flash (free)": "opencode/mimo-v2.6-flash-free",
-    "MiniMax M3.1 Flash (free)": "opencode/minimax-m3.1-flash-free",
-    "Kimi K2 (free)": "openrouter/moonshotai/kimi-k2:free",
-    "Свой model ID…": "__custom__",
-}
+# OpenCode: free models rotate week to week, so nothing is pinned here.
+# The menu lists what `opencode models` marks free right now; the user picks.
+OPENCODE_CUSTOM_LABEL = "Свой model ID…"
+
+
+def _opencode_presets() -> dict[str, str]:
+    free = free_models.free_models(free_models.list_models())
+    return {**{m: m for m in free}, OPENCODE_CUSTOM_LABEL: "__custom__"}
+
 
 GEMINI_MODEL_PRESETS = {
     "Gemini 3.1 Pro": "gemini-3.1-pro-preview",
@@ -85,7 +88,7 @@ PROVIDER_PRESETS = {
     "Claude Pro (native)": "claude",
     "Codex (native CLI)": "codex",
     "Gemini (Google CLI)": "gemini",
-    "OpenCode (MIMO/Kimi)": "opencode",
+    "OpenCode (бесплатные)": "opencode",
     "Cursor Headless": "cursor",
 }
 
@@ -118,10 +121,11 @@ def _provider_model_label(
 
 def _model_presets_for_provider(provider: str) -> dict[str, str]:
     """Return menu presets for a selectable provider."""
+    if provider == "opencode":
+        return _opencode_presets()
     return {
         "claude": CLAUDE_MODEL_PRESETS,
         "codex": CODEX_MODEL_PRESETS,
-        "opencode": OPENCODE_MODEL_PRESETS,
         "gemini": GEMINI_MODEL_PRESETS,
         "muse": MUSE_MODEL_PRESETS,
         "cursor": CURSOR_MODEL_PRESETS,
@@ -143,8 +147,11 @@ def _resolve_model_choice(
     if not model_choice:
         return config
 
-    presets = _model_presets_for_provider(provider)
-    model_id = presets[model_choice]
+    if provider == "opencode":
+        # labels are the model ids; a second `opencode models` call could differ
+        model_id = "__custom__" if model_choice == OPENCODE_CUSTOM_LABEL else model_choice
+    else:
+        model_id = _model_presets_for_provider(provider)[model_choice]
     if model_id == "__custom__":
         if not _custom_model_allowed(provider):
             return config
@@ -237,20 +244,17 @@ def _fallback_prompt_model(provider: str, prompt_label: str) -> str:
         return "" if model.lower() == "default" else model
 
     if provider == "opencode":
-        print(
-            "  Модели: spark-free, mimo, minimax, kimi-k2"
-        )
-        model = (
-            input(f"  {prompt_label} model [mimo]: ").strip().lower() or "mimo"
-        )
-        model_map = {
-            "spark-1.3-free": OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"],
-            "spark-free": OPENCODE_MODEL_PRESETS["Muse Spark 1.3 (free $0)"],
-            "mimo": OPENCODE_MODEL_PRESETS["MIMO v2.6 Flash (free)"],
-            "minimax": OPENCODE_MODEL_PRESETS["MiniMax M3.1 Flash (free)"],
-            "kimi-k2": OPENCODE_MODEL_PRESETS["Kimi K2 (free)"],
-        }
-        return model_map.get(model, model)
+        free = free_models.free_models(free_models.list_models())
+        if not free:
+            print("  `opencode models` не ответил: введи model ID (пусто = модель opencode по умолчанию)")
+            return input(f"  {prompt_label} model: ").strip()
+        print("  Бесплатные сейчас:")
+        for i, model in enumerate(free, 1):
+            print(f"    {i}. {model}")
+        raw = input(f"  {prompt_label} model (номер или ID): ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(free):
+            return free[int(raw) - 1]
+        return raw
 
     if provider == "gemini":
         print("  Модели: gemini-3.1-pro-preview, gemini-3.8-flash, gemini-3.5-flash-lite")

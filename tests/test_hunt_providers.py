@@ -143,7 +143,8 @@ async def test_B22_opencode_stall_timeout_from_config(monkeypatch, tmp_path):
 
 
 def test_B31a_opencode_default_model():
-    assert OpenCodeConfig().default_model == "opencode/mimo-v2.6-flash-free", (
+    # a pinned free model goes stale; the user picks one from `opencode models`
+    assert OpenCodeConfig().default_model == "", (
         f"B31a: дефолтная модель opencode: {OpenCodeConfig().default_model!r}"
     )
 

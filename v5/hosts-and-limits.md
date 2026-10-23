@@ -81,4 +81,5 @@ Gemini 3.1 Pro в списке нет. Судья по умолчанию — `g
 - [ ] opencode: будит ли фоновая команда агента, максимум одного вызова, `opencode run -s <id>` снаружи, compact через `--attach`.
 - [ ] Muse как хозяин: то же, что у Claude Code? Есть ли `rate_limit_event` от `api.meta.ai`.
 - [ ] codex: есть ли `rate_limits` в stdout `codex exec --json` или только в файлах сессий.
+- [ ] opencode: `opencode models` печатает по id на строку (`opencode/...-free`, `openrouter/...:free`)? На это опираются список в меню и проверка на старте (`src/providers/free_models.py`).
 - [ ] agy: что в `--output-format json` о токенах и лимитах; как выглядит ошибка протухшего токена.

@@ -49,7 +49,7 @@ class RunState:
                     suffix=".tmp",
                 )
                 try:
-                    with os.fdopen(fd, "w") as fh:
+                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
                         json.dump(current, fh, ensure_ascii=False)
                     os.replace(tmp_name, self.path)
                 except BaseException:
@@ -71,7 +71,7 @@ class RunState:
     @staticmethod
     def read(path: str | Path) -> dict[str, Any] | None:
         try:
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except (OSError, ValueError):
             return None

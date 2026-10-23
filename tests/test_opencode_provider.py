@@ -674,12 +674,15 @@ def test_opencode_provider_in_provider_presets():
     assert "opencode" in PROVIDER_PRESETS.values()
 
 
-def test_opencode_model_presets_exist():
-    """OPENCODE_MODEL_PRESETS dict is defined with expected models."""
-    from src.menu import OPENCODE_MODEL_PRESETS
+def test_opencode_model_presets_come_from_cli(monkeypatch):
+    """The opencode model menu lists what `opencode models` marks free today."""
+    from src.menu import _model_presets_for_provider
+    from src.providers import free_models
 
-    values = list(OPENCODE_MODEL_PRESETS.values())
-    assert "opencode/minimax-m3.1-flash-free" in values
+    monkeypatch.setattr(
+        free_models, "list_models", lambda command="opencode": ["opencode/minimax-m3.1-flash-free"]
+    )
+    assert "opencode/minimax-m3.1-flash-free" in _model_presets_for_provider("opencode").values()
 
 
 
@@ -716,7 +719,7 @@ def test_fallback_menu_accepts_opencode_player(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["p", "opencode", "kimi-k2", "high", ""])
+    answers = iter(["p", "opencode", "openrouter/moonshotai/kimi-k2:free", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())
@@ -747,7 +750,12 @@ def test_questionary_player_opencode_uses_same_model_presets(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M3.1 Flash (free)", "High"])
+    from src.providers import free_models
+
+    monkeypatch.setattr(
+        free_models, "list_models", lambda command="opencode": ["opencode/minimax-m3.1-flash-free"]
+    )
+    prompts = iter(["OpenCode (бесплатные)", "opencode/minimax-m3.1-flash-free", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -778,7 +786,12 @@ def test_questionary_player_opencode_can_pick_minimax_model(monkeypatch):
     from src.menu import _edit_setting_questionary
     from src.config import Config
 
-    prompts = iter(["OpenCode (MIMO/Kimi)", "MiniMax M3.1 Flash (free)", "High"])
+    from src.providers import free_models
+
+    monkeypatch.setattr(
+        free_models, "list_models", lambda command="opencode": ["opencode/minimax-m3.1-flash-free"]
+    )
+    prompts = iter(["OpenCode (бесплатные)", "opencode/minimax-m3.1-flash-free", "High"])
 
     class DummyPrompt:
         def __init__(self, value):
@@ -840,7 +853,12 @@ def test_fallback_menu_accepts_opencode_escalation(monkeypatch):
     from src.menu import _fallback_menu
     from src.config import Config
 
-    answers = iter(["e", "opencode", "kimi-k2", "high", ""])
+    from src.providers import free_models
+
+    monkeypatch.setattr(
+        free_models, "list_models", lambda command="opencode": ["openrouter/moonshotai/kimi-k2:free"]
+    )
+    answers = iter(["e", "opencode", "1", "high", ""])
     monkeypatch.setattr("builtins.input", lambda _="": next(answers))
 
     config = _fallback_menu(Config())

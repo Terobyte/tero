@@ -1,4 +1,4 @@
-"""OpenCode provider — MIMO, Kimi, and other free models via opencode CLI."""
+"""OpenCode provider — free and other models via opencode CLI."""
 
 import shutil
 from dataclasses import dataclass
@@ -23,7 +23,8 @@ class OpenCodeConfig:
     """Configuration for OpenCode CLI provider."""
 
     command: str = "opencode"
-    default_model: str = "opencode/mimo-v2.6-flash-free"
+    # free models rotate, so none is pinned: "" lets opencode use its own default
+    default_model: str = ""
     # Seconds without stdout before the run is killed; 0 = off, the role timeout governs.
     stall_timeout_s: float = 0
     display_name: str = "OpenCode"
@@ -33,8 +34,8 @@ class OpenCodeProvider:
     """OpenCode provider via CLI (opencode run --format json).
 
     Launches opencode as a subprocess and parses JSONL output.
-    Supports MIMO, Kimi, MiniMax, Nemotron and other free models
-    available through the opencode platform.
+    The user picks the model; the menu lists today's free ones
+    from ``opencode models``.
     """
 
     def __init__(self, config: OpenCodeConfig | None = None):
