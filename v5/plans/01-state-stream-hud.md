@@ -107,9 +107,9 @@
 
 - `Registry` в `~/.tero/registry/<run_id>.json` (pid, pid_started, путь к `state.json`); пишут все запуски.
 
-- [ ] «прогон оборвался»: `status in (starting, running)` и нет процесса с этим `pid` и тем же `pid_started`; тест на подменённом `psutil`
-- [ ] `test_registry_lists_live_runs_only`: при чтении реестр удаляет файлы мёртвых процессов (`pid_exists` + `pid_started`), свой файл удаляется в `finally` `run()`; тест на остатках после `kill -9`
-- [ ] реализовать `Registry`
+- [x] «прогон оборвался»: `status in (starting, running)` и нет процесса с этим `pid` и тем же `pid_started`; тест на подменённом `psutil`
+- [x] `test_registry_lists_live_runs_only`: при чтении реестр удаляет файлы мёртвых процессов (`pid_exists` + `pid_started`), свой файл удаляется в `finally` `run()`; тест на остатках после `kill -9`
+- [x] реализовать `Registry`
 
 ## tero go запускает HUD
 
