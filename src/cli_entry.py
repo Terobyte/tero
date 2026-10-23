@@ -70,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     review_parser.add_argument("--working-dir", "-w", type=str, default=".")
     review_parser.add_argument("--run", type=str, default=None)
 
+    resume_parser = subparsers.add_parser("resume", help="Continue a stopped run from state.json")
+    resume_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    resume_parser.add_argument("--run", type=str, default=None)
+
     hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
     hud_parser.add_argument("--run", type=str, default=None)
 
@@ -201,6 +205,36 @@ def run_review(args) -> int:
     return 0
 
 
+async def run_resume(args) -> int:
+    """Continue a stopped run. Only judge_pending is supported in this step."""
+    from src.loop.agents import LiveAgents
+    from src.loop.run import resume as resume_run
+    from src.loop.state import RunState
+
+    repo = Path(args.working_dir).expanduser().resolve()
+    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    if run_dir is None:
+        run_dir = _latest_run_dir(repo)
+    if run_dir is None or not (run_dir / "state.json").is_file():
+        print("Прогонов нет.")
+        return 1
+    state = RunState.read(run_dir / "state.json") or {}
+    status = state.get("status") or ""
+    if status != "judge_pending":
+        print(f"стоп: resume для `{status}` пока не умеет (код 1)", flush=True)
+        return 1
+    cfg_state = state.get("config") or {}
+    cfg_fields = cfg_state.get("fields") if isinstance(cfg_state.get("fields"), dict) else cfg_state
+    working_dir = cfg_fields.get("working_dir") or str(repo)
+    agents = LiveAgents(working_dir, verbose=bool(cfg_fields.get("verbose", False)))
+    outcome = await resume_run(repo, run_dir, agents=agents)
+    if outcome.reason:
+        print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
+    if outcome.run_dir:
+        print(f"журнал: {outcome.run_dir}", flush=True)
+    return outcome.exit_code
+
+
 def main():
     """Package-safe entrypoint used by the installed `tero` script."""
     parser = build_parser()
@@ -224,6 +258,8 @@ def main():
         run_history(args)
     elif args.command == "review":
         sys.exit(run_review(args))
+    elif args.command == "resume":
+        sys.exit(asyncio.run(run_resume(args)))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 

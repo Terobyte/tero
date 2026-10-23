@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import re
 import shutil
@@ -86,6 +87,7 @@ async def run(
             pid_started=pid_started,
             plan=cfg.plan_file,
             doing="старт",
+            config=_public_config(cfg),
         )
     except Exception:
         pass
@@ -205,7 +207,11 @@ async def run(
 
         checkout_run_branch(repo, slug)
         try:
-            state.update(status=Status.RUNNING.value, doing="фаза 1")
+            keep = _public_config(cfg)
+            state.update(
+                status=Status.RUNNING.value, doing="фаза 1",
+                config=keep,
+            )
         except Exception:
             pass
         ledger = Ledger(run_dir)
@@ -327,6 +333,301 @@ async def run(
             registry.unregister(run_dir.name)
         except Exception:
             pass
+
+
+def _is_secret_name(name: str) -> bool:
+    folded = name.lower()
+    return "key" in folded or "token" in folded or "secret" in folded
+
+
+def _public_config(cfg: Config) -> dict:
+    return {
+        f.name: getattr(cfg, f.name)
+        for f in dataclasses.fields(Config)
+        if not _is_secret_name(f.name)
+    }
+
+
+def _cfg_from_state_fields(saved: dict) -> Config:
+    fields = saved.get("fields")
+    source = fields if isinstance(fields, dict) else saved
+    valid = {f.name for f in dataclasses.fields(Config)}
+    clean = {k: v for k, v in source.items() if k in valid}
+    return Config(**clean)
+
+
+async def resume(
+    repo: str | Path,
+    run_dir: str | Path,
+    *,
+    agents: AgentRunner,
+) -> RunOutcome:
+    """Continue a stopped run from its state.json. Only judge_pending yet."""
+    from src.loop import snapshot as snapshot_mod
+    from src.loop.git import head as git_head
+
+    repo_path = Path(repo).expanduser().resolve()
+    run_path = Path(run_dir).expanduser().resolve()
+    state = RunState.read(run_path / "state.json") or {}
+    status = state.get("status") or ""
+
+    def _refuse(reason: str) -> RunOutcome:
+        print(f"стоп: {reason} (код 1)", flush=True)
+        return RunOutcome(
+            status="error", exit_code=1, reason=reason, run_dir=str(run_path)
+        )
+
+    if status != Status.JUDGE_PENDING.value:
+        return _refuse(f"resume для `{status}` пока не умеет")
+    saved = state.get("config")
+    if not isinstance(saved, dict) or not saved:
+        return _refuse("прогон старше resume, запусти `tero go`")
+    try:
+        cfg = _cfg_from_state_fields(saved)
+    except (TypeError, ValueError) as exc:
+        return _refuse(f"прогон старше resume, запусти `tero go` ({exc})")
+
+    ref = state.get("snapshot_ref") or ""
+    base = state.get("base") or ""
+    phase_title = state.get("phase") or ""
+    phase_index = state.get("phase_index", 0) or 0
+    round_no = state.get("round", 1) or 1
+    if not ref or not base:
+        return _refuse("прогон старше resume, запусти `tero go`")
+
+    lock = acquire(repo_path)
+    if lock is None:
+        return _refuse("another run holds this repo")
+    slug = slugify(Path(cfg.plan_file).stem)
+    registry = Registry()
+    pid_started = current_pid_started()
+    try:
+        registry.register(
+            run_path.name, run_path / "state.json",
+            pid=os.getpid(), pid_started=pid_started,
+        )
+    except Exception:
+        pass
+
+    ledger = Ledger(run_path)
+    from src.loop.stream import Stream
+
+    stream = Stream(run_path / "stream.jsonl")
+    done_io = RunState(run_path / "state.json")
+
+    def _write_status_transition(
+        *, status: str, reason: str, text: str, round_no: int = 0,
+        run_end: bool = False,
+    ) -> None:
+        done_io.update(
+            status=status, reason=reason, text=text,
+            doing="стоп" if status != Status.RUNNING.value else "resume",
+            pid=os.getpid(),
+            pid_started=pid_started,
+        )
+        try:
+            stream.emit(
+                "resume" if status == Status.RUNNING.value else "stop",
+                status=status, reason=reason,
+                phase=phase_title, round=round_no, role="judge",
+                text=text,
+            )
+        except Exception:
+            pass
+        try:
+            kind = (
+                "resume" if status == Status.RUNNING.value else (
+                    "done" if status == Status.DONE.value else "stop"
+                )
+            )
+            ledger.event(
+                kind,
+                status=status, reason=reason, text=text, round=round_no,
+            )
+        except Exception:
+            pass
+        if run_end:
+            try:
+                ledger.event("run_end", reason=reason)
+            except Exception:
+                pass
+
+    try:
+        # F14: статус running — только после успешной настройки, иначе
+        # любая ошибка checkout/восстановления оставляет judge_pending
+        # и resume можно повторить.
+        exclude_tero(repo_path)
+        # F16: существующий before-resume не перезаписываем — повторные попытки
+        # сохраняют своё дерево в before-resume-2, -3, …, чтобы ручные правки
+        # первой попытки оставались доступны.
+        def _before_ref() -> str:
+            base_ref = f"refs/tero/{run_path.name}/before-resume"
+            if not snapshot_mod.verify(repo_path, base_ref):
+                return base_ref
+            n = 2
+            while snapshot_mod.verify(repo_path, f"{base_ref}-{n}"):
+                n += 1
+            return f"{base_ref}-{n}"
+
+        before = _before_ref()
+        before_saved = False
+        if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
+            snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
+            before_saved = True
+        # Конфликтующие ручные правки не останавливают resume: before-resume
+        # уже сохранён, поэтому checkout идёт с -f, а дерево выравнивается
+        # на ref — судья получает код из ref.
+        _force_checkout_run_branch(repo_path, slug)
+        if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
+            if not before_saved:
+                before = _before_ref()
+                snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
+                before_saved = True
+            snapshot_mod.restore_snapshot(repo_path, ref)
+
+        plan_path = repo_path / cfg.plan_file
+        if not plan_path.is_file():
+            return _refuse(f"plan not found: {plan_path}")
+        preamble = load_preamble(plan_path)
+        phases = load_phases(plan_path)
+        phase = next(
+            (p for p in phases if p.index == phase_index or p.title == phase_title),
+            None,
+        )
+        if phase is None:
+            return _refuse(f"фаза не найдена: {phase_title or phase_index}")
+
+        command = detect(
+            repo_path,
+            test_command=cfg.test_command,
+            test_command_scoped=cfg.test_command_scoped,
+        )
+        # F8: resume owns the run again — running from the start, so a later
+        # player snapshot can never be mistaken for a gate-passed ref.
+        # judge_pending returns only via the judge failing again below.
+        _write_status_transition(
+            status=Status.RUNNING.value, reason="resume",
+            text=f"resume: продолжаю с судьи (раунд {round_no})",
+            round_no=round_no,
+        )
+        ledger.event("resume", status=status, round=round_no, ref=ref)
+        shipped = sum(1 for p in phases if p.done)
+        start_index = next(
+            (i for i, p in enumerate(phases) if p.index == phase.index),
+            phase.index,
+        )
+
+        def _end(reason: str) -> None:
+            ledger.event(
+                "run_end",
+                reason=reason,
+                phases_shipped=shipped,
+                phases_total=len(phases),
+            )
+
+        index = start_index
+        first = True
+        outcome = None
+        while index < len(phases):
+            current = phases[index]
+            if current.done:
+                index += 1
+                continue
+            first_kwargs = (
+                {"start_checkpoint": base, "start_round": round_no}
+                if first else {}
+            )
+            first = False
+            outcome = await run_phase(
+                current,
+                repo=repo_path,
+                plan_path=plan_path,
+                preamble=preamble,
+                cfg=cfg,
+                agents=agents,
+                test_command=command,
+                ledger=ledger,
+                total_phases=len(phases),
+                start_with_judge=(current.index == phase.index),
+                **first_kwargs,
+            )
+            _print_phase_summary(current, outcome, total=len(phases))
+            if outcome.status == "ship":
+                shipped += 1
+                index += 1
+                continue
+            if outcome.status == "judge_pending":
+                _end(outcome.reason)
+                return RunOutcome(
+                    status="judge_pending", exit_code=3, reason=outcome.reason,
+                    phases_shipped=shipped,
+                    phases_total=len(phases), run_dir=str(run_path),
+                )
+            _end(outcome.reason)
+            _write_status_transition(
+                status=Status.STOPPED.value,
+                reason=outcome.reason,
+                text=outcome.stop_text or outcome.reason,
+                round_no=round_no,
+            )
+            return RunOutcome(
+                status="stop", exit_code=2, reason=outcome.reason,
+                phases_shipped=shipped,
+                phases_total=len(phases), run_dir=str(run_path),
+            )
+        _write_status_transition(
+            status=Status.DONE.value, reason="ship", text="ship",
+            round_no=round_no, run_end=True,
+        )
+        return RunOutcome(
+            status="ok", exit_code=0, reason="ship",
+            phases_shipped=shipped, phases_total=len(phases),
+            run_dir=str(run_path),
+        )
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+        try:
+            registry.unregister(run_path.name)
+        except Exception:
+            pass
+
+
+def _force_checkout_run_branch(repo: Path, slug: str) -> str:
+    """Вернуться на ветку прогона, не теряя незакоммиченную работу.
+
+    before-resume уже снят до вызова, поэтому конфликтующие правки можно
+    сбросить: checkout идёт с `-f`, дерево дальше выравнивается на ref.
+    Новую ветку (её ещё нет) создаём как обычно.
+    """
+    name = slug if slug.startswith("tero/") else f"tero/{slug}"
+    if run_branch_exists(repo, slug):
+        _force_checkout(repo, name)
+    else:
+        checkout_run_branch(repo, slug)
+    return name
+
+
+def _force_checkout(repo: Path, name: str) -> None:
+    import subprocess
+
+    from src.loop.git import GitError
+
+    try:
+        proc = subprocess.run(
+            ["git", "checkout", "-f", name],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise GitError(f"git checkout -f {name} failed: {exc}") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise GitError(f"git checkout -f {name} failed: {err}")
 
 
 def _dirty_reason(hint: str, status: str) -> str:

@@ -169,6 +169,9 @@ async def run_phase(
     test_command: TestCommand | None,
     ledger: Ledger,
     total_phases: int = 1,
+    start_with_judge: bool = False,
+    start_checkpoint: str = "",
+    start_round: int = 0,
 ) -> PhaseOutcome:
     runner = _PhaseRunner(
         phase=phase,
@@ -180,6 +183,9 @@ async def run_phase(
         test_command=test_command,
         ledger=ledger,
         total_phases=total_phases,
+        start_with_judge=start_with_judge,
+        start_checkpoint=start_checkpoint,
+        start_round=start_round,
     )
     return await runner.run()
 
@@ -197,7 +203,13 @@ class _PhaseRunner:
         test_command: TestCommand | None,
         ledger: Ledger,
         total_phases: int = 1,
+        start_with_judge: bool = False,
+        start_checkpoint: str = "",
+        start_round: int = 0,
     ) -> None:
+        self.start_with_judge = start_with_judge
+        self.start_checkpoint = start_checkpoint
+        self.start_round = start_round
         self.phase = phase
         self.total_phases = total_phases
         self.repo = repo
@@ -208,7 +220,7 @@ class _PhaseRunner:
         self.test_command = test_command
         self.ledger = ledger
         exclude_tero(repo)
-        self.checkpoint = head(repo)
+        self.checkpoint = start_checkpoint or head(repo)
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
         self.guarded, self.link_targets = _snapshot_guarded(repo, self.suite_hashes)
         self.state = _State()
@@ -242,13 +254,32 @@ class _PhaseRunner:
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
         from datetime import datetime, timezone
 
+        if self.start_with_judge:
+            # resume from judge_pending: continue on the restored ref tree,
+            # starting with the judge — no player call, no gate rerun.
+            self._update_state(round=self.start_round)
+            self.state.round = self.start_round
+            self.state.judge_failures = 0
+            self.ledger.event("resume_judge", round=self.state.round)
+            print(
+                f"  {self._tag()} judge "
+                f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
+                flush=True,
+            )
+            verdict = await self._judge()
+            outcome = await self._after_judge(verdict)
+            if outcome is not None:
+                return outcome
+            # F9: resumed judge returned non-terminal verdict — keep the
+            # saved round so the normal cycle continues with start_round + 1.
+            self.state.round = self.start_round
         self._update_state(
             phase=self.phase.title,
             phase_index=self.phase.index,
             phase_started=datetime.now(timezone.utc).isoformat(),
             phase_done=False,
             commit="",
-            round=0,
+            round=self.state.round,
         )
         while True:
             if self.state.round + 1 > self.cfg.max_rounds:
@@ -287,30 +318,37 @@ class _PhaseRunner:
                 flush=True,
             )
             verdict = await self._judge()
-            match verdict:
-                case _Next.JUDGE_PENDING:
-                    return self._stop_judge_pending()
-                case _Next.USER:
-                    return self._halt("user")
-                case _Next.STOP:
-                    return self._halt("stuck")
-                case _Next.SHIP:
-                    return self._ship()
-                case _Next.TESTER:
-                    print(
-                        f"  {self._tag()} tester "
-                        f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
-                        flush=True,
-                    )
-                    if not await self._tester():
-                        return self._halt("provider_unavailable")
-                case _Next.NEXT:
-                    pass
-                case _:
-                    # _Next.INVALID / _Next.UNAVAILABLE are consumed inside
-                    # _judge (retry loop): reaching here would be a bug,
-                    # so fall through without escalating the player.
-                    pass
+            outcome = await self._after_judge(verdict)
+            if outcome is not None:
+                return outcome
+
+    async def _after_judge(self, verdict: _Next) -> PhaseOutcome | None:
+        """Apply a judge verdict. None means: continue the normal cycle."""
+        match verdict:
+            case _Next.JUDGE_PENDING:
+                return self._stop_judge_pending()
+            case _Next.USER:
+                return self._halt("user")
+            case _Next.STOP:
+                return self._halt("stuck")
+            case _Next.SHIP:
+                return self._ship()
+            case _Next.TESTER:
+                print(
+                    f"  {self._tag()} tester "
+                    f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
+                    flush=True,
+                )
+                if not await self._tester():
+                    return self._halt("provider_unavailable")
+                return None
+            case _Next.NEXT:
+                return None
+            case _:
+                # _Next.INVALID / _Next.UNAVAILABLE are consumed inside
+                # _judge (retry loop): reaching here would be a bug,
+                # so fall through without escalating the player.
+                return None
 
     async def _player(self) -> bool:
         model, provider, effort = self._player_identity()
@@ -1012,7 +1050,6 @@ class _PhaseRunner:
         stage_and_diff(self.repo, self.checkpoint)
         secrets = secret_paths(self.repo)
         if secrets:
-            self.ledger.event("stop", reason="secrets", paths=secrets)
             ref = self._rollback_with_snapshot("secrets")
             snapshot_note = f", работа в `{ref}`" if ref else ""
             text = f"secrets: {', '.join(secrets)}{snapshot_note}"
@@ -1067,13 +1104,26 @@ class _PhaseRunner:
             status=Status.STOPPED.value,
             reason=reason,
             text=text,
+            doing="стоп",
         )
-        self._emit("stop", reason=reason, text=text)
+        self._emit(
+            "stop",
+            status=Status.STOPPED.value,
+            reason=reason,
+            role="judge",
+            text=text,
+        )
+        self.ledger.event(
+            "stop",
+            status=Status.STOPPED.value,
+            reason=reason,
+            text=text,
+            round=self.state.round,
+        )
 
     def _halt(self, reason: str) -> PhaseOutcome:
         ref = self._rollback_with_snapshot(reason)
         self.ledger.event("rollback", reason=reason, round=self.state.round)
-        self.ledger.event("stop", reason=reason, question=self.state.user_question)
         if ref is None:
             text = "снимок не сделан, дерево не тронуто"
         else:

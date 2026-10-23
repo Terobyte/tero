@@ -194,10 +194,10 @@
 - Тесты зовут функцию resume из `run.py` с фейками из `tests/loop/fakes.py`; через CLI-подпроцесс проверяется
   только отказ.
 
-- [ ] `test_resume_runs_only_judge`: прогон в `judge_pending`, дерево изменено вручную → `resume` → stub-исполнитель не вызван, дерево перед судьёй = дерево ref, SHIP → фаза сдана коммитом
-- [ ] `test_resume_keeps_manual_changes_in_ref`: ручные изменения до `resume` лежат в `refs/tero/<run_id>/before-resume`
-- [ ] `test_resume_other_status_refuses`: `status=done` → код 1, понятный текст
-- [ ] реализовать
+- [x] `test_resume_runs_only_judge`: прогон в `judge_pending`, дерево изменено вручную → `resume` → stub-исполнитель не вызван, дерево перед судьёй = дерево ref, SHIP → фаза сдана коммитом
+- [x] `test_resume_keeps_manual_changes_in_ref`: ручные изменения до `resume` лежат в `refs/tero/<run_id>/before-resume`
+- [x] `test_resume_other_status_refuses`: `status=done` → код 1, понятный текст
+- [x] реализовать
 
 ## Исполнитель со снимка
 
