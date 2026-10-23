@@ -231,7 +231,7 @@ async def run(
                 state.update(
                     status=Status.STOPPED.value,
                     reason=outcome.reason,
-                    text=outcome.reason,
+                    text=outcome.stop_text or outcome.reason,
                     doing="стоп",
                 )
             except Exception:

@@ -62,8 +62,8 @@
 
 Менять `src/loop/phase.py`.
 
-- [ ] `test_halt_writes_stopped_with_reason` для `user|stuck|fuse|provider_unavailable|secrets`
-- [ ] каждый `_halt` пишет `status=stopped` + `reason` + текст в `state.json`
+- [x] `test_halt_writes_stopped_with_reason` для `user|stuck|fuse|provider_unavailable|secrets`
+- [x] каждый `_halt` пишет `status=stopped` + `reason` + текст в `state.json`
 
 ## Stream.emit
 

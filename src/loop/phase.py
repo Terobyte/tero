@@ -33,6 +33,7 @@ from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop.prompts import judge_prompt, player_prompt, tester_prompt
 from src.loop.schemas import ValidateCtx
+from src.loop.state import RunState, Status
 
 SUITE_CONFIG_NAMES = {
     "pytest.ini",
@@ -123,6 +124,7 @@ class PhaseOutcome:
     rounds: int = 0
     commit_sha: str = ""
     escalated: bool = False
+    stop_text: str = ""
 
 
 @dataclass
@@ -698,11 +700,14 @@ class _PhaseRunner:
         if secrets:
             self.ledger.event("stop", reason="secrets", paths=secrets)
             rollback(self.repo, self.checkpoint)
+            text = f"secrets: {', '.join(secrets)}"
+            self._write_stopped("secrets", text)
             return PhaseOutcome(
                 status="stop",
                 reason="secrets",
                 rounds=self.state.round,
                 escalated=self.state.escalated,
+                stop_text=text,
             )
         plan_bytes = self.plan_path.read_bytes()
         mark_phase_done(self.plan_path, self.phase)
@@ -726,16 +731,37 @@ class _PhaseRunner:
             escalated=self.state.escalated,
         )
 
+    def _halt_text(self, reason: str) -> str:
+        if reason == "user":
+            return self.state.user_question or reason
+        texts = {
+            "stuck": "нет прогресса → откат фазы",
+            "fuse": f"лимит раундов ({self.cfg.max_rounds}) исчерпан → откат фазы",
+            "provider_unavailable": "провайдер недоступен → откат фазы",
+            "secrets": "в дифе файлы-секреты → откат фазы",
+        }
+        return texts.get(reason, reason)
+
+    def _write_stopped(self, reason: str, text: str) -> None:
+        RunState(self.ledger.run_dir / "state.json").update(
+            status=Status.STOPPED.value,
+            reason=reason,
+            text=text,
+        )
+
     def _halt(self, reason: str) -> PhaseOutcome:
         rollback(self.repo, self.checkpoint)
         self.ledger.event("rollback", reason=reason, round=self.state.round)
         self.ledger.event("stop", reason=reason, question=self.state.user_question)
+        text = self._halt_text(reason)
+        self._write_stopped(reason, text)
         return PhaseOutcome(
             status="stop",
             reason=reason,
             user_question=self.state.user_question,
             rounds=self.state.round,
             escalated=self.state.escalated,
+            stop_text=text,
         )
 
 

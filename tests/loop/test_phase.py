@@ -63,6 +63,111 @@ async def _run(repo: Path, agents: FakeAgents, cfg: Config | None = None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason,steps",
+    [
+        (
+            "user",
+            [
+                "player_writes",
+                (
+                    "judge_needs_user",
+                    {
+                        "verdict": "NEEDS_USER",
+                        "previous": [],
+                        "findings": [],
+                        "user_question": "which greeting?",
+                    },
+                ),
+            ],
+        ),
+        ("stuck", ["stuck"]),
+        ("fuse", ["fuse"]),
+        ("provider_unavailable", ["provider_unavailable"]),
+        ("secrets", ["secrets"]),
+    ],
+)
+async def test_halt_writes_stopped_with_reason(
+    tmp_path: Path, reason: str, steps: list
+):
+    from src.loop.state import RunState
+
+    repo = _repo(tmp_path)
+    scripted_steps = []
+    stuck_payload = no_ship(
+        [finding(problem="still broken")],
+        previous=[{"id": "F1", "state": "still_open"}],
+    )
+    for entry in steps:
+        if entry == "player_writes":
+            scripted_steps.append(
+                player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+            )
+        elif isinstance(entry, tuple) and entry[0] == "judge_needs_user":
+            scripted_steps.append(judge_returns(entry[1]))
+        elif entry == "stuck":
+            scripted_steps.append(
+                player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n")
+            )
+            scripted_steps.append(judge_returns(no_ship([finding(problem="still broken")])))
+            scripted_steps.append(
+                player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n")
+            )
+            scripted_steps.append(judge_returns(stuck_payload))
+            scripted_steps.append(
+                player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n")
+            )
+            scripted_steps.append(judge_returns(stuck_payload))
+        elif entry == "fuse":
+            for i in range(3):
+                scripted_steps.append(
+                    player_writes(repo, "src/greet.py", f"def greet():\n    return '{i}'\n")
+                )
+                scripted_steps.append(
+                    judge_returns(
+                        no_ship(
+                            [finding(problem=f"new {i}")],
+                            previous=[{"id": f"F{i}", "state": "resolved"}] if i else [],
+                        )
+                    )
+                )
+        elif entry == "provider_unavailable":
+            scripted_steps.append(
+                lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"}
+            )
+        elif entry == "secrets":
+
+            def player_with_env(_role, _kw):
+                write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+                write_file(repo, ".env", "SECRET=1\n")
+                return {
+                    "status": "done",
+                    "changes": [{"file": "src/greet.py", "what": "greet", "why": "c"}],
+                    "start_here": [],
+                    "blocked_reason": "",
+                }
+
+            scripted_steps.append(player_with_env)
+            scripted_steps.append(judge_returns(ship()))
+    cfg_kwargs: dict = {"escalation_provider": "", "escalation_model": ""}
+    if reason == "fuse":
+        cfg_kwargs["max_rounds"] = 2
+    agents = FakeAgents(repo, scripted_steps)
+    outcome, ledger = await _run(repo, agents, _cfg(**cfg_kwargs))
+    assert outcome.status == "stop"
+    assert outcome.reason == reason
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert state.get("status") == "stopped"
+    assert state.get("reason") == reason
+    assert state.get("text"), "stopped state.json must carry human-readable text"
+    if reason == "user":
+        assert state.get("text") == "which greeting?"
+    elif reason == "secrets":
+        assert ".env" in state.get("text", "")
+
+
+@pytest.mark.asyncio
 async def test_ship_first_round_commits_and_checks_boxes(tmp_path: Path):
     repo = _repo(tmp_path)
     agents = FakeAgents(
