@@ -222,3 +222,151 @@ async def test_crash_diff_truncated_at_20000(tmp_path: Path):
     assert outcome.status == "ship"
     assert len(prompts) == 1
     assert "обрезано, полный дифф" in prompts[0]
+
+
+def _crash_step(repo: Path, prompts: list[str], content: str):
+    def step(_role, kwargs):
+        prompts.append(kwargs.get("prompt") or "")
+        write_file(repo, "src/greet.py", content)
+        return {"__unavailable__": True, "error": "down"}
+
+    return step
+
+
+def _player_step(repo: Path, prompts: list[str], prewrite: list, content: str):
+    def step(_role, kwargs):
+        prompts.append(kwargs.get("prompt") or "")
+        target = repo / "src/greet.py"
+        prewrite.append(target.read_text() if target.exists() else None)
+        write_file(repo, "src/greet.py", content)
+        return dict(scripted.PLAYER_DONE)
+
+    return step
+
+
+@pytest.mark.asyncio
+async def test_kmax_two_flat_rounds_clean_retry(tmp_path: Path):
+    repo = _repo(tmp_path)
+    prompts: list[str] = []
+    prewrite: list = []
+    agents = FakeAgents(
+        repo,
+        [
+            _crash_step(repo, prompts, "v1-crash\n"),
+            _player_step(repo, prompts, prewrite, "v2\n"),
+            judge_returns(
+                no_ship([finding(file="src/greet.py", line=7, problem="round2 bad")])
+            ),
+            _player_step(repo, prompts, prewrite, "v3\n"),
+            judge_returns(
+                no_ship(
+                    [finding(file="src/greet.py", line=7, problem="round3 bad still")]
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v4\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert outcome.reason != "stuck"
+    assert len(prompts) == 4
+    assert "Продолжай, не переписывай готовое" not in prompts[0]
+    assert "Продолжай, не переписывай готовое" in prompts[1]
+    assert "Продолжай, не переписывай готовое" in prompts[2]
+    assert "Продолжай, не переписывай готовое" not in prompts[3]
+    assert prewrite == ["v1-crash\n", "v2\n", None]
+    # Открытые замечания судьи остаются: следующий промпт их содержит.
+    assert "round3 bad still" in prompts[3]
+    run_id = ledger.run_dir.name
+    for rnd in (2, 3):
+        ref = _ref_name(run_id, 0, rnd)
+        assert _git(repo, "rev-parse", "--verify", ref).strip()
+    assert "v3" in _git(
+        repo, "cat-file", "-p", f"{_ref_name(run_id, 0, 3)}:src/greet.py"
+    )
+
+
+@pytest.mark.asyncio
+async def test_kmax_progress_resets(tmp_path: Path):
+    repo = _repo(tmp_path)
+    prompts: list[str] = []
+    prewrite: list = []
+    agents = FakeAgents(
+        repo,
+        [
+            _crash_step(repo, prompts, "v1-crash\n"),
+            _player_step(repo, prompts, prewrite, "v2\n"),
+            judge_returns(
+                no_ship(
+                    [
+                        finding(file="src/greet.py", line=7, problem="bad A"),
+                        finding(file="src/greet.py", line=9, problem="bad B"),
+                    ]
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v3\n"),
+            judge_returns(
+                no_ship([finding(file="src/greet.py", line=7, problem="bad A still")])
+            ),
+            _player_step(repo, prompts, prewrite, "v4\n"),
+            judge_returns(
+                no_ship([finding(file="src/greet.py", line=7, problem="bad A again")])
+            ),
+            _player_step(repo, prompts, prewrite, "v5\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, _ = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert len(prompts) == 5
+    # Отката не было: дерево пережило все раунды, блок продолжения на месте.
+    assert prewrite == ["v1-crash\n", "v2\n", "v3\n", "v4\n"]
+    for prompt in prompts[1:]:
+        assert "Продолжай, не переписывай готовое" in prompt
+
+
+@pytest.mark.asyncio
+async def test_kmax_rephrased_findings_count_as_flat(tmp_path: Path):
+    repo = _repo(tmp_path)
+    prompts: list[str] = []
+    prewrite: list = []
+    agents = FakeAgents(
+        repo,
+        [
+            _crash_step(repo, prompts, "v1-crash\n"),
+            _player_step(repo, prompts, prewrite, "v2\n"),
+            judge_returns(
+                no_ship(
+                    [
+                        finding(
+                            file="src/greet.py",
+                            line=7,
+                            problem="greet returns wrong string",
+                        )
+                    ]
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v3\n"),
+            judge_returns(
+                no_ship(
+                    [
+                        finding(
+                            file="src/greet.py",
+                            line=7,
+                            problem="completely different wording, same place",
+                        )
+                    ]
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v4\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, _ = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert len(prompts) == 4
+    # Тот же (file, line) другим текстом — «не уменьшились»: чистая попытка.
+    assert "Продолжай, не переписывай готовое" not in prompts[3]
+    assert prewrite == ["v1-crash\n", "v2\n", None]
+    assert "completely different wording" in prompts[3]

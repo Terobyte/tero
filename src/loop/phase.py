@@ -86,6 +86,10 @@ class _Next(Enum):
 
 _JUDGE_MAX_FAILURES = 3
 
+# K_max: столько подряд раундов-продолжений с неуменьшившимися замечаниями
+# судьи — и вместо stuck чистая попытка с checkpoint.
+K_MAX = 2
+
 
 class AgentRunner(Protocol):
     async def run_role(self, role: str, **kwargs: Any) -> dict[str, Any] | None: ...
@@ -151,6 +155,9 @@ class _State:
     resume_ref: str = ""
     resume_base: str = ""
     resume_active: bool = False
+    had_crash: bool = False
+    kmax_flat: int = 0
+    kmax_prev: tuple[int, frozenset] | None = None
     open_findings: list[OpenFinding] = field(default_factory=list)
     next_id: int = 1
     suite_delta: list[str] = field(default_factory=list)
@@ -310,13 +317,13 @@ class _PhaseRunner:
                     return self._halt("provider_unavailable")
                 continue
             if self._protect_tests():
-                if self._no_progress():
+                if not self._in_continuation() and self._no_progress():
                     return self._halt("stuck")
                 continue
             gate = self._gate()
             if gate is not None and not gate.ok:
                 if self._same_red(gate):
-                    if self._no_progress():
+                    if not self._in_continuation() and self._no_progress():
                         return self._halt("stuck")
                 self.state.gate_output = gate.output
                 continue
@@ -401,6 +408,7 @@ class _PhaseRunner:
             self._provider_error("player", {"error": str(exc) or type(exc).__name__})
             self.state.player_crashes += 1
             self.state.resume_active = True
+            self.state.had_crash = True
             if ref:
                 self.state.resume_ref = ref
                 self.state.resume_base = self.checkpoint
@@ -410,6 +418,7 @@ class _PhaseRunner:
         if data is None:
             self.state.player_crashes += 1
             self.state.resume_active = True
+            self.state.had_crash = True
             if ref:
                 self.state.resume_ref = ref
                 self.state.resume_base = self.checkpoint
@@ -792,9 +801,71 @@ class _PhaseRunner:
         findings = data.get("findings") or []
         self._discard_tests(findings)
         previous = {row["id"]: row["state"] for row in data.get("previous") or []}
+        if self._in_continuation():
+            return self._apply_verdict_continuation(findings, previous)
         if self._stalled(previous) and self._no_progress():
             return _Next.STOP
 
+        still_open = [
+            item
+            for item in self.state.open_findings
+            if previous.get(item.id) != "resolved"
+        ]
+        new_blocking = self._new_blocking(findings)
+        self.state.open_findings = still_open + new_blocking
+        if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
+            return _Next.TESTER
+        return _Next.NEXT
+
+    def _in_continuation(self) -> bool:
+        # K_max считает только раунды-продолжения после падения исполнителя
+        # (фаза 9), дошедшие до вердикта судьи NO_SHIP. Раунды без падения —
+        # обычный цикл: _stalled/_no_progress работают как раньше.
+        return self.state.had_crash and self.state.resume_active
+
+    @staticmethod
+    def _findings_key(findings: list[dict[str, Any]]) -> tuple[int, frozenset]:
+        blocking = [item for item in findings if item.get("severity") == "blocking"]
+        return (
+            len(blocking),
+            frozenset((item.get("file", ""), item.get("line")) for item in blocking),
+        )
+
+    def _not_shrunk(self, current: tuple[int, frozenset]) -> bool:
+        prev = self.state.kmax_prev
+        if prev is None:
+            return True
+        count_now, keys_now = current
+        count_prev, keys_prev = prev
+        return count_now >= count_prev and not keys_now < keys_prev
+
+    def _clean_retry(self) -> None:
+        ref = self._rollback_with_snapshot("clean_retry")
+        self.ledger.event(
+            "clean_retry",
+            reason="clean_retry",
+            ref=ref,
+            round=self.state.round,
+        )
+        # Чистая попытка: блок продолжения убирается, старый ref остаётся.
+        self.state.resume_active = False
+        self.state.had_crash = False
+        self.state.kmax_flat = 0
+        self.state.kmax_prev = None
+
+    def _apply_verdict_continuation(
+        self, findings: list[dict[str, Any]], previous: dict[str, str]
+    ) -> _Next:
+        # В раунде-продолжении _stalled/_no_progress не проверяются:
+        # решает счётчик K_max.
+        key = self._findings_key(findings)
+        if self._not_shrunk(key):
+            self.state.kmax_flat += 1
+        else:
+            self.state.kmax_flat = 0
+        self.state.kmax_prev = key
+        if self.state.kmax_flat >= K_MAX:
+            self._clean_retry()
         still_open = [
             item
             for item in self.state.open_findings
