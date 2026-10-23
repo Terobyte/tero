@@ -170,9 +170,9 @@
   фазу, раунд, `snapshot_ref`, `base`, `git diff --stat` и полный `diff_for(base, ref)`. Только чтение.
 - Нет `snapshot_ref` в `state.json` → понятный текст и код 1.
 
-- [ ] `test_review_prints_ref_and_diff`: прогон в `judge_pending` (подготовленный `state.json` + ref) → вывод содержит ref, base и строку из diff
-- [ ] `test_review_without_snapshot`: `state.json` без ref → код 1, текст «снимка нет»
-- [ ] реализовать команду
+- [x] `test_review_prints_ref_and_diff`: прогон в `judge_pending` (подготовленный `state.json` + ref) → вывод содержит ref, base и строку из diff
+- [x] `test_review_without_snapshot`: `state.json` без ref → код 1, текст «снимка нет»
+- [x] реализовать команду
 
 ## tero resume с судьи
 
