@@ -156,11 +156,11 @@
   повтор судьи без нового вызова исполнителя. Любой другой старый тест, который ждёт `stuck`, эскалацию или
   `provider_unavailable` от сбоя **судьи**, переписывается так же.
 
-- [ ] `test_garbage_judge_three_times_goes_judge_pending`: stub-судья трижды отвечает мусором → `status=judge_pending`, ref есть, дерево = дерево ref, код выхода 3, не `stuck`
-- [ ] `test_judge_retry_does_not_rerun_player`: stub-судья: мусор, затем SHIP → исполнитель вызван один раз, фаза сдана
-- [ ] `test_judge_unavailable_three_times_no_rollback`: провайдер судьи недоступен трижды → `judge_pending`, файлы исполнителя на диске
-- [ ] `test_judge_failure_does_not_escalate_player`: мусорный ответ судьи не включает эскалацию
-- [ ] реализовать
+- [x] `test_garbage_judge_three_times_goes_judge_pending`: stub-судья трижды отвечает мусором → `status=judge_pending`, ref есть, дерево = дерево ref, код выхода 3, не `stuck`
+- [x] `test_judge_retry_does_not_rerun_player`: stub-судья: мусор, затем SHIP → исполнитель вызван один раз, фаза сдана
+- [x] `test_judge_unavailable_three_times_no_rollback`: провайдер судьи недоступен трижды → `judge_pending`, файлы исполнителя на диске
+- [x] `test_judge_failure_does_not_escalate_player`: мусорный ответ судьи не включает эскалацию
+- [x] реализовать
 
 ## tero review
 

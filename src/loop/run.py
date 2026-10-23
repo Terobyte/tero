@@ -241,6 +241,20 @@ async def run(
                 if outcome.status == "ship":
                     shipped += 1
                     continue
+                if outcome.status == "judge_pending":
+                    _end(outcome.reason)
+                    try:
+                        lock.release()
+                    except Exception:
+                        pass
+                    return RunOutcome(
+                        status="judge_pending",
+                        exit_code=3,
+                        reason=outcome.reason,
+                        phases_shipped=shipped,
+                        phases_total=len(phases),
+                        run_dir=str(run_dir),
+                    )
                 _end(outcome.reason)
                 try:
                     state.update(
@@ -340,6 +354,11 @@ def phase_summary_line(phase: Phase, outcome: PhaseOutcome, *, total: int) -> st
     if outcome.status == "ship":
         sha = (outcome.commit_sha or "")[:7]
         return f"{text}SHIP за {rounds} {rounds_word(rounds)} → {sha}"
+    if outcome.status == "judge_pending":
+        return (
+            f"{text}JUDGE_PENDING ({outcome.reason}) "
+            f"за {rounds} {rounds_word(rounds)}"
+        )
     return f"{text}STOP ({outcome.reason}) за {rounds} {rounds_word(rounds)}"
 
 

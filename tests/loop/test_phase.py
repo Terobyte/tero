@@ -549,12 +549,15 @@ async def test_invalid_judge_is_logged_with_errors_and_raw(tmp_path: Path, capsy
         [
             player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n"),
             judge_returns(invalid),
-            player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n"),
             judge_returns(invalid),
+            judge_returns(ship()),
         ],
     )
     outcome, ledger = await _run(repo, agents)
-    assert outcome.reason == "stuck"
+    assert outcome.status == "ship"
+    # The judge is retried on the same round: no new player call, no escalation.
+    assert agents.calls == ["player", "judge", "judge", "judge"]
+    assert outcome.escalated is False
     rows = [e for e in _events(ledger) if e["kind"] == "invalid"]
     assert rows[0]["role"] == "judge"
     assert rows[0]["errors"] == ["'verdict' is a required property"]
@@ -563,7 +566,7 @@ async def test_invalid_judge_is_logged_with_errors_and_raw(tmp_path: Path, capsy
     assert "'verdict' is a required property" in raw
     out = capsys.readouterr().out
     assert "'verdict' is a required property" in out
-    assert "эскалация" in out
+    assert "эскалация" not in out
 
 
 @pytest.mark.asyncio

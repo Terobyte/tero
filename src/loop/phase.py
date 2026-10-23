@@ -81,6 +81,10 @@ class _Next(Enum):
     NEXT = auto()
     INVALID = auto()
     UNAVAILABLE = auto()
+    JUDGE_PENDING = auto()
+
+
+_JUDGE_MAX_FAILURES = 3
 
 
 class AgentRunner(Protocol):
@@ -140,7 +144,9 @@ class ProtectedTest:
 class _State:
     round: int = 0
     escalated: bool = False
+    judge_failures: int = 0
     user_question: str = ""
+    last_provider_error: str = ""
     open_findings: list[OpenFinding] = field(default_factory=list)
     next_id: int = 1
     suite_delta: list[str] = field(default_factory=list)
@@ -282,11 +288,8 @@ class _PhaseRunner:
             )
             verdict = await self._judge()
             match verdict:
-                case _Next.UNAVAILABLE:
-                    return self._halt("provider_unavailable")
-                case _Next.INVALID:
-                    if self._no_progress():
-                        return self._halt("stuck")
+                case _Next.JUDGE_PENDING:
+                    return self._stop_judge_pending()
                 case _Next.USER:
                     return self._halt("user")
                 case _Next.STOP:
@@ -302,6 +305,11 @@ class _PhaseRunner:
                     if not await self._tester():
                         return self._halt("provider_unavailable")
                 case _Next.NEXT:
+                    pass
+                case _:
+                    # _Next.INVALID / _Next.UNAVAILABLE are consumed inside
+                    # _judge (retry loop): reaching here would be a bug,
+                    # so fall through without escalating the player.
                     pass
 
     async def _player(self) -> bool:
@@ -573,28 +581,38 @@ class _PhaseRunner:
             protected_ids=list(self.state.protected_by_id),
             suite_delta=self.state.suite_delta,
         )
-        data = await self.agents.run_role(
-            role="judge",
-            provider=self.cfg.judge_provider,
-            model=self.cfg.judge_model,
-            effort=self.cfg.judge_effort,
-            prompt=prompt,
-            timeout=self.cfg.judge_timeout_s,
-            ctx=ctx,
-            emit=self._emit,
-        )
-        if snapshot_mod.tree_of(
-            self.repo, self.checkpoint
-        ) != snapshot_mod.ref_tree(self.repo, ref):
-            snapshot_mod.restore_snapshot(self.repo, ref)
-            self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
-            print("  judge изменил рабочее дерево — откат", flush=True)
+        while True:
+            data = await self.agents.run_role(
+                role="judge",
+                provider=self.cfg.judge_provider,
+                model=self.cfg.judge_model,
+                effort=self.cfg.judge_effort,
+                prompt=prompt,
+                timeout=self.cfg.judge_timeout_s,
+                ctx=ctx,
+                emit=self._emit,
+            )
+            if snapshot_mod.tree_of(
+                self.repo, self.checkpoint
+            ) != snapshot_mod.ref_tree(self.repo, ref):
+                snapshot_mod.restore_snapshot(self.repo, ref)
+                self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
+                print("  judge изменил рабочее дерево — откат", flush=True)
 
-        data = self._check_reply("judge", data)
-        if data is None:
-            return _Next.UNAVAILABLE
-        if data.get("__invalid__"):
-            return _Next.INVALID
+            data = self._check_reply("judge", data)
+            if data is not None and not data.get("__invalid__"):
+                break
+            self.state.judge_failures += 1
+            attempt = self.state.judge_failures
+            if data is None:
+                error = self.state.last_provider_error
+                self._judge_failed(attempt, error)
+            else:
+                errors = [str(item) for item in data.get("errors") or []]
+                self._judge_failed(attempt, "; ".join(errors[:3]))
+            if attempt >= _JUDGE_MAX_FAILURES:
+                return _Next.JUDGE_PENDING
+        self.state.judge_failures = 0
 
         self._emit(
             "verdict",
@@ -628,6 +646,69 @@ class _PhaseRunner:
         self.ledger.artifact(self._round_file("judge.json"), _dump(data))
         _print_verdict(data)
         return self._apply_verdict(data)
+
+    def _judge_failed(self, attempt: int, error: str) -> None:
+        text = f"судья: сбой {attempt}/{_JUDGE_MAX_FAILURES} — {error or 'без деталей'}"
+        self.ledger.event(
+            "judge_failed",
+            attempt=attempt,
+            error=error,
+            round=self.state.round,
+        )
+        self._emit(
+            "judge_failed",
+            attempt=attempt,
+            error=error,
+            round=self.state.round,
+            role="judge",
+            text=text,
+        )
+        print(f"  {text}", flush=True)
+
+    def _write_status_transition(
+        self, *, status: str, reason: str, text: str, ref: str = "", role: str = "judge"
+    ) -> None:
+        self.ledger.event(
+            "judge_pending",
+            status=status,
+            reason=reason,
+            ref=ref,
+            text=text,
+            round=self.state.round,
+        )
+        self._update_state(
+            status=status,
+            reason=reason,
+            text=text,
+            snapshot_ref=ref,
+            doing="стоп",
+        )
+        self._emit(
+            "stop",
+            status=status,
+            reason=reason,
+            ref=ref,
+            role=role,
+            text=text,
+        )
+
+    def _stop_judge_pending(self) -> PhaseOutcome:
+        state = RunState.read(self.run_dir / "state.json") or {}
+        ref = state.get("snapshot_ref") or ""
+        text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
+        self._write_status_transition(
+            status=Status.JUDGE_PENDING.value,
+            reason="judge_failed",
+            text=text,
+            ref=ref,
+        )
+        return PhaseOutcome(
+            status="judge_pending",
+            reason="judge_failed",
+            rounds=self.state.round,
+            escalated=self.state.escalated,
+            stop_text=text,
+        )
 
     def _apply_verdict(self, data: dict[str, Any]) -> _Next:
         verdict = data.get("verdict")
@@ -863,6 +944,7 @@ class _PhaseRunner:
 
     def _provider_error(self, role: str, data: Any) -> None:
         error = data.get("error", "") if isinstance(data, dict) else ""
+        self.state.last_provider_error = error
         self.ledger.event("provider_error", role=role, round=self.state.round, error=error)
         print(f"  {role}: провайдер недоступен — {error}", flush=True)
 
