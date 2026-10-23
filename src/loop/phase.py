@@ -34,6 +34,7 @@ from src.loop.plan import Phase, mark_phase_done
 from src.loop.prompts import judge_prompt, player_prompt, tester_prompt
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState, Status
+from src.loop.stream import Stream
 
 SUITE_CONFIG_NAMES = {
     "pytest.ini",
@@ -207,16 +208,53 @@ class _PhaseRunner:
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
         self.contract = phase.body or phase.title
+        self.run_dir = Path(ledger.run_dir)
+        self.state_io = RunState(self.run_dir / "state.json")
+        self.stream = Stream(self.run_dir / "stream.jsonl")
+        self._role = ""
+
+    def _emit(self, type: str, **fields: Any) -> None:
+        fields.setdefault("phase", self.phase.title)
+        fields.setdefault("round", self.state.round)
+        if fields.get("role"):
+            self._role = fields["role"]
+        else:
+            fields["role"] = self._role
+        if "text" not in fields:
+            fields["text"] = _stream_text(type, fields)
+        self.stream.emit(type, **fields)
+
+    def _update_state(self, **fields: Any) -> None:
+        if fields.get("role"):
+            self._role = fields["role"]
+        self.state_io.update(**fields)
 
     def _tag(self) -> str:
         return f"[фаза {self.phase.index + 1}/{self.total_phases} · раунд {self.state.round}]"
 
     async def run(self) -> PhaseOutcome:
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
+        from datetime import datetime, timezone
+
+        self._update_state(
+            phase=self.phase.title,
+            phase_index=self.phase.index,
+            phase_started=datetime.now(timezone.utc).isoformat(),
+            phase_done=False,
+            commit="",
+            round=0,
+        )
         while True:
-            self.state.round += 1
-            if self.state.round > self.cfg.max_rounds:
+            if self.state.round + 1 > self.cfg.max_rounds:
                 return self._halt("fuse")
+            self.state.round += 1
+            self._update_state(round=self.state.round)
+            self._emit(
+                "start_step",
+                phase=self.phase.title,
+                round=self.state.round,
+                role="player",
+            )
             model, provider, effort = self._player_identity()
             extra = f" {effort}" if effort else ""
             print(
@@ -277,6 +315,14 @@ class _PhaseRunner:
             gate_output=_tail(self.state.gate_output),
             discarded=self.state.discarded,
         )
+        from datetime import datetime, timezone
+
+        self._update_state(
+            role="player",
+            provider=provider,
+            model=model,
+            step_started=datetime.now(timezone.utc).isoformat(),
+        )
         data = await self.agents.run_role(
             role="player",
             provider=provider,
@@ -285,6 +331,7 @@ class _PhaseRunner:
             prompt=prompt,
             timeout=self.cfg.player_timeout_s,
             ctx=ValidateCtx(),
+            emit=self._emit,
         )
         data = self._check_reply("player", data)
         if data is None:
@@ -374,10 +421,36 @@ class _PhaseRunner:
 
     def _gate(self) -> GateResult | None:
         if self.test_command is None:
+            from datetime import datetime, timezone
+
             print("  тесты пропущены (нет команды)", flush=True)
+            self._emit("gate", result="skipped", role="gate")
+            self._update_state(
+                role="gate",
+                provider="",
+                model="",
+                step_started=datetime.now(timezone.utc).isoformat(),
+                gate={"ok": True, "result": "skipped"},
+            )
             self.ledger.event("gate", result="skipped")
             return None
+        from datetime import datetime, timezone
+
+        from src.loop.gates import tail_lines
+
         print("  тесты …", flush=True)
+        self._update_state(
+            role="gate",
+            provider="",
+            model="",
+            step_started=datetime.now(timezone.utc).isoformat(),
+        )
+        self._emit(
+            "gate_start",
+            round=self.state.round,
+            role="gate",
+            text="тесты идут …",
+        )
         started = time.monotonic()
         result = run_all(
             self.test_command,
@@ -385,6 +458,22 @@ class _PhaseRunner:
             timeout_s=self.cfg.test_timeout_s,
         )
         duration = time.monotonic() - started
+        tail = tail_lines(result.output)
+        self._emit(
+            "gate",
+            ok=result.ok,
+            exit_code=result.exit_code,
+            round=self.state.round,
+            role="gate",
+            tail=tail,
+        )
+        self._update_state(
+            gate={
+                "ok": result.ok,
+                "exit_code": result.exit_code,
+                "tail": tail,
+            }
+        )
         self.ledger.event(
             "gate",
             ok=result.ok,
@@ -422,6 +511,14 @@ class _PhaseRunner:
         return same
 
     async def _judge(self) -> _Next:
+        from datetime import datetime, timezone
+
+        self._update_state(
+            role="judge",
+            provider=self.cfg.judge_provider,
+            model=self.cfg.judge_model,
+            step_started=datetime.now(timezone.utc).isoformat(),
+        )
         tree_before = write_tree(self.repo)
         ctx = ValidateCtx(
             open_ids=[item.id for item in self.state.open_findings],
@@ -442,6 +539,7 @@ class _PhaseRunner:
             prompt=prompt,
             timeout=self.cfg.judge_timeout_s,
             ctx=ctx,
+            emit=self._emit,
         )
         tree_after = write_tree(self.repo)
         if tree_after != tree_before:
@@ -455,6 +553,30 @@ class _PhaseRunner:
         if data.get("__invalid__"):
             return _Next.INVALID
 
+        self._emit(
+            "verdict",
+            verdict=data.get("verdict"),
+            round=self.state.round,
+            role="judge",
+        )
+        blocking = [
+            item for item in data.get("findings") or [] if item.get("severity") == "blocking"
+        ]
+        first = blocking[0] if blocking else {}
+        self._update_state(
+            role="judge",
+            provider=self.cfg.judge_provider,
+            model=self.cfg.judge_model,
+            verdict={
+                "verdict": data.get("verdict"),
+                "blocking": len(blocking),
+                "first": {
+                    "issue": first.get("problem", ""),
+                    "file": first.get("file", ""),
+                    "line": first.get("line"),
+                },
+            },
+        )
         self.ledger.event(
             "judge",
             verdict=data.get("verdict"),
@@ -548,6 +670,14 @@ class _PhaseRunner:
         ]
         if not routed or not self.tester_enabled or self.test_command is None:
             return True
+        from datetime import datetime, timezone
+
+        self._update_state(
+            role="tester",
+            provider=self.cfg.tester_provider,
+            model=self.cfg.tester_model,
+            step_started=datetime.now(timezone.utc).isoformat(),
+        )
         before_tree = write_tree(self.repo)
         before_files = set(list_worktree_files(self.repo))
         prompt = tester_prompt(
@@ -564,10 +694,18 @@ class _PhaseRunner:
             prompt=prompt,
             timeout=self.cfg.tester_timeout_s,
             ctx=ValidateCtx(),
+            emit=self._emit,
         )
         data = self._check_reply("tester", data)
         if data is None:
             return False
+        self._emit(
+            "tester",
+            round=self.state.round,
+            role="tester",
+            tests=data.get("tests") or [],
+        )
+        self._update_state(tester={"tests": len(data.get("tests") or [])})
         self.ledger.event("tester", round=self.state.round)
         self.ledger.artifact(self._round_file("tester.json"), _dump(data))
         self._revert_non_test(before_tree, before_files)
@@ -723,6 +861,8 @@ class _PhaseRunner:
             self.plan_path.write_bytes(plan_bytes)
             raise
         self.ledger.event("ship", commit=sha, rounds=self.state.round)
+        self._emit("ship", commit=sha, round=self.state.round, role="judge")
+        self._update_state(commit=sha, phase_done=True)
         return PhaseOutcome(
             status="ship",
             reason="ship",
@@ -743,11 +883,12 @@ class _PhaseRunner:
         return texts.get(reason, reason)
 
     def _write_stopped(self, reason: str, text: str) -> None:
-        RunState(self.ledger.run_dir / "state.json").update(
+        self._update_state(
             status=Status.STOPPED.value,
             reason=reason,
             text=text,
         )
+        self._emit("stop", reason=reason, text=text)
 
     def _halt(self, reason: str) -> PhaseOutcome:
         rollback(self.repo, self.checkpoint)
@@ -810,6 +951,34 @@ def _print_verdict(data: dict[str, Any]) -> None:
 def _tail(text: str, limit: int = 200) -> str:
     lines = text.splitlines()
     return "\n".join(lines[-limit:])
+
+
+def _stream_text(type: str, fields: dict[str, Any]) -> str:
+    if type == "tool":
+        return str(fields.get("text", ""))
+    if type == "text":
+        return str(fields.get("text", ""))
+    if type == "gate":
+        if fields.get("result") == "skipped":
+            return "тесты пропущены (нет команды)"
+        tail = str(fields.get("tail", ""))
+        head = "тесты: зелёные" if fields.get("ok") else "тесты: красные"
+        code = fields.get("exit_code")
+        text = f"{head} (код {code})" if code is not None else head
+        return f"{text}\n{tail}" if tail else text
+    if type == "gate_start":
+        return "тесты идут …"
+    if type == "verdict":
+        return str(fields.get("verdict", "") or "")
+    if type == "tester":
+        return f"тестов написано {len(fields.get('tests', []) or [])}"
+    if type == "ship":
+        return f"ship {fields.get('commit', '')}"
+    if type == "stop":
+        return str(fields.get("text", "") or fields.get("reason", "") or "")
+    if type == "start_step":
+        return f"раунд {fields.get('round', '')} начат"
+    return ""
 
 
 def _remove_guarded(target: Path) -> None:

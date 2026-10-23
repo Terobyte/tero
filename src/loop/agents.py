@@ -113,7 +113,8 @@ class LiveAgents:
         read_only = role == "judge"
 
         text = await self._call(
-            provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort
+            provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort,
+            emit=kwargs.get("emit"),
         )
         if text is None:
             return {"__unavailable__": True, "error": self.last_error}
@@ -125,7 +126,8 @@ class LiveAgents:
                 f"{text[-4000:]}\nошибки: {errors}"
             )
             text = await self._call(
-                provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort
+                provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
+                emit=kwargs.get("emit"),
             )
             if text is None:
                 return {"__unavailable__": True, "error": self.last_error}
@@ -146,6 +148,7 @@ class LiveAgents:
         timeout: int,
         role: str = "",
         effort: str = "",
+        emit=None,
     ) -> str | None:
         for attempt in range(2):
             before = self.guard.snapshot_pids()
@@ -164,9 +167,11 @@ class LiveAgents:
                         model=model,
                         output_schema=schema,
                         read_only=read_only,
+                        role=role,
                         effort=effort,
                         verbose=self.verbose,
                         on_output=self._mark_output,
+                        emit=emit,
                     ),
                     timeout=timeout,
                 )
@@ -237,7 +242,7 @@ _ACTIVITY_KEYS = (
 _ACTIVITY_PATH_KEYS = {"file_path", "path", "filePath", "file"}
 
 
-def _activity(block: Any, working_dir: str = "") -> str:
+def _activity(block: Any, working_dir: str = "", emit=None, role: str = "") -> str:
     """One console line per tool call, so a long role call is not silent."""
     name = getattr(block, "name", "")
     if not name or getattr(block, "type", "tool_use") != "tool_use" or name == "StructuredOutput":
@@ -245,13 +250,18 @@ def _activity(block: Any, working_dir: str = "") -> str:
     params = getattr(block, "input", None) or {}
     key = next((k for k in _ACTIVITY_KEYS if params.get(k)), None)
     if key is None:
+        if emit is not None:
+            emit("tool", role=role, text=name)
         return name
     arg = str(params[key])
     if key in _ACTIVITY_PATH_KEYS and working_dir:
         arg = ", ".join(_relative_path(p, working_dir) for p in arg.split(", "))
     arg = " ".join(arg.split())
     arg = _truncate_tail(arg, 100)
-    return f"{name} {arg}".strip()
+    line = f"{name} {arg}".strip()
+    if emit is not None:
+        emit("tool", role=role, text=line)
+    return line
 
 
 def _relative_path(value: str, working_dir: str) -> str:
@@ -281,9 +291,11 @@ async def _collect_text(
     model: str,
     output_schema: dict,
     read_only: bool,
+    role: str = "",
     effort: str = "",
     verbose: bool = False,
     on_output: Callable[[], None] | None = None,
+    emit=None,
 ) -> str:
     from src.providers.message_adapter import normalize_message
 
@@ -301,6 +313,11 @@ async def _collect_text(
         kwargs["read_only"] = read_only
     if "effort" in params or flexible:
         kwargs["effort"] = effort
+    # emit goes only to providers that declare it explicitly: a **kwargs
+    # wrapper (e.g. MuseProvider) would forward it to an inner run() that
+    # rejects it with TypeError, failing the role as unavailable.
+    if emit is not None and "emit" in params:
+        kwargs["emit"] = emit
     parts: list[str] = []
     async for message in provider.run(**kwargs):
         if on_output is not None:
@@ -309,12 +326,14 @@ async def _collect_text(
         if adapted is None:
             continue
         for block in adapted.content or []:
-            line = _activity(block, working_dir)
+            line = _activity(block, working_dir, emit=emit, role=role)
             if line:
                 print(f"    · {line}", flush=True)
         text = adapted.get_text_content()
         if text:
             parts.append(text)
+            if emit is not None:
+                emit("text", role=role, text=text[:300])
             if verbose:
                 snippet = " ".join(text.split())[:200]
                 if snippet:

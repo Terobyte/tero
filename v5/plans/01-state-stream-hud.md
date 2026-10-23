@@ -78,9 +78,9 @@
 
 Менять `src/loop/phase.py`, `src/loop/agents.py` (`_collect_text`/`_activity`), `src/loop/gates.py`.
 
-- [ ] тест на `phase.py` со stub-провайдерами: после фазы в `stream.jsonl` есть `start_step`, `tool`, `gate_start`, `gate`, `verdict`, `ship` в правильном порядке
-- [ ] тест: в `state.json` лежит вердикт из провалидированного JSON судьи (`_judge`), а не из прозы
-- [ ] подключить `emit`/`state.update` там, где сейчас `ledger.event` или `print` статуса; вывод тестов по ходу в поток не стримить
+- [x] тест на `phase.py` со stub-провайдерами: после фазы в `stream.jsonl` есть `start_step`, `tool`, `gate_start`, `gate`, `verdict`, `ship` в правильном порядке
+- [x] тест: в `state.json` лежит вердикт из провалидированного JSON судьи (`_judge`), а не из прозы
+- [x] подключить `emit`/`state.update` там, где сейчас `ledger.event` или `print` статуса; вывод тестов по ходу в поток не стримить
 
 ## Tail
 

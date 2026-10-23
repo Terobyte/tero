@@ -105,6 +105,11 @@ def print_red_tail(output: str) -> None:
         print(f"    {line}", flush=True)
 
 
+def tail_lines(output: str, limit: int = 40) -> str:
+    """Last ~limit lines of gate output for stream/state (never streamed live)."""
+    return "\n".join(output.splitlines()[-limit:])
+
+
 def _has_pytest(root: Path) -> bool:
     if (root / "pyproject.toml").is_file():
         return True
