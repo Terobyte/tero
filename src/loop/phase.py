@@ -324,16 +324,22 @@ class _PhaseRunner:
             model=model,
             step_started=datetime.now(timezone.utc).isoformat(),
         )
-        data = await self.agents.run_role(
-            role="player",
-            provider=provider,
-            model=model,
-            effort=effort,
-            prompt=prompt,
-            timeout=self.cfg.player_timeout_s,
-            ctx=ValidateCtx(),
-            emit=self._emit,
-        )
+        try:
+            data = await self.agents.run_role(
+                role="player",
+                provider=provider,
+                model=model,
+                effort=effort,
+                prompt=prompt,
+                timeout=self.cfg.player_timeout_s,
+                ctx=ValidateCtx(),
+                emit=self._emit,
+            )
+        except Exception as exc:
+            self._snapshot_after_player()
+            self._provider_error("player", {"error": str(exc) or type(exc).__name__})
+            return False
+        self._snapshot_after_player()
         data = self._check_reply("player", data)
         if data is None:
             return False
@@ -832,6 +838,33 @@ class _PhaseRunner:
                 self.cfg.escalation_effort,
             )
         return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
+
+    def _snapshot_after_player(self) -> str | None:
+        run_id = self.ledger.run_dir.name
+        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
+        try:
+            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
+            if not snapshot_mod.verify(self.repo, ref):
+                raise RuntimeError("snapshot verify failed")
+        except Exception as exc:
+            self._update_state(snapshot_ref="")
+            self._emit(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                error=str(exc) or type(exc).__name__,
+                text=f"снимок работы не сделан (`{ref}`)",
+            )
+            self.ledger.event(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                error=str(exc) or type(exc).__name__,
+                round=self.state.round,
+            )
+            return None
+        self._update_state(snapshot_ref=ref, base=self.checkpoint)
+        return ref
 
     def _rollback_with_snapshot(self, reason: str) -> str | None:
         run_id = self.ledger.run_dir.name

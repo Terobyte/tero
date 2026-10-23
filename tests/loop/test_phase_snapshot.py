@@ -159,6 +159,143 @@ async def test_secrets_stop_snapshot_has_no_secrets(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_after_player_ok(tmp_path: Path):
+    repo = _repo(tmp_path)
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship"
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    ref = state.get("snapshot_ref")
+    assert ref == ref_name(ledger.run_dir.name, 0, 1)
+    assert _git(repo, "rev-parse", "--verify", ref).strip()
+    assert "hello" in _git(repo, "show", f"{ref}:src/greet.py")
+
+
+@pytest.mark.asyncio
+async def test_snapshot_after_player_timeout(tmp_path: Path, monkeypatch):
+    import asyncio
+    import time
+
+    import src.loop.snapshot as snapshot_module
+
+    repo = _repo(tmp_path)
+    real_take = snapshot_module.take_snapshot
+    take_calls: list = []
+
+    def counting_take(repo_path, base, ref, deny=None):
+        take_calls.append(ref)
+        return real_take(repo_path, base, ref, deny=deny)
+
+    monkeypatch.setattr(snapshot_module, "take_snapshot", counting_take)
+
+    class BlockingPlayer:
+        """Stub blocks past the configured player timeout: wait_for cancels
+        it, TimeoutError escapes run_role — like a hung LiveAgents provider."""
+
+        def __init__(self, repo_dir: Path):
+            self.repo_dir = repo_dir
+
+        async def run_role(self, role: str, **kwargs):
+            assert role == "player"
+            timeout = kwargs.get("timeout") or 60
+
+            async def work():
+                write_file(self.repo_dir, "src/greet.py", "def greet():\n    return 'half'\n")
+                write_file(self.repo_dir, "src/other.py", "X = 1\n")
+                await asyncio.sleep(timeout + 30)
+
+            await asyncio.wait_for(asyncio.ensure_future(work()), timeout)
+            raise AssertionError("unreachable: wait_for times out first")
+
+    timeout_s = 2
+    started = time.monotonic()
+    outcome, ledger = await _run(
+        repo, BlockingPlayer(repo), _cfg(player_timeout_s=timeout_s)
+    )
+    elapsed = time.monotonic() - started
+    assert elapsed >= timeout_s, "stub must block until the player timeout fires"
+    assert outcome.status == "stop"
+    assert outcome.reason == "provider_unavailable"
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    ref = state.get("snapshot_ref")
+    assert ref == ref_name(ledger.run_dir.name, 0, 1)
+    assert _git(repo, "rev-parse", "--verify", ref).strip()
+    tree = set(_git(repo, "ls-tree", "-r", "--name-only", ref).splitlines())
+    assert "src/greet.py" in tree
+    assert "src/other.py" in tree
+    assert "half" in _git(repo, "show", f"{ref}:src/greet.py")
+    assert not (repo / "src/other.py").exists()
+    # Post-player snapshot plus the _halt snapshot share this round's ref:
+    # removing the post-player snapshot leaves a single take_snapshot call.
+    assert take_calls == [ref, ref]
+
+
+@pytest.mark.asyncio
+async def test_failed_player_snapshot_clears_ref(tmp_path: Path, monkeypatch):
+    import src.loop.snapshot as snapshot_module
+
+    repo = _repo(tmp_path)
+    real_take = snapshot_module.take_snapshot
+    calls = {"n": 0}
+
+    def flaky(repo_path, base, ref, deny=None):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("snapshot exploded")
+        return real_take(repo_path, base, ref, deny=deny)
+
+    monkeypatch.setattr(snapshot_module, "take_snapshot", flaky)
+
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'one'\n"),
+            judge_returns(no_ship([finding(problem="still bad")])),
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'two'\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert calls["n"] == 2
+    run_id = ledger.run_dir.name
+    ref1 = ref_name(run_id, 0, 1)
+    ref2 = ref_name(run_id, 0, 2)
+    assert _git(repo, "rev-parse", "--verify", ref1).strip()
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert not state.get("snapshot_ref")
+    assert ref1 not in (state.get("snapshot_ref") or "")
+    ledger_rows = [
+        json.loads(line) for line in ledger.path.read_text().splitlines()
+    ]
+    failed = [row for row in ledger_rows if row.get("kind") == "snapshot_failed"]
+    assert len(failed) == 1
+    assert failed[0]["round"] == 2
+    assert failed[0]["ref"] == ref2
+    stream_rows = [
+        json.loads(line)
+        for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
+    ]
+    stream_failed = [row for row in stream_rows if row.get("type") == "snapshot_failed"]
+    assert len(stream_failed) == 1
+    snap = stream_failed[0]
+    assert snap["ref"] == ref2
+    assert snap["round"] == 2
+    for key in ("phase", "role", "text"):
+        assert key in snap, key
+    assert snap["text"]
+
+
+@pytest.mark.asyncio
 async def test_snapshot_ref_in_state_stream_ledger(tmp_path: Path):
     repo = _repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD").strip()

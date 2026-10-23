@@ -107,10 +107,10 @@
 - Снимок не удался (`take_snapshot` бросил или `verify` ложь) → событие `snapshot_failed` в ledger и
   `stream.jsonl`, `snapshot_ref` в `state.json` очищается (не остаётся ref прошлого раунда); раунд идёт дальше.
 
-- [ ] `test_snapshot_after_player_timeout`: stub-исполнитель пишет файлы и висит → таймаут → в ref есть все записанные файлы
-- [ ] `test_snapshot_after_player_ok`: обычный раунд → после исполнителя ref раунда существует, `snapshot_ref` в `state.json`
-- [ ] `test_failed_player_snapshot_clears_ref`: `take_snapshot` бросает во 2-м раунде → `snapshot_failed` в ledger, в `state.json` нет ref 1-го раунда
-- [ ] реализовать
+- [x] `test_snapshot_after_player_timeout`: stub-исполнитель пишет файлы и висит → таймаут → в ref есть все записанные файлы
+- [x] `test_snapshot_after_player_ok`: обычный раунд → после исполнителя ref раунда существует, `snapshot_ref` в `state.json`
+- [x] `test_failed_player_snapshot_clears_ref`: `take_snapshot` бросает во 2-м раунде → `snapshot_failed` в ledger, в `state.json` нет ref 1-го раунда
+- [x] реализовать
 
 ## Вход в судью по снимку
 
