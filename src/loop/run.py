@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.config import Config, UnknownProviderError, family_of, normalize_provider
+from src.hud.app import maybe_launch_hud
 from src.loop.gates import detect, print_red_tail, run_all
 from src.loop.git import (
     DirtyWorktreeError,
@@ -76,6 +77,7 @@ async def run(
         )
     except Exception:
         pass
+    maybe_launch_hud(cfg, run_dir)
 
     def _fail_start(reason: str, doing: str = "") -> RunOutcome:
         try:

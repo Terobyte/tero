@@ -101,6 +101,7 @@ class Config:
     escalation_effort: str = ""
     test_command: str = ""
     test_command_scoped: str = ""
+    hud: bool = True
     player_timeout_s: int = 600
     judge_timeout_s: int = 600
     tester_timeout_s: int = 300
@@ -412,6 +413,8 @@ def resolve_config(cli_args: dict) -> Config:
 def apply_cli_args(config: Config, args: Any) -> Config:
     """Apply argparse role/test/plan flags on top of an already-resolved Config."""
     cfg = config
+    if getattr(args, "no_hud", False):
+        cfg = dataclasses.replace(cfg, hud=False)
     plan = getattr(args, "plan", None)
     if plan:
         cfg = dataclasses.replace(cfg, plan_file=plan)

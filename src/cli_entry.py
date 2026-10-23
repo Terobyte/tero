@@ -51,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--plan", "-p", type=str, default=None)
     go_parser.add_argument("--working-dir", "-w", type=str, default=".")
     go_parser.add_argument("--no-menu", action="store_true", default=False)
+    go_parser.add_argument("--no-hud", action="store_true", default=False)
     go_parser.add_argument("--verbose", "-v", action="store_true", default=None)
     go_parser.add_argument("--player", dest="player_spec", default=None)
     go_parser.add_argument("--judge", dest="judge_spec", default=None)
@@ -64,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     history_parser = subparsers.add_parser("history", help="Show run history")
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
+
+    hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
+    hud_parser.add_argument("--run", type=str, default=None)
 
     return parser
 
@@ -159,6 +163,10 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
+    elif args.command == "hud":
+        from src.hud.app import main as hud_main
+
+        sys.exit(hud_main())
 
 
 if __name__ == "__main__":

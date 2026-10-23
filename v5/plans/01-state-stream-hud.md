@@ -98,8 +98,8 @@
 - `hud_should_launch(env, platform, flags, cfg) -> tuple[bool, str]`, правило по порядку: `--no-hud`/`hud: false` → нет; не macOS → нет; `SSH_CONNECTION` или `SSH_TTY` → нет; нет `pywebview` (`importlib.util.find_spec`) → нет + подсказка.
 - Окно (`view.html`) — T4b, здесь не делать: `tero hud --run <папка>` без `pywebview` падает с подсказкой.
 
-- [ ] `test_launch_rule_*`: по тесту на каждую ветку правила
-- [ ] реализовать правило и команду `tero hud`
+- [x] `test_launch_rule_*`: по тесту на каждую ветку правила
+- [x] реализовать правило и команду `tero hud`
 
 ## Реестр запусков
 
