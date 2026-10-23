@@ -44,11 +44,11 @@
 - deny по умолчанию: `git.SECRET_PATTERNS` + `node_modules/` + `.tero/`; сопоставление — через `git.is_secret_path`
   и префиксы каталогов.
 
-- [ ] `test_snapshot_contains_tracked_and_new_files`: изменённый tracked, новый файл, удалённый файл → в `git ls-tree -r <ref>` ровно ожидаемое
-- [ ] `test_snapshot_excludes_deny_list`: `.env`, `key.pem`, `node_modules/x.js`, `.tero/state.json` в дереве → их нет в `git ls-tree -r <ref>`
-- [ ] `test_snapshot_survives_stale_index_lock`: создан `.git/index.lock` → снимок всё равно создан, `index.lock` и рабочий индекс (`git diff --cached`) не тронуты
-- [ ] `test_snapshot_leaves_worktree_alone`: после снимка `git status --porcelain` тот же, что до
-- [ ] реализовать `take_snapshot` и `ref_name`
+- [x] `test_snapshot_contains_tracked_and_new_files`: изменённый tracked, новый файл, удалённый файл → в `git ls-tree -r <ref>` ровно ожидаемое
+- [x] `test_snapshot_excludes_deny_list`: `.env`, `key.pem`, `node_modules/x.js`, `.tero/state.json` в дереве → их нет в `git ls-tree -r <ref>`
+- [x] `test_snapshot_survives_stale_index_lock`: создан `.git/index.lock` → снимок всё равно создан, `index.lock` и рабочий индекс (`git diff --cached`) не тронуты
+- [x] `test_snapshot_leaves_worktree_alone`: после снимка `git status --porcelain` тот же, что до
+- [x] реализовать `take_snapshot` и `ref_name`
 
 ## diff_for и проверка ref
 
