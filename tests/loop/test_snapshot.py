@@ -125,3 +125,38 @@ def test_deny_matching_uses_is_secret_path(tmp_path: Path, monkeypatch):
     ref = snapshot.ref_name("run1", 9, 9)
     snapshot.take_snapshot(repo, base, ref)
     assert "notes.txt" in seen
+
+
+def test_diff_for_ignores_worktree(tmp_path: Path):
+    repo = _init(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tracked.txt").write_text("v2\n")
+    (repo / "new.txt").write_text("new\n")
+    ref = snapshot.ref_name("run1", 3, 1)
+    snapshot.take_snapshot(repo, base, ref)
+    before = snapshot.diff_for(repo, base, ref)
+    assert before == _git(repo, "diff", base, ref)
+    (repo / "tracked.txt").write_text("v3\n")
+    (repo / "new.txt").write_text("changed-after\n")
+    after = snapshot.diff_for(repo, base, ref)
+    assert after == before
+    assert "v3" not in after
+
+
+def test_restore_snapshot_brings_back_work(tmp_path: Path):
+    repo = _init(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tracked.txt").write_text("v2\n")
+    (repo / "new.txt").write_text("new\n")
+    ref = snapshot.ref_name("run1", 3, 2)
+    assert snapshot.verify(repo, ref) is False
+    snapshot.take_snapshot(repo, base, ref)
+    assert snapshot.verify(repo, ref) is True
+    snapshot.git.rollback(repo, base)
+    assert _git(repo, "rev-parse", "HEAD").strip() == base
+    assert (repo / "tracked.txt").read_text() == "v1\n"
+    assert not (repo / "new.txt").exists()
+    snapshot.restore_snapshot(repo, ref)
+    assert (repo / "tracked.txt").read_text() == "v2\n"
+    assert (repo / "new.txt").read_text() == "new\n"
+    assert _git(repo, "rev-parse", "HEAD").strip() == base

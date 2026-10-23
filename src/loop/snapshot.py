@@ -31,6 +31,42 @@ def _denied(rel: str, deny: tuple[str, ...]) -> bool:
     return git.is_secret_path(rel)
 
 
+def _git_plain(repo: Path, *args: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise git.GitError(f"git {' '.join(args)} failed: {exc}") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise git.GitError(f"git {' '.join(args)} failed: {err}")
+    return proc.stdout
+
+
+def diff_for(repo: Path, base: str, ref: str) -> str:
+    """`git diff base ref` — committed objects only, ignores the worktree."""
+    return _git_plain(Path(repo), "diff", base, ref)
+
+
+def verify(repo: Path, ref: str) -> bool:
+    """True iff <ref>^{tree} resolves — i.e. the snapshot was recorded."""
+    try:
+        _git_plain(Path(repo), "cat-file", "-e", f"{ref}^{{tree}}")
+    except git.GitError:
+        return False
+    return True
+
+
+def restore_snapshot(repo: Path, ref: str) -> None:
+    """Make index and worktree the snapshot tree; HEAD does not move."""
+    git.restore_tree(Path(repo), f"{ref}^{{tree}}")
+
+
 def _git_tmp(repo: Path, index_file: str, *args: str) -> str:
     env = {**os.environ, "GIT_INDEX_FILE": index_file}
     try:

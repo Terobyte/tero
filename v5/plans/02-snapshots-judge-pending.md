@@ -58,9 +58,9 @@
 - `verify(repo, ref) -> bool` — `git cat-file -e <ref>^{tree}`; снимок считается сделанным только после `verify`.
 - `restore_snapshot(repo, ref)` — дерево и индекс становятся деревом ref, HEAD не двигается (через `git.restore_tree(<ref>^{tree})`).
 
-- [ ] `test_diff_for_ignores_worktree`: после снимка дерево изменено ещё раз → `diff_for` показывает только то, что в ref
-- [ ] `test_restore_snapshot_brings_back_work`: снимок → `rollback` → `restore_snapshot` → файлы снова на диске, HEAD = base
-- [ ] реализовать `diff_for`, `verify`, `restore_snapshot`
+- [x] `test_diff_for_ignores_worktree`: после снимка дерево изменено ещё раз → `diff_for` показывает только то, что в ref
+- [x] `test_restore_snapshot_brings_back_work`: снимок → `rollback` → `restore_snapshot` → файлы снова на диске, HEAD = base
+- [x] реализовать `diff_for`, `verify`, `restore_snapshot`
 
 ## Откат только со снимком
 
