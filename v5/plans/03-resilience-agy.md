@@ -67,9 +67,9 @@
 - Вне этой фазы: паузы и повторы (фаза 3), убийство по тишине (фаза 2). Повторы в `_call` в этой фазе
   не меняются.
 
-- [ ] `test_classify_error_table`: по одному примеру на каждый вид (тип и текст) → ожидаемый вид; текст «Unauthorized» и «HTTP 401» → `auth`, «ECONNRESET» → `network`
-- [ ] `test_timeout_is_not_provider_unavailable`: stub-провайдер висит дольше таймаута роли → `kind=timeout`, в выводе нет «провайдер недоступен», есть «не уложился в таймаут»
-- [ ] реализовать
+- [x] `test_classify_error_table`: по одному примеру на каждый вид (тип и текст) → ожидаемый вид; текст «Unauthorized» и «HTTP 401» → `auth`, «ECONNRESET» → `network`
+- [x] `test_timeout_is_not_provider_unavailable`: stub-провайдер висит дольше таймаута роли → `kind=timeout`, в выводе нет «провайдер недоступен», есть «не уложился в таймаут»
+- [x] реализовать
 
 ## Убийство по тишине: stall_timeout_s
 

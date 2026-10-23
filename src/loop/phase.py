@@ -28,6 +28,7 @@ from src.loop.git import (
     stage_and_diff,
     write_tree,
 )
+from src.errors import scrub_data, scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
@@ -151,6 +152,7 @@ class _State:
     judge_failures: int = 0
     user_question: str = ""
     last_provider_error: str = ""
+    last_provider_kind: str = "other"
     player_crashes: int = 0
     resume_ref: str = ""
     resume_base: str = ""
@@ -251,12 +253,14 @@ class _PhaseRunner:
             fields["role"] = self._role
         if "text" not in fields:
             fields["text"] = _stream_text(type, fields)
-        self.stream.emit(type, **fields)
+        clean = {k: scrub_data(v) for k, v in fields.items()}
+        self.stream.emit(type, **clean)
 
     def _update_state(self, **fields: Any) -> None:
         if fields.get("role"):
             self._role = fields["role"]
-        self.state_io.update(**fields)
+        clean = {k: scrub_data(v) for k, v in fields.items()}
+        self.state_io.update(**clean)
 
     def _tag(self) -> str:
         return f"[фаза {self.phase.index + 1}/{self.total_phases} · раунд {self.state.round}]"
@@ -405,7 +409,7 @@ class _PhaseRunner:
             )
         except Exception as exc:
             ref = self._snapshot_after_player()
-            self._provider_error("player", {"error": str(exc) or type(exc).__name__})
+            self._provider_error("player", {"error": scrub_secrets(str(exc) or type(exc).__name__)})
             self.state.player_crashes += 1
             self.state.resume_active = True
             self.state.had_crash = True
@@ -1085,10 +1089,17 @@ class _PhaseRunner:
         print(f"  {role}: ответ не по схеме — {'; '.join(errors[:3])}", flush=True)
 
     def _provider_error(self, role: str, data: Any) -> None:
-        error = data.get("error", "") if isinstance(data, dict) else ""
+        error = scrub_secrets(data.get("error", "") if isinstance(data, dict) else "")
+        kind = data.get("kind", "other") if isinstance(data, dict) else "other"
+        if kind not in ("auth", "quota", "network", "timeout", "stall", "other"):
+            kind = "other"
         self.state.last_provider_error = error
+        self.state.last_provider_kind = kind
         self.ledger.event("provider_error", role=role, round=self.state.round, error=error)
-        print(f"  {role}: провайдер недоступен — {error}", flush=True)
+        if kind in ("network", "other"):
+            print(f"  {role}: провайдер недоступен — {error}", flush=True)
+        else:
+            print(f"  {role}: {error}", flush=True)
 
     def _player_identity(self) -> tuple[str, str, str]:
         if self.state.escalated and self.cfg.escalation_provider:
@@ -1194,6 +1205,13 @@ class _PhaseRunner:
     def _halt_text(self, reason: str, ref: str | None = None) -> str:
         if reason == "user":
             return self.state.user_question or reason
+        if reason == "provider_unavailable" and self.state.last_provider_kind in (
+            "timeout",
+            "stall",
+            "auth",
+            "quota",
+        ):
+            return self.state.last_provider_error or reason
         tail = f", работа в `{ref}`" if ref else ""
         texts = {
             "stuck": f"нет прогресса → откат фазы{tail}",

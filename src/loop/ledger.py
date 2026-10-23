@@ -15,10 +15,12 @@ class Ledger:
         self.path = self.run_dir / "ledger.jsonl"
 
     def event(self, kind: str, **data: Any) -> None:
+        from src.errors import scrub_data
+
         payload = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "kind": kind,
-            **data,
+            **scrub_data(data),
         }
         with self.path.open("a") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")

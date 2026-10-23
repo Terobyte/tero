@@ -24,6 +24,9 @@ class Stream:
         self._warned = False
 
     def emit(self, type: str, **fields: Any) -> None:
+        from src.errors import scrub_data
+
+        fields = scrub_data(fields)
         try:
             line = (
                 json.dumps(

@@ -37,6 +37,9 @@ class RunState:
         self._warned = False
 
     def update(self, **fields: Any) -> None:
+        from src.errors import scrub_data
+
+        fields = scrub_data(fields)
         try:
             with self._lock:
                 current = RunState.read(self.path) or {}

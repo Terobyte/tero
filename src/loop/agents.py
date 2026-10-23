@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from src.errors import classify_error, scrub_secrets
 from src.loop.schemas import SCHEMAS, ValidateCtx, validate
 from src.process_guard import ProcessGuard
 
@@ -19,6 +20,7 @@ from src.process_guard import ProcessGuard
 HEARTBEAT_S = 30.0
 
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_STALL_SECS = re.compile(r"(\d+(?:\.\d+)?)\s*с")
 
 
 def extract_json(text: str) -> dict[str, Any] | None:
@@ -96,6 +98,8 @@ class LiveAgents:
         self.verbose = verbose
         self.guard = ProcessGuard()
         self.last_error = ""
+        self._last_kind = "other"
+        self._last_exc: BaseException | None = None
         self._last_output_ts = 0.0
 
     async def run_role(
@@ -117,7 +121,7 @@ class LiveAgents:
             emit=kwargs.get("emit"),
         )
         if text is None:
-            return {"__unavailable__": True, "error": self.last_error}
+            return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
         data = extract_json(text)
         errors = validate_role(role, data, ctx)
         if errors:
@@ -130,7 +134,7 @@ class LiveAgents:
                 emit=kwargs.get("emit"),
             )
             if text is None:
-                return {"__unavailable__": True, "error": self.last_error}
+                return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
             data = extract_json(text)
             errors = validate_role(role, data, ctx)
         if errors:
@@ -177,8 +181,15 @@ class LiveAgents:
                 )
                 return text
             except Exception as exc:  # provider auth/network
-                self.last_error = str(exc) or type(exc).__name__
-                print(f"  {provider_name} ошибка: {exc}", flush=True)
+                raw = scrub_secrets(str(exc) or type(exc).__name__)
+                self.last_error = raw
+                self._last_kind = classify_error(exc, raw)
+                self._last_exc = exc
+                if self._last_kind in ("timeout", "stall"):
+                    self.last_error = self.error_text(role, timeout)
+                    print(f"  {self.last_error}", flush=True)
+                else:
+                    print(f"  {provider_name} ошибка: {raw}", flush=True)
                 if attempt == 0 and self.retry_wait_s:
                     print(f"  повтор через {self.retry_wait_s:.0f} с", flush=True)
                     await asyncio.sleep(self.retry_wait_s)
@@ -190,6 +201,17 @@ class LiveAgents:
                     pass
                 self.guard.kill_new_processes(before)
         return None
+
+    def error_text(self, role: str, timeout: float) -> str:
+        """Console + halt text for the last failed call."""
+        if self._last_kind == "timeout":
+            return f"{role} не уложился в таймаут {timeout:g} с"
+        if self._last_kind == "stall":
+            exc = getattr(self, "_last_exc", None)
+            match = _STALL_SECS.search(str(exc) if exc is not None else "")
+            stall_s = match.group(1) if match else f"{timeout:g}"
+            return f"{role}: нет вывода {stall_s} с, процесс убит"
+        return self.last_error
 
     def _mark_output(self) -> None:
         self._last_output_ts = _now()
