@@ -162,12 +162,16 @@ async def test_run_prints_phase_summary_after_ship(tmp_path: Path, capsys):
 async def test_run_prints_phase_summary_after_stop(tmp_path: Path, capsys):
     repo = _init(tmp_path, PLAN_ONE)
     agents = scripted.FakeAgents(
-        repo, [lambda _r, _k: {"__unavailable__": True, "error": "down"}]
+        repo,
+        [
+            lambda _r, _k: {"__unavailable__": True, "error": "down"},
+            lambda _r, _k: {"__unavailable__": True, "error": "down"},
+        ],
     )
     outcome = await run(_cfg(repo), agents=agents)
     assert outcome.exit_code == 2
     out = capsys.readouterr().out
-    assert "фаза 1/1 «Add greet»: STOP (provider_unavailable) за 1 раунд" in out
+    assert "фаза 1/1 «Add greet»: STOP (provider_unavailable) за 2 раунда" in out
 
 
 @pytest.mark.asyncio
@@ -233,7 +237,11 @@ async def test_resume_skips_done_phases(tmp_path: Path):
 async def test_stop_reports_run_dir(tmp_path: Path):
     repo = _init(tmp_path, PLAN_ONE)
     agents = scripted.FakeAgents(
-        repo, [lambda _r, _k: {"__unavailable__": True, "error": "down"}]
+        repo,
+        [
+            lambda _r, _k: {"__unavailable__": True, "error": "down"},
+            lambda _r, _k: {"__unavailable__": True, "error": "down"},
+        ],
     )
     outcome = await run(_cfg(repo), agents=agents)
     assert outcome.exit_code == 2

@@ -220,22 +220,23 @@ async def test_snapshot_after_player_timeout(tmp_path: Path, monkeypatch):
         repo, BlockingPlayer(repo), _cfg(player_timeout_s=timeout_s)
     )
     elapsed = time.monotonic() - started
-    assert elapsed >= timeout_s, "stub must block until the player timeout fires"
+    assert elapsed >= 2 * timeout_s, "stub must block until the player timeout fires"
     assert outcome.status == "stop"
     assert outcome.reason == "provider_unavailable"
     state = RunState.read(ledger.run_dir / "state.json")
     assert state is not None
     ref = state.get("snapshot_ref")
-    assert ref == ref_name(ledger.run_dir.name, 0, 1)
+    assert ref == ref_name(ledger.run_dir.name, 0, 2)
     assert _git(repo, "rev-parse", "--verify", ref).strip()
     tree = set(_git(repo, "ls-tree", "-r", "--name-only", ref).splitlines())
     assert "src/greet.py" in tree
     assert "src/other.py" in tree
     assert "half" in _git(repo, "show", f"{ref}:src/greet.py")
     assert not (repo / "src/other.py").exists()
-    # Post-player snapshot plus the _halt snapshot share this round's ref:
-    # removing the post-player snapshot leaves a single take_snapshot call.
-    assert take_calls == [ref, ref]
+    # Two crashes halt: round-1 post-player snapshot, round-2 post-player
+    # snapshot, plus the _halt snapshot sharing round 2's ref.
+    ref1 = ref_name(ledger.run_dir.name, 0, 1)
+    assert take_calls == [ref1, ref, ref]
 
 
 @pytest.mark.asyncio

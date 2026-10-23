@@ -218,10 +218,10 @@
   строка про `provider_unavailable` в `tests/loop/test_run.py`), получают второе падение подряд; проверки
   `provider_error` и текста остаются.
 
-- [ ] `test_second_player_gets_first_diff`: stub-исполнитель №1 пишет файл и падает → в промпте stub-исполнителя №2 есть его diff; `git cat-file -p <ref>` содержит файл
-- [ ] `test_no_gate_on_crash_snapshot`: после падения исполнителя гейт не вызывается до следующего раунда исполнителя
-- [ ] `test_two_player_crashes_halt`: два падения подряд → `stopped`, `provider_unavailable`, ref есть
-- [ ] реализовать
+- [x] `test_second_player_gets_first_diff`: stub-исполнитель №1 пишет файл и падает → в промпте stub-исполнителя №2 есть его diff; `git cat-file -p <ref>` содержит файл
+- [x] `test_no_gate_on_crash_snapshot`: после падения исполнителя гейт не вызывается до следующего раунда исполнителя
+- [x] `test_two_player_crashes_halt`: два падения подряд → `stopped`, `provider_unavailable`, ref есть
+- [x] реализовать
 
 ## K_max: чистая попытка
 

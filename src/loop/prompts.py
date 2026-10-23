@@ -15,43 +15,55 @@ def player_prompt(
     protected: list[str] | None = None,
     gate_output: str = "",
     discarded: list[str] | None = None,
+    continuation: bool = False,
+    continuation_diff: str = "",
 ) -> str:
     findings = findings or []
     suite_delta = suite_delta or []
     protected = protected or []
     discarded = discarded or []
-    return "\n".join(
-        [
-            "Ты player. Сделай контракт фазы минимальным изменением.",
-            "Можно запускать тесты для самопроверки.",
-            "Не коммитить.",
-            "Не менять файлы из protected и не удалять тестовые файлы с checkpoint.",
-            "Если контракт неясен — не выдумывай: верни status blocked.",
-            "Финальное сообщение — только JSON PlayerReport "
-            '(status, changes, start_here, blocked_reason). Поля «тесты прошли» нет.',
+    sections = [
+        "Ты player. Сделай контракт фазы минимальным изменением.",
+        "Можно запускать тесты для самопроверки.",
+        "Не коммитить.",
+        "Не менять файлы из protected и не удалять тестовые файлы с checkpoint.",
+        "Если контракт неясен — не выдумывай: верни status blocked.",
+        "Финальное сообщение — только JSON PlayerReport "
+        '(status, changes, start_here, blocked_reason). Поля «тесты прошли» нет.',
+        "",
+        "## Преамбула",
+        preamble or "(нет)",
+        "",
+        "## Контракт фазы",
+        contract,
+        "",
+    ]
+    if continuation:
+        sections += [
+            "## Продолжение после падения",
+            "Часть работы уже сделана предыдущим исполнителем, вот `git diff base..ref`. "
+            "Продолжай, не переписывай готовое.",
             "",
-            "## Преамбула",
-            preamble or "(нет)",
+            continuation_diff or "(дифф пуст)",
             "",
-            "## Контракт фазы",
-            contract,
-            "",
-            "## Блокирующие находки",
-            "\n".join(findings) or "(нет)",
-            "",
-            "## suite_delta (существующие тесты изменены)",
-            "\n".join(suite_delta) or "(нет)",
-            "",
-            "## protected (файлы tester'а, не трогать)",
-            "\n".join(protected) or "(нет)",
-            "",
-            "## Снятые тесты (discard_test): чини код, не тест",
-            "\n".join(discarded) or "(нет)",
-            "",
-            "## Вывод красного гейта",
-            gate_output or "(нет)",
         ]
-    )
+    sections += [
+        "## Блокирующие находки",
+        "\n".join(findings) or "(нет)",
+        "",
+        "## suite_delta (существующие тесты изменены)",
+        "\n".join(suite_delta) or "(нет)",
+        "",
+        "## protected (файлы tester'а, не трогать)",
+        "\n".join(protected) or "(нет)",
+        "",
+        "## Снятые тесты (discard_test): чини код, не тест",
+        "\n".join(discarded) or "(нет)",
+        "",
+        "## Вывод красного гейта",
+        gate_output or "(нет)",
+    ]
+    return "\n".join(sections)
 
 
 # g3 coach, verbatim (main:src/prompts.py COACH_STRICT_SYSTEM_PROMPT); only the

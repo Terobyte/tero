@@ -147,6 +147,10 @@ class _State:
     judge_failures: int = 0
     user_question: str = ""
     last_provider_error: str = ""
+    player_crashes: int = 0
+    resume_ref: str = ""
+    resume_base: str = ""
+    resume_active: bool = False
     open_findings: list[OpenFinding] = field(default_factory=list)
     next_id: int = 1
     suite_delta: list[str] = field(default_factory=list)
@@ -299,7 +303,12 @@ class _PhaseRunner:
                 flush=True,
             )
             if not await self._player():
-                return self._halt("provider_unavailable")
+                # Падение исполнителя: дерево не откатывается, следующий
+                # раунд — новый вызов исполнителя с diff снимка в промпте.
+                # Два падения подряд — halt, как раньше по смыслу.
+                if self.state.player_crashes >= 2:
+                    return self._halt("provider_unavailable")
+                continue
             if self._protect_tests():
                 if self._no_progress():
                     return self._halt("stuck")
@@ -352,6 +361,11 @@ class _PhaseRunner:
 
     async def _player(self) -> bool:
         model, provider, effort = self._player_identity()
+        continuation = ""
+        if self.state.resume_active:
+            continuation = _continuation_block(
+                self.repo, self.state.resume_base, self.state.resume_ref
+            )
         prompt = player_prompt(
             preamble=self.preamble,
             contract=self.contract,
@@ -360,6 +374,8 @@ class _PhaseRunner:
             protected=list(self.state.protected),
             gate_output=_tail(self.state.gate_output),
             discarded=self.state.discarded,
+            continuation=self.state.resume_active,
+            continuation_diff=continuation,
         )
         from datetime import datetime, timezone
 
@@ -381,13 +397,30 @@ class _PhaseRunner:
                 emit=self._emit,
             )
         except Exception as exc:
-            self._snapshot_after_player()
+            ref = self._snapshot_after_player()
             self._provider_error("player", {"error": str(exc) or type(exc).__name__})
+            self.state.player_crashes += 1
+            self.state.resume_active = True
+            if ref:
+                self.state.resume_ref = ref
+                self.state.resume_base = self.checkpoint
             return False
-        self._snapshot_after_player()
+        ref = self._snapshot_after_player()
         data = self._check_reply("player", data)
         if data is None:
+            self.state.player_crashes += 1
+            self.state.resume_active = True
+            if ref:
+                self.state.resume_ref = ref
+                self.state.resume_base = self.checkpoint
             return False
+        self.state.player_crashes = 0
+        if ref:
+            # Успешный ответ не начинает чистую попытку: блок продолжения
+            # остаётся, ref обновляется под актуальное дерево.
+            self.state.resume_ref = ref
+            self.state.resume_base = self.checkpoint
+            self.state.resume_active = True
         report = data if data.get("status") in {"done", "blocked"} else UNAVAILABLE_PLAYER
         self.ledger.event("player", phase=self.phase.title, round=self.state.round, model=model)
         self.ledger.artifact(self._round_file("player.json"), _dump(report))
@@ -1179,6 +1212,18 @@ def _print_verdict(data: dict[str, Any]) -> None:
         print(f"    - {where}: {item.get('problem', '')}", flush=True)
     if data.get("user_question"):
         print(f"    вопрос: {data['user_question']}", flush=True)
+
+
+def _continuation_block(repo: Path, base: str, ref: str) -> str:
+    if not base or not ref:
+        return ""
+    try:
+        diff = snapshot_mod.diff_for(repo, base, ref)
+    except Exception:
+        return f"обрезано, полный дифф: `git diff {base} {ref}`"
+    if len(diff) > 20_000:
+        return diff[:20_000] + f"\n…обрезано, полный дифф: `git diff {base} {ref}`"
+    return diff
 
 
 def _tail(text: str, limit: int = 200) -> str:

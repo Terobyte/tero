@@ -135,6 +135,9 @@ async def test_halt_writes_stopped_with_reason(
             scripted_steps.append(
                 lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"}
             )
+            scripted_steps.append(
+                lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"}
+            )
         elif entry == "secrets":
 
             def player_with_env(_role, _kw):
@@ -598,14 +601,28 @@ async def test_artifacts_are_json_and_verdict_is_printed(tmp_path: Path, capsys)
 async def test_provider_error_is_logged(tmp_path: Path, capsys):
     repo = _repo(tmp_path)
     agents = FakeAgents(
-        repo, [lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"}]
+        repo,
+        [
+            lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"},
+            lambda _r, _k: {"__unavailable__": True, "error": "quota exceeded"},
+        ],
     )
     outcome, ledger = await _run(repo, agents)
     assert outcome.reason == "provider_unavailable"
     rows = [e for e in _events(ledger) if e["kind"] == "provider_error"]
-    assert rows == [
-        {**rows[0], "role": "player", "error": "quota exceeded"}
-    ]
+    assert len(rows) == 2
+    assert rows[0] == {
+        **rows[0],
+        "role": "player",
+        "round": 1,
+        "error": "quota exceeded",
+    }
+    assert rows[1] == {
+        **rows[1],
+        "role": "player",
+        "round": 2,
+        "error": "quota exceeded",
+    }
     out = capsys.readouterr().out
     assert "player" in out
     assert "quota exceeded" in out
