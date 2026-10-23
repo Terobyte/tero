@@ -31,6 +31,7 @@ from src.loop.git import (
 )
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
+from src.loop import snapshot as snapshot_mod
 from src.loop.prompts import judge_prompt, player_prompt, tester_prompt
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState, Status
@@ -832,13 +833,40 @@ class _PhaseRunner:
             )
         return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
 
+    def _rollback_with_snapshot(self, reason: str) -> str | None:
+        run_id = self.ledger.run_dir.name
+        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
+        try:
+            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
+            if not snapshot_mod.verify(self.repo, ref):
+                return None
+        except Exception:
+            return None
+        self._update_state(snapshot_ref=ref, base=self.checkpoint)
+        self._emit(
+            "snapshot",
+            ref=ref,
+            base=self.checkpoint,
+            reason=reason,
+            text=f"снимок работы в `{ref}`",
+        )
+        self.ledger.event(
+            "snapshot", ref=ref, base=self.checkpoint, reason=reason,
+            round=self.state.round,
+        )
+        rollback(self.repo, self.checkpoint)
+        return ref
+
     def _ship(self) -> PhaseOutcome:
         stage_and_diff(self.repo, self.checkpoint)
         secrets = secret_paths(self.repo)
         if secrets:
             self.ledger.event("stop", reason="secrets", paths=secrets)
-            rollback(self.repo, self.checkpoint)
-            text = f"secrets: {', '.join(secrets)}"
+            ref = self._rollback_with_snapshot("secrets")
+            snapshot_note = f", работа в `{ref}`" if ref else ""
+            text = f"secrets: {', '.join(secrets)}{snapshot_note}"
+            if ref is None:
+                text = "снимок не сделан, дерево не тронуто"
             self._write_stopped("secrets", text)
             return PhaseOutcome(
                 status="stop",
@@ -871,14 +899,15 @@ class _PhaseRunner:
             escalated=self.state.escalated,
         )
 
-    def _halt_text(self, reason: str) -> str:
+    def _halt_text(self, reason: str, ref: str | None = None) -> str:
         if reason == "user":
             return self.state.user_question or reason
+        tail = f", работа в `{ref}`" if ref else ""
         texts = {
-            "stuck": "нет прогресса → откат фазы",
-            "fuse": f"лимит раундов ({self.cfg.max_rounds}) исчерпан → откат фазы",
-            "provider_unavailable": "провайдер недоступен → откат фазы",
-            "secrets": "в дифе файлы-секреты → откат фазы",
+            "stuck": f"нет прогресса → откат фазы{tail}",
+            "fuse": f"лимит раундов ({self.cfg.max_rounds}) исчерпан → откат фазы{tail}",
+            "provider_unavailable": f"провайдер недоступен → откат фазы{tail}",
+            "secrets": f"в дифе файлы-секреты → откат фазы{tail}",
         }
         return texts.get(reason, reason)
 
@@ -891,10 +920,13 @@ class _PhaseRunner:
         self._emit("stop", reason=reason, text=text)
 
     def _halt(self, reason: str) -> PhaseOutcome:
-        rollback(self.repo, self.checkpoint)
+        ref = self._rollback_with_snapshot(reason)
         self.ledger.event("rollback", reason=reason, round=self.state.round)
         self.ledger.event("stop", reason=reason, question=self.state.user_question)
-        text = self._halt_text(reason)
+        if ref is None:
+            text = "снимок не сделан, дерево не тронуто"
+        else:
+            text = self._halt_text(reason, ref)
         self._write_stopped(reason, text)
         return PhaseOutcome(
             status="stop",

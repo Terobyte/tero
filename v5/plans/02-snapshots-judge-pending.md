@@ -82,11 +82,11 @@
   `judge_pending` и счётчик сбоев судьи (фаза 6), новый исполнитель со снимка и K_max (фазы 9–10).
   Здесь сбой судьи или исполнителя по-прежнему ведёт в `_halt`, но уже со снимком.
 
-- [ ] `test_halt_takes_snapshot_before_rollback`: stub-исполнитель пишет файл, фаза останавливается по `fuse` → ref есть, файл в ref, дерево откатано
-- [ ] `test_no_rollback_without_snapshot`: `take_snapshot` подменён на исключение → `rollback` не вызван, файл исполнителя на диске, `status=stopped` с текстом про снимок
-- [ ] `test_secrets_stop_snapshot_has_no_secrets`: исполнитель создал `.env` и код → стоп `secrets`, в ref есть код и нет `.env`
-- [ ] `test_snapshot_ref_in_state_stream_ledger`: после остановки `snapshot_ref` и `base` в `state.json`, событие `snapshot` в `stream.jsonl` и ledger
-- [ ] подключить `_rollback_with_snapshot` во все места отката
+- [x] `test_halt_takes_snapshot_before_rollback`: stub-исполнитель пишет файл, фаза останавливается по `fuse` → ref есть, файл в ref, дерево откатано
+- [x] `test_no_rollback_without_snapshot`: `take_snapshot` подменён на исключение → `rollback` не вызван, файл исполнителя на диске, `status=stopped` с текстом про снимок
+- [x] `test_secrets_stop_snapshot_has_no_secrets`: исполнитель создал `.env` и код → стоп `secrets`, в ref есть код и нет `.env`
+- [x] `test_snapshot_ref_in_state_stream_ledger`: после остановки `snapshot_ref` и `base` в `state.json`, событие `snapshot` в `stream.jsonl` и ledger
+- [x] подключить `_rollback_with_snapshot` во все места отката
 
 ## Снимок при выходе исполнителя
 
