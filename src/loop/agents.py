@@ -123,12 +123,14 @@ class LiveAgents:
         schema = SCHEMAS[role]
         read_only = role == "judge"
         compact_check = kwargs.get("compact_check")
+        compact_at_tokens = kwargs.get("compact_at_tokens", 0) or 0
 
         try:
             text = await self._call(
                 provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort,
                 emit=kwargs.get("emit"),
                 compact_check=compact_check,
+                compact_at_tokens=compact_at_tokens,
             )
         except Compacted as exc:
             return {"__compacted__": True, "tokens": exc.tokens}
@@ -146,6 +148,7 @@ class LiveAgents:
                     provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
                     emit=kwargs.get("emit"),
                     compact_check=compact_check,
+                    compact_at_tokens=compact_at_tokens,
                 )
             except Compacted as exc:
                 return {"__compacted__": True, "tokens": exc.tokens}
@@ -170,6 +173,7 @@ class LiveAgents:
         effort: str = "",
         emit=None,
         compact_check=None,
+        compact_at_tokens: int = 0,
     ) -> str | None:
         network_retry = 0
         other_retried = False
@@ -197,6 +201,7 @@ class LiveAgents:
                         on_output=self._mark_output,
                         emit=emit,
                         compact_check=compact_check,
+                        compact_at_tokens=compact_at_tokens,
                     ),
                     timeout=timeout,
                 )
@@ -384,6 +389,7 @@ async def _collect_text(
     on_output: Callable[[], None] | None = None,
     emit=None,
     compact_check: Callable[[int], bool] | None = None,
+    compact_at_tokens: int = 0,
 ) -> str:
     from src.providers.message_adapter import normalize_message
 
@@ -408,6 +414,8 @@ async def _collect_text(
         kwargs["emit"] = emit
     if compact_check is not None and "compact_check" in params:
         kwargs["compact_check"] = compact_check
+    if "compact_at_tokens" in params:
+        kwargs["compact_at_tokens"] = compact_at_tokens
     parts: list[str] = []
     stream = provider.run(**kwargs)
     try:

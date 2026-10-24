@@ -128,9 +128,9 @@
   иначе предупреждение и без флага), и мягкая смена по порогу для этой роли не включается (компактит сам CLI);
   `tero compact` для `claude` работает как для всех. При 0 argv как сейчас.
 
-- [ ] `test_tero_compact_switches_at_step_boundary`: прогон с фейками идёт, в `inbox/` кладётся `compact.json` → исполнитель сменён на границе шага, ref записан, файла больше нет, `compact_requested` очищен
-- [ ] `test_tero_compact_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
-- [ ] `test_claude_autocompact_in_argv`: порог 200000 → в argv `--autocompact 200000`; порог 0 → флага нет
+- [x] `test_tero_compact_switches_at_step_boundary`: прогон с фейками идёт, в `inbox/` кладётся `compact.json` → исполнитель сменён на границе шага, ref записан, файла больше нет, `compact_requested` очищен
+- [x] `test_tero_compact_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
+- [x] `test_claude_autocompact_in_argv`: порог 200000 → в argv `--autocompact 200000`; порог 0 → флага нет
 - [x] реализовать
 
 ## Экзамен судей: слой 1 (адаптеры)

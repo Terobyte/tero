@@ -500,13 +500,94 @@ class _PhaseRunner:
         self.state.stop_reason = "snapshot_failed"
         return None
 
-    def _player_compact_check(self) -> Any:
-        from functools import partial
+    def _compact_file(self, role: str) -> Path:
+        return self.run_dir / "inbox" / "compact.json"
 
+    def _take_requested_compact(self, role: str) -> bool:
+        """Забрать compact.json текущей роли: requested=True, файл удалить.
+
+        Чужой файл не трогаем. Возвращает True при забранном запросе.
+        Забираем атомарно через rename до чтения: замена файла между
+        чтением и удалением (запрос другой роли) остаётся на месте
+        до вызова этой роли.
+        """
+        import json
+        import os
+        import time
+
+        target = self._compact_file(role)
+        claimed = target.parent / f"compact.{os.getpid()}.{time.monotonic_ns()}.claimed"
+        try:
+            os.rename(target, claimed)
+        except OSError:
+            return False
+        try:
+            raw = claimed.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict) or data.get("role") != role:
+            # Чужой запрос — кладём обратно, но только в пустой слот:
+            # новая запись, появившаяся после нашего rename, новее и
+            # её нельзя затирать (last-write-wins).
+            try:
+                if not target.exists():
+                    os.replace(claimed, target)
+                else:
+                    claimed.unlink()
+            except OSError:
+                pass
+            return False
+        self._update_state(compact_requested=role)
+        try:
+            claimed.unlink()
+        except OSError:
+            pass
+        return True
+
+    def _claude_autocompacts(self, role: str) -> bool:
+        """True, когда роль на claude и её порог задан (> 0).
+
+        Вне диапазона --autocompact CLI (100000–1000000) флаг не
+        передаётся (предупреждение в `_autocompact_flag`), но мягкая
+        смена tero по порогу тоже отключается — компактит сам CLI.
+        """
+        from src.providers.claude_native import _positive_int
+
+        if role == "player":
+            provider, at_tokens = self.cfg.player_provider, self.cfg.compact_player_at_tokens
+        else:
+            provider, at_tokens = self.cfg.judge_provider, self.cfg.compact_judge_at_tokens
+        return provider == "claude" and _positive_int(at_tokens) > 0
+
+    def _clear_compact_requested(self, role: str) -> None:
+        """Поле очищается, когда стартовал новый вызов роли."""
+        try:
+            state = RunState.read(self.run_dir / "state.json") or {}
+        except Exception:
+            return
+        if state.get("compact_requested") == role:
+            self._update_state(compact_requested="")
+
+    def _player_compact_check(self) -> Any:
         at_tokens = self.cfg.compact_player_at_tokens
+        if self._claude_autocompacts("player"):
+            # Компактит сам CLI (--autocompact): мягкая смена по порогу
+            # для этой роли не включается.
+            at_tokens = 0
         if self.state.compact_count >= 3:
             return None
-        return partial(should_compact, at_tokens=at_tokens, requested=False)
+
+        def _check(tokens: int) -> bool:
+            # Файл может появиться прямо во время вызова: смотрим на
+            # каждой границе шага, а не один раз при создании проверки.
+            requested = self._take_requested_compact("player")
+            return should_compact(tokens, at_tokens=at_tokens, requested=requested)
+
+        return _check
 
     async def _raw_player_call(
         self,
@@ -523,6 +604,7 @@ class _PhaseRunner:
         """
         from datetime import datetime, timezone
 
+        self._clear_compact_requested("player")
         self._update_state(
             role="player",
             provider=provider,
@@ -540,6 +622,11 @@ class _PhaseRunner:
                 ctx=ValidateCtx(),
                 emit=self._emit,
                 compact_check=compact_check,
+                compact_at_tokens=(
+                    self.cfg.compact_player_at_tokens
+                    if provider == "claude"
+                    else 0
+                ),
             )
         except Exception as exc:
             ref = self._snapshot_after_player()
@@ -824,6 +911,7 @@ class _PhaseRunner:
         if ref is None:
             # The round tree is unverified: the judge must not review it.
             return _Next.NEXT
+        self._clear_compact_requested("judge")
         self._update_state(
             role="judge",
             provider=self.cfg.judge_provider,
@@ -850,6 +938,7 @@ class _PhaseRunner:
                 suite_delta=self.state.suite_delta,
                 needs_user_question=reask_question,
             )
+            self._clear_compact_requested("judge")
             data = await self.agents.run_role(
                 role="judge",
                 provider=self.cfg.judge_provider,
@@ -860,6 +949,11 @@ class _PhaseRunner:
                 ctx=ctx,
                 emit=self._emit,
                 compact_check=self._judge_compact_check(),
+                compact_at_tokens=(
+                    self.cfg.compact_judge_at_tokens
+                    if self.cfg.judge_provider == "claude"
+                    else 0
+                ),
             )
             if snapshot_mod.tree_of(
                 self.repo, self.checkpoint
@@ -993,15 +1087,17 @@ class _PhaseRunner:
         return self._apply_verdict(data)
 
     def _judge_compact_check(self) -> Any:
-        from functools import partial
-
+        at_tokens = self.cfg.compact_judge_at_tokens
+        if self._claude_autocompacts("judge"):
+            at_tokens = 0
         if self.state.judge_compact_used:
             return None
-        return partial(
-            should_compact,
-            at_tokens=self.cfg.compact_judge_at_tokens,
-            requested=False,
-        )
+
+        def _check(tokens: int) -> bool:
+            requested = self._take_requested_compact("judge")
+            return should_compact(tokens, at_tokens=at_tokens, requested=requested)
+
+        return _check
 
     def _judge_failed(self, attempt: int, error: str) -> None:
         text = f"судья: сбой {attempt}/{_JUDGE_MAX_FAILURES} — {error or 'без деталей'}"

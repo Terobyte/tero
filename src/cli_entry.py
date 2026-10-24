@@ -77,6 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
     hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
     hud_parser.add_argument("--run", type=str, default=None)
 
+    compact_parser = subparsers.add_parser(
+        "compact", help="Request a context compact for a running run"
+    )
+    compact_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    compact_parser.add_argument("--run", type=str, default=None)
+    compact_parser.add_argument(
+        "--role", type=str, default="player", choices=("player", "judge")
+    )
+
     return parser
 
 
@@ -162,6 +171,54 @@ def _latest_run_dir(repo: Path) -> Path | None:
     except OSError:
         return None
     return entries[-1] if entries else None
+
+
+def run_compact(args) -> int:
+    """Request a compact: write inbox/compact.json without touching state.json.
+
+    Read-only for state.json: only the run owner writes it.
+    """
+    import json
+    import time
+
+    from src.loop.state import RunState
+
+    repo = Path(args.working_dir).expanduser().resolve()
+    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    if run_dir is None:
+        run_dir = _latest_run_dir(repo)
+    if run_dir is None or not (run_dir / "state.json").is_file():
+        print("Прогонов нет.")
+        return 1
+    state = RunState.read(run_dir / "state.json") or {}
+    if state.get("status") != "running":
+        print("прогон не идёт")
+        return 1
+    role = getattr(args, "role", "player") or "player"
+    inbox = run_dir / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    target = inbox / "compact.json"
+    payload = json.dumps({"role": role, "ts": time.time()}, ensure_ascii=False)
+    import os
+
+    tmp_name = ""
+    try:
+        import tempfile
+
+        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix="compact.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            if tmp_name:
+                os.unlink(tmp_name)
+        except OSError:
+            pass
+        print("не могу записать compact.json")
+        return 1
+    print(f"запрошен компакт `{role}`")
+    return 0
 
 
 def run_review(args) -> int:
@@ -258,6 +315,8 @@ def main():
         run_history(args)
     elif args.command == "review":
         sys.exit(run_review(args))
+    elif args.command == "compact":
+        sys.exit(run_compact(args))
     elif args.command == "resume":
         sys.exit(asyncio.run(run_resume(args)))
     elif args.command == "hud":

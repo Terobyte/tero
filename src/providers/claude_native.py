@@ -72,6 +72,7 @@ class ClaudeNativeProvider:
         read_only: bool = False,
         effort: str = "",
         compact_check=None,
+        compact_at_tokens: int = 0,
     ):
         """Run the native Claude CLI and yield JSON events."""
         from src.loop.compact import Compacted
@@ -87,6 +88,7 @@ class ClaudeNativeProvider:
             output_schema=output_schema,
             read_only=read_only,
             effort=effort,
+            compact_at_tokens=compact_at_tokens,
         )
         env = self._clean_env()
 
@@ -156,6 +158,20 @@ class ClaudeNativeProvider:
         env.pop("CLAUDE_CONFIG_DIR", None)
         return env
 
+    def _autocompact_flag(self, compact_at_tokens: int) -> list:
+        """Флаг --autocompact для роли, если её порог задан и в пределах CLI."""
+        if not _valid_autocompact(compact_at_tokens):
+            if _positive_int(compact_at_tokens) > 0:
+                import warnings
+
+                warnings.warn(
+                    f"claude --autocompact {compact_at_tokens} вне пределов 100000–1000000, без флага",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            return []
+        return ["--autocompact", str(int(compact_at_tokens))]
+
     def _capture_usage(self, event) -> None:
         """Best-effort token accounting from Claude stream-json result events."""
         if not isinstance(event, dict):
@@ -196,6 +212,7 @@ class ClaudeNativeProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_at_tokens: int = 0,
     ) -> list:
         resolved_model = model or self.config.default_model
         resolved_model = _MODEL_ALIASES.get(resolved_model, resolved_model)
@@ -226,6 +243,7 @@ class ClaudeNativeProvider:
         cmd.extend(
             ["--settings", json.dumps({"autoCompactThreshold": 0.99})]
         )
+        cmd.extend(self._autocompact_flag(compact_at_tokens))
 
         if system_prompt:
             cmd.extend(["--system-prompt", system_prompt])
@@ -247,6 +265,19 @@ _TOKEN_USAGE_KEYS = (
     "output_tokens",
     "completion_tokens",
 )
+
+
+def _positive_int(value: object) -> int:
+    try:
+        return int(value or 0)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _valid_autocompact(compact_at_tokens: object) -> bool:
+    """Порог годится для --autocompact CLI: 100000–1000000."""
+    n = _positive_int(compact_at_tokens)
+    return 100000 <= n <= 1000000
 
 
 def _is_token_only(event: dict) -> bool:

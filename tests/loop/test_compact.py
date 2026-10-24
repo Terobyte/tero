@@ -857,3 +857,122 @@ async def test_compact_judge_restarts_on_same_ref(tmp_path):
     assert len(compacts) == 1
     assert compacts[0]["text"]
     assert compacts[0]["ref"] in compacts[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_tero_compact_switches_at_step_boundary(tmp_path):
+    """Запрошенный compact.json → смена исполнителя на границе шага."""
+    import json
+
+    from src.loop.state import RunState
+    from tests.loop import fakes as scripted
+
+    repo = _repo(tmp_path)
+    cfg = _cfg(**{"compact_player_at_tokens": 0, "compact_judge_at_tokens": 0})
+    ledger_holder: dict = {}
+
+    async def _run_with_file(repo, agents, cfg):
+        from src.loop.gates import detect
+        from src.loop.ledger import Ledger, new_run_dir
+        from src.loop.phase import run_phase
+        from src.loop.plan import load_phases, load_preamble
+
+        ledger = Ledger(new_run_dir(repo, "demo"))
+        ledger_holder["ledger"] = ledger
+        phases = load_phases(repo / "plan.md")
+        outcome = await run_phase(
+            phases[0],
+            repo=repo,
+            plan_path=repo / "plan.md",
+            preamble=load_preamble(repo / "plan.md"),
+            cfg=cfg,
+            agents=agents,
+            test_command=detect(repo),
+            ledger=ledger,
+        )
+        return outcome, ledger
+
+    prompts: list[str] = []
+
+    def first_player(_role, kwargs):
+        scripted.write_file(repo, "src/greet.py", "def greet():\n    return 'half'\n")
+        compact_path = ledger_holder["ledger"].run_dir / "inbox" / "compact.json"
+        import time
+
+        compact_path.parent.mkdir(parents=True, exist_ok=True)
+        compact_path.write_text(json.dumps({"role": "player", "ts": time.time()}))
+        # Граница шага: как настоящий провайдер, спрашиваем compact_check.
+        check = kwargs.get("compact_check")
+        if check is not None and check(150):
+            return {"__compacted__": True, "tokens": 150}
+        return dict(scripted.PLAYER_DONE)
+
+    def second_player(_role, kwargs):
+        prompts.append(kwargs.get("prompt") or "")
+        scripted.write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+        return dict(scripted.PLAYER_DONE)
+
+    agents = scripted.FakeAgents(
+        repo,
+        [first_player, second_player, scripted.judge_returns(scripted.ship())],
+    )
+
+    outcome, ledger = await _run_with_file(repo, agents, cfg)
+    assert outcome.status == "ship"
+    # Исполнитель вызван дважды (смена на границе шага после compact.json),
+    # compact.json удалён, compact_requested очищен.
+    assert agents.calls == ["player", "player", "judge"]
+    assert not (ledger.run_dir / "inbox" / "compact.json").exists()
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert not state.get("compact_requested")
+    kinds = [
+        json.loads(line).get("kind")
+        for line in ledger.path.read_text().splitlines()
+    ]
+    assert "compact" in kinds
+    stream_rows = [
+        json.loads(line)
+        for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
+    ]
+    compacts = [row for row in stream_rows if row.get("type") == "compact"]
+    assert len(compacts) >= 1
+    assert compacts[0]["role"] == "player"
+    assert compacts[0].get("ref")
+    assert prompts and "Продолжай, не переписывай готовое" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_tero_compact_refuses_when_not_running(tmp_path):
+    """status=done → код 1 через CLI-подпроцесс."""
+    import subprocess
+    import sys
+    from pathlib import Path as _Path
+
+    from src.loop.state import RunState
+
+    repo = _repo(tmp_path)
+    run_dir = repo / ".tero" / "runs" / "20200101-000000-demo"
+    run_dir.mkdir(parents=True)
+    RunState(run_dir / "state.json").update(status="done")
+    root = _Path(__file__).resolve().parent.parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.cli_entry", "compact", "-w", str(repo)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1
+    assert "прогон не идёт" in (proc.stdout + proc.stderr)
+
+
+def test_claude_autocompact_in_argv():
+    from src.providers.claude_native import ClaudeNativeProvider
+
+    provider = ClaudeNativeProvider()
+    cmd = provider._build_command(model="claude-sonnet-5", compact_at_tokens=200000)
+    assert "--autocompact" in cmd
+    idx = cmd.index("--autocompact")
+    assert cmd[idx + 1] == "200000"
+    cmd_off = provider._build_command(model="claude-sonnet-5", compact_at_tokens=0)
+    assert "--autocompact" not in cmd_off
