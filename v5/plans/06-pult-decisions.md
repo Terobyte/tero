@@ -1,18 +1,24 @@
-# tero v5, трек T, шаг 3б: точки решения, автопилот, stop и resume
+# tero v5, трек T, шаг 3б: продолжение со снимка, точки решения, автопилот, stop и resume
 
-Ты меняешь сам tero (Python ≥ 3.11, `src/`, тесты в `tests/`). Это фазы 9–15 шага 3 (T11a/b/c, T12) из
-`v5/tero-master-plan.md`, вынесенные из плана 04 без изменений по сути: фазы 1–8 того
-плана сданы и лежат в архиве `v5/archive/04-compact-pult.md`. Спека — `v5/tero-master-spec.md` часть B
-«Ядро tero» (блок «Единые решения» главнее частей A/B/C) и `v5/tero-resilience-spec.md` §7.
+Ты меняешь сам tero (Python ≥ 3.11, `src/`, тесты в `tests/`). Это T11a/b/c и T12 из
+`v5/tero-master-plan.md` плюс фаза 1 «resume со снимка остановленного прогона». Спека —
+`v5/tero-master-spec.md` часть B «Ядро tero» (блок «Единые решения» главнее частей A/B/C) и
+`v5/tero-resilience-spec.md` §7. Сданные планы 01–05 лежат в `v5/archive/`.
 
-**Номера фаз в тексте — сквозные по исходному плану:** здесь фаза 9 — первая, фаза 15 — последняя.
-«Фаза 7» — `tero go --detach` (`AGENT_PROTOCOL` в `src/loop/detach.py`), «фаза 8» — inbox и `tero answer`
-(`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/iface.py`): обе уже сделаны.
+**Номера фаз — по этому плану, 1–8:** 1 resume со снимка, 2 точки решения, 3 действия, 4 ожидание и
+автопилот, 5 `judge_pending` как ожидание, 6 `tero stop` во время шага, 7 `resume` после краша, 8 `guide` и
+`notify`. Уже сделаны (план 04 в архиве): `tero go --detach` (`AGENT_PROTOCOL` в `src/loop/detach.py`),
+inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/iface.py`).
 
-**Этот план идёт после рефакторинга `v5/plans/05-refactor.md`.** Пути вида «менять `src/loop/phase.py`»
-написаны до него: ищи код по смыслу (`_halt`, «вход в судью», «после возврата исполнителя») в модулях
-из карты в конце плана 05. Новый код клади туда же, а не обратно в `phase.py`; потолки размера файлов из
-`tests/test_structure.py` не поднимать.
+**Код после рефакторинга (план 05 сдан).** Где что лежит и куда класть новый код — `v5/code-map.md`,
+читать до начала каждой фазы. Строки «Менять …» в фазах ниже уже указывают модули по этой карте. Главное:
+- `src/loop/phase.py` (849) и `src/loop/run.py` (447) стоят на потолке размера: новый код туда не
+  дописывается; если нужен вызов нового шага — сначала вынести соседний код в модуль шага;
+- потолки в `tests/test_structure.py` не поднимать и новых ключей не добавлять; понизить потолок, когда
+  файл похудел на 20+ строк, — обязательно (иначе красный `test_ceilings_are_tight`);
+- новые модули не импортируют `phase`, `run`, `cli_entry`; функции не длиннее 120 строк;
+- переходы статуса — только через `src/loop/transition.py`, запись файлов — только через `src/fsio.py`;
+- точки подмены из `v5/code-map.md` и повторный экспорт старых имён сохраняются.
 
 Уже сделано: `state.json` с enum статуса, `stream.jsonl`, HUD и реестр `~/.tero/registry/`
 (`src/hud/registry.py`: `pid_is_alive`, `is_dead`), лок репо `src/loop/lock.py`, снимки
@@ -20,13 +26,13 @@
 кодом 3), `tero review`, `tero resume` (только с `judge_pending`), виды ошибок провайдера, убийство по
 тишине, провайдер `agy`, компакт и `tero compact`, экзамен судей (слой 1), пульс владельца
 (`src/loop/pulse.py`), `tero wait`/`tero status` (`src/loop/wait.py`), `tero go --detach`, inbox,
-`question` в `state.json` и `tero answer`.
+`question` в `state.json` и `tero answer`, рефакторинг (план 05).
 
 Главный принцип шага: **прогон не умирает молча и не выбрасывает работу; любой стоп — точка решения,
 которую может закрыть человек, агент или автопилот.**
 
 **Судье и исполнителю: фаза принимается только по своему чек-листу и списку «Вне этой фазы».**
-Абзацы выше описывают цель всего шага из 7 фаз, а не требования к текущей фазе. Поведение, которое
+Абзацы выше описывают цель всего шага из 8 фаз, а не требования к текущей фазе. Поведение, которое
 делают следующие фазы, в текущей фазе не делать и не требовать: его отсутствие — не находка.
 
 **Судье: полный набор тестов гоняет гейт tero вне песочницы, его итог — истина.** В песочнице судьи
@@ -69,24 +75,70 @@
 - Никаких сессий CLI: ни `--continue`, ни `--conversation`, ни `-s`. Каждый вызов роли — новый процесс.
 - Каждое событие в `stream.jsonl`, которое добавляет этот шаг, несёт `phase`, `round`, `role` и `text`.
   Каждое изменение статуса пишется и в `state.json`, и в `stream.jsonl`, и в `ledger.jsonl`, одним
-  вызовом-помощником из шага 2а.
+  вызовом из `src/loop/transition.py` (`phase_transition`, `resume_transition`).
 - Секреты (`META_MODEL_API_KEY`, токены) не попадают ни в тексты ошибок, ни в `stream.jsonl`, ни в ledger,
   ни в `inbox/`, ни в вывод `status`.
 - Ретранслятора (Cloudflare) в этом шаге нет: только протокол `RelayClient` и реализации `NoopRelay`
   (по умолчанию) и `FakeRelay` (для тестов). Настоящий клиент — шаг 4.
 
 
+## resume со снимка остановленного прогона
+
+Менять `src/loop/session.py` (`_resume_config`), `src/cli_entry.py` (`run_resume`, флаг `--answer`),
+`src/loop/prompts.py`; создать `src/loop/resume_step.py` (восстановление дерева и выбор фазы, если
+`run.py` иначе вырастет); тесты в `tests/loop/test_resume_stopped.py`. Флаг `Config.decisions` здесь не
+нужен: это новый вход `tero resume`, старое поведение `tero go` не меняется.
+
+Сейчас любой стоп (`user`/NEEDS_USER, `stuck`, `fuse`, `provider_*`) кладёт работу исполнителя в снимок
+`refs/tero/...` и откатывает дерево, а `tero resume` умеет только `judge_pending`. Эта фаза даёт
+продолжить остановленный прогон с уже написанного кода тем же путём, что `judge_pending`: дерево из
+снимка → судья по снимку → если не SHIP, исполнитель продолжает с этого кода (блок продолжения с
+`git diff base..ref`, как после `judge_pending`).
+
+- `tero resume [-w] [--run] [--answer "текст"]` принимает `status=stopped`, если в `state.json` есть
+  `snapshot_ref` и `base`, а причина стопа — `user`, `stuck`, `fuse`, `provider_unavailable`,
+  `provider_auth` или `provider_quota`. Проверка в `run_resume` (CLI) и в
+  `_resume_config` — одна функция, без копии условия.
+- Отказы, код 1, прогон не трогается: `stopped` без снимка → «снимка нет, запусти `tero go`»;
+  причина `secrets` → «стоп по секретам: разберись с файлами и запусти `tero go`»; `done` → прежний текст
+  «resume для `done` пока не умеет» (его проверяет `tests/loop/test_resume_judge.py`, текст не менять).
+- Причина `user` (судья спросил человека): без `--answer` → отказ «прогон ждал ответа: `tero resume
+  --answer "…"`», в тексте отказа — вопрос из `state.json`. С `--answer` текст идёт в промпты судьи и
+  исполнителя продолженной фазы **только** в размеченном блоке «Ответ на вопрос фазы (не меняет контракт,
+  критерии SHIP и правила гейтов)», не длиннее 2000 символов, секреты вычищены. Блок строит одна функция
+  в `src/loop/prompts.py`: её же возьмёт `answer` в фазе 2.
+- Продолжение: лок, ветка прогона и дерево — как у `resume` с `judge_pending` (`_restore_resume_tree`);
+  первой идёт фаза из `state.json`, начиная с судьи по `snapshot_ref` (`start_with_judge`), дальше — обычный
+  цикл `session.run_phases` до конца плана. Номера раундов продолжаются со старого (имена снимков
+  `phase-NN-roundNN` не должны совпасть со старыми и затереть их), а лимит сдвигается: ещё `max_rounds`
+  раундов после старого; история «нет прогресса» пустая; эскалация не переносится.
+- Сбой настройки `resume` (пульс, журнал, исключение до первой фазы) возвращает тот же статус, что был
+  (`stopped` с прежней причиной и ref), а не `judge_pending`: повтор `resume` остаётся возможным.
+- В `ledger.jsonl` — событие `resume` с полями `from_status`, `from_reason`, `ref`; смена статуса на
+  `starting`/`running` — как сейчас, через `resume_transition`.
+- Вне этой фазы: точки решения без выхода из процесса (фаза 2), `resume` после краша (фаза 7).
+
+- [ ] `test_resume_stopped_stuck_continues_from_ref`: прогон `stuck` (фейковый исполнитель без прогресса) → `resume` → судья вызван первым, видит дифф ref; исполнитель следующего раунда получает блок продолжения; фаза сдана, код 0
+- [ ] `test_resume_stopped_fuse_new_round_budget`: `fuse` при `max_rounds=2` → `resume` → ещё 2 раунда (3 и 4), старые снимки раундов 1–2 на месте, стоп по `fuse` только после раунда 4
+- [ ] `test_resume_user_needs_answer`: стоп `user` без `--answer` → код 1, в выводе вопрос; с `--answer "используй sqlite"` → текст в промптах судьи и исполнителя внутри размеченного блока
+- [ ] `test_resume_stopped_refusals`: нет `snapshot_ref` → код 1 «снимка нет»; `secrets` → код 1; `done` → прежний текст (через CLI-подпроцесс)
+- [ ] `test_resume_stopped_setup_failure_keeps_status`: `Pulse` падает при старте → `state.json` снова `stopped` с прежней причиной и ref, лок свободен
+- [ ] реализовать
+
 ## Точки решения: answer, skip, stop, долг
 
-Менять `src/loop/phase.py` (`_halt`), `src/loop/run.py`, `src/loop/git.py`, `src/loop/prompts.py`;
-тесты в `tests/loop/test_decision.py`.
+Создать `src/loop/decision_step.py` и перенести в него из `src/loop/phase.py` `_halt`, `_halt_text`,
+`_write_stopped` (в `phase.py` остаётся вызов шага); менять `src/loop/session.py` (`run_phases`: долг и
+код 4), `src/loop/git.py` (трейлер, `phase_shipped`), `src/loop/prompts.py` (блок ответа из фазы 1),
+`src/hud/` (иконка долга); тесты в `tests/loop/test_decision.py`. `_rollback_with_snapshot` остаётся в `phase.py`
+(тесты подменяют `src.loop.phase.rollback`): шаг получает его колбэком, как `JudgeStep`.
 
 - При `decisions=True` `_halt(reason)` не откатывает и не пишет `stopped`, а открывает точку решения:
   `state.json`: `status=waiting_human`, `question={id, reason, text, actions}`, `tree_sha` — sha дерева
   с неотслеживаемыми файлами (через временный `GIT_INDEX_FILE`, как в `snapshot.py`). Рабочее дерево
   **не откатывается**, пока ждём (при `secrets` индекс очищается, файлы лежат на месте).
 - Цикл ожидания владельца: раз в `DECISION_POLL_S = 10` `Inbox.take(...)`, после каждой итерации —
-  `pulse.progress()`. В этой фазе ждём бесконечно (таймауты — фаза 11).
+  `pulse.progress()`. В этой фазе ждём бесконечно (таймауты — фаза 4).
 - `answer <текст>` → новый раунд той же фазы; в промпты player и judge следующего раунда текст идёт
   **только** в размеченном блоке «Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила
   гейтов)».
@@ -100,8 +152,8 @@
   с тем же трейлером. Помощник `git.phase_shipped(repo, base, run_id, n) -> bool` ищет трейлер в
   `git log base..HEAD`.
 - HUD: финал с долгом рисуется «⚠ сдано с долгом N», не «✓».
-- Вне этой фазы: `more|model|retry|allow|wait` (фаза 10), таймауты, аренда, автопилот (фаза 11),
-  `judge_pending` как ожидание (фаза 12).
+- Вне этой фазы: `more|model|retry|allow|wait` (фаза 3), таймауты, аренда, автопилот (фаза 4),
+  `judge_pending` как ожидание (фаза 5).
 
 - [ ] `test_halt_opens_question_tree_untouched`: `decisions=True`, фейковый судья `NEEDS_USER` → `waiting_human`, `question.id == "1-1"`, файлы исполнителя на месте, `tree_sha` записан
 - [ ] `test_halt_without_decisions_unchanged`: `decisions=False` → `stopped` и откат, как раньше
@@ -114,12 +166,14 @@
 
 ## Действия more, model, retry, allow, wait и бюджет
 
-Менять `src/loop/phase.py`, `src/loop/decision.py`; тесты в `tests/loop/test_decision.py`.
+Менять `src/loop/decision_step.py`, `src/loop/decision.py`, `src/loop/inbox.py` (приём и бюджет),
+`src/loop/prompts.py` (блок «эти файлы не создавать»); в `src/loop/phase.py` — только вызовы, без роста
+файла; тесты в `tests/loop/test_decision.py`.
 
 - `more` → ещё 5 раундов, в которых детектор «нет прогресса» не останавливает фазу; после пятого —
   точка решения с причиной `fuse`. Эскалацию не отменяет.
 - `model <player|tester> <провайдер[:модель]>` → роль сменена до конца фазы, со следующего раунда; модель
-  должна быть известна (`KNOWN_PROVIDERS`), иначе отказ при приёме. `model judge` отклонён ещё в фазе 8.
+  должна быть известна (`KNOWN_PROVIDERS`), иначе отказ при приёме. `model judge` уже отклоняется при приёме (`src/loop/inbox.py`).
 - `retry` → повторить вызов провайдера (тот же раунд); после `secrets` — снимок, откат, фаза заново, а
   пути, вызвавшие стоп, идут в промпт player блоком «эти файлы не создавать».
 - `allow <путь>` (только человек) → путь в `state.json.allowed_secrets`, проверка секретов его
@@ -130,7 +184,7 @@
 - Бюджет продолжений: `more`, `retry`, `wait`, `model` от `agent`/`autopilot` — общий бюджет 3 на фазу в
   `state.json.budget[<фаза>]`, переживает `resume`. Исчерпан → в вопросе остаются только `skip|stop`, другие
   действия отклоняются «бюджет исчерпан». У `human` бюджета нет.
-- Вне этой фазы: таймауты ожидания, аренда, автопилот (фаза 11).
+- Вне этой фазы: таймауты ожидания, аренда, автопилот (фаза 4).
 
 - [ ] `test_more_gives_five_rounds_without_stuck`: фейк без прогресса → `more` → 5 раундов без `stuck`, потом вопрос `fuse`
 - [ ] `test_model_switches_next_round`: `model player opencode:x` → раунд 2 исполнитель `opencode:x`; неизвестный провайдер отклонён
@@ -141,8 +195,8 @@
 
 ## Ожидание, аренда агента, автопилот
 
-Создать `src/loop/autopilot.py`, `tests/loop/test_autopilot.py`; менять `src/loop/phase.py`,
-`src/loop/wait.py`, `src/config.py`.
+Создать `src/loop/autopilot.py`, `tests/loop/test_autopilot.py`; менять `src/loop/decision_step.py`
+(цикл ожидания), `src/loop/wait.py` (аренда), `src/config.py`.
 
 - `Config.human_timeout_s = 900`, `Config.agent_timeout_s = 1800`, `Config.autopilot_grace_s = 900`,
   `Config.wake_command: str = ""`. Все подменяются в тестах на доли секунды.
@@ -163,7 +217,7 @@
   цепочкой:** если фаза, начатая сразу после пропуска автопилотом, тоже дошла до точки решения —
   `stop` и `relay.notify("остановил: две фазы подряд не идут")`. Человек и агент так не ограничены.
 - Повторы без шума: точки решения по одной причине подряд — не больше одного `notify` в 30 мин.
-- Вне этой фазы: `judge_pending` (фаза 12), `stop` во время шага (фаза 13).
+- Вне этой фазы: `judge_pending` (фаза 5), `stop` во время шага (фаза 6).
 
 - [ ] `test_human_timeout_to_waiting_agent`: подменённые таймауты → `waiting_human` → `waiting_agent`, вопрос открыт, `wait_run` вернул 3
 - [ ] `test_lease_written_by_wait`: `wait_run` пишет `lease` с `until` и pid; мёртвый pid → аренда недействительна
@@ -175,7 +229,8 @@
 
 ## judge_pending как живое ожидание
 
-Менять `src/loop/phase.py`, `src/loop/run.py`, `src/loop/autopilot.py`; тесты в `tests/loop/test_judge_pending.py`
+Менять `src/loop/judge_step.py` (`_stop_judge_pending`), `src/loop/decision_step.py`,
+`src/loop/autopilot.py`; `src/loop/run.py` не растёт; тесты в `tests/loop/test_judge_pending.py`
 (новые тесты в конец файла) и `tests/loop/test_autopilot.py`.
 
 - При `decisions=True` три сбоя судьи → `status=judge_pending` и точка решения с причиной `judge_pending`
@@ -195,7 +250,9 @@
 
 ## tero stop во время шага
 
-Создать `tests/loop/test_stop_midstep.py`; менять `src/loop/pulse.py`, `src/loop/phase.py`, `src/cli_entry.py`.
+Создать `src/loop/watchdog.py` (сторожевой поток), `src/commands/stop_cmd.py` (команда `tero stop`),
+`tests/loop/test_stop_midstep.py`; менять `src/loop/pulse.py`, `src/loop/decision_step.py`, в
+`src/cli_entry.py` — только подпарсер и строка диспетчера; `src/loop/phase.py` не растёт.
 
 - `tero stop [-w] [--run]` → `inbox/stop.json` (`{"who", "ts"}`), печатает «стоп запрошен»; статус уже
   `done`/`stopped` → «прогон не идёт», код 1.
@@ -215,12 +272,14 @@
 
 ## tero resume после краша
 
-Создать `tests/loop/test_resume_crash.py`; менять `src/loop/run.py`, `src/cli_entry.py`.
+Создать `tests/loop/test_resume_crash.py`; менять `src/loop/resume_step.py` (из фазы 1),
+`src/loop/session.py` (`_resume_config`), в `src/cli_entry.py` — только флаг `--force`; `src/loop/run.py`
+не растёт.
 
-- `tero resume` смотрит статус: `judge_pending` при `decisions=False` — как сейчас (шаг 2а); любой
-  незавершённый статус с мёртвым или зависшим владельцем — восстановление после краша; `done`/`stopped` →
-  отказ как сейчас: текст «resume для `<статус>` пока не умеет», код 1 (его проверяет
-  `tests/loop/test_resume_judge.py`, текст не менять).
+- `tero resume` смотрит статус: `judge_pending` при `decisions=False` — как сейчас (шаг 2а); `stopped` со
+  снимком — как в фазе 1; любой незавершённый статус с мёртвым или зависшим владельцем — восстановление
+  после краша; `done` и отказы фазы 1 — как сейчас: текст «resume для `done` пока не умеет», код 1 (его
+  проверяет `tests/loop/test_resume_judge.py`, текст не менять).
 - Порядок: старый pid жив и условия «завис» из `wait.py` выполнены → убить его группу процессов, дождаться
   свободного лока; pid жив, но не завис → «прогон жив», код 1. Взять лок, убрать устаревший
   `.git/index.lock`.
@@ -242,9 +301,10 @@
 
 ## tero guide и tero notify
 
-Менять `src/cli_entry.py`, `src/loop/detach.py`; тесты в `tests/test_cli.py`.
+Создать `src/commands/guide_cmds.py` (`guide`, `notify`); менять `src/loop/detach.py` (один текст
+протокола), в `src/cli_entry.py` — только подпарсеры и строки диспетчера; тесты в `tests/test_cli.py`.
 
-- `tero guide` печатает `AGENT_PROTOCOL` (из фазы 7) и раздел «как спать» для хозяев Claude Code,
+- `tero guide` печатает `AGENT_PROTOCOL` (`src/loop/detach.py`) и раздел «как спать» для хозяев Claude Code,
   opencode, Muse (содержание — `v5/hosts-and-limits.md`, без ссылок на `docs/`). Код 0.
 - `tero notify "текст" [-w] [--run]` → `relay.notify(scrub_secrets(текст))`; с `NoopRelay` печатает
   «ретранслятора нет, сообщение не ушло» и код 0 (не ошибка).

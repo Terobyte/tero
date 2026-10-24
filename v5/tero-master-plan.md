@@ -1,8 +1,13 @@
 # tero v5: план реализации (HUD + ядро пульта + отказоустойчивость + agy + телефон)
 
 > **Статус на 2026-10-24.** Сделано: T0, T1, T2, T4a, T5–T8, T8c, T9a, T9b слой 1, T10, T11a частично (inbox,
-> `tero answer`) — планы в `v5/archive/`. Дальше: рефакторинг `v5/plans/05-refactor.md`, затем T11a–c и T12
-> в `v5/plans/06-pult-decisions.md`. Человеку в конце: T3, T4b, T9b слой 2; T13–T15 ещё не расписаны.
+> `tero answer`) и рефакторинг (план 05) — планы в `v5/archive/`. Дальше: `v5/plans/06-pult-decisions.md`
+> (8 фаз: `resume` со снимка остановленного прогона, затем T11a–c и T12). Человеку в конце: T3, T4b, T9b
+> слой 2; T13–T15 ещё не расписаны.
+>
+> **Код после рефакторинга:** пути в «Files» ниже для T10–T15 даны по `v5/code-map.md`. `src/loop/phase.py` и
+> `src/loop/run.py` на потолке размера (`tests/test_structure.py`): новый код идёт в модули шагов
+> (`decision_step.py`, `autopilot.py`, `watchdog.py`, `resume_step.py`), команды CLI — в `src/commands/`.
 
 > **Для исполнителя:** пользуйся superpowers:subagent-driven-development или superpowers:executing-plans, задача за задачей. Шаги — чекбоксы `- [ ]`.
 
@@ -48,7 +53,7 @@
 **Трек T (без человека), по порядку:**
 1. T0 (замеры CLI агентом) · T1 · T2 · T4a (тесты; окно 4b пишется, но не принимается).
 2. T5 · T6 · T7 · T8 · T8c (устойчивость, компакт) · T9a (код `agy`, тесты на stub'ах, реальный pre-flight) · T9b слой 1 (адаптеры).
-3. T10 · T11a/b/c · T12 (ядро пульта).
+3. T10 · рефакторинг (план 05, сдан) · T12a `resume` со снимка остановленного прогона · T11a/b/c · T12 (ядро пульта).
 4. T13a/b/c (Worker на `wrangler dev`, без деплоя) · T14 и T15 (код, тесты; PWA проверяется скриншотом из playwright).
 5. Гейт между шагами: полный `PYTHONPATH=. python3 -m pytest -q` + судья (не Muse).
 
@@ -224,7 +229,7 @@
 
 ### Task 10: владелец, `--detach`, пульс, `wait`, `status`
 
-**Files:** Create `src/loop/lock.py`, `src/loop/pulse.py`, `src/loop/wait.py`, `tests/loop/test_lock.py`, `test_pulse.py`, `test_wait.py`; Modify `src/cli_entry.py` (`go --detach`, `wait`, `status`, `stop`, `guide`), `src/loop/run.py`.
+**Files:** Create `src/loop/lock.py`, `src/loop/pulse.py`, `src/loop/wait.py`, `tests/loop/test_lock.py`, `test_pulse.py`, `test_wait.py`; Modify `src/cli_entry.py` (`go --detach`, `wait`, `status`, `stop`, `guide`), `src/loop/run.py`. После рефакторинга обработчики команд — в `src/commands/`, общий старт и цикл фаз — в `src/loop/session.py`.
 
 **Interfaces:**
 - `acquire(run_dir) -> Lock | None` (`flock` неблокирующий; pid, `pid_started` в `state.json`).
@@ -244,7 +249,7 @@
 
 ### Task 11a: точки решения + inbox + answer · 11b: ожидание, аренда, wake_command · 11c: автопилот, бюджет, долг, трейлер
 
-**Files:** Create `src/loop/decision.py`, `src/loop/inbox.py`, `src/loop/autopilot.py`, `tests/loop/test_decision.py`, `test_inbox.py`, `test_autopilot.py`; Modify `src/loop/phase.py` (каждый `_halt` → точка решения), `src/loop/git.py` (трейлер `Tero-Phase`, пустой коммит).
+**Files:** Create `src/loop/decision.py` и `src/loop/inbox.py` (сделаны), `src/loop/decision_step.py` (сюда переезжают `_halt`, `_halt_text`, `_write_stopped` из `phase.py`; каждый `_halt` → точка решения), `src/loop/autopilot.py`, `tests/loop/test_decision.py`, `test_inbox.py`, `test_autopilot.py`; Modify `src/loop/session.py` (`run_phases`: долг, код 4), `src/loop/judge_step.py` (`judge_pending` как ожидание), `src/loop/wait.py` (аренда), `src/loop/git.py` (трейлер `Tero-Phase`, пустой коммит).
 
 **Interfaces:**
 - `RelayClient` (протокол в `src/relay/iface.py`): `push_state(state)`, `fetch_answers(question_id) -> list[Answer]`, `notify(text)`; в M4 есть `NoopRelay` и `FakeRelay` для тестов, реальный клиент — T13.
@@ -262,9 +267,23 @@
 - [ ] Аренда агента (`lease`) хранит pid сессии агента; смерть pid → досрочное истечение; `wake_command` с фиксированным промптом, действия только `retry|skip|stop` с `--why`, один раз на вопрос.
 - [ ] Коммит по подзадачам.
 
+### Task 12a: `resume` со снимка остановленного прогона (добавлено 2026-10-24, идёт перед T11)
+
+Любой стоп сейчас кладёт работу исполнителя в снимок и откатывает дерево, а `tero resume` умеет только
+`judge_pending`. 12a продолжает остановленный прогон с уже написанного кода: дерево из снимка → судья по
+снимку → исполнитель продолжает с этого кода. Действует без флага `decisions`; точки решения T11 потом
+делают то же без выхода из процесса.
+
+**Files:** Modify `src/loop/session.py` (`_resume_config`), `src/cli_entry.py` (`run_resume`, `--answer`), `src/loop/prompts.py` (размеченный блок ответа — его же берёт `answer` в T11a); Create `src/loop/resume_step.py`, `tests/loop/test_resume_stopped.py`.
+
+- [ ] `stopped` со снимком и причиной `user|stuck|fuse|provider_*` → `resume`: судья первым по ref, дальше исполнитель с блоком продолжения; ещё `max_rounds` раундов, номера и снимки старых раундов не затираются.
+- [ ] Причина `user` требует `--answer`; ответ — только в размеченном блоке промптов судьи и исполнителя.
+- [ ] Отказы: нет снимка, `secrets`, `done` (прежний текст). Сбой настройки возвращает прежний `stopped`.
+- [ ] Коммит.
+
 ### Task 12: `resume` после краша, `stop` во время шага
 
-**Files:** Modify `src/loop/run.py`, `src/cli_entry.py`; Create `tests/loop/test_resume_crash.py`, `test_stop_midstep.py`.
+**Files:** Modify `src/loop/resume_step.py` (из 12a), `src/loop/session.py`, `src/loop/pulse.py`, `src/loop/decision_step.py`, `src/cli_entry.py` (только подпарсеры и флаг `--force`); Create `src/loop/watchdog.py`, `src/commands/stop_cmd.py`, `src/commands/guide_cmds.py`, `tests/loop/test_resume_crash.py`, `test_stop_midstep.py`. `src/loop/run.py` не растёт.
 
 - [ ] Тесты: краш между тиком плана и коммитом; краш между коммитом и записью состояния; краш в точке решения (дерево совпало с sha → ожидание восстановлено, тот же id и вопрос); зависший владелец (pid жив, условия «завис» выполнены → kill группы, взять лок); pid жив, но не завис → отказ «прогон жив».
 - [ ] Счётчик крашей: на третьем `resume` отказ, `stopped`; `resume --force` обходит.
@@ -278,7 +297,7 @@
 
 ### Task 13a: Worker + D1 + фильтр · 13b: pair и токены · 13c: cron, пуш, `RelayClient`
 
-**Files:** Create `relay/src/worker.js`, `relay/schema.sql`, `relay/wrangler.toml`, `relay/test/*.test.js`, `src/relay/client.py`, `tests/test_relay_client.py`; Modify `src/cli_entry.py` (`tero relay setup`, `tero pair`).
+**Files:** Create `relay/src/worker.js`, `relay/schema.sql`, `relay/wrangler.toml`, `relay/test/*.test.js`, `src/relay/client.py`, `tests/test_relay_client.py`, `src/commands/relay_cmds.py` (`tero relay setup`, `tero pair`); Modify `src/cli_entry.py` (только подпарсеры).
 
 - [ ] Тесты на `wrangler dev` (cron через `--test-scheduled`): состояние по ключу `run_id`+`machine_id`; чтение только по токену (read-токен виджета отдельно); ответы: id + допустимое действие + текст; приём с лимитом длины.
 - [ ] Фильтр секретов на отправке: подстроки `sk-`, `AKIA`, `-----BEGIN`, длинные hex/base64 в любом месте; без блоков кода и диффов; пути секретов — только имя файла. Тест: токен посреди 500-символьной находки вырезан.
