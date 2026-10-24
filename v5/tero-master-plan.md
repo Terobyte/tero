@@ -274,11 +274,11 @@
 снимку → исполнитель продолжает с этого кода. Действует без флага `decisions`; точки решения T11 потом
 делают то же без выхода из процесса.
 
-**Files:** Modify `src/loop/session.py` (`_resume_config`), `src/cli_entry.py` (`run_resume`, `--answer`), `src/loop/prompts.py` (размеченный блок ответа — его же берёт `answer` в T11a); Create `src/loop/resume_step.py`, `tests/loop/test_resume_stopped.py`.
+**Files:** Modify `src/loop/session.py` (`resume_refusal`, `_resume_config`), `src/loop/run.py` и `src/loop/phase.py` (только вынос в `resume_step.py` и вызовы, без роста), `src/loop/phase_ctx.py`, `src/loop/prompts.py`, `src/loop/judge_prompt.py` (блок ответа — его же берёт `answer` в T11a), `src/cli_entry.py` (`run_resume`, `--answer`); Create `src/loop/resume_step.py`, `tests/loop/test_resume_stopped.py`.
 
-- [ ] `stopped` со снимком и причиной `user|stuck|fuse|provider_*` → `resume`: судья первым по ref, дальше исполнитель с блоком продолжения; ещё `max_rounds` раундов, номера и снимки старых раундов не затираются.
+- [ ] `stopped` со снимком и причиной `user|stuck|fuse|provider_*` → `resume`: дерево из ref, защита тестов по эталону `base`, гейт (красный → сразу исполнитель), судья по ref, дальше исполнитель с блоком продолжения; ещё `max_rounds` раундов, номера и снимки старых раундов не затираются.
 - [ ] Причина `user` требует `--answer`; ответ — только в размеченном блоке промптов судьи и исполнителя.
-- [ ] Отказы: нет снимка, `secrets`, `done` (прежний текст). Сбой настройки возвращает прежний `stopped`.
+- [ ] Отказы: нет снимка, `secrets`, другие причины, ветка прогона ушла вперёд, `done` (прежний текст). Сбой настройки возвращает прежний `stopped`.
 - [ ] Коммит.
 
 ### Task 12: `resume` после краша, `stop` во время шага

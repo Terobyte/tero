@@ -76,7 +76,7 @@
 
 | Что | Куда |
 |---|---|
-| `resume` со снимка остановленного прогона | `src/loop/session.py` (`_resume_config`), шаг восстановления дерева — в `run.py` не растёт, вынести в новый `src/loop/resume_step.py` |
+| `resume` со снимка остановленного прогона | новый `src/loop/resume_step.py`: туда переезжают `_restore_resume_tree` из `run.py`, `_continuation_block`, `_git_show_bytes` и ветка входа с судьи из `phase.py` (`ResumeStep`, `ResumeFrom`); условие «что можно продолжить» — `resume_refusal` в `src/loop/session.py` |
 | точка решения вместо `_halt`, ожидание ответа, `answer`/`skip`/`stop`, долг | новый `src/loop/decision_step.py`; `_halt`, `_halt_text`, `_write_stopped` переезжают туда из `phase.py` |
 | `more`/`model`/`retry`/`allow`/`wait`, бюджет | `src/loop/decision_step.py`, приём ответов — `src/loop/inbox.py` |
 | таймауты ожидания, аренда, автопилот | новый `src/loop/autopilot.py`, аренду пишет `src/loop/wait.py` |

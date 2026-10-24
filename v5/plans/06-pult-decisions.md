@@ -23,7 +23,7 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
 Уже сделано: `state.json` с enum статуса, `stream.jsonl`, HUD и реестр `~/.tero/registry/`
 (`src/hud/registry.py`: `pid_is_alive`, `is_dead`), лок репо `src/loop/lock.py`, снимки
 `refs/tero/<run_id>/...` (`src/loop/snapshot.py`), `_rollback_with_snapshot`, `judge_pending` (выход с
-кодом 3), `tero review`, `tero resume` (только с `judge_pending`), виды ошибок провайдера, убийство по
+кодом 3), `tero review`, `tero resume` (только с `judge_pending`; фаза 1 добавляет `stopped`), виды ошибок провайдера, убийство по
 тишине, провайдер `agy`, компакт и `tero compact`, экзамен судей (слой 1), пульс владельца
 (`src/loop/pulse.py`), `tero wait`/`tero status` (`src/loop/wait.py`), `tero go --detach`, inbox,
 `question` в `state.json` и `tero answer`, рефакторинг (план 05).
@@ -70,6 +70,8 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
   Все остальные команды (`wait`, `status`, `answer`, `stop`, `compact`) только читают его и пишут в
   `<run_dir>/inbox/`.
 - Внутри владельца один `threading.Lock` на запись `state.json` и git-операции.
+- «Номер фазы» в id вопроса, трейлере `Tero-Phase`, долге и `budget` — `phase.index + 1` (как в консоли:
+  первая фаза — 1). В именах снимков `phase-NN-roundNN` — `phase.index`, как сейчас (первая фаза — `phase-00`).
 - Номера строк условные; ищи семантические точки («после возврата исполнителя», «вход в судью», «`_halt`»).
 - Новых зависимостей не добавлять. Папку `docs/` не трогать.
 - Никаких сессий CLI: ни `--continue`, ни `--conversation`, ни `-s`. Каждый вызов роли — новый процесс.
@@ -84,45 +86,85 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
 
 ## resume со снимка остановленного прогона
 
-Менять `src/loop/session.py` (`_resume_config`), `src/cli_entry.py` (`run_resume`, флаг `--answer`),
-`src/loop/prompts.py`; создать `src/loop/resume_step.py` (восстановление дерева и выбор фазы, если
-`run.py` иначе вырастет); тесты в `tests/loop/test_resume_stopped.py`. Флаг `Config.decisions` здесь не
-нужен: это новый вход `tero resume`, старое поведение `tero go` не меняется.
+Создать `src/loop/resume_step.py`, `tests/loop/test_resume_stopped.py`; менять `src/loop/session.py`
+(`_resume_config`), `src/loop/run.py` (`resume`, `_resume_phases`), `src/loop/phase.py` (вход с судьи),
+`src/loop/phase_ctx.py` (`PhaseState.answer`), `src/loop/prompts.py`, `src/loop/judge_prompt.py`,
+`src/cli_entry.py` (`run_resume`, флаг `--answer`). Флаг `Config.decisions` здесь не нужен: это новый вход
+`tero resume`, поведение `tero go` и `resume` с `judge_pending` не меняется (все старые тесты зелёные без
+правок).
 
 Сейчас любой стоп (`user`/NEEDS_USER, `stuck`, `fuse`, `provider_*`) кладёт работу исполнителя в снимок
-`refs/tero/...` и откатывает дерево, а `tero resume` умеет только `judge_pending`. Эта фаза даёт
-продолжить остановленный прогон с уже написанного кода тем же путём, что `judge_pending`: дерево из
-снимка → судья по снимку → если не SHIP, исполнитель продолжает с этого кода (блок продолжения с
-`git diff base..ref`, как после `judge_pending`).
+`refs/tero/...` (`state.json.snapshot_ref`, `base`) и откатывает дерево, а `tero resume` умеет только
+`judge_pending`. Эта фаза даёт продолжить остановленный прогон с уже написанного кода: дерево из снимка →
+защита тестов и гейт → судья по снимку → если не SHIP, исполнитель продолжает с этого кода.
 
-- `tero resume [-w] [--run] [--answer "текст"]` принимает `status=stopped`, если в `state.json` есть
-  `snapshot_ref` и `base`, а причина стопа — `user`, `stuck`, `fuse`, `provider_unavailable`,
-  `provider_auth` или `provider_quota`. Проверка в `run_resume` (CLI) и в
-  `_resume_config` — одна функция, без копии условия.
-- Отказы, код 1, прогон не трогается: `stopped` без снимка → «снимка нет, запусти `tero go`»;
-  причина `secrets` → «стоп по секретам: разберись с файлами и запусти `tero go`»; `done` → прежний текст
-  «resume для `done` пока не умеет» (его проверяет `tests/loop/test_resume_judge.py`, текст не менять).
-- Причина `user` (судья спросил человека): без `--answer` → отказ «прогон ждал ответа: `tero resume
-  --answer "…"`», в тексте отказа — вопрос из `state.json`. С `--answer` текст идёт в промпты судьи и
-  исполнителя продолженной фазы **только** в размеченном блоке «Ответ на вопрос фазы (не меняет контракт,
-  критерии SHIP и правила гейтов)», не длиннее 2000 символов, секреты вычищены. Блок строит одна функция
-  в `src/loop/prompts.py`: её же возьмёт `answer` в фазе 2.
-- Продолжение: лок, ветка прогона и дерево — как у `resume` с `judge_pending` (`_restore_resume_tree`);
-  первой идёт фаза из `state.json`, начиная с судьи по `snapshot_ref` (`start_with_judge`), дальше — обычный
-  цикл `session.run_phases` до конца плана. Номера раундов продолжаются со старого (имена снимков
-  `phase-NN-roundNN` не должны совпасть со старыми и затереть их), а лимит сдвигается: ещё `max_rounds`
-  раундов после старого; история «нет прогресса» пустая; эскалация не переносится.
-- Сбой настройки `resume` (пульс, журнал, исключение до первой фазы) возвращает тот же статус, что был
-  (`stopped` с прежней причиной и ref), а не `judge_pending`: повтор `resume` остаётся возможным.
-- В `ledger.jsonl` — событие `resume` с полями `from_status`, `from_reason`, `ref`; смена статуса на
-  `starting`/`running` — как сейчас, через `resume_transition`.
-- Вне этой фазы: точки решения без выхода из процесса (фаза 2), `resume` после краша (фаза 7).
+**Место в `phase.py` и `run.py` (оба на потолке).** Сначала перенести в `src/loop/resume_step.py`:
+`_restore_resume_tree` из `run.py`; `_continuation_block`, `_git_show_bytes` и ветку `if
+self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, gate, protect, after_judge)` с
+колбэками, как `JudgeStep`; тесты на эти имена не ссылаются). Потом добавлять новое. Новые входы
+`run_phase` — один параметр `resume_from: ResumeFrom | None = None` (датакласс в `resume_step.py`:
+`ref`, `base`, `answer`, `round_limit`, `gate_first`), а не пять отдельных. Итог: `phase.py` и `run.py` не
+больше потолка, потолки понижены, если файлы похудели на 20+ строк.
 
-- [ ] `test_resume_stopped_stuck_continues_from_ref`: прогон `stuck` (фейковый исполнитель без прогресса) → `resume` → судья вызван первым, видит дифф ref; исполнитель следующего раунда получает блок продолжения; фаза сдана, код 0
-- [ ] `test_resume_stopped_fuse_new_round_budget`: `fuse` при `max_rounds=2` → `resume` → ещё 2 раунда (3 и 4), старые снимки раундов 1–2 на месте, стоп по `fuse` только после раунда 4
-- [ ] `test_resume_user_needs_answer`: стоп `user` без `--answer` → код 1, в выводе вопрос; с `--answer "используй sqlite"` → текст в промптах судьи и исполнителя внутри размеченного блока
-- [ ] `test_resume_stopped_refusals`: нет `snapshot_ref` → код 1 «снимка нет»; `secrets` → код 1; `done` → прежний текст (через CLI-подпроцесс)
-- [ ] `test_resume_stopped_setup_failure_keeps_status`: `Pulse` падает при старте → `state.json` снова `stopped` с прежней причиной и ref, лок свободен
+- **Что продолжаем.** `tero resume [-w] [--run] [--answer "текст"]` принимает `status=stopped`, если в
+  `state.json` есть `config`, `snapshot_ref` и `base`, а `reason` — `user`, `stuck`, `fuse`,
+  `provider_unavailable`, `provider_auth` или `provider_quota`. Условие — одна функция
+  `resume_refusal(state, answer) -> str` в `src/loop/session.py` («» — можно); её зовут и `run_resume`
+  (CLI, до запуска агентов), и `_resume_config`. Копии условия нет.
+- **Отказы, код 1, прогон и дерево не трогаются:**
+  - `stopped` без `snapshot_ref` или `base` → «снимка нет, запусти `tero go`»;
+  - `reason=secrets` → «стоп по секретам: разберись с файлами и запусти `tero go`»;
+  - другая причина (`snapshot_failed`, `interrupted`, …) → «resume для причины `<reason>` не умеет»;
+  - ветка прогона `tero/<slug>` ушла вперёд (её HEAD не равен `base`: после стопа был `tero go` или ручной
+    коммит) → «ветка прогона ушла вперёд, запусти `tero go`»;
+  - статус `done` и все прочие статусы, кроме `judge_pending`, → прежний текст «resume для `<status>` пока не
+    умеет» (его проверяет `tests/loop/test_resume_judge.py`, текст не менять).
+- **Причина `user`** (судья спросил человека; вопрос лежит в `state.json.text`). Без `--answer` → код 1,
+  «прогон ждал ответа: `tero resume --answer "…"`», ниже строка с вопросом. С `--answer` текст
+  (секреты вычищены `scrub_secrets`, обрезан до 2000 символов) кладётся в `PhaseState.answer` и идёт в
+  промпты судьи и исполнителя **этой фазы** (во всех её раундах, в следующих фазах нет) **только** в
+  размеченном блоке «Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила гейтов)». Блок
+  строит одна функция `answer_block(text) -> str` в `src/loop/prompts.py` (её же возьмёт `answer` в фазе 2);
+  `player_prompt` и `judge_prompt` получают параметр `answer: str = ""`, при пустом — промпт байт в байт
+  прежний. Для других причин `--answer` тоже принимается и идёт тем же блоком.
+- **Дерево:** лок, ветка прогона и дерево — как у `judge_pending` (`_restore_resume_tree`: ручные правки в
+  `before-resume`, дерево = `snapshot_ref`).
+- **Эталон защиты — `base`, а не восстановленное дерево.** Хэши набора тестов, конфиги агентов и план
+  берутся из коммита `base` (как сейчас план в `_remember_plan`): например, `git archive base` во временную
+  папку и `file_hashes`/`_snapshot_guarded` по ней. Иначе тест, ослабленный исполнителем в снимке, станет
+  эталоном и не попадёт в `suite_delta` судьи.
+- **Порядок первой фазы** (`gate_first=True`): защита тестов → гейт на дереве снимка. Гейт красный → судья
+  не вызывается, вывод гейта идёт исполнителю, дальше обычный раунд. Гейт зелёный или тестов нет → судья по
+  снимку (снимок на входе в судью с тем же именем раунда — это то же дерево, не находка). Судья слепой и
+  вывода гейта не видит, поэтому без гейта он мог бы сдать красный код. У `judge_pending` гейт уже прошёл:
+  там порядок прежний, без гейта.
+- **Продолжение кода:** если судья не сдал фазу, у исполнителя следующего раунда блок продолжения с
+  `git diff base..ref` (`PhaseState.resume_ref/resume_base/resume_active` выставляются при входе; сейчас у
+  `judge_pending` они не выставляются, и это не меняется).
+- **Раунды:** номера продолжаются со старого `state.json.round`: следующий раунд `round + 1`, имена снимков
+  `phase-NN-roundNN` старых раундов не затираются. Лимит этой фазы — `round_limit = round + max_rounds`
+  (проверка `fuse` в `phase.py` сравнивает с ним, по умолчанию с `cfg.max_rounds`, как сейчас). Следующие
+  фазы прогона — с раунда 1 и обычным лимитом. История «нет прогресса» пустая, эскалация не переносится.
+- **Дальше** — обычный цикл `session.run_phases` до конца плана. Стоп продолженного прогона — как в
+  `tero go`: снимок, откат, `stopped`; его можно снова продолжить `resume`.
+- **Сбой настройки** `resume` (пульс, журнал, восстановление дерева, исключение до первой фазы) возвращает
+  то, что было до `resume`: `status=stopped`, прежние `reason` и `text`, `snapshot_ref` и `base` не тронуты;
+  лок свободен. `_restore_pending` у `judge_pending` не меняется.
+- **Журнал:** событие `resume` в `ledger.jsonl` — прежние поля (`status`, `round`, `ref`) плюс
+  `from_reason`. Смена статуса — как сейчас, через `resume_transition`.
+- Вне этой фазы: точки решения без выхода из процесса (фаза 2), `resume` после краша (фаза 7), продолжение
+  `secrets` и `interrupted`.
+
+Тесты — через фейки `tests/loop/fakes.py` (`FakeAgents`, `player_writes`, `judge_returns`, `no_ship`,
+`ship`), как в `tests/loop/test_resume_judge.py`: сначала `run(...)` доводит прогон до нужного `stopped`,
+потом `resume(...)`.
+
+- [ ] `test_resume_stopped_stuck_continues_from_ref`: прогон `stuck` → `resume` → гейт и судья по дереву ref (файл исполнителя на месте до вызова судьи); судья NO_SHIP → исполнитель следующего раунда получает блок продолжения с диффом ref; дальше SHIP, фаза сдана, код 0
+- [ ] `test_resume_stopped_red_gate_skips_judge`: в ref красный тест → `resume` → судья не вызван, исполнитель получил вывод гейта; ослабленный в ref старый тест есть в `suite_delta` промпта судьи следующего раунда
+- [ ] `test_resume_stopped_fuse_new_round_budget`: `fuse` при `max_rounds=2` → `resume` → раунды 3 и 4, снимки раундов 1–2 на месте, снова `fuse` только после раунда 4
+- [ ] `test_resume_user_needs_answer`: стоп `user` без `--answer` → код 1, в выводе вопрос; с `--answer "используй sqlite"` → текст в промптах судьи и исполнителя внутри размеченного блока; без ответа промпты байт в байт прежние
+- [ ] `test_resume_stopped_refusals`: нет `snapshot_ref` → код 1 «снимка нет»; `secrets` → код 1; `interrupted` → код 1; ветка ушла вперёд → код 1; `done` → прежний текст (через CLI-подпроцесс `[sys.executable, "-m", "src.cli_entry", "resume", ...]`); во всех отказах `state.json` не изменился
+- [ ] `test_resume_stopped_setup_failure_keeps_status`: `Pulse` падает при старте → `state.json` снова `stopped` с прежними `reason`, `text`, `snapshot_ref`; лок свободен
 - [ ] реализовать
 
 ## Точки решения: answer, skip, stop, долг
@@ -139,7 +181,16 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
   **не откатывается**, пока ждём (при `secrets` индекс очищается, файлы лежат на месте).
 - Цикл ожидания владельца: раз в `DECISION_POLL_S = 10` `Inbox.take(...)`, после каждой итерации —
   `pulse.progress()`. В этой фазе ждём бесконечно (таймауты — фаза 4).
-- `answer <текст>` → новый раунд той же фазы; в промпты player и judge следующего раунда текст идёт
+- id вопроса — `<номер фазы>-<номер точки решения в фазе>` (спека, «Вопрос и его id»): первая точка фазы 1 —
+  `1-1`, следующая — `1-2`. Счётчик точек — в `state.json` (`decision_seq`), чтобы фаза 7 восстановила тот
+  же id.
+- `question.actions` — `actions_for(reason)` из `src/loop/decision.py`, но в этой фазе только реализованные:
+  пересечение с `answer|skip|stop` (`more|model|retry|allow|wait` добавит фаза 3, `judge_pending` — фаза 5).
+  Причина без действий (`snapshot_failed` и другие вне `ACTIONS_BY_REASON`) → точку решения не открывать,
+  прежний стоп (`_halt` как при `decisions=False`): иначе прогон ждёт вечно.
+- `inbox/compact.json` и `inbox/stop.json` — служебные файлы, а не ответы: `Inbox.take` их не принимает и
+  `.result` на них не пишет.
+- `answer <текст>` (только для причины `user`) → новый раунд той же фазы, блок `answer_block` из фазы 1; в промпты player и judge следующего раунда текст идёт
   **только** в размеченном блоке «Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила
   гейтов)».
 - `skip` → снимок + откат фазы к чекпоинту (как сейчас `_rollback_with_snapshot`), фаза в долг:
@@ -157,6 +208,7 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
 
 - [ ] `test_halt_opens_question_tree_untouched`: `decisions=True`, фейковый судья `NEEDS_USER` → `waiting_human`, `question.id == "1-1"`, файлы исполнителя на месте, `tree_sha` записан
 - [ ] `test_halt_without_decisions_unchanged`: `decisions=False` → `stopped` и откат, как раньше
+- [ ] `test_question_actions_only_implemented`: `stuck` → `question.actions == ["skip", "stop"]`; ответ `more` отклонён «действие недопустимо»; `snapshot_failed` → прежний `stopped` без вопроса
 - [ ] `test_answer_goes_to_prompts_marked`: ответ `answer "используй sqlite"` → в промптах player и judge раунда 2 текст внутри размеченного блока
 - [ ] `test_skip_is_debt_and_exit_4`: фаза 1 `stuck` → `skip` → фаза 2 сдана, `debt` с фазой 1, код 4, чекбоксы фазы 1 `[ ]`
 - [ ] `test_stop_rolls_back_exit_2`: `stop` → снимок в `refs/tero/...`, дерево у чекпоинта, код 2
@@ -170,8 +222,12 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
 `src/loop/prompts.py` (блок «эти файлы не создавать»); в `src/loop/phase.py` — только вызовы, без роста
 файла; тесты в `tests/loop/test_decision.py`.
 
+- `question.actions` теперь — полный `actions_for(reason)`, кроме `judge_pending` (фаза 5). Тест фазы 2
+  `test_question_actions_only_implemented` переписывается под это (он в «Меняются старые тесты» этой фазы):
+  `stuck` → `more|model|skip|stop`, `snapshot_failed` по-прежнему без вопроса.
 - `more` → ещё 5 раундов, в которых детектор «нет прогресса» не останавливает фазу; после пятого —
-  точка решения с причиной `fuse`. Эскалацию не отменяет.
+  точка решения с причиной `fuse`. Эскалацию не отменяет. Лимит раундов
+  сдвигается тем же `round_limit`, что в фазе 1.
 - `model <player|tester> <провайдер[:модель]>` → роль сменена до конца фазы, со следующего раунда; модель
   должна быть известна (`KNOWN_PROVIDERS`), иначе отказ при приёме. `model judge` уже отклоняется при приёме (`src/loop/inbox.py`).
 - `retry` → повторить вызов провайдера (тот же раунд); после `secrets` — снимок, откат, фаза заново, а
@@ -185,6 +241,8 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
   `state.json.budget[<фаза>]`, переживает `resume`. Исчерпан → в вопросе остаются только `skip|stop`, другие
   действия отклоняются «бюджет исчерпан». У `human` бюджета нет.
 - Вне этой фазы: таймауты ожидания, аренда, автопилот (фаза 4).
+
+Меняются старые тесты: `test_question_actions_only_implemented` (`tests/loop/test_decision.py`).
 
 - [ ] `test_more_gives_five_rounds_without_stuck`: фейк без прогресса → `more` → 5 раундов без `stuck`, потом вопрос `fuse`
 - [ ] `test_model_switches_next_round`: `model player opencode:x` → раунд 2 исполнитель `opencode:x`; неизвестный провайдер отклонён
@@ -234,13 +292,13 @@ inbox и `tero answer` (`src/loop/inbox.py`, `src/loop/decision.py`, `src/relay/
 (новые тесты в конец файла) и `tests/loop/test_autopilot.py`.
 
 - При `decisions=True` три сбоя судьи → `status=judge_pending` и точка решения с причиной `judge_pending`
-  (действия `retry|skip|stop`), процесс не выходит и держит лок; `wait` даёт 3.
+  (действия `retry|skip|stop`, в `question.actions` теперь и для этой причины), процесс не выходит и держит лок; `wait` даёт 3.
 - `retry` → новый вызов судьи на том же `snapshot_ref`, исполнитель не вызывается; от агента/автопилота —
   в бюджет 3.
 - Автопилот для `judge_pending`: только `retry` (в бюджет), после исчерпания — `skip` в долг.
   «Принять вручную» и «отклонить» — только человек: действия `accept` и `reject` доступны только
   `who=human` (`accept` → фаза сдана с этим ref, `reject` → как `retry` исполнителя с новым раундом).
-- При `decisions=False` поведение шага 2а не меняется (выход с кодом 3, `tero resume` с судьи).
+- При `decisions=False` поведение не меняется (выход с кодом 3, `tero resume` с судьи).
 
 - [ ] `test_judge_pending_waits_holding_lock`: судья трижды мусор, `decisions=True` → процесс жив, лок занят, `wait_run` → 3
 - [ ] `test_judge_pending_retry_calls_judge_only`: `retry` → вызван только судья, на том же ref
