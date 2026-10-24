@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,47 @@ def _read_payload(path: Path) -> dict[str, Any] | None:
     return data
 
 
+def inbox_dir(run_dir: str | Path, create: bool = False) -> Path | None:
+    """`<run_dir>/inbox`, если это настоящая папка внутри прогона, иначе None.
+
+    Симлинк вместо папки увёл бы записи `answer`/`compact`/`.result` за
+    пределы `run_dir`, поэтому такая папка не принимается вовсе.
+    """
+    run = Path(run_dir)
+    inbox = run / "inbox"
+    try:
+        if create and not inbox.is_symlink():
+            inbox.mkdir(parents=True, exist_ok=True)
+        if inbox.is_symlink() or not inbox.is_dir():
+            return None
+        if inbox.resolve().parent != run.resolve():
+            return None
+    except OSError:
+        return None
+    return inbox
+
+
+def write_inbox_file(run_dir: str | Path, name: str, text: str) -> bool:
+    """Атомарно положить `inbox/<name>` (временный файл + rename). False при отказе."""
+    inbox = inbox_dir(run_dir, create=True)
+    if inbox is None or "/" in name or name in ("", ".", ".."):
+        return False
+    tmp_name = ""
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix=f"{name}.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp_name, inbox / name)
+    except OSError:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        return False
+    return True
+
+
 def _cap(action: str, text: Any) -> str:
     text = text if isinstance(text, str) else ""
     if action == "answer" and len(text) > TEXT_CAP:
@@ -55,34 +98,30 @@ class Inbox:
         self._state = RunState(self.run_dir / "state.json")
 
     def _inbox_files(self) -> list[Path]:
-        inbox = self.run_dir / "inbox"
+        inbox = inbox_dir(self.run_dir)
+        if inbox is None:
+            return []
         try:
-            if not inbox.is_dir():
-                return []
-            return sorted(p for p in inbox.glob("*.json") if p.is_file())
+            return sorted(
+                p for p in inbox.glob("*.json") if p.is_file() and not p.is_symlink()
+            )
         except OSError:
             return []
 
-    def _result_path(self, uid: str) -> Path | None:
-        if not _is_safe_uuid(uid):
-            return None
-        try:
-            inbox = (self.run_dir / "inbox").resolve()
-            target = (inbox / f"{uid}.result").resolve()
-        except OSError:
-            return None
-        if target.parent != inbox:
-            return None
-        return target
-
     def _write_result(self, uid: str, text: str, overwrite: bool = False) -> None:
-        target = self._result_path(uid)
-        if target is None:
+        inbox = inbox_dir(self.run_dir)
+        if inbox is None or not _is_safe_uuid(uid):
+            return
+        # O_NOFOLLOW: a symlink planted at <uid>.result is never written through
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        flags |= os.O_TRUNC if overwrite else os.O_EXCL
+        try:
+            fd = os.open(inbox / f"{uid}.result", flags, 0o644)
+        except OSError:
             return
         try:
-            if not overwrite and target.exists():
-                return
-            target.write_text(text, encoding="utf-8")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
         except OSError:
             pass
 

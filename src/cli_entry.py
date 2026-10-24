@@ -289,12 +289,12 @@ def _answer_poll_s() -> float:
 def run_answer(args) -> int:
     """Write inbox/<uuid>.json and wait for the owner's .result verdict."""
     import json
-    import os
     import sys as _sys
     import time
     import uuid as _uuid
 
     from src.errors import scrub_data, scrub_secrets
+    from src.loop.inbox import write_inbox_file
 
     repo = Path(args.working_dir).expanduser().resolve()
     run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
@@ -319,32 +319,12 @@ def run_answer(args) -> int:
             "ts": time.time(),
         }
     )
-    inbox = run_dir / "inbox"
-    try:
-        inbox.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        print("не могу записать inbox")
-        return 1
-    import tempfile
-
     raw = json.dumps(payload, ensure_ascii=False)
-    try:
-        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix=f"{uid}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(raw)
-            os.replace(tmp_name, inbox / f"{uid}.json")
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
-    except Exception:
+    if not write_inbox_file(run_dir, f"{uid}.json", raw):
         print("не могу записать inbox")
         return 1
     deadline = time.monotonic() + _answer_wait_s()
-    result_path = inbox / f"{uid}.result"
+    result_path = run_dir / "inbox" / f"{uid}.result"
     while time.monotonic() < deadline:
         try:
             text = result_path.read_text(encoding="utf-8")
@@ -366,6 +346,7 @@ def run_compact(args) -> int:
     import json
     import time
 
+    from src.loop.inbox import write_inbox_file
     from src.loop.state import RunState
 
     repo = Path(args.working_dir).expanduser().resolve()
@@ -380,26 +361,8 @@ def run_compact(args) -> int:
         print("прогон не идёт")
         return 1
     role = getattr(args, "role", "player") or "player"
-    inbox = run_dir / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
-    target = inbox / "compact.json"
     payload = json.dumps({"role": role, "ts": time.time()}, ensure_ascii=False)
-    import os
-
-    tmp_name = ""
-    try:
-        import tempfile
-
-        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix="compact.", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        os.replace(tmp_name, target)
-    except Exception:
-        try:
-            if tmp_name:
-                os.unlink(tmp_name)
-        except OSError:
-            pass
+    if not write_inbox_file(run_dir, "compact.json", payload):
         print("не могу записать compact.json")
         return 1
     print(f"запрошен компакт `{role}`")

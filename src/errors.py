@@ -72,6 +72,9 @@ def classify_error(exc: BaseException | None, text: str) -> str:
     return "other"
 
 
+MIN_SECRET_LEN = 8
+
+
 def scrub_data(value: Any) -> Any:
     """Scrub strings inside nested containers so lists/dicts in stream/state/ledger stay clean."""
     if isinstance(value, str):
@@ -91,7 +94,9 @@ def scrub_secrets(text: str) -> str:
     redacted = text
     for name, value in os.environ.items():
         folded = name.upper()
-        if ("KEY" in folded or "TOKEN" in folded or "SECRET" in folded) and value:
+        # short values are flags ("1", "true"), not keys: replacing them
+        # would mangle every "1" in refs, ids and text
+        if ("KEY" in folded or "TOKEN" in folded or "SECRET" in folded) and len(value) >= MIN_SECRET_LEN:
             redacted = redacted.replace(value, "[redacted]")
     # Generic long key/token assignments: `key=...`, `token: ...`, bearer etc.
     redacted = re.sub(

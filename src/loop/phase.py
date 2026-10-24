@@ -29,6 +29,7 @@ from src.loop.git import (
     write_tree,
 )
 from src.errors import scrub_data, scrub_secrets
+from src.loop.inbox import inbox_dir
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
@@ -537,6 +538,8 @@ class _PhaseRunner:
         import os
         import time
 
+        if inbox_dir(self.run_dir) is None:
+            return False
         target = self._compact_file(role)
         claimed = target.parent / f"compact.{os.getpid()}.{time.monotonic_ns()}.claimed"
         try:
