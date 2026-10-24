@@ -258,11 +258,11 @@
   UUID из `applied_uuids` повторно не применяется.
 - Вне этой фазы: кто открывает вопрос и что делают действия (фазы 9–10); ожидание и аренда (фаза 11).
 
-- [ ] `test_answer_writes_inbox_and_prints_result`: CLI-подпроцесс `answer` + фейковый владелец в тесте пишет `.result` → вывод «принято»
-- [ ] `test_two_answers_one_wins` (Review Focus 4): два ответа на один id → принят первый, второй получил «уже отвечено: agent, skip»; `FakeRelay` с ответом человека → выигрывает человек, хотя локальный файл старше
-- [ ] `test_answer_rejects`: чужой id, недопустимое действие, `model judge`, `allow` от агента → свои тексты отказа, `state.json` не изменён
-- [ ] `test_applied_uuid_not_reapplied`: тот же uuid второй раз → не применён, журнал решений не вырос
-- [ ] `test_answer_text_capped`: текст 5000 символов → в `state.json` 2000
+- [x] `test_answer_writes_inbox_and_prints_result`: CLI-подпроцесс `answer` + фейковый владелец в тесте пишет `.result` → вывод «принято»
+- [x] `test_two_answers_one_wins` (Review Focus 4): два ответа на один id → принят первый, второй получил «уже отвечено: agent, skip`; `FakeRelay` с ответом человека → выигрывает человек, хотя локальный файл старше
+- [x] `test_answer_rejects`: чужой id, недопустимое действие, `model judge`, `allow` от агента → свои тексты отказа, `state.json` не изменён
+- [x] `test_applied_uuid_not_reapplied`: тот же uuid второй раз → не применён, журнал решений не вырос
+- [x] `test_answer_text_capped`: текст 5000 символов → в `state.json` 2000
 - [x] реализовать
 
 ## Точки решения: answer, skip, stop, долг

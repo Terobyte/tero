@@ -103,6 +103,15 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--run", type=str, default=None)
     status_parser.add_argument("--json", action="store_true", default=False)
 
+    answer_parser = subparsers.add_parser("answer", help="Answer the open decision question")
+    answer_parser.add_argument("question_id", type=str)
+    answer_parser.add_argument("action", type=str)
+    answer_parser.add_argument("text", type=str, nargs="?", default="")
+    answer_parser.add_argument("--why", type=str, required=True)
+    answer_parser.add_argument("--human", action="store_true", default=False)
+    answer_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    answer_parser.add_argument("--run", type=str, default=None)
+
     return parser
 
 
@@ -259,6 +268,96 @@ def run_status(args) -> int:
     return 0
 
 
+def _answer_wait_s() -> float:
+    import os as _os
+
+    try:
+        return max(0.0, float(_os.environ.get("TERO_ANSWER_WAIT_S", "60")))
+    except ValueError:
+        return 60.0
+
+
+def _answer_poll_s() -> float:
+    import os as _os
+
+    try:
+        return max(0.001, float(_os.environ.get("TERO_ANSWER_POLL_S", "0.2")))
+    except ValueError:
+        return 0.2
+
+
+def run_answer(args) -> int:
+    """Write inbox/<uuid>.json and wait for the owner's .result verdict."""
+    import json
+    import os
+    import sys as _sys
+    import time
+    import uuid as _uuid
+
+    from src.errors import scrub_data, scrub_secrets
+
+    repo = Path(args.working_dir).expanduser().resolve()
+    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    if run_dir is None:
+        run_dir = _latest_run_dir(repo)
+    if run_dir is None or not (run_dir / "state.json").is_file():
+        print("Прогонов нет.")
+        return 1
+    if getattr(args, "human", False) and _sys.stdin.isatty():
+        who = "human"
+    else:
+        who = "agent"
+    uid = _uuid.uuid4().hex
+    payload = scrub_data(
+        {
+            "uuid": uid,
+            "question_id": args.question_id,
+            "action": args.action,
+            "text": args.text or "",
+            "why": args.why,
+            "who": who,
+            "ts": time.time(),
+        }
+    )
+    inbox = run_dir / "inbox"
+    try:
+        inbox.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        print("не могу записать inbox")
+        return 1
+    import tempfile
+
+    raw = json.dumps(payload, ensure_ascii=False)
+    try:
+        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix=f"{uid}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(raw)
+            os.replace(tmp_name, inbox / f"{uid}.json")
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        print("не могу записать inbox")
+        return 1
+    deadline = time.monotonic() + _answer_wait_s()
+    result_path = inbox / f"{uid}.result"
+    while time.monotonic() < deadline:
+        try:
+            text = result_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        if text:
+            print(scrub_secrets(text))
+            return 0
+        time.sleep(_answer_poll_s())
+    print("владелец не ответил")
+    return 1
+
+
 def run_compact(args) -> int:
     """Request a compact: write inbox/compact.json without touching state.json.
 
@@ -413,6 +512,8 @@ def main():
         sys.exit(run_wait(args))
     elif args.command == "status":
         sys.exit(run_status(args))
+    elif args.command == "answer":
+        sys.exit(run_answer(args))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 
