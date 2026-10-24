@@ -310,12 +310,12 @@
 - Меняются старые тесты: нет.
 - Вне этой фазы: `menu.py`, `config.py`, провайдеры (их потолки остаются как есть).
 
-- [ ] `test_run_and_resume_share_loop`: по `ast` `run_phase` вызывается в `src/loop/` ровно в одном месте — в `session.run_phases`
-- [ ] `test_resume_does_not_launch_hud`: `resume` с подменённым запуском HUD → запуск не вызван; `run` → вызван один раз
-- [ ] `test_cli_help_lists_commands`: подпроцесс `python -m src.cli_entry --help` → в выводе `go`, `history`, `hud`, `wait`, `status`, `answer`, `compact`, `review`, `resume`
-- [ ] `test_run_reexports`: имена из списка выше импортируются из `src.loop.run`, `run_review` и `run_answer` — из `src.cli_entry`
-- [ ] `test_run_py_sizes`: `src/loop/run.py` ≤ 450, `src/cli_entry.py` ≤ 300, ни одна функция в `src/loop/` и `src/commands/` не длиннее 120 строк
-- [ ] реализовать
+- [x] `test_run_and_resume_share_loop`: по `ast` `run_phase` вызывается в `src/loop/` ровно в одном месте — в `session.run_phases`
+- [x] `test_resume_does_not_launch_hud`: `resume` с подменённым запуском HUD → запуск не вызван; `run` → вызван один раз
+- [x] `test_cli_help_lists_commands`: подпроцесс `python -m src.cli_entry --help` → в выводе `go`, `history`, `hud`, `wait`, `status`, `answer`, `compact`, `review`, `resume`
+- [x] `test_run_reexports`: имена из списка выше импортируются из `src.loop.run`, `run_review` и `run_answer` — из `src.cli_entry`
+- [x] `test_run_py_sizes`: `src/loop/run.py` ≤ 450, `src/cli_entry.py` ≤ 300, ни одна функция в `src/loop/` и `src/commands/` не длиннее 120 строк
+- [x] реализовать
 
 ---
 

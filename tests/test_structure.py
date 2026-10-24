@@ -8,18 +8,15 @@ ROOT = Path(__file__).resolve().parent.parent
 
 FILE_CEILINGS = {
     "src/loop/phase.py": 849,
-    "src/loop/run.py": 848,
+    "src/loop/run.py": 447,
     "src/menu.py": 548,
     "src/providers/codex.py": 540,
-    "src/cli_entry.py": 454,
     "src/config.py": 516,
     "src/loop/agents.py": 459,
     "src/providers/subprocess_runner.py": 403,
 }
 
 FUNC_CEILINGS = {
-    "src/loop/run.py::run": 334,
-    "src/loop/run.py::resume": 279,
     "src/providers/subprocess_runner.py::run_subprocess_jsonl": 262,
 }
 

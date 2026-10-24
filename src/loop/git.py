@@ -46,6 +46,37 @@ def run_branch_exists(repo: str | Path, slug: str) -> bool:
     return _branch_exists(repo, _run_branch(slug))
 
 
+def force_checkout_run_branch(repo: str | Path, slug: str) -> str:
+    """Вернуться на ветку прогона, не теряя незакоммиченную работу.
+
+    before-resume уже снят до вызова, поэтому конфликтующие правки можно
+    сбросить: checkout идёт с `-f`, дерево дальше выравнивается на ref.
+    Новую ветку (её ещё нет) создаём как обычно.
+    """
+    name = slug if slug.startswith("tero/") else f"tero/{slug}"
+    if run_branch_exists(repo, slug):
+        _force_checkout(repo, name)
+    else:
+        checkout_run_branch(repo, slug)
+    return name
+
+
+def _force_checkout(repo: str | Path, name: str) -> None:
+    try:
+        proc = subprocess.run(
+            ["git", "checkout", "-f", name],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise GitError(f"git checkout -f {name} failed: {exc}") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise GitError(f"git checkout -f {name} failed: {err}")
+
+
 def _run_branch(slug: str) -> str:
     return slug if slug.startswith("tero/") else f"tero/{slug}"
 
