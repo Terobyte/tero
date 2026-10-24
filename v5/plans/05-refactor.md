@@ -200,10 +200,10 @@
 - Меняются старые тесты: нет.
 - Вне этой фазы: компакт, тестер, судья (фазы 6–7).
 
-- [ ] `test_suite_guard_imports_no_phase`: по `ast` `src/loop/suite_guard.py` не импортирует `src.loop.phase` и `src.loop.run`
-- [ ] `test_is_test_path_same_object`: `src.loop.phase.is_test_path is src.loop.suite_guard.is_test_path`
-- [ ] `test_snapshot_guarded_direct`: прямой вызов `suite_guard._snapshot_guarded` на репо в `tmp_path` с `conftest.py`, `AGENTS.md` и симлинком на папку → те же записи, что в `_PhaseRunner(...).guarded`
-- [ ] реализовать
+- [x] `test_suite_guard_imports_no_phase`: по `ast` `src/loop/suite_guard.py` не импортирует `src.loop.phase` и `src.loop.run`
+- [x] `test_is_test_path_same_object`: `src.loop.phase.is_test_path is src.loop.suite_guard.is_test_path`
+- [x] `test_snapshot_guarded_direct`: прямой вызов `suite_guard._snapshot_guarded` на репо в `tmp_path` с `conftest.py`, `AGENTS.md` и симлинком на папку → те же записи, что в `_PhaseRunner(...).guarded`
+- [x] реализовать
 
 ## phase.py: контекст фазы, компакт и тестер в свои модули
 
