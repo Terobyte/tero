@@ -198,6 +198,7 @@ async def run_phase(
     start_with_judge: bool = False,
     start_checkpoint: str = "",
     start_round: int = 0,
+    pulse: Any = None,
 ) -> PhaseOutcome:
     runner = _PhaseRunner(
         phase=phase,
@@ -212,6 +213,7 @@ async def run_phase(
         start_with_judge=start_with_judge,
         start_checkpoint=start_checkpoint,
         start_round=start_round,
+        pulse=pulse,
     )
     return await runner.run()
 
@@ -232,10 +234,12 @@ class _PhaseRunner:
         start_with_judge: bool = False,
         start_checkpoint: str = "",
         start_round: int = 0,
+        pulse: Any = None,
     ) -> None:
         self.start_with_judge = start_with_judge
         self.start_checkpoint = start_checkpoint
         self.start_round = start_round
+        self.pulse = pulse
         self.phase = phase
         self.total_phases = total_phases
         self.repo = repo
@@ -275,6 +279,15 @@ class _PhaseRunner:
         clean = {k: scrub_data(v) for k, v in fields.items()}
         self.state_io.update(**clean)
 
+    def _progress(self) -> None:
+        pulse = self.pulse
+        if pulse is None:
+            return
+        try:
+            pulse.progress()
+        except Exception:
+            pass
+
     def _tag(self) -> str:
         return f"[фаза {self.phase.index + 1}/{self.total_phases} · раунд {self.state.round}]"
 
@@ -295,8 +308,11 @@ class _PhaseRunner:
                 flush=True,
             )
             verdict = await self._judge()
+            self._progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
+                if outcome.status == "ship":
+                    self._progress()
                 return outcome
             # F9: resumed judge returned non-terminal verdict — keep the
             # saved round so the normal cycle continues with start_round + 1.
@@ -329,6 +345,7 @@ class _PhaseRunner:
                 flush=True,
             )
             player_ok = await self._player()
+            self._progress()
             if player_ok is None:
                 if self.state.stop_reason == "snapshot_failed":
                     return self._halt("snapshot_failed")
@@ -345,6 +362,7 @@ class _PhaseRunner:
                     return self._halt("stuck")
                 continue
             gate = self._gate()
+            self._progress()
             if gate is not None and not gate.ok:
                 if self._same_red(gate):
                     if not self._in_continuation() and self._no_progress():
@@ -358,8 +376,11 @@ class _PhaseRunner:
                 flush=True,
             )
             verdict = await self._judge()
+            self._progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
+                if outcome.status == "ship":
+                    self._progress()
                 return outcome
 
     async def _after_judge(self, verdict: _Next) -> PhaseOutcome | None:
@@ -380,6 +401,7 @@ class _PhaseRunner:
                     flush=True,
                 )
                 tester_ok = await self._tester()
+                self._progress()
                 if tester_ok is None:
                     return self._halt(self.state.stop_reason or "provider_unavailable")
                 if not tester_ok:

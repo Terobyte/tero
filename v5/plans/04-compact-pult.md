@@ -165,10 +165,10 @@
   `judge_timeout_s`, `tester_timeout_s`, `test_timeout_s`, `stall_timeout_s` + 300.
 - Вне этой фазы: кто и как читает пульс (`tero wait`, фаза 6).
 
-- [ ] `test_pulse_alive_ticks`: `interval_s=0.05` → `alive` растёт, после `stop()` поток завершён
-- [ ] `test_pulse_progress_after_each_step`: прогон с фейками на одну фазу → `progress` вырос на число шагов, `progress_ts` свежий
-- [ ] `test_pulse_write_error_does_not_crash_run`: папка прогона только для чтения при записи пульса → прогон доходит до конца
-- [ ] `test_state_has_hang_after_s`: после старта в `state.json` поле `hang_after_s` = max таймаутов + 300
+- [x] `test_pulse_alive_ticks`: `interval_s=0.05` → `alive` растёт, после `stop()` поток завершён
+- [x] `test_pulse_progress_after_each_step`: прогон с фейками на одну фазу → `progress` вырос на число шагов, `progress_ts` свежий
+- [x] `test_pulse_write_error_does_not_crash_run`: папка прогона только для чтения при записи пульса → прогон доходит до конца
+- [x] `test_state_has_hang_after_s`: после старта в `state.json` поле `hang_after_s` = max таймаутов + 300
 - [x] реализовать
 
 ## tero wait и tero status

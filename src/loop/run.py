@@ -9,7 +9,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from src.config import (
     Config,
@@ -88,6 +88,8 @@ async def run(
                            pid=os.getpid(), pid_started=pid_started)
     except Exception:
         pass
+    from src.loop import pulse as pulse_mod
+
     try:
         state.update(
             status=Status.STARTING.value,
@@ -96,9 +98,32 @@ async def run(
             plan=cfg.plan_file,
             doing="старт",
             config=_public_config(cfg),
+            hang_after_s=max(
+                cfg.player_timeout_s,
+                cfg.judge_timeout_s,
+                cfg.tester_timeout_s,
+                cfg.test_timeout_s,
+                cfg.stall_timeout_s,
+            )
+            + 300,
         )
     except Exception:
         pass
+    pulse = None
+    try:
+        pulse = pulse_mod.Pulse(run_dir)
+    except Exception:
+        # F4: a ticker that never started must surface — but without
+        # leaking the repo lock or the registry entry.
+        try:
+            lock.release()
+        except Exception:
+            pass
+        try:
+            registry.unregister(run_dir.name)
+        except Exception:
+            pass
+        raise
     try:
         maybe_launch_hud(cfg, run_dir)
 
@@ -265,6 +290,7 @@ async def run(
                     test_command=command,
                     ledger=ledger,
                     total_phases=len(phases),
+                    pulse=pulse,
                 )
                 _print_phase_summary(phase, outcome, total=len(phases))
                 if outcome.status == "ship":
@@ -353,6 +379,11 @@ async def run(
         )
     finally:
         try:
+            if pulse is not None:
+                pulse.stop()
+        except Exception:
+            pass
+        try:
             registry.unregister(run_dir.name)
         except Exception:
             pass
@@ -421,6 +452,33 @@ async def resume(
     lock = acquire(repo_path)
     if lock is None:
         return _refuse("another run holds this repo")
+    from src.loop import pulse as pulse_mod
+
+    from src.loop.stream import Stream
+
+    done_io = RunState(run_path / "state.json")
+    stream = Stream(run_path / "stream.jsonl")
+    try:
+        saved_hang = state.get("hang_after_s")
+        if not isinstance(saved_hang, (int, float)):
+            done_io.update(
+                hang_after_s=max(
+                    cfg.player_timeout_s,
+                    cfg.judge_timeout_s,
+                    cfg.tester_timeout_s,
+                    cfg.test_timeout_s,
+                    cfg.stall_timeout_s,
+                )
+                + 300,
+            )
+    except Exception:
+        pass
+    # F5: resume owns the run again via the shared status helper — the
+    # starting transition is recorded in state.json, stream.jsonl and
+    # ledger.jsonl like every other status change, so a setup failure or
+    # early return below can restore judge_pending and a retry stays
+    # possible.
+    resume_pulse: Any = None
     slug = slugify(Path(cfg.plan_file).stem)
     registry = Registry()
     pid_started = current_pid_started()
@@ -432,11 +490,13 @@ async def resume(
     except Exception:
         pass
 
-    ledger = Ledger(run_path)
-    from src.loop.stream import Stream
+    ledger: Ledger | None = None
 
-    stream = Stream(run_path / "stream.jsonl")
-    done_io = RunState(run_path / "state.json")
+    def _ledger() -> Ledger:
+        nonlocal ledger
+        if ledger is None:
+            ledger = Ledger(run_path)
+        return ledger
 
     def _write_status_transition(
         *, status: str, reason: str, text: str, round_no: int = 0,
@@ -463,7 +523,7 @@ async def resume(
                     "done" if status == Status.DONE.value else "stop"
                 )
             )
-            ledger.event(
+            _ledger().event(
                 kind,
                 status=status, reason=reason, text=text, round=round_no,
             )
@@ -471,143 +531,188 @@ async def resume(
             pass
         if run_end:
             try:
-                ledger.event("run_end", reason=reason)
+                _ledger().event("run_end", reason=reason)
             except Exception:
                 pass
 
     try:
+        _write_status_transition(
+            status=Status.STARTING.value, reason="resume",
+            text="resume: старт", round_no=round_no,
+        )
+    except Exception:
+        pass
+
+    # F6: pulse startup and all subsequent setup live inside one
+    # try/finally that always stops the pulse and releases the lock,
+    # so a setup failure cannot leak the daemon ticker thread.
+    # F5: a Pulse startup failure also restores judge_pending first,
+    # so the retry stays possible (the starting transition above is
+    # already recorded in state.json, stream.jsonl and ledger.jsonl).
+    # Return without entering the phase loop: restore judge_pending so a
+    # fixed setup can be retried. Any other unexpected failure inside the
+    # whole resume body below (including a Ledger init failure or a crash
+    # in the judge loop) also restores judge_pending; the pulse still
+    # stops and the lock still releases via the outer finally.
+    def _restore_pending() -> None:
+        try:
+            _write_status_transition(
+                status=Status.JUDGE_PENDING.value, reason="resume_setup_failed",
+                text="resume: настройка не удалась, повтор возможен",
+                round_no=round_no,
+            )
+        except Exception:
+            pass
+
+    try:
+        try:
+            resume_pulse = pulse_mod.Pulse(run_path)
+        except Exception:
+            _restore_pending()
+            raise
         # F14: статус running — только после успешной настройки, иначе
         # любая ошибка checkout/восстановления оставляет judge_pending
         # и resume можно повторить.
-        exclude_tero(repo_path)
-        # F16: существующий before-resume не перезаписываем — повторные попытки
-        # сохраняют своё дерево в before-resume-2, -3, …, чтобы ручные правки
-        # первой попытки оставались доступны.
-        def _before_ref() -> str:
-            base_ref = f"refs/tero/{run_path.name}/before-resume"
-            if not snapshot_mod.verify(repo_path, base_ref):
-                return base_ref
-            n = 2
-            while snapshot_mod.verify(repo_path, f"{base_ref}-{n}"):
-                n += 1
-            return f"{base_ref}-{n}"
+        try:
+            # F16: существующий before-resume не перезаписываем — повторные попытки
+            # сохраняют своё дерево в before-resume-2, -3, …, чтобы ручные правки
+            # первой попытки оставались доступны.
+            def _before_ref() -> str:
+                base_ref = f"refs/tero/{run_path.name}/before-resume"
+                if not snapshot_mod.verify(repo_path, base_ref):
+                    return base_ref
+                n = 2
+                while snapshot_mod.verify(repo_path, f"{base_ref}-{n}"):
+                    n += 1
+                return f"{base_ref}-{n}"
 
-        before = _before_ref()
-        before_saved = False
-        if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
-            snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
-            before_saved = True
-        # Конфликтующие ручные правки не останавливают resume: before-resume
-        # уже сохранён, поэтому checkout идёт с -f, а дерево выравнивается
-        # на ref — судья получает код из ref.
-        _force_checkout_run_branch(repo_path, slug)
-        if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
-            if not before_saved:
-                before = _before_ref()
+            before = _before_ref()
+            before_saved = False
+            if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
                 snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
                 before_saved = True
-            snapshot_mod.restore_snapshot(repo_path, ref)
+            # Конфликтующие ручные правки не останавливают resume: before-resume
+            # уже сохранён, поэтому checkout идёт с -f, а дерево выравнивается
+            # на ref — судья получает код из ref.
+            _force_checkout_run_branch(repo_path, slug)
+            if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
+                if not before_saved:
+                    before = _before_ref()
+                    snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
+                    before_saved = True
+                snapshot_mod.restore_snapshot(repo_path, ref)
 
-        plan_path = repo_path / cfg.plan_file
-        if not plan_path.is_file():
-            return _refuse(f"plan not found: {plan_path}")
-        preamble = load_preamble(plan_path)
-        phases = load_phases(plan_path)
-        phase = next(
-            (p for p in phases if p.index == phase_index or p.title == phase_title),
-            None,
-        )
-        if phase is None:
-            return _refuse(f"фаза не найдена: {phase_title or phase_index}")
+            plan_path = repo_path / cfg.plan_file
+            if not plan_path.is_file():
+                _restore_pending()
+                return _refuse(f"plan not found: {plan_path}")
+            preamble = load_preamble(plan_path)
+            phases = load_phases(plan_path)
+            phase = next(
+                (p for p in phases if p.index == phase_index or p.title == phase_title),
+                None,
+            )
+            if phase is None:
+                _restore_pending()
+                return _refuse(f"фаза не найдена: {phase_title or phase_index}")
 
-        command = detect(
-            repo_path,
-            test_command=cfg.test_command,
-            test_command_scoped=cfg.test_command_scoped,
-        )
-        # F8: resume owns the run again — running from the start, so a later
-        # player snapshot can never be mistaken for a gate-passed ref.
-        # judge_pending returns only via the judge failing again below.
-        _write_status_transition(
-            status=Status.RUNNING.value, reason="resume",
-            text=f"resume: продолжаю с судьи (раунд {round_no})",
-            round_no=round_no,
-        )
-        ledger.event("resume", status=status, round=round_no, ref=ref)
-        shipped = sum(1 for p in phases if p.done)
-        start_index = next(
-            (i for i, p in enumerate(phases) if p.index == phase.index),
-            phase.index,
-        )
-
-        def _end(reason: str) -> None:
-            ledger.event(
-                "run_end",
-                reason=reason,
-                phases_shipped=shipped,
-                phases_total=len(phases),
+            command = detect(
+                repo_path,
+                test_command=cfg.test_command,
+                test_command_scoped=cfg.test_command_scoped,
+            )
+            # F8: resume owns the run again — running from the start, so a later
+            # player snapshot can never be mistaken for a gate-passed ref.
+            # judge_pending returns only via the judge failing again below.
+            _write_status_transition(
+                status=Status.RUNNING.value, reason="resume",
+                text=f"resume: продолжаю с судьи (раунд {round_no})",
+                round_no=round_no,
+            )
+            _ledger().event("resume", status=status, round=round_no, ref=ref)
+            shipped = sum(1 for p in phases if p.done)
+            start_index = next(
+                (i for i, p in enumerate(phases) if p.index == phase.index),
+                phase.index,
             )
 
-        index = start_index
-        first = True
-        outcome = None
-        while index < len(phases):
-            current = phases[index]
-            if current.done:
-                index += 1
-                continue
-            first_kwargs = (
-                {"start_checkpoint": base, "start_round": round_no}
-                if first else {}
-            )
-            first = False
-            outcome = await run_phase(
-                current,
-                repo=repo_path,
-                plan_path=plan_path,
-                preamble=preamble,
-                cfg=cfg,
-                agents=agents,
-                test_command=command,
-                ledger=ledger,
-                total_phases=len(phases),
-                start_with_judge=(current.index == phase.index),
-                **first_kwargs,
-            )
-            _print_phase_summary(current, outcome, total=len(phases))
-            if outcome.status == "ship":
-                shipped += 1
-                index += 1
-                continue
-            if outcome.status == "judge_pending":
+            def _end(reason: str) -> None:
+                _ledger().event(
+                    "run_end",
+                    reason=reason,
+                    phases_shipped=shipped,
+                    phases_total=len(phases),
+                )
+
+            index = start_index
+            first = True
+            outcome = None
+            while index < len(phases):
+                current = phases[index]
+                if current.done:
+                    index += 1
+                    continue
+                first_kwargs = (
+                    {"start_checkpoint": base, "start_round": round_no}
+                    if first else {}
+                )
+                first = False
+                outcome = await run_phase(
+                    current,
+                    repo=repo_path,
+                    plan_path=plan_path,
+                    preamble=preamble,
+                    cfg=cfg,
+                    agents=agents,
+                    test_command=command,
+                    ledger=_ledger(),
+                    total_phases=len(phases),
+                    start_with_judge=(current.index == phase.index),
+                    pulse=resume_pulse,
+                    **first_kwargs,
+                )
+                _print_phase_summary(current, outcome, total=len(phases))
+                if outcome.status == "ship":
+                    shipped += 1
+                    index += 1
+                    continue
+                if outcome.status == "judge_pending":
+                    _end(outcome.reason)
+                    return RunOutcome(
+                        status="judge_pending", exit_code=3, reason=outcome.reason,
+                        phases_shipped=shipped,
+                        phases_total=len(phases), run_dir=str(run_path),
+                    )
                 _end(outcome.reason)
+                _write_status_transition(
+                    status=Status.STOPPED.value,
+                    reason=outcome.reason,
+                    text=outcome.stop_text or outcome.reason,
+                    round_no=round_no,
+                )
                 return RunOutcome(
-                    status="judge_pending", exit_code=3, reason=outcome.reason,
+                    status="stop", exit_code=2, reason=outcome.reason,
                     phases_shipped=shipped,
                     phases_total=len(phases), run_dir=str(run_path),
                 )
-            _end(outcome.reason)
             _write_status_transition(
-                status=Status.STOPPED.value,
-                reason=outcome.reason,
-                text=outcome.stop_text or outcome.reason,
-                round_no=round_no,
+                status=Status.DONE.value, reason="ship", text="ship",
+                round_no=round_no, run_end=True,
             )
             return RunOutcome(
-                status="stop", exit_code=2, reason=outcome.reason,
-                phases_shipped=shipped,
-                phases_total=len(phases), run_dir=str(run_path),
+                status="ok", exit_code=0, reason="ship",
+                phases_shipped=shipped, phases_total=len(phases),
+                run_dir=str(run_path),
             )
-        _write_status_transition(
-            status=Status.DONE.value, reason="ship", text="ship",
-            round_no=round_no, run_end=True,
-        )
-        return RunOutcome(
-            status="ok", exit_code=0, reason="ship",
-            phases_shipped=shipped, phases_total=len(phases),
-            run_dir=str(run_path),
-        )
+        except Exception:
+            _restore_pending()
+            raise
     finally:
+        try:
+            if resume_pulse is not None:
+                resume_pulse.stop()
+        except Exception:
+            pass
         try:
             lock.release()
         except Exception:
