@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 
 from src.constants import DEFAULT_COMPACT_THRESHOLD
+from src.errors import ProviderStalled
 from .effort import normalize_effort
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
@@ -40,10 +41,13 @@ class ClaudeNativeConfig:
 
     command: str = "claude"
     default_model: str = "claude-sonnet-5"
+    stall_timeout_s: float = 0
 
 
 class ClaudeNativeProvider:
     """Native Claude CLI provider (Pro subscription)."""
+
+    streams = True
 
     def __init__(self, config: ClaudeNativeConfig | None = None):
         self.config = config or ClaudeNativeConfig()
@@ -78,10 +82,20 @@ class ClaudeNativeProvider:
         )
         env = self._clean_env()
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, env=env, stdin_data=prompt.encode())
+        _gen = run_subprocess_jsonl(
+            cmd,
+            working_dir,
+            env=env,
+            stdin_data=prompt.encode(),
+            stall_timeout=self.config.stall_timeout_s,
+        )
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
+                    if event.stalled:
+                        raise ProviderStalled(
+                            f"нет вывода {self.config.stall_timeout_s:g} с"
+                        )
                     if event.returncode != 0:
                         raise_for_exit("claude CLI", event.returncode, event.stderr)
                 else:

@@ -12,6 +12,7 @@ from src.constants import (
     LARGE_PROMPT_THRESHOLD_BYTES,
     MAX_TOOL_OUTPUT_CHARS,
 )
+from src.errors import ProviderStalled
 from .message_adapter import (
     AdaptedMessage,
     TextBlock,
@@ -31,6 +32,7 @@ class CodexConfig:
 
     command: str = "codex"  # Path to codex binary
     default_model: str = ""  # Empty string = default from ~/.codex/config.toml
+    stall_timeout_s: float = 0
     sandbox_mode: str = (
         "workspace-write"  # read-only | workspace-write | danger-full-access
     )
@@ -58,6 +60,8 @@ class CodexConfig:
 
 class CodexProvider:
     """Codex provider via native CLI (codex exec --json)."""
+
+    streams = True
 
     def __init__(self, config: CodexConfig | None = None):
         self.config = config or CodexConfig()
@@ -102,11 +106,19 @@ class CodexProvider:
         env = self._build_env(system_prompt)
 
         _gen = run_subprocess_jsonl(
-            cmd, working_dir, env=env, stdin_data=prompt.encode("utf-8")
+            cmd,
+            working_dir,
+            env=env,
+            stdin_data=prompt.encode("utf-8"),
+            stall_timeout=self.config.stall_timeout_s,
         )
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
+                    if event.stalled:
+                        raise ProviderStalled(
+                            f"нет вывода {self.config.stall_timeout_s:g} с"
+                        )
                     self._raise_for_returncode(event.returncode, event.stderr)
                 else:
                     adapted = self._adapt_codex_event(event)

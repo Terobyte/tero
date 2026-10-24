@@ -127,6 +127,7 @@ class Config:
     judge_timeout_s: int = 600
     tester_timeout_s: int = 300
     test_timeout_s: int = 900
+    stall_timeout_s: int = 900
     max_rounds: int = 15
     verbose: bool = False
 
@@ -333,6 +334,10 @@ _POSITIVE_FIELDS = {
     "test_timeout_s",
 }
 
+_NON_NEGATIVE_FIELDS = {
+    "stall_timeout_s",
+}
+
 
 def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
     """Coerce a yaml/env value to the dataclass field type; "" stays ""."""
@@ -353,6 +358,8 @@ def _coerce_value(field: str, value: Any, fallback: Any) -> Any:
             raise ConfigError(f"{field}: expected a number, got {value!r}") from None
         if field in _POSITIVE_FIELDS and number < 1:
             raise ConfigError(f"{field}: must be at least 1, got {number}")
+        if field in _NON_NEGATIVE_FIELDS and number < 0:
+            raise ConfigError(f"{field}: must be at least 0, got {number}")
         return number
     if isinstance(fallback, str):
         return str(value)

@@ -7,7 +7,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, load_provider_configs, resolve_config
+from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
 
 
 def _config_from_args(args) -> Config:
@@ -105,12 +105,10 @@ async def run_go(args, config: Config | None = None):
     print(f"тесты {loop_cfg.test_command or 'автодетект'}", flush=True)
 
     def _ready(provider: str, model: str) -> tuple[bool, str]:
-        from src.providers import create_provider
-
         try:
-            inst = create_provider(
-                provider, load_provider_configs(loop_cfg.working_dir).get(provider)
-            )
+            from src.loop.agents import _default_factory
+
+            inst = _default_factory(loop_cfg.working_dir)(provider)
         except Exception as exc:
             return False, str(exc)
         return inst.check_ready()

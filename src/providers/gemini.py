@@ -28,6 +28,8 @@ class GeminiProvider:
     parses JSONL stream-json output and yields AdaptedMessage objects.
     """
 
+    streams = False
+
     def __init__(self, config: GeminiConfig | None = None):
         self.config = config or GeminiConfig()
         self._last_input_tokens = 0

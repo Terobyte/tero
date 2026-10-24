@@ -10,6 +10,7 @@ from .message_adapter import (
     ToolResultBlock,
     wrap_system_prompt,
 )
+from src.errors import ProviderStalled
 from .effort import normalize_effort
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
@@ -37,6 +38,8 @@ class OpenCodeProvider:
     The user picks the model; the menu lists today's free ones
     from ``opencode models``.
     """
+
+    streams = True
 
     def __init__(self, config: OpenCodeConfig | None = None):
         self.config = config or OpenCodeConfig()
@@ -74,6 +77,10 @@ class OpenCodeProvider:
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
+                    if event.stalled:
+                        raise ProviderStalled(
+                            f"нет вывода {self.config.stall_timeout_s:g} с"
+                        )
                     self._raise_for_returncode(event.returncode, event.stderr, errors)
                 else:
                     if isinstance(event, dict) and event.get("type") == "error":

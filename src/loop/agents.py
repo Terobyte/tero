@@ -188,6 +188,7 @@ class LiveAgents:
                 if self._last_kind in ("timeout", "stall"):
                     self.last_error = self.error_text(role, timeout)
                     print(f"  {self.last_error}", flush=True)
+                    break  # timeout/stall never retry: phase decides (продолжение/judge_pending)
                 else:
                     print(f"  {provider_name} ошибка: {raw}", flush=True)
                 if attempt == 0 and self.retry_wait_s:
@@ -240,11 +241,24 @@ def _now() -> float:
 
 def _default_factory(working_dir: str) -> Callable[[str], Any]:
     def factory(name: str):
-        from src.config import load_provider_configs
+        from src.config import Config, load_provider_configs, resolve_config
         from src.providers import create_provider
 
         configs = load_provider_configs(working_dir)
-        return create_provider(name, configs.get(name))
+        entry = dict(configs.get(name) or {})
+        provider = create_provider(name, entry if entry else None)
+        if getattr(provider, "streams", False):
+            stall = entry.get("stall_timeout_s", None)
+            if stall is None:
+                try:
+                    stall = resolve_config({"working_dir": working_dir}).stall_timeout_s
+                except Exception:
+                    stall = Config().stall_timeout_s
+            try:
+                provider.config.stall_timeout_s = stall
+            except Exception:
+                pass
+        return provider
 
     return factory
 

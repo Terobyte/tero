@@ -5,7 +5,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
-from src.errors import ProviderError
+from src.errors import ProviderError, ProviderStalled
 from .effort import cursor_model_arg
 from .message_adapter import AdaptedMessage, TextBlock, ToolUseBlock, ToolResultBlock, wrap_system_prompt
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
@@ -20,6 +20,7 @@ class CursorConfig:
     display_name: str = "Cursor"
     force: bool = True
     trust: bool = True
+    stall_timeout_s: float = 0
 
 
 class CursorProvider:
@@ -28,6 +29,8 @@ class CursorProvider:
     ``-p`` is a boolean print-mode flag; the prompt is positional. Do not pass
     ``--worktree`` — tero already isolates via WorktreeManager.
     """
+
+    streams = True
 
     def __init__(self, config: CursorConfig | None = None):
         self.config = config or CursorConfig()
@@ -61,10 +64,16 @@ class CursorProvider:
             read_only=read_only,
         )
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
+        _gen = run_subprocess_jsonl(
+            cmd, working_dir, env=env, stall_timeout=self.config.stall_timeout_s
+        )
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
+                    if event.stalled:
+                        raise ProviderStalled(
+                            f"нет вывода {self.config.stall_timeout_s:g} с"
+                        )
                     self._raise_for_returncode(event.returncode, event.stderr)
                 else:
                     adapted = self._adapt_cursor_event(event)

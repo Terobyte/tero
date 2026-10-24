@@ -26,6 +26,7 @@ def create_provider(
         native_cfg = ClaudeNativeConfig(
             command=provider_config.get("command", "claude"),
             default_model=provider_config.get("default_model", "claude-sonnet-5"),
+            stall_timeout_s=provider_config.get("stall_timeout_s", 0),
         )
         return ClaudeNativeProvider(native_cfg)
 
@@ -56,6 +57,7 @@ def create_provider(
             display_name=provider_config.get("display_name", "Cursor"),
             force=provider_config.get("force", provider_config.get("yolo", True)),
             trust=provider_config.get("trust", True),
+            stall_timeout_s=provider_config.get("stall_timeout_s", 0),
         )
         return CursorProvider(cursor_cfg)
 
@@ -70,6 +72,7 @@ def create_provider(
             ),
             sandbox_mode=provider_config.get("sandbox_mode", "workspace-write"),
             approval_policy=provider_config.get("approval_policy", "never"),
+            stall_timeout_s=provider_config.get("stall_timeout_s", 0),
             ephemeral=provider_config.get("ephemeral", True),
             full_auto=provider_config.get("full_auto", False),
             bypass_approvals=provider_config.get("bypass_approvals", True),

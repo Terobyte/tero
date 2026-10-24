@@ -42,6 +42,7 @@ class MuseConfig:
     base_url: str = DEFAULT_BASE_URL
     secrets_file: str = DEFAULT_SECRETS_FILE
     display_name: str = "Muse API"
+    stall_timeout_s: float = 0
 
 
 def muse_from_config(provider_config: dict) -> "MuseProvider":
@@ -53,6 +54,7 @@ def muse_from_config(provider_config: dict) -> "MuseProvider":
             base_url=provider_config.get("base_url", DEFAULT_BASE_URL),
             secrets_file=provider_config.get("secrets_file", DEFAULT_SECRETS_FILE),
             display_name=provider_config.get("display_name", MuseConfig.display_name),
+            stall_timeout_s=provider_config.get("stall_timeout_s", 0),
         )
     )
 
@@ -89,6 +91,8 @@ def _missing_key_message(config: MuseConfig) -> str:
 
 class MuseProvider(ClaudeNativeProvider):
     """Claude Code agent loop on Meta's Messages API with a Muse Spark model."""
+
+    streams = True
 
     def __init__(self, config: MuseConfig | None = None):
         super().__init__(config or MuseConfig())

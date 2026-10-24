@@ -87,10 +87,10 @@
   раунд-продолжение, судья → повтор на том же ref и `judge_pending`).
 - Вне этой фазы: паузы при сетевых ошибках (фаза 3).
 
-- [ ] `test_stall_kills_every_streaming_provider`: параметризован по `claude`, `codex`, `opencode`, `cursor`: stub-CLI печатает одну строку и спит → за ≈`stall_timeout_s` (в тесте 0.5) провайдер бросает `ProviderStalled`, процесс stub мёртв
-- [ ] `test_stall_not_retried`: stub-провайдер бросает `ProviderStalled` → `_call` вызвал провайдер один раз, `kind=stall`
-- [ ] `test_non_streaming_provider_gets_no_stall`: провайдер с `streams = False` не получает `stall_timeout` (проверка аргументов фабрики или конфига)
-- [ ] реализовать
+- [x] `test_stall_kills_every_streaming_provider`: параметризован по `claude`, `codex`, `opencode`, `cursor`: stub-CLI печатает одну строку и спит → за ≈`stall_timeout_s` (в тесте 0.5) провайдер бросает `ProviderStalled`, процесс stub мёртв
+- [x] `test_stall_not_retried`: stub-провайдер бросает `ProviderStalled` → `_call` вызвал провайдер один раз, `kind=stall`
+- [x] `test_non_streaming_provider_gets_no_stall`: провайдер с `streams = False` не получает `stall_timeout` (проверка аргументов фабрики или конфига)
+- [x] реализовать
 
 ## Пауза при сетевой ошибке, стоп при входе и квоте
 
