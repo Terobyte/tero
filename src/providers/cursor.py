@@ -51,8 +51,11 @@ class CursorProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_check=None,
     ) -> AsyncIterator:
         """Run Cursor CLI and yield adapted messages."""
+        from src.loop.compact import Compacted
+
         self._reset_usage()
         full_prompt = self._combine_prompt(system_prompt, prompt)
         env = os.environ.copy()
@@ -76,7 +79,14 @@ class CursorProvider:
                         )
                     self._raise_for_returncode(event.returncode, event.stderr)
                 else:
+                    tokens_before = self._last_input_tokens
                     adapted = self._adapt_cursor_event(event)
+                    if (
+                        compact_check is not None
+                        and self._last_input_tokens != tokens_before
+                    ):
+                        if compact_check(self._last_input_tokens):
+                            raise Compacted(self._last_input_tokens)
                     if adapted is not None:
                         yield adapted
         finally:

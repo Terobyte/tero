@@ -82,10 +82,10 @@
   как обычно (`guard.kill_new_processes`), возврат `{"__compacted__": True, "tokens": N}`.
 - Вне этой фазы: что фаза делает с `__compacted__` (фаза 2), команда `tero compact` (фаза 3).
 
-- [ ] `test_should_compact`: порог, ноль = выключено, `requested` побеждает
-- [ ] `test_run_role_stops_at_threshold`: stub-провайдер растит `last_context_tokens` по шагам → после шага, где порог превышен, чтение прекращено, возврат `__compacted__` с числом токенов
-- [ ] `test_opencode_and_agy_report_tokens`: stub-потоки `opencode` и `agy` → `last_context_tokens` равен числу из последнего события
-- [ ] реализовать
+- [x] `test_should_compact`: порог, ноль = выключено, `requested` побеждает
+- [x] `test_run_role_stops_at_threshold`: stub-провайдер растит `last_context_tokens` по шагам → после шага, где порог превышен, чтение прекращено, возврат `__compacted__` с числом токенов
+- [x] `test_opencode_and_agy_report_tokens`: stub-потоки `opencode` и `agy` → `last_context_tokens` равен числу из последнего события
+- [x] реализовать
 
 ## Мягкая смена сессии исполнителя
 
@@ -110,7 +110,7 @@
 - [ ] `test_compact_does_not_grow_round_or_kmax`: компакт → `round` тот же, счётчик падений и K_max не изменились
 - [ ] `test_compact_capped_per_round`: исполнитель превышает порог каждый вызов → 3 компакта, 4-й вызов доживает до конца
 - [ ] `test_compact_judge_restarts_on_same_ref`: судья вернул `__compacted__` → второй вызов судьи, исполнитель не вызван, счётчик сбоев судьи 0
-- [ ] реализовать
+- [x] реализовать
 
 ## tero compact и autocompact у claude
 
@@ -131,7 +131,7 @@
 - [ ] `test_tero_compact_switches_at_step_boundary`: прогон с фейками идёт, в `inbox/` кладётся `compact.json` → исполнитель сменён на границе шага, ref записан, файла больше нет, `compact_requested` очищен
 - [ ] `test_tero_compact_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
 - [ ] `test_claude_autocompact_in_argv`: порог 200000 → в argv `--autocompact 200000`; порог 0 → флага нет
-- [ ] реализовать
+- [x] реализовать
 
 ## Экзамен судей: слой 1 (адаптеры)
 
@@ -149,7 +149,7 @@
 - [ ] `test_adapter_valid_verdict_each_cli`: параметризован по `agy`, `claude`, `codex`, `opencode`: stub-CLI в формате этого CLI (форматы — как в существующих тестах провайдеров `tests/test_agy_provider.py`, `tests/test_opencode_provider.py` и т.д.) отдаёт валидный вердикт → `ok=True`
 - [ ] `test_adapter_garbage_is_not_ok`: stub отдаёт мусор → `ok=False`, в `error` «не по схеме»
 - [ ] `test_adapter_table_output`: `--adapters` с подменённой фабрикой печатает строку таблицы на каждого судью
-- [ ] реализовать
+- [x] реализовать
 
 ## Пульс владельца
 
@@ -169,7 +169,7 @@
 - [ ] `test_pulse_progress_after_each_step`: прогон с фейками на одну фазу → `progress` вырос на число шагов, `progress_ts` свежий
 - [ ] `test_pulse_write_error_does_not_crash_run`: папка прогона только для чтения при записи пульса → прогон доходит до конца
 - [ ] `test_state_has_hang_after_s`: после старта в `state.json` поле `hang_after_s` = max таймаутов + 300
-- [ ] реализовать
+- [x] реализовать
 
 ## tero wait и tero status
 
@@ -202,7 +202,7 @@
 - [ ] `test_watch_survives_short_waits`: три `wait_run(timeout_s=…)` подряд с одним `progress` → окно считается от первой отметки, третий даёт 5
 - [ ] `test_wait_judge_pending_is_3`: `judge_pending` → 3; `waiting_agent` → 3
 - [ ] `test_status_json_fields`: `tero status --json` через CLI-подпроцесс → все поля из списка есть, секретов нет
-- [ ] реализовать
+- [x] реализовать
 
 ## tero go --detach
 
@@ -228,7 +228,7 @@
 - [ ] `test_detach_owner_early_exit_is_1`: stub-владелец пишет в лог ошибку с `META_MODEL_API_KEY=…` и выходит 1 → родитель код 1, хвост лога напечатан без значения ключа
 - [ ] `test_detach_caffeinate_argv`: подменённый `popen`, `sys.platform="darwin"`, stub `caffeinate` в `PATH` → второй вызов `["caffeinate", "-i", "-w", "<pid>"]`; без `caffeinate` — второго вызова нет
 - [ ] `test_go_decisions_flag`: `go --decisions` и `go --detach` → `cfg.decisions is True`; просто `go` → `False`
-- [ ] реализовать
+- [x] реализовать
 
 ## inbox, вопрос и tero answer
 
@@ -263,7 +263,7 @@
 - [ ] `test_answer_rejects`: чужой id, недопустимое действие, `model judge`, `allow` от агента → свои тексты отказа, `state.json` не изменён
 - [ ] `test_applied_uuid_not_reapplied`: тот же uuid второй раз → не применён, журнал решений не вырос
 - [ ] `test_answer_text_capped`: текст 5000 символов → в `state.json` 2000
-- [ ] реализовать
+- [x] реализовать
 
 ## Точки решения: answer, skip, stop, долг
 
@@ -299,7 +299,7 @@
 - [ ] `test_stop_rolls_back_exit_2`: `stop` → снимок в `refs/tero/...`, дерево у чекпоинта, код 2
 - [ ] `test_phase_trailer_and_empty_commit`: сданная фаза → трейлер `Tero-Phase: <run>/1`; фаза без изменений → пустой коммит с трейлером; `phase_shipped` → `True`
 - [ ] `test_hud_debt_icon`: HUD-модель для `done` с долгом 2 → текст «⚠ сдано с долгом 2»
-- [ ] реализовать
+- [x] реализовать
 
 ## Действия more, model, retry, allow, wait и бюджет
 
@@ -326,7 +326,7 @@
 - [ ] `test_secrets_allow_and_retry`: `secrets` + `allow .env.example` от человека → сдача; `retry` → откат, в промпте player «не создавать: .env»
 - [ ] `test_wait_backoff_then_question`: провайдер `quota` три раза при подменённых паузах → `waiting_limit` трижды, потом новый вопрос
 - [ ] `test_budget_three_per_phase`: агент `retry` ×3 принято, 4-й отклонён «бюджет исчерпан»; человек — без ограничения
-- [ ] реализовать
+- [x] реализовать
 
 ## Ожидание, аренда агента, автопилот
 
@@ -360,7 +360,7 @@
 - [ ] `test_autopilot_no_relay_no_agent_10min`: `NoopRelay`, аренды нет → автопилот по таймеру 600 с (подменён)
 - [ ] `test_autopilot_not_chain`: фаза 1 пропущена автопилотом, фаза 2 тоже в точке решения → `stop`, notify «две фазы подряд»
 - [ ] `test_wake_command_once_when_lease_expired`: `wake_command` со stub-скриптом → запущен один раз с подставленными `{run_dir}` и `{question_id}`; при живой аренде не запущен; `woken`-ответ `more` отклонён
-- [ ] реализовать
+- [x] реализовать
 
 ## judge_pending как живое ожидание
 
@@ -380,7 +380,7 @@
 - [ ] `test_judge_pending_retry_calls_judge_only`: `retry` → вызван только судья, на том же ref
 - [ ] `test_autopilot_judge_pending_retry_then_skip`: автопилот: `retry` ×3, потом `skip` в долг
 - [ ] `test_accept_reject_human_only`: `accept` от агента отклонён; от человека → фаза сдана с трейлером
-- [ ] реализовать
+- [x] реализовать
 
 ## tero stop во время шага
 
@@ -400,7 +400,7 @@
 - [ ] `test_stop_midstep_kills_fast`: stub-исполнитель `sleep 600`, `STOP_POLL_S=0.1` → `stop.json` → прогон `stopped` меньше чем за 5 с, процесс stub мёртв, снимок есть
 - [ ] `test_stop_removes_stale_index_lock`: убитый шаг оставил `.git/index.lock` → после стопа его нет, откат прошёл
 - [ ] `test_stop_cli_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
-- [ ] реализовать
+- [x] реализовать
 
 ## tero resume после краша
 
@@ -427,7 +427,7 @@
 - [ ] `test_crash_in_decision_point_restores_question`: дерево совпало с `tree_sha` → `waiting_human`, тот же id и текст
 - [ ] `test_resume_kills_hung_owner`: stub-владелец жив, `progress` стоит дольше порога → убит, лок взят; не завис → «прогон жив», код 1
 - [ ] `test_third_crash_resume_refused`: третий `resume` подряд → `stopped`; `--force` проходит
-- [ ] реализовать
+- [x] реализовать
 
 ## tero guide и tero notify
 
@@ -442,4 +442,4 @@
 - [ ] `test_guide_prints_protocol_and_hosts`: вывод содержит коды `wait` 0/2/3/4/5/6 и разделы трёх хозяев
 - [ ] `test_notify_noop_relay`: без ретранслятора → текст «ретранслятора нет», код 0; секрет в тексте вычищен (через `FakeRelay`)
 - [ ] `test_detach_and_guide_same_protocol`: текст протокола в выводе `--detach` (stub-владелец) и `guide` совпадает
-- [ ] реализовать
+- [x] реализовать

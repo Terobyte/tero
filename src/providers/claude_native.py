@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from src.constants import DEFAULT_COMPACT_THRESHOLD
 from src.errors import ProviderStalled
 from .effort import normalize_effort
+from .message_adapter import adapt_claude_event
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 
@@ -54,6 +55,10 @@ class ClaudeNativeProvider:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
 
+    @property
+    def last_context_tokens(self) -> int:
+        return self._last_input_tokens
+
     async def run(
         self,
         prompt: str,
@@ -66,8 +71,11 @@ class ClaudeNativeProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_check=None,
     ):
         """Run the native Claude CLI and yield JSON events."""
+        from src.loop.compact import Compacted
+
         self._last_input_tokens = 0
         self._last_output_tokens = 0
         cmd = self._build_command(
@@ -100,6 +108,11 @@ class ClaudeNativeProvider:
                         raise_for_exit("claude CLI", event.returncode, event.stderr)
                 else:
                     self._capture_usage(event)
+                    if compact_check is not None and _is_token_only(event):
+                        # Токеновая граница без сообщения. Событие с текстом
+                        # отдаём дальше: решает LiveAgents после обработки.
+                        if compact_check(self._last_input_tokens):
+                            raise Compacted(self._last_input_tokens)
                     yield event
         finally:
             await _gen.aclose()
@@ -150,18 +163,28 @@ class ClaudeNativeProvider:
         usage = event.get("usage") or event.get("stats") or {}
         if not isinstance(usage, dict):
             return
-        self._last_input_tokens = int(
-            usage.get("input_tokens")
-            or usage.get("prompt_tokens")
-            or self._last_input_tokens
-            or 0
-        )
-        self._last_output_tokens = int(
-            usage.get("output_tokens")
-            or usage.get("completion_tokens")
-            or self._last_output_tokens
-            or 0
-        )
+        if (
+            "input_tokens" in usage
+            or "prompt_tokens" in usage
+            or "cache_read_input_tokens" in usage
+        ):
+            # Явные нули — тоже счётчик: старое значение не сохраняем.
+            inp = usage.get("input_tokens")
+            if inp is None:
+                inp = usage.get("prompt_tokens")
+            if inp is None:
+                inp = 0
+            cache = usage.get("cache_read_input_tokens")
+            if cache is None:
+                cache = 0
+            self._last_input_tokens = int(inp) + int(cache)
+        if "output_tokens" in usage or "completion_tokens" in usage:
+            out = usage.get("output_tokens")
+            if out is None:
+                out = usage.get("completion_tokens")
+            if out is None:
+                out = 0
+            self._last_output_tokens = int(out)
 
     def _build_command(
         self,
@@ -215,3 +238,31 @@ class ClaudeNativeProvider:
             cmd.extend(["--disallowedTools", "Edit,Write,NotebookEdit,Bash"])
 
         return cmd
+
+
+_TOKEN_USAGE_KEYS = (
+    "input_tokens",
+    "prompt_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+    "completion_tokens",
+)
+
+
+def _is_token_only(event: dict) -> bool:
+    """True на распознанной токеновой границе без сообщения.
+
+    Только события с usage/stats (там, где `_capture_usage` берёт счётчик),
+    которые не отдают сообщение наружу. Метаданные без счётчика (init,
+    system и т.п.) — не граница: их решает LiveAgents после реальных
+    сообщений, иначе запрошенный компакт останавливает поток до первого
+    сообщения.
+    """
+    if not isinstance(event, dict):
+        return False
+    if adapt_claude_event(event) is not None:
+        return False
+    usage = event.get("usage") or event.get("stats")
+    if not isinstance(usage, dict):
+        return False
+    return any(k in usage for k in _TOKEN_USAGE_KEYS)

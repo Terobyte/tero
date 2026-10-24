@@ -58,6 +58,10 @@ class AgyProvider:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
 
+    @property
+    def last_context_tokens(self) -> int:
+        return self._last_input_tokens
+
     def _reset_usage(self) -> None:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
@@ -73,8 +77,11 @@ class AgyProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_check=None,
     ):
         """Run agy CLI and yield adapted messages."""
+        from src.loop.compact import Compacted
+
         self._reset_usage()
         full_prompt = wrap_system_prompt(system_prompt, prompt)
         cmd = self._build_command(
@@ -126,10 +133,21 @@ class AgyProvider:
                                 stop_reason="end_turn",
                                 type="result",
                             )
+                        elif compact_check is not None:
+                            # Финальная граница без текста: дальше сообщений не
+                            # будет, запрошенный компакт проверяем здесь.
+                            if compact_check(self._last_input_tokens):
+                                raise Compacted(self._last_input_tokens)
                         continue
                     adapted = self._adapt_agy_event(event)
-                    if adapted is not None:
-                        yield adapted
+                    if adapted is None:
+                        # DONE-граница без сообщения: проверяем всегда, даже без
+                        # нового счётчика, чтобы запрошенный компакт сработал.
+                        if compact_check is not None and _is_done_step(event):
+                            if compact_check(self._last_input_tokens):
+                                raise Compacted(self._last_input_tokens)
+                        continue
+                    yield adapted
             finally:
                 await _gen.aclose()
 
@@ -223,12 +241,10 @@ class AgyProvider:
         """Best-effort token accounting from DONE steps and the result event."""
         if not isinstance(usage, dict):
             return
-        self._last_input_tokens = int(
-            usage.get("input_tokens") or self._last_input_tokens or 0
-        )
-        self._last_output_tokens = int(
-            usage.get("output_tokens") or self._last_output_tokens or 0
-        )
+        if usage.get("input_tokens") is not None:
+            self._last_input_tokens = int(usage["input_tokens"])
+        if usage.get("output_tokens") is not None:
+            self._last_output_tokens = int(usage["output_tokens"])
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if agy CLI is installed and available."""
@@ -239,6 +255,16 @@ class AgyProvider:
     @property
     def display_name(self) -> str:
         return f"{self.config.display_name} ({self.config.default_model})"
+
+
+def _is_done_step(event) -> bool:
+    """True на DONE-границе шага agy, даже без нового счётчика."""
+    if not isinstance(event, dict):
+        return False
+    if event.get("event") != "step_update":
+        return False
+    upd = event.get("step_update")
+    return isinstance(upd, dict) and upd.get("state") == "DONE"
 
 
 def _resolve_model(model: str) -> str:

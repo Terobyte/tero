@@ -96,8 +96,11 @@ class MuseProvider(ClaudeNativeProvider):
 
     def __init__(self, config: MuseConfig | None = None):
         super().__init__(config or MuseConfig())
+        from .opencode import OpenCodeConfig, OpenCodeProvider
+
         self._model = self.config.default_model
         self._config_dir: str | None = None
+        self._opencode = OpenCodeProvider(OpenCodeConfig())
 
     async def run(
         self,
@@ -106,11 +109,17 @@ class MuseProvider(ClaudeNativeProvider):
         working_dir: str,
         max_turns: int = 30,
         model: str = "",
+        compact_check=None,
         **kwargs,
     ):
+        from src.loop.compact import Compacted
+
         if not load_api_key(self.config.secrets_file):
             raise ProviderError(_missing_key_message(self.config))
         self._model = model or self.config.default_model
+        # Счётчик прошлого прогона не должен светиться в новом:
+        # last_context_tokens — ноль, пока текущий прогон не отчитался.
+        self._opencode._reset_usage()
         # Fresh Claude Code home per run: no claude.ai login, history or
         # settings from ~/.claude leak into Muse runs, and parallel runs
         # do not share session state.
@@ -122,12 +131,52 @@ class MuseProvider(ClaudeNativeProvider):
                 working_dir,
                 max_turns=max_turns,
                 model=self._model,
+                compact_check=compact_check,
                 **kwargs,
             ):
+                if (
+                    compact_check is not None
+                    and isinstance(event, dict)
+                    and event.get("type") == "step_finish"
+                ):
+                    # Граница шага без сообщения (счётчик уже обновлён в
+                    # _capture_usage внутри super().run): дальше не читаем.
+                    tokens = self.last_context_tokens
+                    if compact_check(tokens):
+                        raise Compacted(tokens)
                 yield event
         finally:
             shutil.rmtree(self._config_dir, ignore_errors=True)
             self._config_dir = None
+
+    def _capture_usage(self, event) -> None:
+        """Учёт Claude-потока пишем в леджер внутреннего opencode-провайдера."""
+        if isinstance(event, dict) and event.get("type") == "step_finish":
+            part = event.get("part") or {}
+            if isinstance(part, dict):
+                tokens = part.get("tokens") or {}
+                if isinstance(tokens, dict):
+                    try:
+                        self._opencode._last_input_tokens = int(tokens.get("input") or 0)
+                        self._opencode._last_output_tokens = int(tokens.get("output") or 0)
+                        self._last_input_tokens = self._opencode._last_input_tokens
+                        self._last_output_tokens = self._opencode._last_output_tokens
+                    except (TypeError, ValueError):
+                        pass
+                    return
+        before_in, before_out = (
+            self._opencode._last_input_tokens,
+            self._opencode._last_output_tokens,
+        )
+        super()._capture_usage(event)
+        if (self._last_input_tokens, self._last_output_tokens) != (before_in, before_out):
+            self._opencode._last_input_tokens = self._last_input_tokens
+            self._opencode._last_output_tokens = self._last_output_tokens
+
+    @property
+    def last_context_tokens(self) -> int:
+        """Токены внутреннего opencode-провайдера."""
+        return self._opencode.last_context_tokens
 
     def _clean_env(self) -> dict:
         env = super()._clean_env()

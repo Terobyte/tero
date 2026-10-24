@@ -71,6 +71,10 @@ class CodexProvider:
         self._temp_schema_path: str | None = None
         self._codex_started_ids: set[str] = set()
 
+    @property
+    def last_context_tokens(self) -> int:
+        return self._last_input_tokens
+
     def _reset_usage(self) -> None:
         """Clear usage counters before starting a new Codex subprocess."""
         self._last_input_tokens = 0
@@ -88,12 +92,15 @@ class CodexProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_check=None,
     ) -> AsyncIterator:
         """Run Codex agent via CLI and yield adapted messages.
 
         Launches `codex exec --json` as subprocess, reads JSONL from stdout,
         and yields AdaptedMessage objects.
         """
+        from src.loop.compact import Compacted
+
         self._reset_usage()
         cmd = self._build_command(
             model=model,
@@ -121,9 +128,17 @@ class CodexProvider:
                         )
                     self._raise_for_returncode(event.returncode, event.stderr)
                 else:
+                    tokens_before = self._last_input_tokens
                     adapted = self._adapt_codex_event(event)
-                    if adapted is not None:
-                        yield adapted
+                    if adapted is None:
+                        if (
+                            compact_check is not None
+                            and self._last_input_tokens != tokens_before
+                        ):
+                            if compact_check(self._last_input_tokens):
+                                raise Compacted(self._last_input_tokens)
+                        continue
+                    yield adapted
         finally:
             await _gen.aclose()
             self._cleanup_temp_instructions()

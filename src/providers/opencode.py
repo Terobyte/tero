@@ -46,6 +46,10 @@ class OpenCodeProvider:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
 
+    @property
+    def last_context_tokens(self) -> int:
+        return self._last_input_tokens
+
     def _reset_usage(self) -> None:
         self._last_input_tokens = 0
         self._last_output_tokens = 0
@@ -61,8 +65,11 @@ class OpenCodeProvider:
         output_schema: dict | None = None,
         read_only: bool = False,
         effort: str = "",
+        compact_check=None,
     ):
         """Run OpenCode agent via CLI and yield adapted messages."""
+        from src.loop.compact import Compacted
+
         self._reset_usage()
         cmd = self._build_command(model, working_dir, effort=effort, read_only=read_only)
         full_prompt = self._build_system_prompt(system_prompt, prompt)
@@ -87,6 +94,15 @@ class OpenCodeProvider:
                         errors.append(self._error_text(event))
                     adapted = self._adapt_opencode_event(event)
                     if adapted is None:
+                        # Токеновая граница без сообщения: каждый step_finish,
+                        # даже без счётчика, чтобы запрошенный компакт сработал.
+                        if (
+                            compact_check is not None
+                            and isinstance(event, dict)
+                            and event.get("type") == "step_finish"
+                        ):
+                            if compact_check(self._last_input_tokens):
+                                raise Compacted(self._last_input_tokens)
                         continue
                     messages = adapted if isinstance(adapted, list) else [adapted]
                     for message in messages:

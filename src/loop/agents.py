@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import classify_error, scrub_secrets
+from src.loop.compact import Compacted
 from src.loop.schemas import SCHEMAS, ValidateCtx, validate
 from src.process_guard import ProcessGuard
 
@@ -121,11 +122,16 @@ class LiveAgents:
         ctx = kwargs.get("ctx")
         schema = SCHEMAS[role]
         read_only = role == "judge"
+        compact_check = kwargs.get("compact_check")
 
-        text = await self._call(
-            provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort,
-            emit=kwargs.get("emit"),
-        )
+        try:
+            text = await self._call(
+                provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort,
+                emit=kwargs.get("emit"),
+                compact_check=compact_check,
+            )
+        except Compacted as exc:
+            return {"__compacted__": True, "tokens": exc.tokens}
         if text is None:
             return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
         data = extract_json(text)
@@ -135,10 +141,14 @@ class LiveAgents:
                 "верни только JSON по схеме; твой прошлый ответ:\n"
                 f"{text[-4000:]}\nошибки: {errors}"
             )
-            text = await self._call(
-                provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
-                emit=kwargs.get("emit"),
-            )
+            try:
+                text = await self._call(
+                    provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
+                    emit=kwargs.get("emit"),
+                    compact_check=compact_check,
+                )
+            except Compacted as exc:
+                return {"__compacted__": True, "tokens": exc.tokens}
             if text is None:
                 return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
             data = extract_json(text)
@@ -159,6 +169,7 @@ class LiveAgents:
         role: str = "",
         effort: str = "",
         emit=None,
+        compact_check=None,
     ) -> str | None:
         network_retry = 0
         other_retried = False
@@ -185,10 +196,13 @@ class LiveAgents:
                         verbose=self.verbose,
                         on_output=self._mark_output,
                         emit=emit,
+                        compact_check=compact_check,
                     ),
                     timeout=timeout,
                 )
                 return text
+            except Compacted:
+                raise
             except Exception as exc:  # provider auth/network
                 raw = scrub_secrets(str(exc) or type(exc).__name__)
                 self.last_error = raw
@@ -369,6 +383,7 @@ async def _collect_text(
     verbose: bool = False,
     on_output: Callable[[], None] | None = None,
     emit=None,
+    compact_check: Callable[[int], bool] | None = None,
 ) -> str:
     from src.providers.message_adapter import normalize_message
 
@@ -391,24 +406,46 @@ async def _collect_text(
     # rejects it with TypeError, failing the role as unavailable.
     if emit is not None and "emit" in params:
         kwargs["emit"] = emit
+    if compact_check is not None and "compact_check" in params:
+        kwargs["compact_check"] = compact_check
     parts: list[str] = []
-    async for message in provider.run(**kwargs):
-        if on_output is not None:
-            on_output()
-        adapted = normalize_message(message)
-        if adapted is None:
-            continue
-        for block in adapted.content or []:
-            line = _activity(block, working_dir, emit=emit, role=role)
-            if line:
-                print(f"    · {line}", flush=True)
-        text = adapted.get_text_content()
-        if text:
-            parts.append(text)
-            if emit is not None:
-                emit("text", role=role, text=text[:300])
-            if verbose:
-                snippet = " ".join(text.split())[:200]
-                if snippet:
-                    print(f"    ✎ {snippet}", flush=True)
+    stream = provider.run(**kwargs)
+    try:
+        async for message in stream:
+            if isinstance(message, Compacted):
+                raise message
+            if on_output is not None:
+                on_output()
+            adapted = normalize_message(message)
+            if adapted is None:
+                # Фильтрованные метаданные (init и т.п.) — не граница шага:
+                # компакт решает только LiveAgents после реальных сообщений,
+                # токеновые границы без сообщений проверяет сам провайдер.
+                continue
+            for block in adapted.content or []:
+                line = _activity(block, working_dir, emit=emit, role=role)
+                if line:
+                    print(f"    · {line}", flush=True)
+            text = adapted.get_text_content()
+            if text:
+                parts.append(text)
+                if emit is not None:
+                    emit("text", role=role, text=text[:300])
+                if verbose:
+                    snippet = " ".join(text.split())[:200]
+                    if snippet:
+                        print(f"    ✎ {snippet}", flush=True)
+            if compact_check is not None:
+                tokens = getattr(provider, "last_context_tokens", 0) or 0
+                if compact_check(tokens):
+                    raise Compacted(tokens)
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Compacted:
+                raise
+            except Exception:
+                pass
     return "\n".join(parts)

@@ -234,6 +234,11 @@ async def run(
             pass
         ledger = Ledger(run_dir)
         ledger.event("run_start", plan=cfg.plan_file, slug=slug)
+        ledger.event(
+            "compact_config",
+            player_at_tokens=cfg.compact_player_at_tokens,
+            judge_at_tokens=cfg.compact_judge_at_tokens,
+        )
 
         preamble = load_preamble(plan_path)
         shipped = 0

@@ -131,6 +131,8 @@ class Config:
     stall_timeout_s: int = 900
     max_rounds: int = 15
     verbose: bool = False
+    compact_player_at_tokens: int = 0
+    compact_judge_at_tokens: int = 0
 
 
 _ENV_MAP = {
@@ -337,6 +339,8 @@ _POSITIVE_FIELDS = {
 
 _NON_NEGATIVE_FIELDS = {
     "stall_timeout_s",
+    "compact_player_at_tokens",
+    "compact_judge_at_tokens",
 }
 
 
