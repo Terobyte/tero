@@ -234,10 +234,10 @@
 - Меняются старые тесты: нет.
 - Вне этой фазы: судья, K_max, переходы статуса (фаза 7).
 
-- [ ] `test_step_modules_import_no_phase`: по `ast` `phase_ctx.py`, `compact_step.py`, `tester_step.py` не импортируют `src.loop.phase` и `src.loop.run`
-- [ ] `test_reexports_same_objects`: `src.loop.phase._State is src.loop.phase_ctx.PhaseState`, `src.loop.phase.PhaseOutcome is src.loop.phase_ctx.PhaseOutcome`
-- [ ] `test_emit_fields_unchanged`: `PhaseContext.emit("gate", ...)` с подменённым `Stream` → в записи есть `phase`, `round`, `role`, `text`, секрет из окружения (длиннее 8 символов) вычищен
-- [ ] реализовать
+- [x] `test_step_modules_import_no_phase`: по `ast` `phase_ctx.py`, `compact_step.py`, `tester_step.py` не импортируют `src.loop.phase` и `src.loop.run`
+- [x] `test_reexports_same_objects`: `src.loop.phase._State is src.loop.phase_ctx.PhaseState`, `src.loop.phase.PhaseOutcome is src.loop.phase_ctx.PhaseOutcome`
+- [x] `test_emit_fields_unchanged`: `PhaseContext.emit("gate", ...)` с подменённым `Stream` → в записи есть `phase`, `round`, `role`, `text`, секрет из окружения (длиннее 8 символов) вычищен
+- [x] реализовать
 
 ## phase.py: судья в свой модуль, переходы статуса в одном месте
 

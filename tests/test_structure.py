@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 FILE_CEILINGS = {
-    "src/loop/phase.py": 1776,
+    "src/loop/phase.py": 1290,
     "src/loop/run.py": 878,
     "src/menu.py": 548,
     "src/providers/codex.py": 540,

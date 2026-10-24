@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import os
 import time
-from dataclasses import dataclass, field
-from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Protocol
 
 from src.config import Config
-from src.loop.gates import GateResult, TestCommand, fingerprint, print_red_tail, run_all, run_files
+from src.loop.gates import GateResult, TestCommand, fingerprint, print_red_tail, run_all
 from src.loop.git import (
     GitError,
     commit,
@@ -19,28 +15,39 @@ from src.loop.git import (
     file_hashes,
     has_staged_changes,
     head,
-    list_worktree_files,
     rollback,
     secret_paths,
     stage_and_diff,
     write_tree,
 )
-from src.errors import scrub_data, scrub_secrets
-from src.loop.inbox import inbox_dir
+from src.errors import scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
-from src.loop.compact import should_compact
 from src.loop.prompts import (
     judge_prompt,
     needs_user_reask_block,
     player_prompt,
-    tester_prompt,
 )
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState, Status
 from src.loop.stream import Stream
 from src.loop import suite_guard
+from src.loop.compact_step import CompactStep
+from src.loop.phase_ctx import (
+    _JUDGE_MAX_FAILURES,
+    _NEEDS_USER_MAX_ATTEMPTS,
+    K_MAX,
+    OpenFinding,
+    PhaseContext,
+    PhaseOutcome,
+    PhaseState,
+    ProtectedTest,
+    _dump,
+    _Next,
+    _tail,
+)
+from src.loop.tester_step import TesterStep
 from src.loop.suite_guard import (
     AGENT_CONFIG_DIRS,
     AGENT_INSTRUCTION_NAMES,
@@ -52,7 +59,12 @@ from src.loop.suite_guard import (
 )
 
 __all__ = [
+    "K_MAX",
+    "OpenFinding",
     "PhaseOutcome",
+    "ProtectedTest",
+    "_Next",
+    "_State",
     "run_phase",
     "AGENT_CONFIG_DIRS",
     "AGENT_INSTRUCTION_NAMES",
@@ -60,6 +72,8 @@ __all__ = [
     "SUITE_HOOK_NAMES",
     "is_test_path",
 ]
+
+_State = PhaseState
 
 UNAVAILABLE_PLAYER = {
     "status": "blocked",
@@ -69,106 +83,8 @@ UNAVAILABLE_PLAYER = {
 }
 
 
-class _Next(Enum):
-    SHIP = auto()
-    USER = auto()
-    STOP = auto()
-    TESTER = auto()
-    NEXT = auto()
-    JUDGE_PENDING = auto()
-
-
-_JUDGE_MAX_FAILURES = 3
-_NEEDS_USER_MAX_ATTEMPTS = 3
-
-# K_max: столько подряд раундов-продолжений с неуменьшившимися замечаниями
-# судьи — и вместо stuck чистая попытка с checkpoint.
-K_MAX = 2
-
-
 class AgentRunner(Protocol):
     async def run_role(self, role: str, **kwargs: Any) -> dict[str, Any] | None: ...
-
-
-@dataclass
-class OpenFinding:
-    id: str
-    severity: str
-    route: str
-    file: str
-    line: int | None
-    problem: str
-    expected: str
-    test_paths: list[str] = field(default_factory=list)
-    note: str = ""
-
-    def as_prompt(self) -> str:
-        extra = f" [test: {', '.join(self.test_paths)}]" if self.test_paths else ""
-        note = f" ({self.note})" if self.note else ""
-        return f"{self.id}: {self.problem} → {self.expected}{extra}{note}"
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "severity": self.severity,
-            "route": self.route,
-            "file": self.file,
-            "line": self.line,
-            "problem": self.problem,
-            "expected": self.expected,
-            "test_paths": self.test_paths,
-        }
-
-
-@dataclass
-class PhaseOutcome:
-    status: str
-    reason: str
-    user_question: str = ""
-    rounds: int = 0
-    commit_sha: str = ""
-    escalated: bool = False
-    stop_text: str = ""
-
-
-@dataclass
-class ProtectedTest:
-    """A tester's red test, restored byte-for-byte if the player touches it."""
-
-    digest: str
-    content: str
-
-
-@dataclass
-class _State:
-    round: int = 0
-    escalated: bool = False
-    judge_failures: int = 0
-    needs_user_attempts: int = 0
-    pending_reason: str = ""
-    last_provider: str = ""
-    stop_reason: str = ""
-    user_question: str = ""
-    last_provider_error: str = ""
-    last_provider_kind: str = "other"
-    player_crashes: int = 0
-    resume_ref: str = ""
-    resume_base: str = ""
-    resume_active: bool = False
-    had_crash: bool = False
-    kmax_flat: int = 0
-    kmax_prev: tuple[int, frozenset] | None = None
-    open_findings: list[OpenFinding] = field(default_factory=list)
-    next_id: int = 1
-    suite_delta: list[str] = field(default_factory=list)
-    discarded: list[str] = field(default_factory=list)
-    gate_output: str = ""
-    last_red_fp: frozenset[str] | None = None
-    last_red_tree: str | None = None
-    protected: dict[str, ProtectedTest] = field(default_factory=dict)
-    protected_by_id: dict[str, list[str]] = field(default_factory=dict)
-    compact_count: int = 0
-    judge_compact_used: bool = False
 
 
 async def run_phase(
@@ -247,7 +163,30 @@ class _PhaseRunner:
         self.run_dir = Path(ledger.run_dir)
         self.state_io = RunState(self.run_dir / "state.json")
         self.stream = Stream(self.run_dir / "stream.jsonl")
-        self._role = ""
+        self.ctx = PhaseContext(
+            phase=phase,
+            total_phases=total_phases,
+            repo=repo,
+            plan_path=plan_path,
+            preamble=preamble,
+            cfg=cfg,
+            agents=agents,
+            test_command=test_command,
+            tester_enabled=self.tester_enabled,
+            ledger=ledger,
+            run_dir=self.run_dir,
+            state_io=self.state_io,
+            stream=self.stream,
+            pulse=pulse,
+            checkpoint=self.checkpoint,
+            contract=self.contract,
+            suite_hashes=self.suite_hashes,
+            guarded=self.guarded,
+            link_targets=self.link_targets,
+            st=self.state,
+        )
+        self.compact = CompactStep(self.ctx)
+        self.tester = TesterStep(self.ctx, self._guard_plan)
 
     def _remember_plan(self) -> bytes | None:
         """Байты плана на входе в фазу; None — план не отслеживаем.
@@ -309,7 +248,7 @@ class _PhaseRunner:
                 role=role,
                 error=str(exc),
             )
-            self._emit(
+            self.ctx.emit(
                 "plan_restore_failed",
                 role=role,
                 text=f"{role} менял план, восстановить не удалось",
@@ -323,37 +262,7 @@ class _PhaseRunner:
             role=role,
             text=f"{role} менял план, вернул",
         )
-        self._emit("plan_restored", role=role, text=f"{role} менял план, вернул")
-
-    def _emit(self, type: str, **fields: Any) -> None:
-        fields.setdefault("phase", self.phase.title)
-        fields.setdefault("round", self.state.round)
-        if fields.get("role"):
-            self._role = fields["role"]
-        else:
-            fields["role"] = self._role
-        if "text" not in fields:
-            fields["text"] = _stream_text(type, fields)
-        clean = {k: scrub_data(v) for k, v in fields.items()}
-        self.stream.emit(type, **clean)
-
-    def _update_state(self, **fields: Any) -> None:
-        if fields.get("role"):
-            self._role = fields["role"]
-        clean = {k: scrub_data(v) for k, v in fields.items()}
-        self.state_io.update(**clean)
-
-    def _progress(self) -> None:
-        pulse = self.pulse
-        if pulse is None:
-            return
-        try:
-            pulse.progress()
-        except Exception:
-            pass
-
-    def _tag(self) -> str:
-        return f"[фаза {self.phase.index + 1}/{self.total_phases} · раунд {self.state.round}]"
+        self.ctx.emit("plan_restored", role=role, text=f"{role} менял план, вернул")
 
     async def run(self) -> PhaseOutcome:
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
@@ -362,26 +271,26 @@ class _PhaseRunner:
         if self.start_with_judge:
             # resume from judge_pending: continue on the restored ref tree,
             # starting with the judge — no player call, no gate rerun.
-            self._update_state(round=self.start_round)
+            self.ctx.update_state(round=self.start_round)
             self.state.round = self.start_round
             self.state.judge_failures = 0
             self.ledger.event("resume_judge", round=self.state.round)
             print(
-                f"  {self._tag()} judge "
+                f"  {self.ctx.tag()} judge "
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
                 flush=True,
             )
             verdict = await self._judge()
-            self._progress()
+            self.ctx.progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
                 if outcome.status == "ship":
-                    self._progress()
+                    self.ctx.progress()
                 return outcome
             # F9: resumed judge returned non-terminal verdict — keep the
             # saved round so the normal cycle continues with start_round + 1.
             self.state.round = self.start_round
-        self._update_state(
+        self.ctx.update_state(
             phase=self.phase.title,
             phase_index=self.phase.index,
             phase_started=datetime.now(timezone.utc).isoformat(),
@@ -393,23 +302,23 @@ class _PhaseRunner:
             if self.state.round + 1 > self.cfg.max_rounds:
                 return self._halt("fuse")
             self.state.round += 1
-            self._update_state(round=self.state.round)
+            self.ctx.update_state(round=self.state.round)
             self.state.compact_count = 0
             self.state.judge_compact_used = False
-            self._emit(
+            self.ctx.emit(
                 "start_step",
                 phase=self.phase.title,
                 round=self.state.round,
                 role="player",
             )
-            model, provider, effort = self._player_identity()
+            model, provider, effort = self.ctx.player_identity()
             extra = f" {effort}" if effort else ""
             print(
-                f"  {self._tag()} player {provider}({model}{extra}) …",
+                f"  {self.ctx.tag()} player {provider}({model}{extra}) …",
                 flush=True,
             )
             player_ok = await self._player()
-            self._progress()
+            self.ctx.progress()
             if player_ok is None:
                 if self.state.stop_reason == "snapshot_failed":
                     return self._halt("snapshot_failed")
@@ -426,7 +335,7 @@ class _PhaseRunner:
                     return self._halt("stuck")
                 continue
             gate = self._gate()
-            self._progress()
+            self.ctx.progress()
             if gate is not None and not gate.ok:
                 if self._same_red(gate):
                     if not self._in_continuation() and self._no_progress():
@@ -435,16 +344,16 @@ class _PhaseRunner:
                 continue
             self.state.gate_output = gate.output if gate else "тесты не обнаружены"
             print(
-                f"  {self._tag()} judge "
+                f"  {self.ctx.tag()} judge "
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
                 flush=True,
             )
             verdict = await self._judge()
-            self._progress()
+            self.ctx.progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
                 if outcome.status == "ship":
-                    self._progress()
+                    self.ctx.progress()
                 return outcome
 
     async def _after_judge(self, verdict: _Next) -> PhaseOutcome | None:
@@ -460,12 +369,12 @@ class _PhaseRunner:
                 return self._ship()
             case _Next.TESTER:
                 print(
-                    f"  {self._tag()} tester "
+                    f"  {self.ctx.tag()} tester "
                     f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
                     flush=True,
                 )
-                tester_ok = await self._tester()
-                self._progress()
+                tester_ok = await self.tester._tester()
+                self.ctx.progress()
                 if tester_ok is None:
                     return self._halt(self.state.stop_reason or "provider_unavailable")
                 if not tester_ok:
@@ -481,9 +390,9 @@ class _PhaseRunner:
 
     async def _player(self) -> bool | None:
         """True/False — обычный исход; None — auth/quota/snapshot_failed, caller делает halt."""
-        model, provider, effort = self._player_identity()
+        model, provider, effort = self.ctx.player_identity()
         while True:
-            check = self._player_compact_check()
+            check = self.compact._player_compact_check()
             data = await self._raw_player_call(
                 model, provider, effort, self._player_prompt(), check
             )
@@ -503,14 +412,14 @@ class _PhaseRunner:
                 # Компакт без запрошенного порога (лимит исчерпан, дальше
                 # вызов шёл без compact_check): проверенного снимка нет —
                 # останавливаемся без гейта и судьи (F5, F9).
-                return self._player_compact_failed()
+                return self.compact._player_compact_failed()
             self.state.compact_count += 1
-            ref = self._record_compact("player", data)
+            ref = self.compact._record_compact("player", data)
             if ref is None:
                 # Снимок компакта не записался: без проверенного ref бриф
                 # для нового вызова не построить — останавливаемся без
                 # гейта и судьи (F5, F9).
-                return self._player_compact_failed()
+                return self.compact._player_compact_failed()
         ref = self._snapshot_after_player()
         if data is None:
             if self.state.last_provider_kind == "auth":
@@ -543,7 +452,7 @@ class _PhaseRunner:
                 self.state.resume_active = True
             report = data if data.get("status") in {"done", "blocked"} else UNAVAILABLE_PLAYER
         self.ledger.event("player", phase=self.phase.title, round=self.state.round, model=model)
-        self.ledger.artifact(self._round_file("player.json"), _dump(report))
+        self.ledger.artifact(self.ctx.round_file("player.json"), _dump(report))
         line = f"  player: {report['status']}, изменений {len(report.get('changes') or [])}"
         if report.get("blocked_reason"):
             line += f" — {report['blocked_reason']}"
@@ -568,115 +477,6 @@ class _PhaseRunner:
             continuation_diff=continuation,
         )
 
-    def _player_compact_failed(self) -> None:
-        """Раунд после ответа __compacted__ без проверенного ref.
-
-        Гейт и судья не запускаются (F5): работа исполнителя не завершена,
-        вердикта нет. Останавливаемся (F5, F9): без проверенного ref бриф
-        для нового вызова не построить, следующий раунд без снимка и
-        compact-события запрещён. Компакт — не падение и не продолжение
-        (F9): счётчик player_crashes не растёт, had_crash не выставляется,
-        счётчики K_max не трогаем.
-        """
-        self.ledger.event(
-            "player_compact_failed",
-            round=self.state.round,
-            crashes=self.state.player_crashes,
-        )
-        self.state.stop_reason = "snapshot_failed"
-        return None
-
-    def _compact_file(self, role: str) -> Path:
-        return self.run_dir / "inbox" / "compact.json"
-
-    def _take_requested_compact(self, role: str) -> bool:
-        """Забрать compact.json текущей роли: requested=True, файл удалить.
-
-        Чужой файл не трогаем. Возвращает True при забранном запросе.
-        Забираем атомарно через rename до чтения: замена файла между
-        чтением и удалением (запрос другой роли) остаётся на месте
-        до вызова этой роли.
-        """
-        import json
-        import os
-        import time
-
-        if inbox_dir(self.run_dir) is None:
-            return False
-        target = self._compact_file(role)
-        claimed = target.parent / f"compact.{os.getpid()}.{time.monotonic_ns()}.claimed"
-        try:
-            os.rename(target, claimed)
-        except OSError:
-            return False
-        try:
-            raw = claimed.read_text(encoding="utf-8")
-        except OSError:
-            return False
-        try:
-            data = json.loads(raw)
-        except ValueError:
-            data = {}
-        if not isinstance(data, dict) or data.get("role") != role:
-            # Чужой запрос — кладём обратно, но только в пустой слот:
-            # новая запись, появившаяся после нашего rename, новее и
-            # её нельзя затирать (last-write-wins).
-            try:
-                if not target.exists():
-                    os.replace(claimed, target)
-                else:
-                    claimed.unlink()
-            except OSError:
-                pass
-            return False
-        self._update_state(compact_requested=role)
-        try:
-            claimed.unlink()
-        except OSError:
-            pass
-        return True
-
-    def _claude_autocompacts(self, role: str) -> bool:
-        """True, когда роль на claude и её порог задан (> 0).
-
-        Вне диапазона --autocompact CLI (100000–1000000) флаг не
-        передаётся (предупреждение в `_autocompact_flag`), но мягкая
-        смена tero по порогу тоже отключается — компактит сам CLI.
-        """
-        from src.providers.claude_native import _positive_int
-
-        if role == "player":
-            provider, at_tokens = self.cfg.player_provider, self.cfg.compact_player_at_tokens
-        else:
-            provider, at_tokens = self.cfg.judge_provider, self.cfg.compact_judge_at_tokens
-        return provider == "claude" and _positive_int(at_tokens) > 0
-
-    def _clear_compact_requested(self, role: str) -> None:
-        """Поле очищается, когда стартовал новый вызов роли."""
-        try:
-            state = RunState.read(self.run_dir / "state.json") or {}
-        except Exception:
-            return
-        if state.get("compact_requested") == role:
-            self._update_state(compact_requested="")
-
-    def _player_compact_check(self) -> Any:
-        at_tokens = self.cfg.compact_player_at_tokens
-        if self._claude_autocompacts("player"):
-            # Компактит сам CLI (--autocompact): мягкая смена по порогу
-            # для этой роли не включается.
-            at_tokens = 0
-        if self.state.compact_count >= 3:
-            return None
-
-        def _check(tokens: int) -> bool:
-            # Файл может появиться прямо во время вызова: смотрим на
-            # каждой границе шага, а не один раз при создании проверки.
-            requested = self._take_requested_compact("player")
-            return should_compact(tokens, at_tokens=at_tokens, requested=requested)
-
-        return _check
-
     async def _raw_player_call(
         self,
         model: str,
@@ -692,8 +492,8 @@ class _PhaseRunner:
         """
         from datetime import datetime, timezone
 
-        self._clear_compact_requested("player")
-        self._update_state(
+        self.compact._clear_compact_requested("player")
+        self.ctx.update_state(
             role="player",
             provider=provider,
             model=model,
@@ -708,7 +508,7 @@ class _PhaseRunner:
                 prompt=prompt,
                 timeout=self.cfg.player_timeout_s,
                 ctx=ValidateCtx(),
-                emit=self._emit,
+                emit=self.ctx.emit,
                 compact_check=compact_check,
                 compact_at_tokens=(
                     self.cfg.compact_player_at_tokens
@@ -719,7 +519,7 @@ class _PhaseRunner:
         except Exception as exc:
             self._guard_plan("player")
             ref = self._snapshot_after_player()
-            self._provider_error(
+            self.ctx.provider_error(
                 "player",
                 {"error": scrub_secrets(str(exc) or type(exc).__name__)},
                 provider,
@@ -732,7 +532,7 @@ class _PhaseRunner:
                 self.state.resume_base = self.checkpoint
             return None
         self._guard_plan("player")
-        data = self._check_reply("player", data, provider)
+        data = self.ctx.check_reply("player", data, provider)
         if data is None:
             if self.state.last_provider_kind in ("auth", "quota"):
                 return False
@@ -745,62 +545,6 @@ class _PhaseRunner:
                 self.state.resume_base = self.checkpoint
             return None
         return data
-
-    def _record_compact(self, role: str, data: dict[str, Any]) -> str | None:
-        run_id = self.ledger.run_dir.name
-        if role == "player":
-            ref = f"refs/tero/{run_id}/phase-{self.phase.index:02d}-round{self.state.round:02d}-compact{self.state.compact_count}"
-        else:
-            ref = f"refs/tero/{run_id}/phase-{self.phase.index:02d}-round{self.state.round:02d}-judge-compact"
-        try:
-            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
-            if not snapshot_mod.verify(self.repo, ref):
-                raise RuntimeError("snapshot verify failed")
-        except Exception as exc:
-            self._update_state(snapshot_ref="")
-            self._emit(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                role=role,
-                error=str(exc) or type(exc).__name__,
-                text=f"снимок работы не сделан (`{ref}`)",
-            )
-            self.ledger.event(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                error=str(exc) or type(exc).__name__,
-                round=self.state.round,
-            )
-            return None
-        tokens = data.get("tokens", 0)
-        if role == "player":
-            self._update_state(snapshot_ref=ref, base=self.checkpoint)
-        text = f"компакт {role} ({tokens} токенов) — новый вызов, снимок `{ref}`"
-        self._emit(
-            "compact",
-            role=role,
-            tokens=tokens,
-            ref=ref or "",
-            text=text,
-        )
-        self.ledger.event(
-            "compact",
-            role=role,
-            tokens=tokens,
-            ref=ref,
-            round=self.state.round,
-            crashes=self.state.player_crashes,
-            kmax_flat=self.state.kmax_flat,
-        )
-        print(f"  компакт {role} ({tokens} токенов) — новый вызов", flush=True)
-        if ref and role == "player":
-            self.state.resume_ref = ref
-            self.state.resume_base = self.checkpoint
-            self.state.resume_active = True
-        # Компакт — не падение и не раунд: счётчики не трогаем.
-        return ref
 
     def _protect_tests(self) -> bool:
         return suite_guard.protect_tests(
@@ -818,8 +562,8 @@ class _PhaseRunner:
             from datetime import datetime, timezone
 
             print("  тесты пропущены (нет команды)", flush=True)
-            self._emit("gate", result="skipped", role="gate")
-            self._update_state(
+            self.ctx.emit("gate", result="skipped", role="gate")
+            self.ctx.update_state(
                 role="gate",
                 provider="",
                 model="",
@@ -833,13 +577,13 @@ class _PhaseRunner:
         from src.loop.gates import tail_lines
 
         print("  тесты …", flush=True)
-        self._update_state(
+        self.ctx.update_state(
             role="gate",
             provider="",
             model="",
             step_started=datetime.now(timezone.utc).isoformat(),
         )
-        self._emit(
+        self.ctx.emit(
             "gate_start",
             round=self.state.round,
             role="gate",
@@ -853,7 +597,7 @@ class _PhaseRunner:
         )
         duration = time.monotonic() - started
         tail = tail_lines(result.output)
-        self._emit(
+        self.ctx.emit(
             "gate",
             ok=result.ok,
             exit_code=result.exit_code,
@@ -861,7 +605,7 @@ class _PhaseRunner:
             role="gate",
             tail=tail,
         )
-        self._update_state(
+        self.ctx.update_state(
             gate={
                 "ok": result.ok,
                 "exit_code": result.exit_code,
@@ -875,7 +619,7 @@ class _PhaseRunner:
             round=self.state.round,
         )
         self.ledger.artifact(
-            self._round_file("tests.log"),
+            self.ctx.round_file("tests.log"),
             result.output,
         )
         if result.ok:
@@ -912,8 +656,8 @@ class _PhaseRunner:
             if not snapshot_mod.verify(self.repo, ref):
                 raise RuntimeError("snapshot verify failed")
         except Exception as exc:
-            self._update_state(snapshot_ref="")
-            self._emit(
+            self.ctx.update_state(snapshot_ref="")
+            self.ctx.emit(
                 "snapshot_failed",
                 ref=ref,
                 base=self.checkpoint,
@@ -938,8 +682,8 @@ class _PhaseRunner:
         if ref is None:
             # The round tree is unverified: the judge must not review it.
             return _Next.NEXT
-        self._clear_compact_requested("judge")
-        self._update_state(
+        self.compact._clear_compact_requested("judge")
+        self.ctx.update_state(
             role="judge",
             provider=self.cfg.judge_provider,
             model=self.cfg.judge_model,
@@ -965,7 +709,7 @@ class _PhaseRunner:
                 suite_delta=self.state.suite_delta,
                 needs_user_question=reask_question,
             )
-            self._clear_compact_requested("judge")
+            self.compact._clear_compact_requested("judge")
             data = await self.agents.run_role(
                 role="judge",
                 provider=self.cfg.judge_provider,
@@ -974,8 +718,8 @@ class _PhaseRunner:
                 prompt=prompt,
                 timeout=self.cfg.judge_timeout_s,
                 ctx=ctx,
-                emit=self._emit,
-                compact_check=self._judge_compact_check(),
+                emit=self.ctx.emit,
+                compact_check=self.compact._judge_compact_check(),
                 compact_at_tokens=(
                     self.cfg.compact_judge_at_tokens
                     if self.cfg.judge_provider == "claude"
@@ -992,7 +736,7 @@ class _PhaseRunner:
                 self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
                 print("  judge изменил рабочее дерево — откат", flush=True)
 
-            data = self._check_reply("judge", data, self.cfg.judge_provider)
+            data = self.ctx.check_reply("judge", data, self.cfg.judge_provider)
             if data is not None and data.get("__compacted__"):
                 # Компакт судьи: повтор на уже проверенном ref раунда, без
                 # дополнительного обязательного снимка (F12), не считается
@@ -1000,7 +744,7 @@ class _PhaseRunner:
                 if not self.state.judge_compact_used:
                     tokens = data.get("tokens", 0)
                     text = f"компакт judge ({tokens} токенов) — новый вызов, снимок `{ref}`"
-                    self._emit(
+                    self.ctx.emit(
                         "compact",
                         role="judge",
                         tokens=tokens,
@@ -1048,7 +792,7 @@ class _PhaseRunner:
                     question=question,
                     round=self.state.round,
                 )
-                self._emit(
+                self.ctx.emit(
                     "needs_user",
                     attempt=attempt,
                     question=question,
@@ -1083,7 +827,7 @@ class _PhaseRunner:
                 return _Next.JUDGE_PENDING
         self.state.judge_failures = 0
 
-        self._emit(
+        self.ctx.emit(
             "verdict",
             verdict=data.get("verdict"),
             round=self.state.round,
@@ -1093,7 +837,7 @@ class _PhaseRunner:
             item for item in data.get("findings") or [] if item.get("severity") == "blocking"
         ]
         first = blocking[0] if blocking else {}
-        self._update_state(
+        self.ctx.update_state(
             role="judge",
             provider=self.cfg.judge_provider,
             model=self.cfg.judge_model,
@@ -1112,22 +856,9 @@ class _PhaseRunner:
             verdict=data.get("verdict"),
             round=self.state.round,
         )
-        self.ledger.artifact(self._round_file("judge.json"), _dump(data))
+        self.ledger.artifact(self.ctx.round_file("judge.json"), _dump(data))
         _print_verdict(data)
         return self._apply_verdict(data)
-
-    def _judge_compact_check(self) -> Any:
-        at_tokens = self.cfg.compact_judge_at_tokens
-        if self._claude_autocompacts("judge"):
-            at_tokens = 0
-        if self.state.judge_compact_used:
-            return None
-
-        def _check(tokens: int) -> bool:
-            requested = self._take_requested_compact("judge")
-            return should_compact(tokens, at_tokens=at_tokens, requested=requested)
-
-        return _check
 
     def _judge_failed(self, attempt: int, error: str) -> None:
         text = f"судья: сбой {attempt}/{_JUDGE_MAX_FAILURES} — {error or 'без деталей'}"
@@ -1137,7 +868,7 @@ class _PhaseRunner:
             error=error,
             round=self.state.round,
         )
-        self._emit(
+        self.ctx.emit(
             "judge_failed",
             attempt=attempt,
             error=error,
@@ -1158,14 +889,14 @@ class _PhaseRunner:
             text=text,
             round=self.state.round,
         )
-        self._update_state(
+        self.ctx.update_state(
             status=status,
             reason=reason,
             text=text,
             snapshot_ref=ref,
             doing="стоп",
         )
-        self._emit(
+        self.ctx.emit(
             "stop",
             status=status,
             reason=reason,
@@ -1179,7 +910,7 @@ class _PhaseRunner:
         ref = state.get("snapshot_ref") or ""
         if reason in ("judge_auth", "judge_quota"):
             provider = self.cfg.judge_provider or "?"
-            text = self._provider_text("judge", provider) + " `tero resume` после входа"
+            text = self.ctx.provider_text("judge", provider) + " `tero resume` после входа"
         elif reason == "needs_user":
             question = self.state.user_question or ""
             text = f"нужен человек: `{question}`; `tero review`, `tero resume`"
@@ -1337,122 +1068,6 @@ class _PhaseRunner:
             new_blocking.append(found)
         return new_blocking
 
-    async def _tester(self) -> bool | None:
-        """True/False — обычный исход; None — auth/quota, caller делает halt."""
-        routed = [
-            item
-            for item in self.state.open_findings
-            if item.route == "tester" and not item.test_paths
-        ]
-        if not routed or not self.tester_enabled or self.test_command is None:
-            return True
-        from datetime import datetime, timezone
-
-        self._update_state(
-            role="tester",
-            provider=self.cfg.tester_provider,
-            model=self.cfg.tester_model,
-            step_started=datetime.now(timezone.utc).isoformat(),
-        )
-        before_tree = write_tree(self.repo)
-        before_files = set(list_worktree_files(self.repo))
-        prompt = tester_prompt(
-            preamble=self.preamble,
-            contract=self.contract,
-            diff=stage_and_diff(self.repo, self.checkpoint),
-            findings=[item.as_dict() for item in routed],
-        )
-        data = await self.agents.run_role(
-            role="tester",
-            provider=self.cfg.tester_provider,
-            model=self.cfg.tester_model,
-            effort=self.cfg.tester_effort,
-            prompt=prompt,
-            timeout=self.cfg.tester_timeout_s,
-            ctx=ValidateCtx(),
-            emit=self._emit,
-        )
-        self._guard_plan("tester")
-        data = self._check_reply("tester", data, self.cfg.tester_provider)
-        if data is None:
-            if self.state.last_provider_kind == "auth":
-                self.state.stop_reason = "provider_auth"
-                return None
-            if self.state.last_provider_kind == "quota":
-                self.state.stop_reason = "provider_quota"
-                return None
-            return False
-        self._emit(
-            "tester",
-            round=self.state.round,
-            role="tester",
-            tests=data.get("tests") or [],
-        )
-        self._update_state(tester={"tests": len(data.get("tests") or [])})
-        self.ledger.event("tester", round=self.state.round)
-        self.ledger.artifact(self._round_file("tester.json"), _dump(data))
-        self._revert_non_test(before_tree, before_files)
-        written = 0
-        red_confirmed = 0
-        for test in data.get("tests") or []:
-            path = test.get("path", "")
-            fid = test.get("finding_id", "")
-            if not path:
-                continue
-            written += 1
-            if not self._inside_repo(path):
-                self._note_finding(fid, "tester wrote a path outside the repo")
-                continue
-            if not is_test_path(path):
-                self._revert_path(before_tree, before_files, path)
-                self._note_finding(fid, "tester wrote a non-test path")
-                continue
-            if not (self.repo / path).is_file():
-                self._note_finding(fid, "tester reported a file it did not write")
-                continue
-            result = run_files(
-                self.test_command,
-                [path],
-                repo=self.repo,
-                timeout_s=self.cfg.test_timeout_s,
-            )
-            self.ledger.event("red_check", path=path, ok=result.ok)
-            if result.ok:
-                target = self.repo / path
-                target.unlink(missing_ok=True)
-                self._note_finding(fid, "tester test was green; file removed")
-                continue
-            red_confirmed += 1
-            content = (self.repo / path).read_text() if (self.repo / path).exists() else ""
-            digest = file_hashes(self.repo, [path]).get(path, "")
-            self.state.protected[path] = ProtectedTest(digest, content)
-            self.state.protected_by_id.setdefault(fid, [])
-            if path not in self.state.protected_by_id[fid]:
-                self.state.protected_by_id[fid].append(path)
-            for item in self.state.open_findings:
-                if item.id == fid and path not in item.test_paths:
-                    item.test_paths.append(path)
-        print(
-            f"  tester: тестов написано {written}, red-подтверждено {red_confirmed}",
-            flush=True,
-        )
-        return True
-
-    def _inside_repo(self, path: str) -> bool:
-        return suite_guard.inside_repo(self.repo, path)
-
-    def _revert_non_test(self, before_tree: str, before_files: set[str]) -> None:
-        suite_guard.revert_non_test(self.repo, before_tree, before_files)
-
-    def _revert_path(self, before_tree: str, before_files: set[str], path: str) -> None:
-        suite_guard.revert_path(self.repo, before_tree, before_files, path)
-
-    def _note_finding(self, fid: str, note: str) -> None:
-        for item in self.state.open_findings:
-            if item.id == fid:
-                item.note = note
-                item.route = "player"
-
     def _no_progress(self) -> bool:
         if not self.state.escalated and self.cfg.escalation_provider:
             self.state.escalated = True
@@ -1471,64 +1086,6 @@ class _PhaseRunner:
         print("  нет прогресса → откат фазы", flush=True)
         return True
 
-    def _round_file(self, name: str) -> str:
-        return f"phase-{self.phase.index:02d}/round-{self.state.round:02d}/{name}"
-
-    def _check_reply(
-        self, role: str, data: Any, provider: str = ""
-    ) -> dict[str, Any] | None:
-        """None when the provider is unavailable. An invalid reply is logged and still returned."""
-        if not isinstance(data, dict) or data.get("__unavailable__"):
-            self._provider_error(role, data, provider)
-            return None
-        if data.get("__invalid__"):
-            self._invalid(role, data)
-        return data
-
-    def _provider_text(self, role: str, provider: str) -> str:
-        kind = self.state.last_provider_kind
-        error = self.state.last_provider_error
-        if kind == "auth":
-            return f"`{provider}`: нужен вход (`{error}`)"
-        if kind == "quota":
-            return f"`{provider}`: квота или лимит (`{error}`)"
-        return error
-
-    def _invalid(self, role: str, data: dict[str, Any]) -> None:
-        errors = [str(item) for item in data.get("errors") or []]
-        raw = data.get("raw") or ""
-        self.ledger.event("invalid", role=role, round=self.state.round, errors=errors)
-        self.ledger.artifact(
-            self._round_file(f"{role}.invalid.txt"),
-            "ошибки:\n" + "\n".join(errors) + "\n\nответ:\n" + (raw or "(пусто)") + "\n",
-        )
-        print(f"  {role}: ответ не по схеме — {'; '.join(errors[:3])}", flush=True)
-
-    def _provider_error(
-        self, role: str, data: Any, provider: str = ""
-    ) -> None:
-        error = scrub_secrets(data.get("error", "") if isinstance(data, dict) else "")
-        kind = data.get("kind", "other") if isinstance(data, dict) else "other"
-        if kind not in ("auth", "quota", "network", "timeout", "stall", "other"):
-            kind = "other"
-        self.state.last_provider_error = error
-        self.state.last_provider_kind = kind
-        self.state.last_provider = provider
-        self.ledger.event("provider_error", role=role, round=self.state.round, error=error)
-        if kind in ("network", "other"):
-            print(f"  {role}: провайдер недоступен — {error}", flush=True)
-        else:
-            print(f"  {role}: {error}", flush=True)
-
-    def _player_identity(self) -> tuple[str, str, str]:
-        if self.state.escalated and self.cfg.escalation_provider:
-            return (
-                self.cfg.escalation_model,
-                self.cfg.escalation_provider,
-                self.cfg.escalation_effort,
-            )
-        return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
-
     def _snapshot_after_player(self) -> str | None:
         run_id = self.ledger.run_dir.name
         ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
@@ -1537,8 +1094,8 @@ class _PhaseRunner:
             if not snapshot_mod.verify(self.repo, ref):
                 raise RuntimeError("snapshot verify failed")
         except Exception as exc:
-            self._update_state(snapshot_ref="")
-            self._emit(
+            self.ctx.update_state(snapshot_ref="")
+            self.ctx.emit(
                 "snapshot_failed",
                 ref=ref,
                 base=self.checkpoint,
@@ -1553,7 +1110,7 @@ class _PhaseRunner:
                 round=self.state.round,
             )
             return None
-        self._update_state(snapshot_ref=ref, base=self.checkpoint)
+        self.ctx.update_state(snapshot_ref=ref, base=self.checkpoint)
         return ref
 
     def _rollback_with_snapshot(self, reason: str) -> str | None:
@@ -1565,8 +1122,8 @@ class _PhaseRunner:
                 return None
         except Exception:
             return None
-        self._update_state(snapshot_ref=ref, base=self.checkpoint)
-        self._emit(
+        self.ctx.update_state(snapshot_ref=ref, base=self.checkpoint)
+        self.ctx.emit(
             "snapshot",
             ref=ref,
             base=self.checkpoint,
@@ -1611,8 +1168,8 @@ class _PhaseRunner:
             self.plan_path.write_bytes(plan_bytes)
             raise
         self.ledger.event("ship", commit=sha, rounds=self.state.round)
-        self._emit("ship", commit=sha, round=self.state.round, role="judge")
-        self._update_state(commit=sha, phase_done=True)
+        self.ctx.emit("ship", commit=sha, round=self.state.round, role="judge")
+        self.ctx.update_state(commit=sha, phase_done=True)
         return PhaseOutcome(
             status="ship",
             reason="ship",
@@ -1625,7 +1182,7 @@ class _PhaseRunner:
         if reason == "user":
             return self.state.user_question or reason
         if reason in ("provider_auth", "provider_quota"):
-            return self._provider_text("", self.state.last_provider or "?")
+            return self.ctx.provider_text("", self.state.last_provider or "?")
         if reason == "provider_unavailable" and self.state.last_provider_kind in (
             "timeout",
             "stall",
@@ -1643,13 +1200,13 @@ class _PhaseRunner:
         return texts.get(reason, reason)
 
     def _write_stopped(self, reason: str, text: str) -> None:
-        self._update_state(
+        self.ctx.update_state(
             status=Status.STOPPED.value,
             reason=reason,
             text=text,
             doing="стоп",
         )
-        self._emit(
+        self.ctx.emit(
             "stop",
             status=Status.STOPPED.value,
             reason=reason,
@@ -1680,10 +1237,6 @@ class _PhaseRunner:
             escalated=self.state.escalated,
             stop_text=text,
         )
-
-
-def _dump(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
 def _git_show_bytes(repo: Path, base: str, plan: Path) -> bytes | None:
@@ -1734,43 +1287,4 @@ def _continuation_block(repo: Path, base: str, ref: str) -> str:
     if len(diff) > 20_000:
         return diff[:20_000] + f"\n…обрезано, полный дифф: `git diff {base} {ref}`"
     return diff
-
-
-def _tail(text: str, limit: int = 200) -> str:
-    lines = text.splitlines()
-    return "\n".join(lines[-limit:])
-
-
-def _stream_text(type: str, fields: dict[str, Any]) -> str:
-    if type == "tool":
-        return str(fields.get("text", ""))
-    if type == "text":
-        return str(fields.get("text", ""))
-    if type == "gate":
-        if fields.get("result") == "skipped":
-            return "тесты пропущены (нет команды)"
-        tail = str(fields.get("tail", ""))
-        head = "тесты: зелёные" if fields.get("ok") else "тесты: красные"
-        code = fields.get("exit_code")
-        text = f"{head} (код {code})" if code is not None else head
-        return f"{text}\n{tail}" if tail else text
-    if type == "gate_start":
-        return "тесты идут …"
-    if type == "verdict":
-        return str(fields.get("verdict", "") or "")
-    if type == "tester":
-        return f"тестов написано {len(fields.get('tests', []) or [])}"
-    if type == "ship":
-        return f"ship {fields.get('commit', '')}"
-    if type == "stop":
-        return str(fields.get("text", "") or fields.get("reason", "") or "")
-    if type == "start_step":
-        return f"раунд {fields.get('round', '')} начат"
-    if type == "compact":
-        return (
-            f"компакт {fields.get('role', '')} "
-            f"({fields.get('tokens', 0)} токенов) — "
-            f"новый вызов, снимок `{fields.get('ref', '')}`"
-        )
-    return ""
 
