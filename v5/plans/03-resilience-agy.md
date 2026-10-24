@@ -148,10 +148,10 @@
   `test_needs_user_rolls_back` и `tests/loop/test_hunt_loop.py` идут с эскалацией по умолчанию
   (`Config.escalation_provider="claude"`) и не меняются.
 
-- [ ] `test_needs_user_reask_then_fresh_then_pending`: судья трижды `NEEDS_USER` → 3 вызова судьи, во 2-м промпте блок переспроса с вопросом, в 3-м его нет, итог `judge_pending` `needs_user`, исполнитель вызван один раз
-- [ ] `test_needs_user_then_ship`: `NEEDS_USER`, затем SHIP → фаза сдана без нового вызова исполнителя
-- [ ] `test_needs_user_with_escalation_unchanged`: эскалация настроена → `NEEDS_USER` даёт прежний стоп `user`
-- [ ] реализовать
+- [x] `test_needs_user_reask_then_fresh_then_pending`: судья трижды `NEEDS_USER` → 3 вызова судьи, во 2-м промпте блок переспроса с вопросом, в 3-м его нет, итог `judge_pending` `needs_user`, исполнитель вызван один раз
+- [x] `test_needs_user_then_ship`: `NEEDS_USER`, затем SHIP → фаза сдана без нового вызова исполнителя
+- [x] `test_needs_user_with_escalation_unchanged`: эскалация настроена → `NEEDS_USER` даёт прежний стоп `user`
+- [x] реализовать
 
 ## Ключи config.yaml вне defaults
 

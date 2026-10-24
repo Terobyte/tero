@@ -32,7 +32,12 @@ from src.errors import scrub_data, scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
-from src.loop.prompts import judge_prompt, player_prompt, tester_prompt
+from src.loop.prompts import (
+    judge_prompt,
+    needs_user_reask_block,
+    player_prompt,
+    tester_prompt,
+)
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState, Status
 from src.loop.stream import Stream
@@ -86,6 +91,7 @@ class _Next(Enum):
 
 
 _JUDGE_MAX_FAILURES = 3
+_NEEDS_USER_MAX_ATTEMPTS = 3
 
 # K_max: столько подряд раундов-продолжений с неуменьшившимися замечаниями
 # судьи — и вместо stuck чистая попытка с checkpoint.
@@ -150,6 +156,7 @@ class _State:
     round: int = 0
     escalated: bool = False
     judge_failures: int = 0
+    needs_user_attempts: int = 0
     pending_reason: str = ""
     last_provider: str = ""
     stop_reason: str = ""
@@ -678,14 +685,16 @@ class _PhaseRunner:
             open_ids=[item.id for item in self.state.open_findings],
             protected_ids=set(self.state.protected_by_id),
         )
-        prompt = judge_prompt(
-            preamble=self.preamble,
-            contract=self.contract,
-            open_findings=[item.as_dict() for item in self.state.open_findings],
-            protected_ids=list(self.state.protected_by_id),
-            suite_delta=self.state.suite_delta,
-        )
+        reask_question = ""
         while True:
+            prompt = judge_prompt(
+                preamble=self.preamble,
+                contract=self.contract,
+                open_findings=[item.as_dict() for item in self.state.open_findings],
+                protected_ids=list(self.state.protected_by_id),
+                suite_delta=self.state.suite_delta,
+                needs_user_question=reask_question,
+            )
             data = await self.agents.run_role(
                 role="judge",
                 provider=self.cfg.judge_provider,
@@ -704,8 +713,44 @@ class _PhaseRunner:
                 print("  judge изменил рабочее дерево — откат", flush=True)
 
             data = self._check_reply("judge", data, self.cfg.judge_provider)
-            if data is not None and not data.get("__invalid__"):
+            if (
+                data is not None
+                and not data.get("__invalid__")
+                and not (
+                    data.get("verdict") == "NEEDS_USER"
+                    and not self.cfg.escalation_provider
+                )
+            ):
+                if data.get("verdict") in ("SHIP", "NO_SHIP"):
+                    self.state.needs_user_attempts = 0
                 break
+            if data is not None and data.get("verdict") == "NEEDS_USER":
+                question = str(data.get("user_question") or "")
+                self.state.needs_user_attempts += 1
+                attempt = self.state.needs_user_attempts
+                self.state.user_question = question
+                text = needs_user_reask_block(question)
+                self.ledger.event(
+                    "needs_user",
+                    attempt=attempt,
+                    question=question,
+                    round=self.state.round,
+                )
+                self._emit(
+                    "needs_user",
+                    attempt=attempt,
+                    question=question,
+                    round=self.state.round,
+                    role="judge",
+                    text=text,
+                )
+                print(f"  судья: нужен человек — {question}", flush=True)
+                if attempt >= _NEEDS_USER_MAX_ATTEMPTS:
+                    self.state.pending_reason = "needs_user"
+                    self.state.user_question = question
+                    return _Next.JUDGE_PENDING
+                reask_question = question if attempt == 1 else ""
+                continue
             self.state.judge_failures += 1
             attempt = self.state.judge_failures
             if data is None:
@@ -810,6 +855,9 @@ class _PhaseRunner:
         if reason in ("judge_auth", "judge_quota"):
             provider = self.cfg.judge_provider or "?"
             text = self._provider_text("judge", provider) + " `tero resume` после входа"
+        elif reason == "needs_user":
+            question = self.state.user_question or ""
+            text = f"нужен человек: `{question}`; `tero review`, `tero resume`"
         else:
             text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
         self._write_status_transition(

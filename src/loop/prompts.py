@@ -99,6 +99,14 @@ DECISION:
 "Close enough" is NOT approved. EXACT match required."""
 
 
+def needs_user_reask_block(user_question: str) -> str:
+    return (
+        f"Ты спросил: `{user_question}`. Человека нет. "
+        "Реши сам: SHIP или NO_SHIP с замечаниями. "
+        "NEEDS_USER снова не принимается."
+    )
+
+
 def judge_prompt(
     *,
     preamble: str,
@@ -106,6 +114,7 @@ def judge_prompt(
     open_findings: list[dict[str, Any]] | None = None,
     protected_ids: list[str] | None = None,
     suite_delta: list[str] | None = None,
+    needs_user_question: str = "",
 ) -> str:
     # Blind like the g3 coach: no player report, no diff, no gate output.
     # suite_delta is a fact from the loop, not the player's story: it names
@@ -141,12 +150,22 @@ def judge_prompt(
             "ask for is a blocking finding.",
             "\n".join(suite_delta) or "(нет)",
             "",
-            "## open_findings",
-            json.dumps(open_findings, ensure_ascii=False, indent=2),
+        "## open_findings",
+        json.dumps(open_findings, ensure_ascii=False, indent=2),
+        "",
+        "## protected_ids (можно discard_test)",
+        ", ".join(protected_ids) or "(нет)",
+    ]
+    + (
+        [
             "",
-            "## protected_ids (можно discard_test)",
-            ", ".join(protected_ids) or "(нет)",
+            "## Переспрос без человека",
+            needs_user_reask_block(needs_user_question),
+            "",
         ]
+        if needs_user_question
+        else []
+    )
     )
 
 

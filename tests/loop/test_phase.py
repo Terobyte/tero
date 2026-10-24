@@ -153,6 +153,8 @@ async def test_halt_writes_stopped_with_reason(
             scripted_steps.append(player_with_env)
             scripted_steps.append(judge_returns(ship()))
     cfg_kwargs: dict = {"escalation_provider": "", "escalation_model": ""}
+    if reason == "user":
+        cfg_kwargs = {"escalation_provider": "codex", "escalation_model": ""}
     if reason == "fuse":
         cfg_kwargs["max_rounds"] = 2
     agents = FakeAgents(repo, scripted_steps)

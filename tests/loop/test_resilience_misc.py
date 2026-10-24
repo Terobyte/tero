@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
 
 import pytest
 
+from src.config import Config
 from src.errors import ProviderStalled, classify_error
 from src.loop.agents import LiveAgents
+from src.loop.gates import detect
+from src.loop.ledger import Ledger, new_run_dir
+from src.loop.phase import run_phase
 from src.loop.schemas import ValidateCtx
+from src.loop.state import RunState
+from tests.loop import fakes as scripted
 
 
 @pytest.mark.parametrize(
@@ -429,6 +436,154 @@ async def test_judge_quota_goes_judge_pending_at_once(tmp_path):
     state = RunState.read(ledger.run_dir / "state.json")
     assert state is not None
     assert state.get("status") == "judge_pending"
+
+
+_RESILIENCE_PLAN = """# Demo
+
+Preamble.
+
+## Add greet
+
+- [ ] greet() returns hello
+"""
+
+
+def _repo(tmp_path):
+    return scripted.init_repo(tmp_path, _RESILIENCE_PLAN)
+
+
+def _cfg(**overrides):
+    data = {"plan_file": "plan.md", "max_rounds": 8, "test_timeout_s": 30}
+    data.update(overrides)
+    return Config(**data)
+
+
+async def _run_phase(repo, agents, cfg=None):
+    from src.loop.plan import load_phases, load_preamble
+
+    cfg = cfg or _cfg()
+    ledger = Ledger(new_run_dir(repo, "demo"))
+    phases = load_phases(repo / "plan.md")
+    outcome = await run_phase(
+        phases[0],
+        repo=repo,
+        plan_path=repo / "plan.md",
+        preamble=load_preamble(repo / "plan.md"),
+        cfg=cfg,
+        agents=agents,
+        test_command=detect(repo),
+        ledger=ledger,
+    )
+    return outcome, ledger
+
+
+def _needs_user(question="which greeting?"):
+    return {
+        "verdict": "NEEDS_USER",
+        "previous": [],
+        "findings": [],
+        "user_question": question,
+    }
+
+
+def _ledger_rows(ledger):
+    return [json.loads(line) for line in ledger.path.read_text().splitlines()]
+
+
+def _stream_rows(ledger):
+    return [
+        json.loads(line)
+        for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_needs_user_reask_then_fresh_then_pending(tmp_path):
+    repo = _repo(tmp_path)
+    prompts: list[str] = []
+
+    def judge_nu(role, kwargs):
+        assert role == "judge"
+        prompts.append(kwargs.get("prompt") or "")
+        return dict(_needs_user())
+
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            scripted.player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_nu,
+            judge_nu,
+            judge_nu,
+        ],
+    )
+    outcome, ledger = await _run_phase(
+        repo, agents, _cfg(escalation_provider="", escalation_model="")
+    )
+    assert outcome.status == "judge_pending"
+    assert outcome.reason == "needs_user"
+    assert agents.calls == ["player", "judge", "judge", "judge"]
+    assert len(prompts) == 3
+    q = "which greeting?"
+    assert q in prompts[1]
+    assert "Человека нет" in prompts[1]
+    assert "NEEDS_USER" in prompts[1]
+    assert q not in prompts[0]
+    assert "Человека нет" not in prompts[2]
+    assert (repo / "src/greet.py").exists()
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert state.get("status") == "judge_pending"
+    assert state.get("reason") == "needs_user"
+    assert q in (state.get("text") or "")
+    assert "tero review" in (state.get("text") or "")
+    assert "tero resume" in (state.get("text") or "")
+    kinds = [row.get("kind") for row in _ledger_rows(ledger)]
+    assert "rollback" not in kinds
+    assert "escalate" not in kinds
+    needs = [row for row in _ledger_rows(ledger) if row.get("kind") == "needs_user"]
+    assert [row.get("attempt") for row in needs] == [1, 2, 3]
+    assert all(row.get("question") == q for row in needs)
+    stream_needs = [row for row in _stream_rows(ledger) if row.get("type") == "needs_user"]
+    assert len(stream_needs) == 3
+    for row in stream_needs:
+        for key in ("phase", "round", "role", "text"):
+            assert row.get(key), key
+
+
+@pytest.mark.asyncio
+async def test_needs_user_then_ship(tmp_path):
+    repo = _repo(tmp_path)
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            scripted.player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            scripted.judge_returns(_needs_user()),
+            scripted.judge_returns(scripted.ship()),
+        ],
+    )
+    outcome, _ = await _run_phase(
+        repo, agents, _cfg(escalation_provider="", escalation_model="")
+    )
+    assert outcome.status == "ship"
+    assert agents.calls == ["player", "judge", "judge"]
+
+
+@pytest.mark.asyncio
+async def test_needs_user_with_escalation_unchanged(tmp_path):
+    repo = _repo(tmp_path)
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            scripted.player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            scripted.judge_returns(_needs_user()),
+        ],
+    )
+    outcome, _ = await _run_phase(
+        repo, agents, _cfg(escalation_provider="codex", escalation_model="")
+    )
+    assert outcome.status == "stop"
+    assert outcome.reason == "user"
+    assert outcome.user_question == "which greeting?"
 
 
 @pytest.mark.asyncio
