@@ -19,6 +19,12 @@ from src.process_guard import ProcessGuard
 # codex: 17s reasoning, a judge with no tool calls) never looks hung.
 HEARTBEAT_S = 30.0
 
+# Network backoff: pause before each retry, in order; at most len() retries.
+# A retry never starts when elapsed + next pause would pass the deadline.
+# Overridable in tests (seconds).
+RETRY_DELAYS_S = (60, 120, 300, 600, 3600)
+RETRY_DEADLINE_S = 7200
+
 _FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _STALL_SECS = re.compile(r"(\d+(?:\.\d+)?)\s*с")
 
@@ -154,7 +160,10 @@ class LiveAgents:
         effort: str = "",
         emit=None,
     ) -> str | None:
-        for attempt in range(2):
+        network_retry = 0
+        other_retried = False
+        overall_start = _now()
+        while True:
             before = self.guard.snapshot_pids()
             call_start = _now()
             self._last_output_ts = call_start
@@ -185,15 +194,43 @@ class LiveAgents:
                 self.last_error = raw
                 self._last_kind = classify_error(exc, raw)
                 self._last_exc = exc
-                if self._last_kind in ("timeout", "stall"):
-                    self.last_error = self.error_text(role, timeout)
+                if self._last_kind in ("timeout", "stall", "auth", "quota"):
+                    if self._last_kind in ("timeout", "stall"):
+                        self.last_error = self.error_text(role, timeout)
                     print(f"  {self.last_error}", flush=True)
-                    break  # timeout/stall never retry: phase decides (продолжение/judge_pending)
-                else:
-                    print(f"  {provider_name} ошибка: {raw}", flush=True)
-                if attempt == 0 and self.retry_wait_s:
+                    break  # timeout/stall/auth/quota never retry here: phase decides
+                print(f"  {provider_name} ошибка: {raw}", flush=True)
+                if self._last_kind == "network":
+                    delays = RETRY_DELAYS_S
+                    if network_retry >= len(delays):
+                        break
+                    wait_s = delays[network_retry]
+                    if _now() - overall_start + wait_s > RETRY_DEADLINE_S:
+                        break
+                    network_retry += 1
+                    line = (
+                        f"{role}: сеть, повтор {network_retry}/{len(delays)}"
+                        f" через {wait_s / 60:g} мин"
+                    )
+                    print(f"  {line}", flush=True)
+                    if emit is not None:
+                        emit(
+                            "retry",
+                            role=role,
+                            attempt=network_retry,
+                            wait_s=wait_s,
+                            error=raw,
+                            text=line,
+                        )
+                    await asyncio.sleep(wait_s)
+                    continue
+                if other_retried:
+                    break
+                other_retried = True
+                if self.retry_wait_s:
                     print(f"  повтор через {self.retry_wait_s:.0f} с", flush=True)
                     await asyncio.sleep(self.retry_wait_s)
+                continue
             finally:
                 heartbeat.cancel()
                 try:

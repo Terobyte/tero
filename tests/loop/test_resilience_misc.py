@@ -196,6 +196,241 @@ def test_non_streaming_provider_gets_no_stall(tmp_path, monkeypatch):
     assert streaming.config.stall_timeout_s == 42
 
 
+class _FailThenSucceed:
+    """Provider stub: fail N times with `exc`, then yield valid player JSON."""
+
+    def __init__(self, exc_factory, fails: int, payload: str = ""):
+        self._exc_factory = exc_factory
+        self.calls = 0
+        self._fails = fails
+        self._payload = payload or (
+            '{"status": "done", "changes": [], "start_here": [], "blocked_reason": ""}'
+        )
+
+    async def run(self, prompt, system_prompt, working_dir, model="", **kwargs):
+        self.calls += 1
+        if self.calls <= self._fails:
+            raise self._exc_factory()
+        yield self._payload
+
+
+@pytest.mark.asyncio
+async def test_network_error_backoff_schedule(tmp_path, monkeypatch):
+    import src.loop.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "RETRY_DELAYS_S", (60, 120, 300))
+    sleeps: list[float] = []
+
+    async def _sleep(wait_s: float) -> None:
+        sleeps.append(wait_s)
+
+    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    provider = _FailThenSucceed(lambda: RuntimeError("ECONNRESET"), 3)
+    agents = LiveAgents(
+        str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
+    )
+    data = await agents.run_role(
+        "player",
+        provider="opencode",
+        model="m",
+        prompt="P",
+        timeout=10,
+        ctx=ValidateCtx(),
+    )
+    assert data["status"] == "done"
+    assert provider.calls == 4
+    assert sleeps == [60, 120, 300]
+
+
+@pytest.mark.asyncio
+async def test_network_retries_capped(tmp_path, monkeypatch):
+    import src.loop.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "RETRY_DELAYS_S", (60, 120))
+    monkeypatch.setattr(agents_mod, "RETRY_DEADLINE_S", 7200)
+
+    async def _sleep(_wait_s: float) -> None:
+        pass
+
+    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    provider = _FailThenSucceed(lambda: ConnectionError("reset by peer"), 99)
+    agents = LiveAgents(
+        str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
+    )
+    data = await agents.run_role(
+        "player",
+        provider="opencode",
+        model="m",
+        prompt="P",
+        timeout=10,
+        ctx=ValidateCtx(),
+    )
+    assert data["__unavailable__"] is True
+    assert data["kind"] == "network"
+    assert provider.calls == 3  # 1 + len(RETRY_DELAYS_S)
+
+
+@pytest.mark.asyncio
+async def test_network_retries_stop_at_deadline(tmp_path, monkeypatch):
+    import src.loop.agents as agents_mod
+
+    monkeypatch.setattr(agents_mod, "RETRY_DELAYS_S", (100, 100, 100))
+    monkeypatch.setattr(agents_mod, "RETRY_DEADLINE_S", 250)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(agents_mod, "_now", lambda: clock["now"])
+
+    async def _sleep(wait_s: float) -> None:
+        clock["now"] += wait_s
+
+    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    provider = _FailThenSucceed(lambda: ConnectionError("reset by peer"), 99)
+    agents = LiveAgents(
+        str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
+    )
+    data = await agents.run_role(
+        "player",
+        provider="opencode",
+        model="m",
+        prompt="P",
+        timeout=10,
+        ctx=ValidateCtx(),
+    )
+    assert data["__unavailable__"] is True
+    assert data["kind"] == "network"
+    assert clock["now"] - 1000.0 <= 250
+    assert provider.calls == 3  # 1 + 2 повтора: третий упёрся в дедлайн
+
+
+@pytest.mark.asyncio
+async def test_auth_error_stops_without_waiting(tmp_path, monkeypatch):
+    import src.loop.agents as agents_mod
+
+    async def _sleep(_wait_s: float) -> None:  # pragma: no cover - не ждём
+        raise AssertionError("auth must not sleep")
+
+    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    provider = _FailThenSucceed(lambda: RuntimeError("HTTP 401 Unauthorized"), 99)
+    agents = LiveAgents(
+        str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
+    )
+    data = await agents.run_role(
+        "player",
+        provider="opencode",
+        model="m",
+        prompt="P",
+        timeout=10,
+        ctx=ValidateCtx(),
+    )
+    assert provider.calls == 1
+    assert data["__unavailable__"] is True
+    assert data["kind"] == "auth"
+
+    from src.config import Config
+    from src.loop.gates import detect
+    from src.loop.ledger import Ledger, new_run_dir
+    from src.loop.phase import run_phase
+    from src.loop.state import RunState
+    from tests.loop import fakes as scripted
+
+    repo = scripted.init_repo(
+        tmp_path,
+        "# Demo\n\nPreamble.\n\n## Add greet\n\n- [ ] greet() returns hello\n",
+    )
+
+    class _AuthAgents:
+        calls: list[str] = []
+
+        async def run_role(self, role: str, **kwargs):
+            type(self).calls.append(role)
+            return {"__unavailable__": True, "error": "HTTP 401 Unauthorized", "kind": "auth"}
+
+    from src.loop.plan import load_phases, load_preamble
+
+    ledger = Ledger(new_run_dir(repo, "demo"))
+    phases = load_phases(repo / "plan.md")
+    cfg = Config(plan_file="plan.md", max_rounds=8, test_timeout_s=30)
+    auth_agents = _AuthAgents()
+    outcome = await run_phase(
+        phases[0],
+        repo=repo,
+        plan_path=repo / "plan.md",
+        preamble=load_preamble(repo / "plan.md"),
+        cfg=cfg,
+        agents=auth_agents,
+        test_command=detect(repo),
+        ledger=ledger,
+    )
+    assert outcome.status == "stop"
+    assert outcome.reason == "provider_auth"
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert state.get("status") == "stopped"
+    text = state.get("text") or ""
+    assert "нужен вход" in text
+    assert state.get("snapshot_ref"), "halt делает снимок"
+    assert auth_agents.calls == ["player"]
+
+
+@pytest.mark.asyncio
+async def test_judge_quota_goes_judge_pending_at_once(tmp_path):
+    from src.config import Config
+    from src.loop.gates import detect
+    from src.loop.ledger import Ledger, new_run_dir
+    from src.loop.phase import run_phase
+    from src.loop.state import RunState
+    from tests.loop import fakes as scripted
+
+    repo = scripted.init_repo(
+        tmp_path,
+        "# Demo\n\nPreamble.\n\n## Add greet\n\n- [ ] greet() returns hello\n",
+    )
+    player_calls: list[str] = []
+
+    def _player(_role, _kwargs):
+        player_calls.append("player")
+        scripted.write_file(repo, "src/greet.py", "def greet():\n    return 'hello'\n")
+        return dict(scripted.PLAYER_DONE)
+
+    class _QuotaJudge:
+        calls: list[str] = []
+
+        async def run_role(self, role: str, **kwargs):
+            assert role == "judge"
+            type(self).calls.append(role)
+            return {"__unavailable__": True, "error": "quota exceeded", "kind": "quota"}
+
+    from src.loop.plan import load_phases, load_preamble
+
+    judge_agents = _QuotaJudge()
+
+    class _Both:
+        async def run_role(self, role: str, **kwargs):
+            if role == "player":
+                return _player(role, kwargs)
+            return await judge_agents.run_role(role, **kwargs)
+
+    ledger = Ledger(new_run_dir(repo, "demo"))
+    phases = load_phases(repo / "plan.md")
+    cfg = Config(plan_file="plan.md", max_rounds=8, test_timeout_s=30)
+    outcome = await run_phase(
+        phases[0],
+        repo=repo,
+        plan_path=repo / "plan.md",
+        preamble=load_preamble(repo / "plan.md"),
+        cfg=cfg,
+        agents=_Both(),
+        test_command=detect(repo),
+        ledger=ledger,
+    )
+    assert outcome.status == "judge_pending"
+    assert outcome.reason == "judge_quota"
+    assert len(player_calls) == 1
+    assert len(judge_agents.calls) == 1
+    state = RunState.read(ledger.run_dir / "state.json")
+    assert state is not None
+    assert state.get("status") == "judge_pending"
+
+
 @pytest.mark.asyncio
 async def test_timeout_is_not_provider_unavailable(tmp_path, capsys):
     class _HangingProvider:

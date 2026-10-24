@@ -118,12 +118,12 @@
     нетронуты, текст как выше + «`tero resume` после входа».
 - Вне этой фазы: `NEEDS_USER` (фаза 4), pre-flight `agy` (фаза 7).
 
-- [ ] `test_network_error_backoff_schedule`: stub падает с «ECONNRESET» 3 раза, потом отвечает → 4 вызова, паузы ровно первые три из `RETRY_DELAYS_S` (подменённый `asyncio.sleep` записывает их), успех
-- [ ] `test_network_retries_capped`: stub падает всегда → вызовов `len(RETRY_DELAYS_S)+1`, `kind=network`
-- [ ] `test_network_retries_stop_at_deadline`: `RETRY_DEADLINE_S` меньше суммы пауз → повторов меньше, общее время не превышает дедлайн (часы подменены)
-- [ ] `test_auth_error_stops_without_waiting`: «401 Unauthorized» → один вызов, ни одной паузы, у исполнителя `stopped` с `provider_auth`, ref есть
-- [ ] `test_judge_quota_goes_judge_pending_at_once`: судья падает с «quota» → `judge_pending` после первого же сбоя, `reason=judge_quota`, исполнитель вызван один раз
-- [ ] реализовать
+- [x] `test_network_error_backoff_schedule`: stub падает с «ECONNRESET» 3 раза, потом отвечает → 4 вызова, паузы ровно первые три из `RETRY_DELAYS_S` (подменённый `asyncio.sleep` записывает их), успех
+- [x] `test_network_retries_capped`: stub падает всегда → вызовов `len(RETRY_DELAYS_S)+1`, `kind=network`
+- [x] `test_network_retries_stop_at_deadline`: `RETRY_DEADLINE_S` меньше суммы пауз → повторов меньше, общее время не превышает дедлайн (часы подменены)
+- [x] `test_auth_error_stops_without_waiting`: «401 Unauthorized» → один вызов, ни одной паузы, у исполнителя `stopped` с `provider_auth`, ref есть
+- [x] `test_judge_quota_goes_judge_pending_at_once`: судья падает с «quota» → `judge_pending` после первого же сбоя, `reason=judge_quota`, исполнитель вызван один раз
+- [x] реализовать
 
 ## NEEDS_USER без эскалации
 

@@ -150,6 +150,9 @@ class _State:
     round: int = 0
     escalated: bool = False
     judge_failures: int = 0
+    pending_reason: str = ""
+    last_provider: str = ""
+    stop_reason: str = ""
     user_question: str = ""
     last_provider_error: str = ""
     last_provider_kind: str = "other"
@@ -313,7 +316,10 @@ class _PhaseRunner:
                 f"  {self._tag()} player {provider}({model}{extra}) …",
                 flush=True,
             )
-            if not await self._player():
+            player_ok = await self._player()
+            if player_ok is None:
+                return self._halt(self.state.stop_reason or "provider_unavailable")
+            if not player_ok:
                 # Падение исполнителя: дерево не откатывается, следующий
                 # раунд — новый вызов исполнителя с diff снимка в промпте.
                 # Два падения подряд — halt, как раньше по смыслу.
@@ -346,7 +352,7 @@ class _PhaseRunner:
         """Apply a judge verdict. None means: continue the normal cycle."""
         match verdict:
             case _Next.JUDGE_PENDING:
-                return self._stop_judge_pending()
+                return self._stop_judge_pending(self.state.pending_reason or "judge_failed")
             case _Next.USER:
                 return self._halt("user")
             case _Next.STOP:
@@ -359,7 +365,10 @@ class _PhaseRunner:
                     f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
                     flush=True,
                 )
-                if not await self._tester():
+                tester_ok = await self._tester()
+                if tester_ok is None:
+                    return self._halt(self.state.stop_reason or "provider_unavailable")
+                if not tester_ok:
                     return self._halt("provider_unavailable")
                 return None
             case _Next.NEXT:
@@ -370,7 +379,8 @@ class _PhaseRunner:
                 # so fall through without escalating the player.
                 return None
 
-    async def _player(self) -> bool:
+    async def _player(self) -> bool | None:
+        """True/False — обычный исход; None — auth/quota, caller делает halt."""
         model, provider, effort = self._player_identity()
         continuation = ""
         if self.state.resume_active:
@@ -409,7 +419,11 @@ class _PhaseRunner:
             )
         except Exception as exc:
             ref = self._snapshot_after_player()
-            self._provider_error("player", {"error": scrub_secrets(str(exc) or type(exc).__name__)})
+            self._provider_error(
+                "player",
+                {"error": scrub_secrets(str(exc) or type(exc).__name__)},
+                provider,
+            )
             self.state.player_crashes += 1
             self.state.resume_active = True
             self.state.had_crash = True
@@ -418,8 +432,14 @@ class _PhaseRunner:
                 self.state.resume_base = self.checkpoint
             return False
         ref = self._snapshot_after_player()
-        data = self._check_reply("player", data)
+        data = self._check_reply("player", data, provider)
         if data is None:
+            if self.state.last_provider_kind == "auth":
+                self.state.stop_reason = "provider_auth"
+                return None
+            if self.state.last_provider_kind == "quota":
+                self.state.stop_reason = "provider_quota"
+                return None
             self.state.player_crashes += 1
             self.state.resume_active = True
             self.state.had_crash = True
@@ -683,18 +703,26 @@ class _PhaseRunner:
                 self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
                 print("  judge изменил рабочее дерево — откат", flush=True)
 
-            data = self._check_reply("judge", data)
+            data = self._check_reply("judge", data, self.cfg.judge_provider)
             if data is not None and not data.get("__invalid__"):
                 break
             self.state.judge_failures += 1
             attempt = self.state.judge_failures
             if data is None:
+                kind = self.state.last_provider_kind
+                if kind == "auth":
+                    self.state.pending_reason = "judge_auth"
+                    return _Next.JUDGE_PENDING
+                if kind == "quota":
+                    self.state.pending_reason = "judge_quota"
+                    return _Next.JUDGE_PENDING
                 error = self.state.last_provider_error
                 self._judge_failed(attempt, error)
             else:
                 errors = [str(item) for item in data.get("errors") or []]
                 self._judge_failed(attempt, "; ".join(errors[:3]))
             if attempt >= _JUDGE_MAX_FAILURES:
+                self.state.pending_reason = "judge_failed"
                 return _Next.JUDGE_PENDING
         self.state.judge_failures = 0
 
@@ -776,19 +804,23 @@ class _PhaseRunner:
             text=text,
         )
 
-    def _stop_judge_pending(self) -> PhaseOutcome:
+    def _stop_judge_pending(self, reason: str = "judge_failed") -> PhaseOutcome:
         state = RunState.read(self.run_dir / "state.json") or {}
         ref = state.get("snapshot_ref") or ""
-        text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
+        if reason in ("judge_auth", "judge_quota"):
+            provider = self.cfg.judge_provider or "?"
+            text = self._provider_text("judge", provider) + " `tero resume` после входа"
+        else:
+            text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
         self._write_status_transition(
             status=Status.JUDGE_PENDING.value,
-            reason="judge_failed",
+            reason=reason,
             text=text,
             ref=ref,
         )
         return PhaseOutcome(
             status="judge_pending",
-            reason="judge_failed",
+            reason=reason,
             rounds=self.state.round,
             escalated=self.state.escalated,
             stop_text=text,
@@ -932,7 +964,8 @@ class _PhaseRunner:
             new_blocking.append(found)
         return new_blocking
 
-    async def _tester(self) -> bool:
+    async def _tester(self) -> bool | None:
+        """True/False — обычный исход; None — auth/quota, caller делает halt."""
         routed = [
             item
             for item in self.state.open_findings
@@ -966,8 +999,14 @@ class _PhaseRunner:
             ctx=ValidateCtx(),
             emit=self._emit,
         )
-        data = self._check_reply("tester", data)
+        data = self._check_reply("tester", data, self.cfg.tester_provider)
         if data is None:
+            if self.state.last_provider_kind == "auth":
+                self.state.stop_reason = "provider_auth"
+                return None
+            if self.state.last_provider_kind == "quota":
+                self.state.stop_reason = "provider_quota"
+                return None
             return False
         self._emit(
             "tester",
@@ -1069,14 +1108,25 @@ class _PhaseRunner:
     def _round_file(self, name: str) -> str:
         return f"phase-{self.phase.index:02d}/round-{self.state.round:02d}/{name}"
 
-    def _check_reply(self, role: str, data: Any) -> dict[str, Any] | None:
+    def _check_reply(
+        self, role: str, data: Any, provider: str = ""
+    ) -> dict[str, Any] | None:
         """None when the provider is unavailable. An invalid reply is logged and still returned."""
         if not isinstance(data, dict) or data.get("__unavailable__"):
-            self._provider_error(role, data)
+            self._provider_error(role, data, provider)
             return None
         if data.get("__invalid__"):
             self._invalid(role, data)
         return data
+
+    def _provider_text(self, role: str, provider: str) -> str:
+        kind = self.state.last_provider_kind
+        error = self.state.last_provider_error
+        if kind == "auth":
+            return f"`{provider}`: нужен вход (`{error}`)"
+        if kind == "quota":
+            return f"`{provider}`: квота или лимит (`{error}`)"
+        return error
 
     def _invalid(self, role: str, data: dict[str, Any]) -> None:
         errors = [str(item) for item in data.get("errors") or []]
@@ -1088,13 +1138,16 @@ class _PhaseRunner:
         )
         print(f"  {role}: ответ не по схеме — {'; '.join(errors[:3])}", flush=True)
 
-    def _provider_error(self, role: str, data: Any) -> None:
+    def _provider_error(
+        self, role: str, data: Any, provider: str = ""
+    ) -> None:
         error = scrub_secrets(data.get("error", "") if isinstance(data, dict) else "")
         kind = data.get("kind", "other") if isinstance(data, dict) else "other"
         if kind not in ("auth", "quota", "network", "timeout", "stall", "other"):
             kind = "other"
         self.state.last_provider_error = error
         self.state.last_provider_kind = kind
+        self.state.last_provider = provider
         self.ledger.event("provider_error", role=role, round=self.state.round, error=error)
         if kind in ("network", "other"):
             print(f"  {role}: провайдер недоступен — {error}", flush=True)
@@ -1205,6 +1258,8 @@ class _PhaseRunner:
     def _halt_text(self, reason: str, ref: str | None = None) -> str:
         if reason == "user":
             return self.state.user_question or reason
+        if reason in ("provider_auth", "provider_quota"):
+            return self._provider_text("", self.state.last_provider or "?")
         if reason == "provider_unavailable" and self.state.last_provider_kind in (
             "timeout",
             "stall",
