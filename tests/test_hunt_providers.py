@@ -5,13 +5,11 @@ import pytest
 import src.providers.claude_native as claude_native_mod
 import src.providers.codex as codex_mod
 import src.providers.cursor as cursor_mod
-import src.providers.gemini as gemini_mod
 import src.providers.opencode as opencode_mod
 from src.errors import ProviderError
 from src.providers.claude_native import ClaudeNativeProvider
 from src.providers.codex import CodexProvider
 from src.providers.cursor import CursorProvider
-from src.providers.gemini import GeminiProvider
 from src.providers.opencode import OpenCodeConfig, OpenCodeProvider
 from src.providers.subprocess_runner import SubprocessExit
 
@@ -60,17 +58,6 @@ def _flag_value(cmd, flag):
 
 
 @pytest.mark.asyncio
-async def test_B03a_gemini_read_only_uses_plan(monkeypatch, tmp_path):
-    seen = _patch_runner(monkeypatch, gemini_mod, [])
-    await _drain(GeminiProvider(), "p", "sys", str(tmp_path), read_only=True)
-    cmd = seen["cmd"]
-    assert _flag_value(cmd, "--approval-mode") == "plan", (
-        f"B03a: нет --approval-mode plan при read_only=True: {cmd!r}"
-    )
-    assert "--yolo" not in cmd, f"B03a: --yolo при read_only=True: {cmd!r}"
-
-
-@pytest.mark.asyncio
 async def test_B03b_cursor_read_only_uses_ask(monkeypatch, tmp_path):
     seen = _patch_runner(monkeypatch, cursor_mod, [])
     await _drain(CursorProvider(), "p", "sys", str(tmp_path), read_only=True)
@@ -104,33 +91,6 @@ async def test_B03d_claude_read_only_disallows_bash(monkeypatch, tmp_path):
     assert "Bash" in (_flag_value(cmd, "--disallowedTools") or ""), (
         f"B03d: --disallowedTools без Bash при read_only=True: {cmd!r}"
     )
-
-
-@pytest.mark.asyncio
-async def test_B20_gemini_always_skips_trust(monkeypatch, tmp_path):
-    seen = _patch_runner(monkeypatch, gemini_mod, [])
-    await _drain(GeminiProvider(), "p", "sys", str(tmp_path), read_only=False)
-    assert "--skip-trust" in seen["cmd"], (
-        f"B20: нет --skip-trust в команде gemini: {seen['cmd']!r}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_B21_gemini_delta_concat_no_newline(monkeypatch, tmp_path):
-    from src.loop.agents import _collect_text
-
-    events = [
-        {"type": "message", "role": "assistant",
-         "content": '{"verdict": "SH', "delta": True},
-        {"type": "message", "role": "assistant",
-         "content": 'IP"}', "delta": True},
-    ]
-    _patch_runner(monkeypatch, gemini_mod, events)
-    text = await _collect_text(
-        GeminiProvider(), prompt="p", working_dir=str(tmp_path),
-        model="", output_schema={}, read_only=False,
-    )
-    assert text == '{"verdict": "SHIP"}', f"B21: дельты склеились с мусором: {text!r}"
 
 
 @pytest.mark.asyncio
@@ -191,21 +151,6 @@ async def test_B33b_opencode_stderr_not_in_text(monkeypatch, tmp_path):
     messages = await _drain(OpenCodeProvider(), "p", "", str(tmp_path))
     for t in _texts(messages):
         assert "WRONG" not in t, f"B33b: stderr попал в текст ответа: {t!r}"
-
-
-@pytest.mark.asyncio
-async def test_B34_gemini_prompt_via_stdin(monkeypatch, tmp_path):
-    prompt = "X" * 200000
-    seen = _patch_runner(monkeypatch, gemini_mod, [])
-    await _drain(GeminiProvider(), prompt, "", str(tmp_path))
-    for part in seen["cmd"]:
-        assert len(part) <= 10000, (
-            f"B34: промпт в argv (элемент длиной {len(part)}): {str(part)[:80]!r}"
-        )
-    stdin_data = seen.get("stdin_data") or b""
-    assert prompt in stdin_data.decode("utf-8", errors="replace"), (
-        "B34: промпт не передан через stdin"
-    )
 
 
 def test_B35_native_claude_env_hides_api_key(monkeypatch):

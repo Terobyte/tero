@@ -285,13 +285,6 @@ def _config_search_paths(
     return deduped
 
 
-def _load_defaults_section(path: Path) -> dict:
-    """Load just the defaults section from one config file."""
-    data = _load_yaml(path)
-    defaults = data.get("defaults", {})
-    return defaults if isinstance(defaults, dict) else {}
-
-
 def load_provider_configs(
     working_dir: str | Path = ".",
     *,

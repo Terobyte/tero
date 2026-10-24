@@ -10,7 +10,6 @@ from src.providers.effort import (
     normalize_effort,
     provider_supports_effort,
 )
-from src.providers.gemini import GeminiProvider
 from src.providers.opencode import OpenCodeProvider
 
 
@@ -77,14 +76,6 @@ def test_cursor_command_encodes_effort_in_model():
 def test_opencode_command_passes_variant():
     cmd = OpenCodeProvider()._build_command(model="opencode/mimo-v2-pro-free", effort="max")
     assert cmd[cmd.index("--variant") + 1] == "max"
-
-
-def test_gemini_command_ignores_effort():
-    cmd = GeminiProvider()._build_command(model="gemini-3.8-flash", effort="high")
-    assert "--effort" not in cmd
-    assert "--variant" not in cmd
-    joined = " ".join(cmd)
-    assert "effort=" not in joined
 
 
 def test_effort_labels_cover_canon():

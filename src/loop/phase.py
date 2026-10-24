@@ -87,8 +87,6 @@ class _Next(Enum):
     STOP = auto()
     TESTER = auto()
     NEXT = auto()
-    INVALID = auto()
-    UNAVAILABLE = auto()
     JUDGE_PENDING = auto()
 
 
@@ -488,7 +486,7 @@ class _PhaseRunner:
             case _Next.NEXT:
                 return None
             case _:
-                # _Next.INVALID / _Next.UNAVAILABLE are consumed inside
+                # invalid or unavailable judge replies are consumed inside
                 # _judge (retry loop): reaching here would be a bug,
                 # so fall through without escalating the player.
                 return None

@@ -118,3 +118,96 @@ def test_ceilings_are_tight():
 def test_every_src_module_imports():
     for path in _src_files():
         importlib.import_module(_module_name(path))
+
+
+def test_gemini_module_gone():
+    import importlib.util
+    import warnings
+
+    from src.providers import create_provider
+    from src.providers.agy import AgyProvider
+
+    assert importlib.util.find_spec("src.providers.gemini") is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert isinstance(create_provider("gemini"), AgyProvider)
+
+
+def _top_level_defs(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    nodes = list(tree.body)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            nodes.extend(node.body)
+    return [n for n in nodes if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _mentions(tree: ast.Module) -> list[str]:
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.append(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.append(node.value)
+    return names
+
+
+def test_no_unreferenced_private_functions():
+    exceptions: set[str] = set()
+    trees = {_rel(p): ast.parse(p.read_text()) for p in _src_files()}
+    mentioned: dict[str, int] = {}
+    for tree in trees.values():
+        for name in _mentions(tree):
+            mentioned[name] = mentioned.get(name, 0) + 1
+    unreferenced = []
+    for rel, tree in trees.items():
+        for node in _top_level_defs(tree):
+            name = node.name
+            if not name.startswith("_") or (name.startswith("__") and name.endswith("__")):
+                continue
+            if name in exceptions:
+                continue
+            if mentioned.get(name, 0) == 0:
+                unreferenced.append(f"{rel}::{name}")
+    assert unreferenced == []
+
+
+def _type_checking_nodes(tree: ast.Module) -> set[int]:
+    inside = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test):
+            inside.update(id(child) for child in ast.walk(node))
+    return inside
+
+
+def _dunder_all(tree: ast.Module) -> set[str]:
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            return {e.value for e in node.value.elts if isinstance(e, ast.Constant)}
+    return set()
+
+
+def test_no_unused_imports():
+    unused = []
+    for path in _src_files():
+        text = path.read_text()
+        lines = text.splitlines()
+        tree = ast.parse(text)
+        skip = _type_checking_nodes(tree)
+        exported = _dunder_all(tree)
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)) or id(node) in skip:
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                continue
+            if any("# noqa: F401" in lines[i - 1] for i in range(node.lineno, node.end_lineno + 1)):
+                continue
+            for alias in node.names:
+                name = (alias.asname or alias.name).split(".")[0]
+                if name not in used and name not in exported:
+                    unused.append(f"{_rel(path)}:{node.lineno} {name}")
+    assert unused == []

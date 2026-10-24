@@ -64,12 +64,6 @@ def write_tree(repo: str | Path) -> str:
     return _git(repo, "write-tree").strip()
 
 
-def restore_tree(repo: str | Path, tree: str) -> None:
-    _git(repo, "read-tree", tree)
-    _git(repo, "checkout-index", "-a", "-f")
-    _git(repo, "clean", "-fd")
-
-
 def file_hashes(repo: str | Path, paths: list[str]) -> dict[str, str]:
     root = Path(repo)
     hashes: dict[str, str] = {}

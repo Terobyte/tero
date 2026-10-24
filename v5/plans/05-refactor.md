@@ -142,10 +142,10 @@
   Тест `test_gemini_routes_to_agy` остаётся.
 - Вне этой фазы: дубли (фаза 4), переносы из `phase.py` и `run.py`.
 
-- [ ] `test_gemini_module_gone`: `importlib.util.find_spec("src.providers.gemini") is None`, `create_provider("gemini")` → `AgyProvider`
-- [ ] `test_no_unreferenced_private_functions`: каждая функция или метод уровня модуля/класса с именем `_x` в `src/` упоминается в `src/` ещё хотя бы раз кроме своего `def` (по `ast`, имена `__dunder__` не считаются); список исключений в тесте пуст
-- [ ] `test_no_unused_imports`: по `ast` каждое имя из `import`/`from … import` в `src/` используется в своём модуле или стоит в его `__all__`; не считаются `from __future__ import …`, импорты внутри `if TYPE_CHECKING:` и строки с `# noqa: F401`
-- [ ] реализовать
+- [x] `test_gemini_module_gone`: `importlib.util.find_spec("src.providers.gemini") is None`, `create_provider("gemini")` → `AgyProvider`
+- [x] `test_no_unreferenced_private_functions`: каждая функция или метод уровня модуля/класса с именем `_x` в `src/` упоминается в `src/` ещё хотя бы раз кроме своего `def` (по `ast`, имена `__dunder__` не считаются); список исключений в тесте пуст
+- [x] `test_no_unused_imports`: по `ast` каждое имя из `import`/`from … import` в `src/` используется в своём модуле или стоит в его `__all__`; не считаются `from __future__ import …`, импорты внутри `if TYPE_CHECKING:` и строки с `# noqa: F401`
+- [x] реализовать
 
 ## Один атомарный ввод-вывод и одна папка прогона в CLI
 

@@ -17,7 +17,6 @@ from src.loop.git import (
     stage_and_diff,
     status_short,
     write_tree,
-    restore_tree,
 )
 
 
@@ -76,7 +75,8 @@ def test_write_tree_and_restore(tmp_path: Path):
     tree = write_tree(repo)
     (repo / "a.py").write_text("two\n")
     _git(repo, "add", "-A")
-    restore_tree(repo, tree)
+    _git(repo, "read-tree", tree)
+    _git(repo, "checkout-index", "-a", "-f")
     assert (repo / "a.py").read_text() == "one\n"
 
 

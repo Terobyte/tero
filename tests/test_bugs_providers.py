@@ -12,7 +12,6 @@ import src.providers.claude_native as claude_native_mod
 from src.errors import ProviderError
 from src.providers.claude_native import ClaudeNativeProvider
 from src.providers.codex import CodexProvider
-from src.providers.gemini import GeminiConfig, GeminiProvider
 from src.providers.opencode import OpenCodeConfig, OpenCodeProvider
 from src.providers.subprocess_runner import SubprocessExit
 
@@ -31,10 +30,6 @@ async def _drain(provider, *args, **kwargs):
     async for m in provider.run(*args, **kwargs):
         out.append(m)
     return out
-
-
-def _make_gemini(**overrides):
-    return GeminiProvider(GeminiConfig(**overrides))
 
 
 def _make_opencode(**overrides):
@@ -96,29 +91,6 @@ async def test_b44b_claude_native_valid_stderr_still_provider_error(
 
 
 # ---------------------------------------------------------------- B45
-
-
-def test_b45_gemini_result_event_stats_null():
-    """gemini result event with "stats": null → zero tokens, no AttributeError."""
-    provider = _make_gemini()
-    event = {"type": "result", "status": "success", "stats": None}
-
-    try:
-        msg = provider._adapt_gemini_event(event)
-    except (AttributeError, TypeError) as exc:
-        assert False, (
-            f"B45: result event with stats=null crashed: {exc!r} — "
-            "expected it treated as an empty dict (zero tokens)"
-        )
-
-    assert msg is not None, "B45: result event with stats=null should still yield the result message"
-    assert msg.stop_reason == "end_turn"
-    assert provider._last_input_tokens == 0, (
-        f"B45: expected zero input tokens for stats=null, got {provider._last_input_tokens}"
-    )
-    assert provider._last_output_tokens == 0, (
-        f"B45: expected zero output tokens for stats=null, got {provider._last_output_tokens}"
-    )
 
 
 def test_b45_codex_turn_completed_usage_null():
@@ -199,22 +171,3 @@ def test_b46_opencode_tool_state_output_null():
         f"B46: expected empty output for state.output=null, got {tool_result.content!r}"
     )
     assert tool_result.is_error is False
-
-
-# ---------------------------------------------------------------- B52
-
-
-def test_b52_gemini_result_error_status_treated_as_error():
-    """gemini result event with status="error" must follow the same error path
-    as a type:"error" event and raise ProviderError."""
-    provider = _make_gemini()
-    event = {
-        "type": "result",
-        "status": "error",
-        "message": "model exploded mid-run",
-    }
-
-    with pytest.raises(ProviderError) as exc_info:
-        provider._adapt_gemini_event(event)
-
-    assert exc_info.value is not None

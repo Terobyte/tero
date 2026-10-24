@@ -162,10 +162,3 @@ def test_B26_history_survives_truncated_ledger(tmp_path):
         pytest.fail(f"B26: history(limit=0) падает: {exc}")
 
 
-def test_B37_adapter_survives_non_dict_event():
-    from src.providers.gemini import GeminiProvider
-    for bad in (42, None):
-        try:
-            GeminiProvider()._adapt_gemini_event(bad)
-        except AttributeError as exc:
-            pytest.fail(f"B37: _adapt_gemini_event({bad!r}) падает: AttributeError: {exc}")
