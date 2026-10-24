@@ -223,11 +223,11 @@
 - Запуск подпроцессов — через параметр `popen=subprocess.Popen` (подменяется в тестах).
 - Вне этой фазы: точки решения (фаза 9 и дальше); `--decisions` здесь только принимается и кладётся в `Config`.
 
-- [ ] `test_detach_prints_protocol_and_returns`: stub-владелец (скрипт в `tmp_path`, пишет `state.json` с `running` и своим pid, спит) → родитель вернул 0, в выводе id и протокол
-- [ ] `test_detach_hud_does_not_flash_dead` (Review Focus 3): после возврата родителя `pid` в `state.json` = pid владельца, `registry.is_dead(state)` ложно, пока владелец жив
-- [ ] `test_detach_owner_early_exit_is_1`: stub-владелец пишет в лог ошибку с `META_MODEL_API_KEY=…` и выходит 1 → родитель код 1, хвост лога напечатан без значения ключа
-- [ ] `test_detach_caffeinate_argv`: подменённый `popen`, `sys.platform="darwin"`, stub `caffeinate` в `PATH` → второй вызов `["caffeinate", "-i", "-w", "<pid>"]`; без `caffeinate` — второго вызова нет
-- [ ] `test_go_decisions_flag`: `go --decisions` и `go --detach` → `cfg.decisions is True`; просто `go` → `False`
+- [x] `test_detach_prints_protocol_and_returns`: stub-владелец (скрипт в `tmp_path`, пишет `state.json` с `running` и своим pid, спит) → родитель вернул 0, в выводе id и протокол
+- [x] `test_detach_hud_does_not_flash_dead` (Review Focus 3): после возврата родителя `pid` в `state.json` = pid владельца, `registry.is_dead(state)` ложно, пока владелец жив
+- [x] `test_detach_owner_early_exit_is_1`: stub-владелец пишет в лог ошибку с `META_MODEL_API_KEY=…` и выходит 1 → родитель код 1, хвост лога напечатан без значения ключа
+- [x] `test_detach_caffeinate_argv`: подменённый `popen`, `sys.platform="darwin"`, stub `caffeinate` в `PATH` → второй вызов `["caffeinate", "-i", "-w", "<pid>"]`; без `caffeinate` — второго вызова нет
+- [x] `test_go_decisions_flag`: `go --decisions` и `go --detach` → `cfg.decisions is True`; просто `go` → `False`
 - [x] реализовать
 
 ## inbox, вопрос и tero answer

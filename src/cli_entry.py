@@ -25,7 +25,9 @@ def _config_from_args(args) -> Config:
 def prepare_go_config(args) -> Config:
     """Resolve config, apply CLI flags, then prompt for interactive settings."""
     config = _config_from_args(args)
-    no_menu = getattr(args, "no_menu", False)
+    detach = getattr(args, "detach", False)
+    owner = getattr(args, "owner", False)
+    no_menu = getattr(args, "no_menu", False) or detach or owner
 
     if no_menu:
         return config
@@ -58,6 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--tester", dest="tester_spec", default=None)
     go_parser.add_argument("--escalation", dest="escalation_spec", default=None)
     go_parser.add_argument("--no-escalation", action="store_true", default=False)
+    go_parser.add_argument("--decisions", action="store_true", default=False)
+    go_parser.add_argument("--detach", action="store_true", default=False)
+    go_parser.add_argument("--owner", action="store_true", default=False, help=argparse.SUPPRESS)
     go_parser.add_argument("--test-command", default=None)
     go_parser.add_argument("--test-command-scoped", default=None)
     go_parser.add_argument("--max-rounds", type=int, default=None)
@@ -379,6 +384,10 @@ def main():
     args = parser.parse_args()
 
     if args.command == "go":
+        if getattr(args, "detach", False):
+            from src.loop.detach import detach_go
+
+            sys.exit(detach_go(args))
         try:
             config = prepare_go_config(args)
         except UnknownProviderError as exc:

@@ -133,6 +133,7 @@ class Config:
     verbose: bool = False
     compact_player_at_tokens: int = 0
     compact_judge_at_tokens: int = 0
+    decisions: bool = False
 
 
 _ENV_MAP = {
@@ -481,6 +482,9 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     test_command_scoped = getattr(args, "test_command_scoped", None)
     if test_command_scoped is not None:
         cfg = dataclasses.replace(cfg, test_command_scoped=test_command_scoped)
+    decisions = getattr(args, "decisions", False)
+    if decisions or getattr(args, "detach", False) or getattr(args, "owner", False):
+        cfg = dataclasses.replace(cfg, decisions=True)
     max_rounds = getattr(args, "max_rounds", None)
     if max_rounds is not None:
         cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
