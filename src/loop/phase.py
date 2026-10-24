@@ -24,19 +24,13 @@ from src.errors import scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
-from src.loop.prompts import (
-    judge_prompt,
-    needs_user_reask_block,
-    player_prompt,
-)
+from src.loop.prompts import player_prompt
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState, Status
 from src.loop.stream import Stream
 from src.loop import suite_guard
 from src.loop.compact_step import CompactStep
 from src.loop.phase_ctx import (
-    _JUDGE_MAX_FAILURES,
-    _NEEDS_USER_MAX_ATTEMPTS,
     K_MAX,
     OpenFinding,
     PhaseContext,
@@ -48,6 +42,8 @@ from src.loop.phase_ctx import (
     _tail,
 )
 from src.loop.tester_step import TesterStep
+from src.loop.findings import in_continuation
+from src.loop.judge_step import JudgeStep
 from src.loop.suite_guard import (
     AGENT_CONFIG_DIRS,
     AGENT_INSTRUCTION_NAMES,
@@ -140,11 +136,8 @@ class _PhaseRunner:
         pulse: Any = None,
     ) -> None:
         self.start_with_judge = start_with_judge
-        self.start_checkpoint = start_checkpoint
         self.start_round = start_round
-        self.pulse = pulse
         self.phase = phase
-        self.total_phases = total_phases
         self.repo = repo
         self.plan_path = plan_path
         self.preamble = preamble
@@ -157,12 +150,9 @@ class _PhaseRunner:
         self.suite_hashes = file_hashes(repo, _suite_paths(repo))
         self.guarded, self.link_targets = _snapshot_guarded(repo, self.suite_hashes)
         self.state = _State()
-        self.tester_enabled = bool(test_command and test_command.run_files)
         self.contract = phase.body or phase.title
         self._plan_bytes = self._remember_plan()
         self.run_dir = Path(ledger.run_dir)
-        self.state_io = RunState(self.run_dir / "state.json")
-        self.stream = Stream(self.run_dir / "stream.jsonl")
         self.ctx = PhaseContext(
             phase=phase,
             total_phases=total_phases,
@@ -172,11 +162,11 @@ class _PhaseRunner:
             cfg=cfg,
             agents=agents,
             test_command=test_command,
-            tester_enabled=self.tester_enabled,
+            tester_enabled=bool(test_command and test_command.run_files),
             ledger=ledger,
             run_dir=self.run_dir,
-            state_io=self.state_io,
-            stream=self.stream,
+            state_io=RunState(self.run_dir / "state.json"),
+            stream=Stream(self.run_dir / "stream.jsonl"),
             pulse=pulse,
             checkpoint=self.checkpoint,
             contract=self.contract,
@@ -187,6 +177,13 @@ class _PhaseRunner:
         )
         self.compact = CompactStep(self.ctx)
         self.tester = TesterStep(self.ctx, self._guard_plan)
+        self.judge = JudgeStep(
+            self.ctx,
+            self.compact,
+            self._rollback_with_snapshot,
+            self._guard_plan,
+            self._no_progress,
+        )
 
     def _remember_plan(self) -> bytes | None:
         """Байты плана на входе в фазу; None — план не отслеживаем.
@@ -199,8 +196,6 @@ class _PhaseRunner:
             resolved = self.plan_path.resolve()
             repo_root = self.repo.resolve()
         except OSError:
-            return None
-        if not resolved.is_relative_to(repo_root):
             return None
         if not resolved.is_relative_to(repo_root):
             return None
@@ -280,7 +275,7 @@ class _PhaseRunner:
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
                 flush=True,
             )
-            verdict = await self._judge()
+            verdict = await self.judge._judge()
             self.ctx.progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
@@ -331,14 +326,14 @@ class _PhaseRunner:
                     return self._halt("provider_unavailable")
                 continue
             if self._protect_tests():
-                if not self._in_continuation() and self._no_progress():
+                if not in_continuation(self.state) and self._no_progress():
                     return self._halt("stuck")
                 continue
             gate = self._gate()
             self.ctx.progress()
             if gate is not None and not gate.ok:
                 if self._same_red(gate):
-                    if not self._in_continuation() and self._no_progress():
+                    if not in_continuation(self.state) and self._no_progress():
                         return self._halt("stuck")
                 self.state.gate_output = gate.output
                 continue
@@ -348,7 +343,7 @@ class _PhaseRunner:
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
                 flush=True,
             )
-            verdict = await self._judge()
+            verdict = await self.judge._judge()
             self.ctx.progress()
             outcome = await self._after_judge(verdict)
             if outcome is not None:
@@ -360,7 +355,7 @@ class _PhaseRunner:
         """Apply a judge verdict. None means: continue the normal cycle."""
         match verdict:
             case _Next.JUDGE_PENDING:
-                return self._stop_judge_pending(self.state.pending_reason or "judge_failed")
+                return self.judge._stop_judge_pending(self.state.pending_reason or "judge_failed")
             case _Next.USER:
                 return self._halt("user")
             case _Next.STOP:
@@ -648,426 +643,6 @@ class _PhaseRunner:
         self.state.last_red_tree = tree_now
         return same
 
-    def _snapshot_before_judge(self) -> str | None:
-        run_id = self.ledger.run_dir.name
-        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
-        try:
-            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
-            if not snapshot_mod.verify(self.repo, ref):
-                raise RuntimeError("snapshot verify failed")
-        except Exception as exc:
-            self.ctx.update_state(snapshot_ref="")
-            self.ctx.emit(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                role="judge",
-                error=str(exc) or type(exc).__name__,
-                text=f"снимок работы не сделан (`{ref}`)",
-            )
-            self.ledger.event(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                error=str(exc) or type(exc).__name__,
-                round=self.state.round,
-            )
-            return None
-        return ref
-
-    async def _judge(self) -> _Next:
-        from datetime import datetime, timezone
-
-        ref = self._snapshot_before_judge()
-        if ref is None:
-            # The round tree is unverified: the judge must not review it.
-            return _Next.NEXT
-        self.compact._clear_compact_requested("judge")
-        self.ctx.update_state(
-            role="judge",
-            provider=self.cfg.judge_provider,
-            model=self.cfg.judge_model,
-            step_started=datetime.now(timezone.utc).isoformat(),
-            snapshot_ref=ref,
-            base=self.checkpoint,
-        )
-        if snapshot_mod.tree_of(self.repo, self.checkpoint) != snapshot_mod.ref_tree(
-            self.repo, ref
-        ):
-            snapshot_mod.restore_snapshot(self.repo, ref)
-        ctx = ValidateCtx(
-            open_ids=[item.id for item in self.state.open_findings],
-            protected_ids=set(self.state.protected_by_id),
-        )
-        reask_question = ""
-        while True:
-            prompt = judge_prompt(
-                preamble=self.preamble,
-                contract=self.contract,
-                open_findings=[item.as_dict() for item in self.state.open_findings],
-                protected_ids=list(self.state.protected_by_id),
-                suite_delta=self.state.suite_delta,
-                needs_user_question=reask_question,
-            )
-            self.compact._clear_compact_requested("judge")
-            data = await self.agents.run_role(
-                role="judge",
-                provider=self.cfg.judge_provider,
-                model=self.cfg.judge_model,
-                effort=self.cfg.judge_effort,
-                prompt=prompt,
-                timeout=self.cfg.judge_timeout_s,
-                ctx=ctx,
-                emit=self.ctx.emit,
-                compact_check=self.compact._judge_compact_check(),
-                compact_at_tokens=(
-                    self.cfg.compact_judge_at_tokens
-                    if self.cfg.judge_provider == "claude"
-                    else 0
-                ),
-            )
-            # Провайдер без read_only может писать в дерево: план проверяем
-            # сразу после вызова, до сравнения деревьев.
-            self._guard_plan("judge")
-            if snapshot_mod.tree_of(
-                self.repo, self.checkpoint
-            ) != snapshot_mod.ref_tree(self.repo, ref):
-                snapshot_mod.restore_snapshot(self.repo, ref)
-                self.ledger.event("judge_tamper", round=self.state.round, ref=ref)
-                print("  judge изменил рабочее дерево — откат", flush=True)
-
-            data = self.ctx.check_reply("judge", data, self.cfg.judge_provider)
-            if data is not None and data.get("__compacted__"):
-                # Компакт судьи: повтор на уже проверенном ref раунда, без
-                # дополнительного обязательного снимка (F12), не считается
-                # сбоем судьи; второй компакт за раунд — как сбой (F7).
-                if not self.state.judge_compact_used:
-                    tokens = data.get("tokens", 0)
-                    text = f"компакт judge ({tokens} токенов) — новый вызов, снимок `{ref}`"
-                    self.ctx.emit(
-                        "compact",
-                        role="judge",
-                        tokens=tokens,
-                        ref=ref or "",
-                        text=text,
-                    )
-                    self.ledger.event(
-                        "compact",
-                        role="judge",
-                        tokens=tokens,
-                        ref=ref,
-                        round=self.state.round,
-                        crashes=self.state.player_crashes,
-                        kmax_flat=self.state.kmax_flat,
-                    )
-                    print(f"  компакт judge ({tokens} токенов) — новый вызов", flush=True)
-                    self.state.judge_compact_used = True
-                    continue
-                else:
-                    data = {
-                        "__invalid__": True,
-                        "errors": ["judge compacted twice in one round"],
-                        "raw": "",
-                    }
-            if (
-                data is not None
-                and not data.get("__invalid__")
-                and not (
-                    data.get("verdict") == "NEEDS_USER"
-                    and not self.cfg.escalation_provider
-                )
-            ):
-                if data.get("verdict") in ("SHIP", "NO_SHIP"):
-                    self.state.needs_user_attempts = 0
-                break
-            if data is not None and data.get("verdict") == "NEEDS_USER":
-                question = str(data.get("user_question") or "")
-                self.state.needs_user_attempts += 1
-                attempt = self.state.needs_user_attempts
-                self.state.user_question = question
-                text = needs_user_reask_block(question)
-                self.ledger.event(
-                    "needs_user",
-                    attempt=attempt,
-                    question=question,
-                    round=self.state.round,
-                )
-                self.ctx.emit(
-                    "needs_user",
-                    attempt=attempt,
-                    question=question,
-                    round=self.state.round,
-                    role="judge",
-                    text=text,
-                )
-                print(f"  судья: нужен человек — {question}", flush=True)
-                if attempt >= _NEEDS_USER_MAX_ATTEMPTS:
-                    self.state.pending_reason = "needs_user"
-                    self.state.user_question = question
-                    return _Next.JUDGE_PENDING
-                reask_question = question if attempt == 1 else ""
-                continue
-            self.state.judge_failures += 1
-            attempt = self.state.judge_failures
-            if data is None:
-                kind = self.state.last_provider_kind
-                if kind == "auth":
-                    self.state.pending_reason = "judge_auth"
-                    return _Next.JUDGE_PENDING
-                if kind == "quota":
-                    self.state.pending_reason = "judge_quota"
-                    return _Next.JUDGE_PENDING
-                error = self.state.last_provider_error
-                self._judge_failed(attempt, error)
-            else:
-                errors = [str(item) for item in data.get("errors") or []]
-                self._judge_failed(attempt, "; ".join(errors[:3]))
-            if attempt >= _JUDGE_MAX_FAILURES:
-                self.state.pending_reason = "judge_failed"
-                return _Next.JUDGE_PENDING
-        self.state.judge_failures = 0
-
-        self.ctx.emit(
-            "verdict",
-            verdict=data.get("verdict"),
-            round=self.state.round,
-            role="judge",
-        )
-        blocking = [
-            item for item in data.get("findings") or [] if item.get("severity") == "blocking"
-        ]
-        first = blocking[0] if blocking else {}
-        self.ctx.update_state(
-            role="judge",
-            provider=self.cfg.judge_provider,
-            model=self.cfg.judge_model,
-            verdict={
-                "verdict": data.get("verdict"),
-                "blocking": len(blocking),
-                "first": {
-                    "issue": first.get("problem", ""),
-                    "file": first.get("file", ""),
-                    "line": first.get("line"),
-                },
-            },
-        )
-        self.ledger.event(
-            "judge",
-            verdict=data.get("verdict"),
-            round=self.state.round,
-        )
-        self.ledger.artifact(self.ctx.round_file("judge.json"), _dump(data))
-        _print_verdict(data)
-        return self._apply_verdict(data)
-
-    def _judge_failed(self, attempt: int, error: str) -> None:
-        text = f"судья: сбой {attempt}/{_JUDGE_MAX_FAILURES} — {error or 'без деталей'}"
-        self.ledger.event(
-            "judge_failed",
-            attempt=attempt,
-            error=error,
-            round=self.state.round,
-        )
-        self.ctx.emit(
-            "judge_failed",
-            attempt=attempt,
-            error=error,
-            round=self.state.round,
-            role="judge",
-            text=text,
-        )
-        print(f"  {text}", flush=True)
-
-    def _write_status_transition(
-        self, *, status: str, reason: str, text: str, ref: str = "", role: str = "judge"
-    ) -> None:
-        self.ledger.event(
-            "judge_pending",
-            status=status,
-            reason=reason,
-            ref=ref,
-            text=text,
-            round=self.state.round,
-        )
-        self.ctx.update_state(
-            status=status,
-            reason=reason,
-            text=text,
-            snapshot_ref=ref,
-            doing="стоп",
-        )
-        self.ctx.emit(
-            "stop",
-            status=status,
-            reason=reason,
-            ref=ref,
-            role=role,
-            text=text,
-        )
-
-    def _stop_judge_pending(self, reason: str = "judge_failed") -> PhaseOutcome:
-        state = RunState.read(self.run_dir / "state.json") or {}
-        ref = state.get("snapshot_ref") or ""
-        if reason in ("judge_auth", "judge_quota"):
-            provider = self.cfg.judge_provider or "?"
-            text = self.ctx.provider_text("judge", provider) + " `tero resume` после входа"
-        elif reason == "needs_user":
-            question = self.state.user_question or ""
-            text = f"нужен человек: `{question}`; `tero review`, `tero resume`"
-        else:
-            text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
-        self._write_status_transition(
-            status=Status.JUDGE_PENDING.value,
-            reason=reason,
-            text=text,
-            ref=ref,
-        )
-        return PhaseOutcome(
-            status="judge_pending",
-            reason=reason,
-            rounds=self.state.round,
-            escalated=self.state.escalated,
-            stop_text=text,
-        )
-
-    def _apply_verdict(self, data: dict[str, Any]) -> _Next:
-        verdict = data.get("verdict")
-        if verdict == "SHIP":
-            return _Next.SHIP
-        if verdict == "NEEDS_USER":
-            self.state.user_question = data.get("user_question", "")
-            return _Next.USER
-
-        findings = data.get("findings") or []
-        self._discard_tests(findings)
-        previous = {row["id"]: row["state"] for row in data.get("previous") or []}
-        if self._in_continuation():
-            return self._apply_verdict_continuation(findings, previous)
-        if self._stalled(previous) and self._no_progress():
-            return _Next.STOP
-
-        still_open = [
-            item
-            for item in self.state.open_findings
-            if previous.get(item.id) != "resolved"
-        ]
-        new_blocking = self._new_blocking(findings)
-        self.state.open_findings = still_open + new_blocking
-        if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
-            return _Next.TESTER
-        return _Next.NEXT
-
-    def _in_continuation(self) -> bool:
-        # K_max считает только раунды-продолжения после падения исполнителя
-        # (фаза 9), дошедшие до вердикта судьи NO_SHIP. Раунды без падения —
-        # обычный цикл: _stalled/_no_progress работают как раньше.
-        return self.state.had_crash and self.state.resume_active
-
-    @staticmethod
-    def _findings_key(findings: list[dict[str, Any]]) -> tuple[int, frozenset]:
-        blocking = [item for item in findings if item.get("severity") == "blocking"]
-        return (
-            len(blocking),
-            frozenset((item.get("file", ""), item.get("line")) for item in blocking),
-        )
-
-    def _not_shrunk(self, current: tuple[int, frozenset]) -> bool:
-        prev = self.state.kmax_prev
-        if prev is None:
-            return True
-        count_now, keys_now = current
-        count_prev, keys_prev = prev
-        return count_now >= count_prev and not keys_now < keys_prev
-
-    def _clean_retry(self) -> None:
-        ref = self._rollback_with_snapshot("clean_retry")
-        self.ledger.event(
-            "clean_retry",
-            reason="clean_retry",
-            ref=ref,
-            round=self.state.round,
-        )
-        # Чистая попытка: блок продолжения убирается, старый ref остаётся.
-        self.state.resume_active = False
-        self.state.had_crash = False
-        self.state.kmax_flat = 0
-        self.state.kmax_prev = None
-
-    def _apply_verdict_continuation(
-        self, findings: list[dict[str, Any]], previous: dict[str, str]
-    ) -> _Next:
-        # В раунде-продолжении _stalled/_no_progress не проверяются:
-        # решает счётчик K_max.
-        key = self._findings_key(findings)
-        if self._not_shrunk(key):
-            self.state.kmax_flat += 1
-        else:
-            self.state.kmax_flat = 0
-        self.state.kmax_prev = key
-        if self.state.kmax_flat >= K_MAX:
-            self._clean_retry()
-        still_open = [
-            item
-            for item in self.state.open_findings
-            if previous.get(item.id) != "resolved"
-        ]
-        new_blocking = self._new_blocking(findings)
-        self.state.open_findings = still_open + new_blocking
-        if any(item.route == "tester" for item in new_blocking) and self.tester_enabled:
-            return _Next.TESTER
-        return _Next.NEXT
-
-    def _discard_tests(self, findings: list[dict[str, Any]]) -> None:
-        self.state.discarded = []
-        for item in findings:
-            if item.get("route") != "discard_test":
-                continue
-            fid = item.get("id") or ""
-            paths = self.state.protected_by_id.pop(fid, None)
-            if not paths:
-                continue
-            note = "тест снят, чини код"
-            for path in paths:
-                target = self.repo / path
-                target.unlink(missing_ok=True)
-                self.state.protected.pop(path, None)
-                self.state.discarded.append(f"{fid}: {note}")
-            for found in self.state.open_findings:
-                if found.id == fid:
-                    found.test_paths = []
-                    found.note = note
-
-    def _stalled(self, previous: dict[str, str]) -> bool:
-        # discard_test changes the tree; that is progress, not a stall.
-        return (
-            bool(self.state.open_findings)
-            and not any(previous.get(item.id) == "resolved" for item in self.state.open_findings)
-            and not self.state.discarded
-        )
-
-    def _new_blocking(self, findings: list[dict[str, Any]]) -> list[OpenFinding]:
-        new_blocking: list[OpenFinding] = []
-        for item in findings:
-            if item.get("severity") != "blocking":
-                continue
-            if item.get("route") == "discard_test":
-                continue
-            route = item.get("route") or "player"
-            if route == "tester" and not self.tester_enabled:
-                route = "player"
-            found = OpenFinding(
-                id=f"F{self.state.next_id}",
-                severity="blocking",
-                route=route,
-                file=item.get("file", ""),
-                line=item.get("line"),
-                problem=item.get("problem", ""),
-                expected=item.get("expected", ""),
-            )
-            self.state.next_id += 1
-            new_blocking.append(found)
-        return new_blocking
-
     def _no_progress(self) -> bool:
         if not self.state.escalated and self.cfg.escalation_provider:
             self.state.escalated = True
@@ -1259,22 +834,6 @@ def _git_show_bytes(repo: Path, base: str, plan: Path) -> bytes | None:
     if proc.returncode != 0:
         return None
     return proc.stdout
-
-
-def _print_verdict(data: dict[str, Any]) -> None:
-    findings = data.get("findings") or []
-    blocking = [item for item in findings if item.get("severity") == "blocking"]
-    print(
-        f"  judge: {data.get('verdict')}, blocking {len(blocking)}",
-        flush=True,
-    )
-    for item in blocking[:5]:
-        where = item.get("file") or "?"
-        if item.get("line"):
-            where += f":{item['line']}"
-        print(f"    - {where}: {item.get('problem', '')}", flush=True)
-    if data.get("user_question"):
-        print(f"    вопрос: {data['user_question']}", flush=True)
 
 
 def _continuation_block(repo: Path, base: str, ref: str) -> str:

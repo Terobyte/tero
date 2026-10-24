@@ -269,11 +269,11 @@
 - Меняются старые тесты: нет.
 - Вне этой фазы: остальной `run.py` (фаза 8).
 
-- [ ] `test_judge_modules_import_no_phase`: по `ast` `judge_step.py`, `findings.py`, `transition.py` (и `judge_prompt.py`, если есть) не импортируют `src.loop.phase` и `src.loop.run`
-- [ ] `test_transitions_in_one_module`: по `ast` во всём `src/` нет `_write_status_transition`, а `phase_transition` и `resume_transition` определены только в `src/loop/transition.py`
-- [ ] `test_findings_pure`: `findings_key` и `not_shrunk` на двух списках замечаний с тем же `(file, line)` и другим текстом → «не уменьшились» (как `test_kmax_rephrased_findings_count_as_flat`, но без прогона)
-- [ ] `test_phase_py_is_orchestrator`: `src/loop/phase.py` ≤ 850 строк, в `FUNC_CEILINGS` нет ключей из `phase.py`
-- [ ] реализовать
+- [x] `test_judge_modules_import_no_phase`: по `ast` `judge_step.py`, `findings.py`, `transition.py` (и `judge_prompt.py`, если есть) не импортируют `src.loop.phase` и `src.loop.run`
+- [x] `test_transitions_in_one_module`: по `ast` во всём `src/` нет `_write_status_transition`, а `phase_transition` и `resume_transition` определены только в `src/loop/transition.py`
+- [x] `test_findings_pure`: `findings_key` и `not_shrunk` на двух списках замечаний с тем же `(file, line)` и другим текстом → «не уменьшились» (как `test_kmax_rephrased_findings_count_as_flat`, но без прогона)
+- [x] `test_phase_py_is_orchestrator`: `src/loop/phase.py` ≤ 850 строк, в `FUNC_CEILINGS` нет ключей из `phase.py`
+- [x] реализовать
 
 ## run.py и cli_entry.py: общий старт, общий цикл фаз, команды отдельно
 

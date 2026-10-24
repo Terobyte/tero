@@ -97,3 +97,49 @@ def test_emit_fields_unchanged(tmp_path, monkeypatch):
     assert secret not in first["text"] and secret not in first["tail"]
     assert second["role"] == "gate"  # role sticks from the previous event
     assert second["text"] == "SHIP"
+
+
+def test_judge_modules_import_no_phase():
+    _assert_no_phase_imports(
+        "src/loop/judge_step.py",
+        "src/loop/judge_prompt.py",
+        "src/loop/findings.py",
+        "src/loop/transition.py",
+    )
+
+
+def test_transitions_in_one_module():
+    defined: dict[str, list[str]] = {"phase_transition": [], "resume_transition": []}
+    for path in sorted(ROOT.glob("src/**/*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                assert node.name != "_write_status_transition", rel
+                if node.name in defined:
+                    defined[node.name].append(rel)
+            elif isinstance(node, (ast.Name, ast.Attribute)):
+                name = node.id if isinstance(node, ast.Name) else node.attr
+                assert name != "_write_status_transition", rel
+    assert defined == {
+        "phase_transition": ["src/loop/transition.py"],
+        "resume_transition": ["src/loop/transition.py"],
+    }
+
+
+def test_findings_pure():
+    from src.loop.findings import findings_key, not_shrunk
+    from src.loop.phase_ctx import PhaseState
+
+    before = [{"severity": "blocking", "file": "a.py", "line": 3, "problem": "старый текст"}]
+    after = [{"severity": "blocking", "file": "a.py", "line": 3, "problem": "другие слова"}]
+    st = PhaseState(kmax_prev=findings_key(before))
+    assert not_shrunk(st, findings_key(after)) is True
+    assert not_shrunk(st, findings_key([])) is False
+
+
+def test_phase_py_is_orchestrator():
+    from tests.test_structure import FUNC_CEILINGS
+
+    assert len((ROOT / "src/loop/phase.py").read_text().splitlines()) <= 850
+    assert not [key for key in FUNC_CEILINGS if key.startswith("src/loop/phase.py::")]

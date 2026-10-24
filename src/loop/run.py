@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import os
 import re
 import shutil
@@ -38,6 +39,7 @@ from src.loop.lock import acquire
 from src.loop.phase import AgentRunner, PhaseOutcome, run_phase
 from src.loop.plan import Phase, load_phases, load_preamble
 from src.loop.state import RunState, Status
+from src.loop.transition import resume_transition
 from src.providers import free_models
 
 _SLUG = re.compile(r"[^a-zA-Z0-9]+")
@@ -498,45 +500,13 @@ async def resume(
             ledger = Ledger(run_path)
         return ledger
 
-    def _write_status_transition(
-        *, status: str, reason: str, text: str, round_no: int = 0,
-        run_end: bool = False,
-    ) -> None:
-        done_io.update(
-            status=status, reason=reason, text=text,
-            doing="стоп" if status != Status.RUNNING.value else "resume",
-            pid=os.getpid(),
-            pid_started=pid_started,
-        )
-        try:
-            stream.emit(
-                "resume" if status == Status.RUNNING.value else "stop",
-                status=status, reason=reason,
-                phase=phase_title, round=round_no, role="judge",
-                text=text,
-            )
-        except Exception:
-            pass
-        try:
-            kind = (
-                "resume" if status == Status.RUNNING.value else (
-                    "done" if status == Status.DONE.value else "stop"
-                )
-            )
-            _ledger().event(
-                kind,
-                status=status, reason=reason, text=text, round=round_no,
-            )
-        except Exception:
-            pass
-        if run_end:
-            try:
-                _ledger().event("run_end", reason=reason)
-            except Exception:
-                pass
+    _write = functools.partial(
+        resume_transition, done_io, stream, _ledger,
+        phase_title=phase_title, pid_started=pid_started,
+    )
 
     try:
-        _write_status_transition(
+        _write(
             status=Status.STARTING.value, reason="resume",
             text="resume: старт", round_no=round_no,
         )
@@ -556,7 +526,7 @@ async def resume(
     # stops and the lock still releases via the outer finally.
     def _restore_pending() -> None:
         try:
-            _write_status_transition(
+            _write(
                 status=Status.JUDGE_PENDING.value, reason="resume_setup_failed",
                 text="resume: настройка не удалась, повтор возможен",
                 round_no=round_no,
@@ -624,7 +594,7 @@ async def resume(
             # F8: resume owns the run again — running from the start, so a later
             # player snapshot can never be mistaken for a gate-passed ref.
             # judge_pending returns only via the judge failing again below.
-            _write_status_transition(
+            _write(
                 status=Status.RUNNING.value, reason="resume",
                 text=f"resume: продолжаю с судьи (раунд {round_no})",
                 round_no=round_no,
@@ -684,7 +654,7 @@ async def resume(
                         phases_total=len(phases), run_dir=str(run_path),
                     )
                 _end(outcome.reason)
-                _write_status_transition(
+                _write(
                     status=Status.STOPPED.value,
                     reason=outcome.reason,
                     text=outcome.stop_text or outcome.reason,
@@ -695,7 +665,7 @@ async def resume(
                     phases_shipped=shipped,
                     phases_total=len(phases), run_dir=str(run_path),
                 )
-            _write_status_transition(
+            _write(
                 status=Status.DONE.value, reason="ship", text="ship",
                 round_no=round_no, run_end=True,
             )
