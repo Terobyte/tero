@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+from src.fsio import atomic_write_text
 
 from src.loop.state import RunState
 from src.relay.iface import Answer, RelayClient
@@ -67,18 +68,9 @@ def write_inbox_file(run_dir: str | Path, name: str, text: str) -> bool:
     inbox = inbox_dir(run_dir, create=True)
     if inbox is None or "/" in name or name in ("", ".", ".."):
         return False
-    tmp_name = ""
     try:
-        fd, tmp_name = tempfile.mkstemp(dir=inbox, prefix=f"{name}.", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp_name, inbox / name)
+        atomic_write_text(inbox / name, text, mode=0o600)
     except OSError:
-        if tmp_name:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
         return False
     return True
 

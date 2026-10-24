@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.fsio import atomic_write_text
+
 _H2 = re.compile(r"^##\s+(.+?)\s*$")
 _CHECKBOX = re.compile(r"^- \[([ xX])\] (.+)$")
 
@@ -54,7 +56,8 @@ def mark_phase_done(path: str | Path, phase: Phase) -> None:
         if phase.start_line <= i < phase.end_line and _CHECKBOX.match(raw):
             raw = _CHECKBOX.sub(r"- [x] \2", raw)
         changed.append(raw + newline)
-    _atomic_write(target, "".join(changed))
+    # same locale encoding as _parse reads with (read_text())
+    atomic_write_text(target, "".join(changed), newline="", encoding=None)
 
 
 def _parse(path: Path) -> tuple[str, list[Phase]]:
@@ -126,10 +129,3 @@ def _line_ending(line: str) -> str:
     if line.endswith("\n"):
         return "\n"
     return ""
-
-
-def _atomic_write(path: Path, content: str) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    with open(tmp, "w", newline="") as f:
-        f.write(content)
-    tmp.replace(path)

@@ -6,7 +6,6 @@ the parent only reads it and the `detach.log` tail.
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import scrub_secrets
+from src.fsio import read_json_dict
 
 DETACH_READY_S = 120
 
@@ -60,15 +60,6 @@ def owner_argv(args: Any) -> list[str]:
     return argv
 
 
-def _read_state(path: Path) -> dict[str, Any] | None:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def _maybe_caffeinate(
     owner_pid: int,
     *,
@@ -109,7 +100,7 @@ def _find_ready_state(repo: Path, owner_pid: Any) -> Path | None:
     for run_dir in entries:
         if not run_dir.is_dir():
             continue
-        data = _read_state(run_dir / "state.json")
+        data = read_json_dict(run_dir / "state.json")
         if not data:
             continue
         if data.get("status") in _READY_STATUSES and data.get("pid") == owner_pid:

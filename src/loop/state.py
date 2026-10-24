@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
-import os
 import sys
-import tempfile
 import threading
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from src.fsio import atomic_write_json, read_json_dict
 
 
 class Status(str, Enum):
@@ -46,21 +45,7 @@ class RunState:
                 current.update(fields)
                 current["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, tmp_name = tempfile.mkstemp(
-                    dir=self.path.parent,
-                    prefix=self.path.name + ".",
-                    suffix=".tmp",
-                )
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                        json.dump(current, fh, ensure_ascii=False)
-                    os.replace(tmp_name, self.path)
-                except BaseException:
-                    try:
-                        os.unlink(tmp_name)
-                    except OSError:
-                        pass
-                    raise
+                atomic_write_json(self.path, current, ensure_ascii=False, mode=0o600)
         except Exception as exc:
             with self._lock:
                 if self._warned:
@@ -73,9 +58,4 @@ class RunState:
 
     @staticmethod
     def read(path: str | Path) -> dict[str, Any] | None:
-        try:
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
+        return read_json_dict(path)

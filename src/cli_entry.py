@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
+from src.commands import resolve_run_dir
 
 
 def _config_from_args(args) -> Config:
@@ -185,31 +186,14 @@ def run_history(args):
         )
 
 
-def _latest_run_dir(repo: Path) -> Path | None:
-    runs = repo / ".tero" / "runs"
-    if not runs.is_dir():
-        return None
-    try:
-        entries = sorted(
-            (p for p in runs.iterdir() if p.is_dir()),
-            key=lambda p: p.name,
-        )
-    except OSError:
-        return None
-    return entries[-1] if entries else None
-
-
 def run_wait(args) -> int:
     """Sleep until the agent is needed; exit with the wait RunOutcome code."""
     from src.loop.state import RunState
     from src.loop.wait import wait_run
 
     repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     code = wait_run(
         run_dir, repo, timeout_s=getattr(args, "timeout", None)
@@ -234,11 +218,8 @@ def run_status(args) -> int:
     from src.loop.wait import status_payload
 
     repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     payload = status_payload(run_dir, repo)
     if getattr(args, "json", False):
@@ -296,12 +277,8 @@ def run_answer(args) -> int:
     from src.errors import scrub_data, scrub_secrets
     from src.loop.inbox import write_inbox_file
 
-    repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     if getattr(args, "human", False) and _sys.stdin.isatty():
         who = "human"
@@ -349,12 +326,8 @@ def run_compact(args) -> int:
     from src.loop.inbox import write_inbox_file
     from src.loop.state import RunState
 
-    repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     state = RunState.read(run_dir / "state.json") or {}
     if state.get("status") != "running":
@@ -379,11 +352,8 @@ def run_review(args) -> int:
     from src.loop.state import RunState
 
     repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     state = RunState.read(run_dir / "state.json") or {}
     ref = state.get("snapshot_ref") or ""
@@ -417,11 +387,8 @@ async def run_resume(args) -> int:
     from src.loop.state import RunState
 
     repo = Path(args.working_dir).expanduser().resolve()
-    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    run_dir = resolve_run_dir(args)
     if run_dir is None:
-        run_dir = _latest_run_dir(repo)
-    if run_dir is None or not (run_dir / "state.json").is_file():
-        print("Прогонов нет.")
         return 1
     state = RunState.read(run_dir / "state.json") or {}
     status = state.get("status") or ""

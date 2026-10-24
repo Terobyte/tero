@@ -8,16 +8,14 @@ not like death.
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import scrub_data
+from src.fsio import atomic_write_json, read_json_dict
 from src.hud.registry import pid_is_alive
 
 DONE = 0
@@ -51,25 +49,16 @@ def boot_id() -> str:
         return ""
 
 
-def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def _read_state(run_dir: Path) -> dict[str, Any]:
-    return _read_json(run_dir / "state.json") or {}
+    return read_json_dict(run_dir / "state.json") or {}
 
 
 def _read_pulse(run_dir: Path) -> dict[str, Any] | None:
-    return _read_json(run_dir / "pulse")
+    return read_json_dict(run_dir / "pulse")
 
 
 def _read_watch(run_dir: Path) -> dict[str, Any] | None:
-    return _read_json(run_dir / "watch")
+    return read_json_dict(run_dir / "watch")
 
 
 def _write_watch(
@@ -79,19 +68,7 @@ def _write_watch(
     try:
         payload = {"boot_id": boot, "progress": progress, "seen_mono": seen_mono}
         run_dir.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(run_dir), prefix="watch.", suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh)
-            os.replace(tmp_name, run_dir / "watch")
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(run_dir / "watch", payload, mode=0o600)
     except Exception:
         pass
 

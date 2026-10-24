@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 import threading
 import time
 from pathlib import Path
+
+from src.fsio import atomic_write_json
 
 
 class Pulse:
@@ -122,18 +121,4 @@ class Pulse:
             "progress_ts": progress_ts,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(self.path.parent),
-            prefix=self.path.name + ".",
-            suffix=".tmp",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh)
-            os.replace(tmp_name, self.path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(self.path, payload, mode=0o600)

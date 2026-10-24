@@ -177,12 +177,12 @@
 - Меняются старые тесты: нет.
 - Вне этой фазы: перенос обработчиков CLI (фаза 8), переносы из `phase.py` и `run.py`.
 
-- [ ] `test_atomic_write_failure_keeps_old`: `os.replace` подменён на исключение → старое содержимое на месте, `*.tmp` в папке нет; то же с подменённым `Path.replace`
-- [ ] `test_atomic_write_keeps_mode_and_crlf`: файл 0644 с `\r\n` → после записи с `newline=""` права 0644, байты `\r\n` на месте; новый файл — `0o666 & ~umask`
-- [ ] `test_atomic_write_utf8_under_c_locale`: подпроцесс с `LC_ALL=C`, `PYTHONUTF8=0` пишет кириллицу → файл в UTF-8
-- [ ] `test_read_json_dict_cases`: нет файла, мусор, список, словарь → `None`, `None`, `None`, словарь
-- [ ] `test_mkstemp_only_in_fsio`: `tempfile.mkstemp`/`NamedTemporaryFile` в `src/` встречается только в `src/fsio.py`, `src/loop/snapshot.py` (временный индекс) и `src/providers/codex.py` (файлы инструкций и схемы)
-- [ ] реализовать
+- [x] `test_atomic_write_failure_keeps_old`: `os.replace` подменён на исключение → старое содержимое на месте, `*.tmp` в папке нет; то же с подменённым `Path.replace`
+- [x] `test_atomic_write_keeps_mode_and_crlf`: файл 0644 с `\r\n` → после записи с `newline=""` права 0644, байты `\r\n` на месте; новый файл — `0o666 & ~umask`
+- [x] `test_atomic_write_utf8_under_c_locale`: подпроцесс с `LC_ALL=C`, `PYTHONUTF8=0` пишет кириллицу → файл в UTF-8
+- [x] `test_read_json_dict_cases`: нет файла, мусор, список, словарь → `None`, `None`, `None`, словарь
+- [x] `test_mkstemp_only_in_fsio`: `tempfile.mkstemp`/`NamedTemporaryFile` в `src/` встречается только в `src/fsio.py`, `src/loop/snapshot.py` (временный индекс) и `src/providers/codex.py` (файлы инструкций и схемы)
+- [x] реализовать
 
 ## phase.py: защита набора тестов в suite_guard.py
 

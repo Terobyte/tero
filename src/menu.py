@@ -1,11 +1,11 @@
 """Interactive TUI settings menu for tero go (spec §6.2)."""
 
 import dataclasses
-import os
 from pathlib import Path
 import yaml
 
 from src.config import Config, short_model_name
+from src.fsio import atomic_write_text
 from src.providers import free_models
 from src.providers.effort import (
     EFFORT_LABELS,
@@ -485,10 +485,9 @@ def _save_global_default(config: Config) -> None:
         if field not in _PROJECT_SCOPED_FIELDS:
             defaults[field] = getattr(config, field)
     data["defaults"] = defaults
-    tmp_path = global_config_path.with_suffix(".tmp")
-    with open(tmp_path, "w") as fh:
-        yaml.dump(data, fh, allow_unicode=True, sort_keys=False)
-    os.replace(tmp_path, global_config_path)
+    atomic_write_text(
+        global_config_path, yaml.dump(data, allow_unicode=True, sort_keys=False)
+    )
     home = str(Path.home())
     wd = config.working_dir
     wd = "~" + wd[len(home):] if wd == home or wd.startswith(home + "/") else wd

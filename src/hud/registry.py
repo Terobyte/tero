@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import psutil
+from src.fsio import atomic_write_json
 
 ACTIVE_STATUSES = ("starting", "running")
 
@@ -98,9 +99,7 @@ class Registry:
                 "state_path": str(state_path),
             }
             self.base_dir.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
+            atomic_write_json(path, payload, ensure_ascii=False)
         except Exception:
             pass
         return path
