@@ -257,10 +257,87 @@ class _PhaseRunner:
         self.state = _State()
         self.tester_enabled = bool(test_command and test_command.run_files)
         self.contract = phase.body or phase.title
+        self._plan_bytes = self._remember_plan()
         self.run_dir = Path(ledger.run_dir)
         self.state_io = RunState(self.run_dir / "state.json")
         self.stream = Stream(self.run_dir / "stream.jsonl")
         self._role = ""
+
+    def _remember_plan(self) -> bytes | None:
+        """Байты плана на входе в фазу; None — план не отслеживаем.
+
+        На resume (start_with_judge) правка плана в ref старого прогона
+        могла уже лежать, поэтому эталон — `git show <base>:<план>`, а не
+        диск. Нет файла или план вне репо — проверки нет, не исключение.
+        """
+        try:
+            resolved = self.plan_path.resolve()
+            repo_root = self.repo.resolve()
+        except OSError:
+            return None
+        if not resolved.is_relative_to(repo_root):
+            return None
+        if not resolved.is_relative_to(repo_root):
+            return None
+        if self.start_with_judge and self.checkpoint:
+            # Эталон resume — коммит (файла на диске может уже не быть):
+            # правка плана в ref старого прогона могла уже лежать, диску
+            # тут верить нельзя. Нет блоба (план не отслеживается) —
+            # проверки нет.
+            return _git_show_bytes(self.repo, self.checkpoint, resolved)
+        if not self.plan_path.is_file():
+            return None
+        try:
+            return self.plan_path.read_bytes()
+        except OSError:
+            return None
+
+    def _guard_plan(self, role: str) -> None:
+        """Вернуть план, если роль его меняла: запись в план — только tero.
+
+        Зовётся сразу после run_role роли, до любого снимка раунда: в снимке
+        план уже чистый. Единственная легальная запись — mark_phase_done.
+        """
+        if self._plan_bytes is None:
+            return
+        try:
+            current = (
+                self.plan_path.read_bytes() if self.plan_path.is_file() else None
+            )
+        except OSError:
+            current = None
+        if current == self._plan_bytes:
+            return
+        try:
+            self.plan_path.parent.mkdir(parents=True, exist_ok=True)
+            self.plan_path.write_bytes(self._plan_bytes)
+        except OSError as exc:
+            # План остаётся изменённым: молчать нельзя — событие и в ledger,
+            # и в stream, чтобы правка была видна в HUD и истории.
+            print(f"  план изменён, восстановить не удалось: {exc}", flush=True)
+            self.ledger.event(
+                "plan_restore_failed",
+                path=self.plan_path.name,
+                phase=self.phase.title,
+                round=self.state.round,
+                role=role,
+                error=str(exc),
+            )
+            self._emit(
+                "plan_restore_failed",
+                role=role,
+                text=f"{role} менял план, восстановить не удалось",
+            )
+            return
+        self.ledger.event(
+            "plan_restored",
+            path=self.plan_path.name,
+            phase=self.phase.title,
+            round=self.state.round,
+            role=role,
+            text=f"{role} менял план, вернул",
+        )
+        self._emit("plan_restored", role=role, text=f"{role} менял план, вернул")
 
     def _emit(self, type: str, **fields: Any) -> None:
         fields.setdefault("phase", self.phase.title)
@@ -654,6 +731,7 @@ class _PhaseRunner:
                 ),
             )
         except Exception as exc:
+            self._guard_plan("player")
             ref = self._snapshot_after_player()
             self._provider_error(
                 "player",
@@ -667,6 +745,7 @@ class _PhaseRunner:
                 self.state.resume_ref = ref
                 self.state.resume_base = self.checkpoint
             return None
+        self._guard_plan("player")
         data = self._check_reply("player", data, provider)
         if data is None:
             if self.state.last_provider_kind in ("auth", "quota"):
@@ -980,6 +1059,9 @@ class _PhaseRunner:
                     else 0
                 ),
             )
+            # Провайдер без read_only может писать в дерево: план проверяем
+            # сразу после вызова, до сравнения деревьев.
+            self._guard_plan("judge")
             if snapshot_mod.tree_of(
                 self.repo, self.checkpoint
             ) != snapshot_mod.ref_tree(self.repo, ref):
@@ -1367,6 +1449,7 @@ class _PhaseRunner:
             ctx=ValidateCtx(),
             emit=self._emit,
         )
+        self._guard_plan("tester")
         data = self._check_reply("tester", data, self.cfg.tester_provider)
         if data is None:
             if self.state.last_provider_kind == "auth":
@@ -1708,6 +1791,28 @@ def _suite_paths(repo: Path) -> list[str]:
 
 def _dump(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _git_show_bytes(repo: Path, base: str, plan: Path) -> bytes | None:
+    """`git show <base>:<план>` байтами; None — плана нет в этом коммите."""
+    import subprocess
+
+    try:
+        rel = plan.relative_to(repo).as_posix()
+    except ValueError:
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{base}:{rel}"],
+            cwd=repo,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
 
 
 def _print_verdict(data: dict[str, Any]) -> None:

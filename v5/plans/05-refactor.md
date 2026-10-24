@@ -84,12 +84,12 @@
 - Единственная запись в план — `mark_phase_done` при сдаче фазы.
 - Вне этой фазы: перенос кода фазы (фазы 5–7).
 
-- [ ] `test_player_ticking_future_phase_is_reverted`: план из двух фаз, stub-исполнитель фазы 1 пишет код и ставит `[x]` во всех чекбоксах плана → фаза 1 сдана, у фазы 2 на диске `[ ]`, `plan_restored` с `role=player` в ledger; повторный `run()` на ветке прогона запускает фазу 2, а не пишет «делать нечего»
-- [ ] `test_player_inserting_lines_above_phase`: исполнитель фазы 2 вставил строку в начало плана → после сдачи `[x]` стоят ровно у чекбоксов фазы 2, вставленной строки нет
-- [ ] `test_player_crash_snapshot_has_clean_plan`: исполнитель правит план и бросает исключение → `git show <snapshot_ref>:plan.md` равен исходному плану
-- [ ] `test_tester_editing_plan_is_reverted`: тестер правит план → план на диске исходный, `plan_restored` с `role=tester` в ledger
-- [ ] `test_plan_outside_repo_untouched`: план вне репо → событий `plan_restored` нет, фаза сдана как раньше
-- [ ] реализовать
+- [x] `test_player_ticking_future_phase_is_reverted`: план из двух фаз, stub-исполнитель фазы 1 пишет код и ставит `[x]` во всех чекбоксах плана → фаза 1 сдана, у фазы 2 на диске `[ ]`, `plan_restored` с `role=player` в ledger; повторный `run()` на ветке прогона запускает фазу 2, а не пишет «делать нечего»
+- [x] `test_player_inserting_lines_above_phase`: исполнитель фазы 2 вставил строку в начало плана → после сдачи `[x]` стоят ровно у чекбоксов фазы 2, вставленной строки нет
+- [x] `test_player_crash_snapshot_has_clean_plan`: исполнитель правит план и бросает исключение → `git show <snapshot_ref>:plan.md` равен исходному плану
+- [x] `test_tester_editing_plan_is_reverted`: тестер правит план → план на диске исходный, `plan_restored` с `role=tester` в ledger
+- [x] `test_plan_outside_repo_untouched`: план вне репо → событий `plan_restored` нет, фаза сдана как раньше
+- [x] реализовать
 
 ## Страж структуры: потолки размеров
 
