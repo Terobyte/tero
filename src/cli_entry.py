@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 async def run_go(args, config: Config | None = None):
     """Run the player → judge loop."""
     from src.loop.agents import LiveAgents
-    from src.loop.run import run as run_loop
+    from src.loop.run import agy_preflight_check, run as run_loop
 
     loop_cfg = config if config is not None else _config_from_args(args)
 
@@ -114,7 +114,9 @@ async def run_go(args, config: Config | None = None):
         return inst.check_ready()
 
     agents = LiveAgents(loop_cfg.working_dir, verbose=loop_cfg.verbose)
-    outcome = await run_loop(loop_cfg, agents=agents, check_ready=_ready)
+    outcome = await run_loop(
+        loop_cfg, agents=agents, check_ready=_ready, agy_preflight=agy_preflight_check
+    )
     if outcome.reason == "nothing_to_do":
         print(
             f"делать нечего: все фазы плана ({outcome.phases_total}) уже отмечены [x]",

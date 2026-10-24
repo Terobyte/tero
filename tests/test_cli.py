@@ -23,9 +23,10 @@ def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
     (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
     captured = {}
 
-    async def fake_run(cfg, *, agents, check_ready=None):
+    async def fake_run(cfg, *, agents, check_ready=None, agy_preflight=None):
         captured["plan"] = cfg.plan_file
         captured["player"] = cfg.player_provider
+        captured["agy_preflight"] = agy_preflight
         from src.loop.run import RunOutcome
 
         return RunOutcome(status="ok", exit_code=0, reason="ship")
@@ -55,6 +56,9 @@ def test_run_go_uses_v4_loop(tmp_path, monkeypatch):
 
     assert captured["plan"] == "plan.md"
     assert captured["player"] == "muse"
+    from src.loop.run import agy_preflight_check
+
+    assert captured["agy_preflight"] is agy_preflight_check
     assert exit_codes == [0]
 
 
@@ -64,7 +68,7 @@ def test_run_go_applies_menu_config_even_when_plan_flag_set(tmp_path, monkeypatc
     (tmp_path / "plan.md").write_text("## One\n\n- [ ] do it\n")
     captured = {}
 
-    async def fake_run(cfg, *, agents, check_ready=None):
+    async def fake_run(cfg, *, agents, check_ready=None, agy_preflight=None):
         captured["cfg"] = cfg
         from src.loop.run import RunOutcome
 
@@ -120,7 +124,7 @@ def test_run_go_does_not_open_menu_inside_async_context(tmp_path, monkeypatch):
 
     (tmp_path / "requirements.md").write_text("1. Build it\n")
 
-    async def fake_run(cfg, *, agents, check_ready=None):
+    async def fake_run(cfg, *, agents, check_ready=None, agy_preflight=None):
         from src.loop.run import RunOutcome
 
         return RunOutcome(status="ok", exit_code=0, reason="ship")

@@ -202,3 +202,197 @@ def test_agy_check_ready_without_binary():
     ok, msg = p.check_ready()
     assert ok is False
     assert "not found" in msg
+
+
+# --- pre-flight перед очередью (T9a): короткий `agy -p`, висящий = стоп ---
+
+def _stub_agy(tmp_path, argv_log, behavior: str):
+    """Stub-`agy`, различающий `models` и pre-flight `-p`.
+
+    behavior: "ok" | "not_logged_in" | "hang".
+    """
+    name = f"agy-{behavior}"
+    script = tmp_path / name
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, time\n"
+        "argv = sys.argv[1:]\n"
+        "log = " + repr(str(argv_log)) + "\n"
+        "open(log, 'a').write(' '.join(argv) + chr(10))\n"
+        + (
+            "if 'models' in argv:\n"
+            "    sys.stdout.write('gemini-3.8-flash-high\\tGemini 3.8 Flash\\n')\n"
+            "    sys.exit(0)\n"
+            "if len(argv) >= 2 and argv[0] == '-p' and argv[1] == 'ок':\n"
+            "    time.sleep(3600)\n"
+            "    sys.exit(0)\n"
+            if behavior == "hang" else
+            "if 'models' in argv:\n"
+            "    sys.stdout.write('gemini-3.8-flash-high\\tGemini 3.8 Flash\\n')\n"
+            "    sys.exit(0)\n"
+            "if len(argv) >= 2 and argv[0] == '-p' and argv[1] == 'ок':\n"
+            + (
+                "    sys.stdout.write(json.dumps({'status': 'SUCCESS',}) + chr(10))\n"
+                "    sys.exit(0)\n"
+                if behavior == "ok" else
+                "    sys.stderr.write('ERROR: not logged in\\n')\n"
+                "    sys.exit(1)\n"
+            )
+        )
+    )
+    script.chmod(0o755)
+    return str(script)
+
+
+async def _run_with_agy(cfg_overrides, tmp_path, monkeypatch, steps):
+    """Прогон run() с одной ролью через stub-agy. Возвращает outcome и argv-лог."""
+    import asyncio as _asyncio
+
+    from src.config import Config
+    from src.loop import run as run_mod
+    from tests.loop import fakes as scripted
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    scripted.git(repo, "init")
+    scripted.git(repo, "config", "user.email", "tero@test")
+    scripted.git(repo, "config", "user.name", "tero")
+    scripted.write_file(repo, "plan.md", "# Demo\n\n## Greet\n\n- [ ] greet\n")
+    scripted.write_file(repo, "src/__init__.py", "")
+    scripted.write_file(repo, "tests/test_smoke.py", "def test_smoke():\n    assert True\n")
+    scripted.git(repo, "add", "-A")
+    scripted.git(repo, "commit", "-m", "init")
+
+    argv_log = tmp_path / "argv.log"
+    argv_log.write_text("")
+    stub = _stub_agy(tmp_path, argv_log, cfg_overrides.pop("_stub"))
+    monkeypatch.setattr(
+        run_mod, "load_provider_configs", lambda *a, **k: {"agy": {"command": stub}}
+    )
+    data = {
+        "plan_file": "plan.md",
+        "working_dir": str(repo),
+        "player_provider": "muse",
+        "player_model": "muse-spark-1.3",
+        "judge_provider": "codex",
+        "judge_model": "gpt-5.6-terra",
+        "tester_provider": "muse",
+        "tester_model": "muse-spark-1.3",
+        "test_timeout_s": 30,
+    }
+    data.update(cfg_overrides)
+    cfg = Config(**data)
+    outcome_holder: dict = {}
+
+    async def _go():
+        outcome_holder["outcome"] = await run_mod.run(
+            cfg,
+            agents=scripted.FakeAgents(repo, list(steps)),
+            agy_preflight=run_mod.agy_preflight_check,
+        )
+
+    try:
+        await _asyncio.wait_for(_go(), timeout=20)
+    except _asyncio.TimeoutError:
+        raise AssertionError("прогон завис — pre-flight должен останавливать по таймауту")
+    return outcome_holder["outcome"], argv_log.read_text()
+
+
+@pytest.mark.asyncio
+async def test_agy_preflight_ok(tmp_path, monkeypatch):
+    from tests.loop import fakes as scripted
+
+    repo_calls: list = []
+
+    def _player(role, kwargs):
+        repo = tmp_path / "repo" / "src" / "greet.py"
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        repo.write_text("def greet():\n    return 'hello'\n")
+        repo_calls.append(role)
+        return scripted.PLAYER_DONE
+
+    outcome, argv = await _run_with_agy(
+        {"judge_provider": "agy", "judge_model": "gemini-3.8-flash-high", "_stub": "ok"},
+        tmp_path, monkeypatch,
+        [_player, scripted.judge_returns(scripted.ship())],
+    )
+    assert outcome.exit_code == 0, outcome.reason
+    assert repo_calls == ["player"], "agy вызван до исполнителя, исполнитель не пропущен"
+    assert "-p" in argv and "ок" in argv
+
+
+@pytest.mark.asyncio
+async def test_agy_preflight_no_login_stops(tmp_path, monkeypatch):
+    from tests.loop import fakes as scripted
+
+    outcome, _argv = await _run_with_agy(
+        {"judge_provider": "agy", "judge_model": "gemini-3.8-flash-high", "_stub": "not_logged_in"},
+        tmp_path, monkeypatch,
+        [scripted.judge_returns(scripted.ship())],
+    )
+    assert outcome.exit_code == 1
+    assert outcome.status == "stopped"
+    assert "Войди" in outcome.reason
+    assert "agy" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_agy_preflight_hang_stops(tmp_path, monkeypatch):
+    from src.loop import run as run_mod
+
+    monkeypatch.setattr("src.providers.agy.AGY_PREFLIGHT_TIMEOUT_S", 1)
+    from tests.loop import fakes as scripted
+
+    outcome, _argv = await _run_with_agy(
+        {"judge_provider": "agy", "judge_model": "gemini-3.8-flash-high", "_stub": "hang"},
+        tmp_path, monkeypatch,
+        [scripted.judge_returns(scripted.ship())],
+    )
+    assert outcome.exit_code == 1
+    assert outcome.status == "stopped"
+    assert "не отвечает" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_agy_unknown_model_warns(tmp_path, monkeypatch, capsys):
+    from tests.loop import fakes as scripted
+
+    def _player(role, kwargs):
+        scripted.write_file(
+            tmp_path / "repo", "src/greet.py", "def greet():\n    return 'hello'\n"
+        )
+        return scripted.PLAYER_DONE
+
+    outcome, _argv = await _run_with_agy(
+        {"judge_provider": "agy", "judge_model": "gemini-9.9-ultra", "_stub": "ok"},
+        tmp_path, monkeypatch,
+        [_player, scripted.judge_returns(scripted.ship())],
+    )
+    assert outcome.exit_code == 0, outcome.reason
+    out = capsys.readouterr().out
+    assert "gemini-9.9-ultra" in out
+    assert "agy models" in out
+
+
+@pytest.mark.parametrize(
+    "line, ok",
+    [
+        ('{"status": "SUCCESS"}', True),
+        ('{"result": {"status": "SUCCESS"}}', True),
+        ('{"result": {"status": "ERROR", "error": "not logged in"}}', False),
+    ],
+)
+def test_agy_preflight_reads_bare_and_wrapped_result(tmp_path, line, ok):
+    from src.providers import agy as agy_mod
+
+    script = tmp_path / "agy-json"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f"sys.stdout.write({line!r} + chr(10))\n"
+    )
+    script.chmod(0o755)
+    got, detail = agy_mod.preflight(str(script), "gemini-3.8-flash", timeout_s=10)
+    assert got is ok
+    if not ok:
+        assert "not logged in" in detail

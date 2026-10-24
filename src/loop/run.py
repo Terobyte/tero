@@ -11,7 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from src.config import Config, ConfigError, UnknownProviderError, family_key, normalize_provider
+from src.config import (
+    Config,
+    ConfigError,
+    UnknownProviderError,
+    family_key,
+    load_provider_configs,
+    normalize_provider,
+)
 from src.hud.app import maybe_launch_hud
 from src.hud.registry import Registry, current_pid_started
 from src.loop.free import check_free_models
@@ -52,6 +59,7 @@ async def run(
     agents: AgentRunner,
     check_ready: Callable[[str, str], tuple[bool, str]] | None = None,
     list_models: Callable[[], list[str]] | None = None,
+    agy_preflight: Callable[[str, str, str], str | None] | None = None,
 ) -> RunOutcome:
     repo = Path(cfg.working_dir).expanduser().resolve()
     if not is_repo(repo):
@@ -94,7 +102,7 @@ async def run(
     try:
         maybe_launch_hud(cfg, run_dir)
 
-        def _fail_start(reason: str, doing: str = "") -> RunOutcome:
+        def _fail_start(reason: str, doing: str = "", status: str = "error") -> RunOutcome:
             try:
                 state.update(
                     status=Status.STOPPED.value,
@@ -108,7 +116,7 @@ async def run(
                 lock.release()
             except Exception:
                 pass
-            return RunOutcome(status="error", exit_code=1, reason=reason)
+            return RunOutcome(status=status, exit_code=1, reason=reason)
 
         try:
             state.update(doing="проверяю дерево …")
@@ -152,6 +160,16 @@ async def run(
                 ok, why = check_ready(provider, model)
                 if not ok:
                     return _fail_start(f"{role} provider ({provider}) not ready: {why}")
+
+        if agy_preflight:
+            checked: set[str] = set()
+            for role, model in _agy_roles(cfg):
+                if model in checked:
+                    continue
+                checked.add(model)
+                preflight_error = agy_preflight(role, model, cfg.working_dir)
+                if preflight_error is not None:
+                    return _fail_start(preflight_error, status="stopped")
 
         try:
             state.update(doing="проверяю план …")
@@ -703,3 +721,48 @@ def _roles(cfg: Config) -> list[tuple[str, str, str]]:
     if cfg.escalation_provider:
         rows.append(("escalation", cfg.escalation_provider, cfg.escalation_model))
     return rows
+
+
+def _agy_roles(cfg: Config) -> list[tuple[str, str]]:
+    """Роли, идущие через `agy` (включая алиас `gemini`), до первой фазы."""
+    return [
+        (role, model)
+        for role, provider, model in _roles(cfg)
+        if provider in ("agy", "gemini")
+    ]
+
+
+def agy_preflight_check(role: str, model: str, working_dir: str) -> str | None:
+    """Pre-flight `agy` до очереди: список моделей, короткий вызов.
+
+    Возвращает текст стопа или None, когда прогон идёт дальше.
+    """
+    from src.providers import agy as agy_mod
+
+    try:
+        configs = load_provider_configs(working_dir)
+    except Exception:
+        configs = {}
+    entry = dict(configs.get("agy") or {})
+    command = entry.get("command", "agy")
+    model = agy_mod._resolve_model(
+        model or entry.get("default_model") or agy_mod.AgyConfig.default_model
+    )
+    try:
+        listed = agy_mod.list_models(command)
+    except Exception:
+        listed = []
+    if listed and model and model not in listed:
+        print(f"`agy`: модели `{model}` нет в `agy models`, прогон идёт", flush=True)
+    try:
+        ok, detail = agy_mod.preflight(
+            command, model, timeout_s=agy_mod.AGY_PREFLIGHT_TIMEOUT_S
+        )
+    except Exception as exc:
+        ok, detail = False, f"`agy` не отвечает: `{exc}`"
+    if not ok:
+        return (
+            f"{role} provider (agy) not ready: {detail}. "
+            "Войди: запусти `agy` в терминале"
+        )
+    return None

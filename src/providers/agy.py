@@ -4,9 +4,10 @@ import asyncio
 import json
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 
-from src.errors import ProviderError, ProviderStalled
+from src.errors import ProviderError, ProviderStalled, scrub_secrets
 from .effort import normalize_effort
 from .message_adapter import (
     AdaptedMessage,
@@ -19,6 +20,10 @@ from .subprocess_runner import SubprocessExit, run_subprocess_jsonl
 
 # Parallel `agy` runs share profile files: at most one call at a time.
 _AGY_LOCK = asyncio.Lock()
+
+# Pre-flight перед очередью: короткий `agy -p`; висящий CLI убивается по тишине.
+AGY_LIST_TIMEOUT_S = 30
+AGY_PREFLIGHT_TIMEOUT_S = 90
 
 # A bare flash model (`gemini-3.8-flash`) means the high tier (`-high`).
 _BARE_FLASH_MODEL = re.compile(r"^(gemini-\d[\w.]*-flash)$")
@@ -241,6 +246,75 @@ def _resolve_model(model: str) -> str:
     if _BARE_FLASH_MODEL.match(model or ""):
         return f"{model}-high"
     return model
+
+
+def list_models(command: str = "agy") -> list[str]:
+    """Model ids from ``agy models``; empty when the CLI is missing or fails."""
+    try:
+        out = subprocess.run(
+            [command, "models"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=AGY_LIST_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    return [line.split()[0] for line in out.stdout.splitlines() if line.split()]
+
+
+def preflight(
+    command: str = "agy",
+    model: str = "",
+    *,
+    timeout_s: float = AGY_PREFLIGHT_TIMEOUT_S,
+) -> tuple[bool, str]:
+    """Короткий ``agy -p "ок"``: True когда CLI отвечает, иначе текст ошибки.
+
+    ``False`` = стоп до очереди: нет входа, протухший токен, висящий процесс.
+    Секреты из вывода вычищены.
+    """
+    cmd = [
+        command,
+        "-p",
+        "ок",
+        "--model",
+        _resolve_model(model),
+        "--output-format",
+        "json",
+        "--print-timeout",
+        "60s",
+    ]
+    try:
+        out = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_s,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"`agy` не отвечает: тишина дольше {timeout_s:g} с"
+    except OSError as exc:
+        return False, scrub_secrets(f"`agy` не отвечает: {exc}")
+    try:
+        payload = json.loads((out.stdout or "").strip() or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    # `--output-format json` may print the result object bare or wrapped as `{"result": {...}}`.
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+    if out.returncode == 0 and result.get("status") == "SUCCESS":
+        return True, ""
+    detail = result.get("error") or _stderr_tail(out.stderr)
+    return False, scrub_secrets(f"`agy` не отвечает: `{detail}`")
 
 
 def _stderr_tail(stderr_data: bytes | str) -> str:

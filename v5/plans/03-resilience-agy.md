@@ -229,11 +229,11 @@
      «`agy` не отвечает: `<error>`. Войди: запусти `agy` в терминале», код выхода 1. Не зависание.
 - Вне этой фазы: компакт (фазы 8–10).
 
-- [ ] `test_agy_preflight_ok`: stub отвечает SUCCESS → прогон стартует, `agy` вызван до исполнителя
-- [ ] `test_agy_preflight_no_login_stops`: stub печатает ERROR «not logged in» → `stopped`, код 1, текст с «Войди», исполнитель не вызван
-- [ ] `test_agy_preflight_hang_stops`: stub висит → стоп по таймауту (подменён на 1 с), не зависание
-- [ ] `test_agy_unknown_model_warns`: модели нет в `agy models` → предупреждение, прогон идёт
-- [ ] реализовать
+- [x] `test_agy_preflight_ok`: stub отвечает SUCCESS → прогон стартует, `agy` вызван до исполнителя
+- [x] `test_agy_preflight_no_login_stops`: stub печатает ERROR «not logged in» → `stopped`, код 1, текст с «Войди», исполнитель не вызван
+- [x] `test_agy_preflight_hang_stops`: stub висит → стоп по таймауту (подменён на 1 с), не зависание
+- [x] `test_agy_unknown_model_warns`: модели нет в `agy models` → предупреждение, прогон идёт
+- [x] реализовать
 
 ## Счётчик контекста
 
