@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-KNOWN_PROVIDERS = ("muse", "claude", "codex", "gemini", "opencode", "cursor")
+KNOWN_PROVIDERS = ("muse", "claude", "codex", "gemini", "opencode", "cursor", "agy")
 
 _ALIASES = {
     "cursor-cli": "cursor",
@@ -51,6 +51,7 @@ def split_role_spec(value: str) -> tuple[str, str]:
 
 
 _FAMILY_BY_PROVIDER = {
+    "agy": "gemini",
     "claude": "claude",
     "gemini": "gemini",
     "codex": "openai",

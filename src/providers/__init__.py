@@ -1,10 +1,12 @@
 """Provider factory for coding-agent CLI providers."""
 
+import warnings
+
 from src.errors import ProviderError
+from .agy import AgyConfig, AgyProvider
 from .claude_native import ClaudeNativeConfig, ClaudeNativeProvider
 from .codex import CodexConfig, CodexProvider
 from .opencode import OpenCodeConfig, OpenCodeProvider
-from .gemini import GeminiConfig, GeminiProvider
 from .muse import muse_from_config
 from .cursor import CursorConfig, CursorProvider
 
@@ -13,7 +15,7 @@ def create_provider(
     provider_name: str,
     provider_config: dict | None = None,
 ):
-    """Create a provider by name ("claude", "codex", "opencode", "gemini", "muse", "cursor").
+    """Create a provider by name ("claude", "codex", "opencode", "gemini", "agy", "muse", "cursor").
 
     provider_config is an optional dict from .tero/config.yaml providers section.
     """
@@ -42,13 +44,15 @@ def create_provider(
         return OpenCodeProvider(opencode_cfg)
 
     if provider_type == "gemini":
-        gemini_cfg = GeminiConfig(
-            command=provider_config.get("command", "gemini"),
-            default_model=provider_config.get("default_model", "gemini-3.1-pro-preview"),
-            display_name=provider_config.get("display_name", "Gemini"),
-            yolo=provider_config.get("yolo", True),
+        warnings.warn(
+            "gemini CLI больше не используется, вызываю agy",
+            UserWarning,
+            stacklevel=2,
         )
-        return GeminiProvider(gemini_cfg)
+        return _agy_from_config(provider_config)
+
+    if provider_type == "agy":
+        return _agy_from_config(provider_config)
 
     if provider_type in ("cursor", "cursor_cli", "cursor_headless"):
         cursor_cfg = CursorConfig(
@@ -89,6 +93,18 @@ def create_provider(
     raise ProviderError(
         f"Unknown provider type: {provider_type} (name: {provider_name})"
     )
+
+
+def _agy_from_config(provider_config: dict) -> AgyProvider:
+    agy_cfg = AgyConfig(
+        command=provider_config.get("command", "agy"),
+        default_model=provider_config.get(
+            "default_model", provider_config.get("model", "gemini-3.8-flash-high")
+        ),
+        print_timeout_s=provider_config.get("print_timeout_s", 3600),
+        stall_timeout_s=provider_config.get("stall_timeout_s", 0),
+    )
+    return AgyProvider(agy_cfg)
 
 
 __all__ = [

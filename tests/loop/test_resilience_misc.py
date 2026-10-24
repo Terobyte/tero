@@ -42,7 +42,7 @@ def test_classify_error_table(exc, text, expected):
     assert classify_error(exc, text) == expected
 
 
-_STALL_PROVIDERS = ("claude", "codex", "opencode", "cursor")
+_STALL_PROVIDERS = ("claude", "codex", "opencode", "cursor", "agy")
 
 
 def _stub_cli(tmp_path, body: str) -> str:
@@ -165,41 +165,52 @@ async def test_stall_not_retried(tmp_path):
 
 
 def test_non_streaming_provider_gets_no_stall(tmp_path, monkeypatch):
-    """Провайдер с streams = False не получает stall_timeout (F4).
+    """Провайдер с `streams = False` не получает `stall_timeout` (F4).
 
     Проверяется _default_factory путь: он вливает глобальный stall_timeout_s
     в streaming-провайдеры — exercise его с настроенным глобальным значением.
     """
     import src.config as config_mod
     import src.loop.agents as agents_mod
-    from src.providers.gemini import GeminiProvider
+    import src.providers as providers_mod
 
-    assert GeminiProvider.streams is False
+    class _QuietProvider:
+        streams = False
+
+        def __init__(self):
+            from types import SimpleNamespace
+
+            self.config = SimpleNamespace()
+
+    _orig_create = providers_mod.create_provider
+
+    def _fake_create(name, cfg=None):
+        if name == "quiet":
+            return _QuietProvider()
+        return _orig_create(name, cfg)
+
+    monkeypatch.setattr(providers_mod, "create_provider", _fake_create)
     monkeypatch.setattr(
         config_mod,
         "load_provider_configs",
-        lambda _wd, **_kw: {"gemini": {"command": "gemini"}},
+        lambda _wd, **_kw: {"quiet": {"command": "quiet"}},
     )
     monkeypatch.setattr(
         config_mod,
         "resolve_config",
         lambda _cli: type("C", (), {"stall_timeout_s": 42})(),
     )
-    monkeypatch.setattr(
-        config_mod,
-        "resolve_config",
-        lambda _cli: type("C", (), {"stall_timeout_s": 42})(),
-    )
-    provider = agents_mod._default_factory(str(tmp_path))("gemini")
-    assert isinstance(provider, GeminiProvider)
-    assert not hasattr(provider.config, "stall_timeout_s")
-    # Контроль: streaming-провайдер через тот же путь получает глобальный stall.
+    quiet = agents_mod._default_factory(str(tmp_path))("quiet")
+    assert quiet.streams is False
+    assert not hasattr(quiet.config, "stall_timeout_s")
+    # Контроль: claude остаётся streaming и получает глобальный stall.
     monkeypatch.setattr(
         config_mod,
         "load_provider_configs",
         lambda _wd, **_kw: {"claude": {"command": "claude"}},
     )
     streaming = agents_mod._default_factory(str(tmp_path))("claude")
+    assert streaming.streams is True
     assert streaming.config.stall_timeout_s == 42
 
 

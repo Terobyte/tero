@@ -11,7 +11,7 @@ EFFORT_LABELS = {
 }
 
 PROVIDERS_WITH_EFFORT = frozenset(
-    {"claude", "muse", "codex", "cursor", "opencode"}
+    {"agy", "claude", "muse", "codex", "cursor", "opencode"}
 )
 
 _ALIASES = {

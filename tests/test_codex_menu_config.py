@@ -57,6 +57,7 @@ def test_provider_presets_drop_zai_and_kilo():
         "gemini",
         "opencode",
         "cursor",
+        "agy",
     ]
 
 

@@ -209,13 +209,13 @@
     `streams = False`, подставленном в `_default_factory` через monkeypatch; смысл теста тот же:
     не-streaming провайдер не получает `stall_timeout_s`, контрольная часть с `claude` не меняется.
 
-- [ ] `test_agy_argv_judge_and_player`: argv судьи содержит `--mode plan` и не содержит `--dangerously-skip-permissions`; у исполнителя наоборот; `--print-timeout` с единицей (`3600s`)
-- [ ] `test_agy_structured_output_is_final_text`: stub `agy` печатает поток из фактов выше → финальный текст = `structured_output`, строки инструментов видны через `_activity`
-- [ ] `test_agy_error_result_raises`: stub печатает `result.status=ERROR` и выходит с 1 → `ProviderError` с текстом `error`
-- [ ] `test_agy_garbage_is_judge_failure`: stub без `result` и без JSON → `run_role("judge")` даёт `__invalid__`
-- [ ] `test_agy_one_call_at_a_time`: два параллельных вызова stub `agy` (stub пишет время старта/конца) → интервалы не пересекаются
-- [ ] `test_gemini_routes_to_agy`: `create_provider("gemini")` → `AgyProvider`, предупреждение есть
-- [ ] реализовать
+- [x] `test_agy_argv_judge_and_player`: argv судьи содержит `--mode plan` и не содержит `--dangerously-skip-permissions`; у исполнителя наоборот; `--print-timeout` с единицей (`3600s`)
+- [x] `test_agy_structured_output_is_final_text`: stub `agy` печатает поток из фактов выше → финальный текст = `structured_output`, строки инструментов видны через `_activity`
+- [x] `test_agy_error_result_raises`: stub печатает `result.status=ERROR` и выходит с 1 → `ProviderError` с текстом `error`
+- [x] `test_agy_garbage_is_judge_failure`: stub без `result` и без JSON → `run_role("judge")` даёт `__invalid__`
+- [x] `test_agy_one_call_at_a_time`: два параллельных вызова stub `agy` (stub пишет время старта/конца) → интервалы не пересекаются
+- [x] `test_gemini_routes_to_agy`: `create_provider("gemini")` → `AgyProvider`, предупреждение есть
+- [x] реализовать
 
 ## agy: проверка перед очередью
 
