@@ -382,8 +382,29 @@ def resolve_config(cli_args: dict) -> Config:
 
     # Merge defaults in source order: bundled -> global -> project.
     unknown: set[str] = set()
+    seen: set[Path] = set()
     for path in (bundled_config, global_config, project_config):
-        for key, value in _load_defaults_section(path).items():
+        resolved = path.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        data = _load_yaml(path)
+        if isinstance(data, dict):
+            extra = [k for k in data.keys() if k not in ("defaults", "providers")]
+            if extra:
+                labeled = [
+                    f"{k} → перенеси в defaults:" if k in valid_fields else str(k)
+                    for k in sorted(extra, key=str)
+                ]
+                warnings.warn(
+                    f"{path}: ключи вне defaults: не читаются: [{', '.join(labeled)}]",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        defaults_section = data.get("defaults", {}) if isinstance(data, dict) else {}
+        if not isinstance(defaults_section, dict):
+            defaults_section = {}
+        for key, value in defaults_section.items():
             if key not in valid_fields:
                 unknown.add(key)
                 continue

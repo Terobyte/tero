@@ -355,6 +355,52 @@ def test_apply_cli_args_escalation_provider_after_off_gets_default_model():
     assert (out.escalation_provider, out.escalation_model) == ("claude", "opus")
 
 
+def test_top_level_keys_warn(tmp_path, monkeypatch):
+    """Top-level player_provider warns with path+hint and is not applied."""
+    import warnings
+
+    _isolate_home(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    proj = workspace / ".tero" / "config.yaml"
+    _write_yaml(proj, "player_provider: codex\ndefaults:\n  max_rounds: 15\n")
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        cfg = resolve_config({"working_dir": str(workspace)})
+
+    top = [
+        str(w.message)
+        for w in rec
+        if issubclass(w.category, UserWarning) and "ключи вне" in str(w.message)
+    ]
+    assert len(top) == 1
+    assert str(proj) in top[0]
+    assert "player_provider" in top[0]
+    assert "перенеси" in top[0]
+    assert cfg.player_provider == "muse"
+
+
+def test_known_sections_no_warning(tmp_path, monkeypatch):
+    """Only defaults+providers → no top-level-keys warning."""
+    import warnings
+
+    _isolate_home(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    _write_yaml(
+        workspace / ".tero" / "config.yaml",
+        "defaults:\n  max_rounds: 12\nproviders:\n  codex:\n    command: codex\n",
+    )
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        cfg = resolve_config({"working_dir": str(workspace)})
+
+    top = [w for w in rec if "ключи вне" in str(w.message)]
+    assert top == []
+    assert rec == []
+    assert cfg.max_rounds == 12
+
+
 def test_family_of_claude():
     assert family_of("claude:opus") == "claude"
 

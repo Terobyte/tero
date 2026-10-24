@@ -162,9 +162,9 @@
   `[...]`». Ключи с именами полей `Config` в этом списке помечаются «→ перенеси в `defaults:`».
 - Значения таких ключей по-прежнему не применяются.
 
-- [ ] `test_top_level_keys_warn`: `player_provider: codex` на верхнем уровне → предупреждение с путём и подсказкой, `Config.player_provider` не изменился
-- [ ] `test_known_sections_no_warning`: только `defaults` и `providers` → предупреждений нет
-- [ ] реализовать
+- [x] `test_top_level_keys_warn`: `player_provider: codex` на верхнем уровне → предупреждение с путём и подсказкой, `Config.player_provider` не изменился
+- [x] `test_known_sections_no_warning`: только `defaults` и `providers` → предупреждений нет
+- [x] реализовать
 
 ## Провайдер agy
 
