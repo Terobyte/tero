@@ -146,9 +146,9 @@
   `провайдер | модель | ok | вердикт | секунды | ошибка`. Настоящий запуск — только руками, не в гейте.
 - Слой 2 (кейсы, метки, пороги) в этом шаге не делается: это трек человека.
 
-- [ ] `test_adapter_valid_verdict_each_cli`: параметризован по `agy`, `claude`, `codex`, `opencode`: stub-CLI в формате этого CLI (форматы — как в существующих тестах провайдеров `tests/test_agy_provider.py`, `tests/test_opencode_provider.py` и т.д.) отдаёт валидный вердикт → `ok=True`
-- [ ] `test_adapter_garbage_is_not_ok`: stub отдаёт мусор → `ok=False`, в `error` «не по схеме»
-- [ ] `test_adapter_table_output`: `--adapters` с подменённой фабрикой печатает строку таблицы на каждого судью
+- [x] `test_adapter_valid_verdict_each_cli`: параметризован по `agy`, `claude`, `codex`, `opencode`: stub-CLI в формате этого CLI (форматы — как в существующих тестах провайдеров `tests/test_agy_provider.py`, `tests/test_opencode_provider.py` и т.д.) отдаёт валидный вердикт → `ok=True`
+- [x] `test_adapter_garbage_is_not_ok`: stub отдаёт мусор → `ok=False`, в `error` «не по схеме»
+- [x] `test_adapter_table_output`: `--adapters` с подменённой фабрикой печатает строку таблицы на каждого судью
 - [x] реализовать
 
 ## Пульс владельца
