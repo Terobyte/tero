@@ -195,13 +195,13 @@
   (`null`, пока её нет), `push_ok` (`false`, пока ретранслятора нет). Без `--json` — те же поля строками.
 - Вне этой фазы: `--detach` (фаза 7), открытые вопросы и аренда (фазы 8, 11) — поля есть, значения пустые.
 
-- [ ] `test_wait_done_without_process`: `status=done`, pid мёртв → 0; `done` с долгом → 4; `stopped` → 2
-- [ ] `test_wait_dead_needs_free_lock`: незавершённый статус, pid мёртв, лок свободен → 5; лок занят → не 5 (по таймауту 6)
-- [ ] `test_wait_hang_by_progress`: подменённые часы: `progress` стоит дольше `hang_after_s` → 5; в `waiting_human` порог 120 с
-- [ ] `test_wait_sleep_is_not_death`: монотонные часы стоят (сон машины), стена ушла на час → не 5
-- [ ] `test_watch_survives_short_waits`: три `wait_run(timeout_s=…)` подряд с одним `progress` → окно считается от первой отметки, третий даёт 5
-- [ ] `test_wait_judge_pending_is_3`: `judge_pending` → 3; `waiting_agent` → 3
-- [ ] `test_status_json_fields`: `tero status --json` через CLI-подпроцесс → все поля из списка есть, секретов нет
+- [x] `test_wait_done_without_process`: `status=done`, pid мёртв → 0; `done` с долгом → 4; `stopped` → 2
+- [x] `test_wait_dead_needs_free_lock`: незавершённый статус, pid мёртв, лок свободен → 5; лок занят → не 5 (по таймауту 6)
+- [x] `test_wait_hang_by_progress`: подменённые часы: `progress` стоит дольше `hang_after_s` → 5; в `waiting_human` порог 120 с
+- [x] `test_wait_sleep_is_not_death`: монотонные часы стоят (сон машины), стена ушла на час → не 5
+- [x] `test_watch_survives_short_waits`: три `wait_run(timeout_s=…)` подряд с одним `progress` → окно считается от первой отметки, третий даёт 5
+- [x] `test_wait_judge_pending_is_3`: `judge_pending` → 3; `waiting_agent` → 3
+- [x] `test_status_json_fields`: `tero status --json` через CLI-подпроцесс → все поля из списка есть, секретов нет
 - [x] реализовать
 
 ## tero go --detach

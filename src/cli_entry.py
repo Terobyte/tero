@@ -86,6 +86,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--role", type=str, default="player", choices=("player", "judge")
     )
 
+    wait_parser = subparsers.add_parser(
+        "wait", help="Sleep until the run needs the agent, ends, or looks dead"
+    )
+    wait_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    wait_parser.add_argument("--run", type=str, default=None)
+    wait_parser.add_argument("--timeout", type=float, default=None)
+
+    status_parser = subparsers.add_parser("status", help="Show run status")
+    status_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    status_parser.add_argument("--run", type=str, default=None)
+    status_parser.add_argument("--json", action="store_true", default=False)
+
     return parser
 
 
@@ -171,6 +183,75 @@ def _latest_run_dir(repo: Path) -> Path | None:
     except OSError:
         return None
     return entries[-1] if entries else None
+
+
+def run_wait(args) -> int:
+    """Sleep until the agent is needed; exit with the wait RunOutcome code."""
+    from src.loop.state import RunState
+    from src.loop.wait import wait_run
+
+    repo = Path(args.working_dir).expanduser().resolve()
+    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    if run_dir is None:
+        run_dir = _latest_run_dir(repo)
+    if run_dir is None or not (run_dir / "state.json").is_file():
+        print("Прогонов нет.")
+        return 1
+    code = wait_run(
+        run_dir, repo, timeout_s=getattr(args, "timeout", None)
+    )
+    state = RunState.read(run_dir / "state.json") or {}
+    why = {
+        0: "готово",
+        4: "готово с долгом",
+        2: f"остановлен: {state.get('reason') or ''}".rstrip(),
+        3: "нужен агент",
+        5: "мёртв или завис — нужен resume",
+        6: "таймаут",
+    }.get(code, f"код {code}")
+    print(f"{state.get('status', '?')}: {why}")
+    return code
+
+
+def run_status(args) -> int:
+    """Print run status: machine-readable with --json, lines otherwise."""
+    import json as _json
+
+    from src.loop.wait import status_payload
+
+    repo = Path(args.working_dir).expanduser().resolve()
+    run_dir = Path(args.run).expanduser() if getattr(args, "run", None) else None
+    if run_dir is None:
+        run_dir = _latest_run_dir(repo)
+    if run_dir is None or not (run_dir / "state.json").is_file():
+        print("Прогонов нет.")
+        return 1
+    payload = status_payload(run_dir, repo)
+    if getattr(args, "json", False):
+        print(_json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return 0
+    print(f"фаза: {payload['phase']}")
+    title = payload.get("phase_title") or ""
+    if title:
+        print(f"название: {title}")
+    print(f"раунд: {payload['round']}")
+    print(f"роль: {payload['role']}")
+    print(f"провайдер: {payload['provider']}")
+    print(f"модель: {payload['model']}")
+    print(f"статус: {payload['status']}")
+    print(f"doing: {payload['doing']}")
+    question = payload.get("question")
+    if question:
+        print(f"вопрос: {question.get('id')} {question.get('text')}")
+        print(f"действия: {','.join(question.get('actions') or [])}")
+    else:
+        print("вопрос: null")
+    print(f"решения: {_json.dumps(payload['decisions'], ensure_ascii=False)}")
+    print(f"долг: {_json.dumps(payload['debt'], ensure_ascii=False)}")
+    print(f"пульс: {payload['pulse_age_s']}")
+    print("аренда: null")
+    print(f"push_ok: {str(payload['push_ok']).lower()}")
+    return 0
 
 
 def run_compact(args) -> int:
@@ -319,6 +400,10 @@ def main():
         sys.exit(run_compact(args))
     elif args.command == "resume":
         sys.exit(asyncio.run(run_resume(args)))
+    elif args.command == "wait":
+        sys.exit(run_wait(args))
+    elif args.command == "status":
+        sys.exit(run_status(args))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 

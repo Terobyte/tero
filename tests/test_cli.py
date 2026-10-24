@@ -206,6 +206,73 @@ def test_resolve_config_project_overrides_global(tmp_path, monkeypatch):
     assert cfg.judge_provider == "codex"
 
 
+def test_status_json_fields_via_subprocess(tmp_path, monkeypatch):
+    """`tero status --json` via CLI subprocess: all fields present, secrets scrubbed."""
+    import json
+    import subprocess
+    import sys
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "plan.md").write_text("# Demo\n\n## One\n\n- [ ] x\n")
+    run_dir = repo / ".tero" / "runs" / "20200101-000000-demo"
+    run_dir.mkdir(parents=True)
+
+    from src.loop.state import RunState
+
+    secret = "tok-cli-secret-47"
+    RunState(run_dir / "state.json").update(
+        status="running",
+        plan="plan.md",
+        phase="One",
+        phase_index=0,
+        round=1,
+        role="player",
+        provider="muse",
+        model="muse-spark-1.3",
+        doing=f"работа {secret}",
+    )
+    monkeypatch.setenv("TERO_STATUS_TEST_TOKEN", secret)
+
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.cli_entry",
+            "status",
+            "--json",
+            "-w",
+            str(repo),
+            "--run",
+            str(run_dir),
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    for key in (
+        "phase",
+        "round",
+        "role",
+        "provider",
+        "model",
+        "status",
+        "doing",
+        "question",
+        "decisions",
+        "debt",
+        "pulse_age_s",
+        "lease",
+        "push_ok",
+    ):
+        assert key in payload, key
+    assert "META_MODEL_API_KEY" not in proc.stdout
+    assert secret not in proc.stdout
+
+
 def test_installed_script_points_at_package_entrypoint():
     """The console script should resolve inside the installed package."""
     pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
