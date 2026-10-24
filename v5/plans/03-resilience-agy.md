@@ -200,6 +200,14 @@
   предупреждением «gemini CLI больше не используется, вызываю agy». `src/providers/gemini.py` и его тесты не трогать.
 - `src/config.py`: `"agy"` в `KNOWN_PROVIDERS`; `family_of("agy:<model>")` — по модели, без модели → `gemini`.
 - Вне этой фазы: pre-flight и проверка `agy models` (фаза 7).
+- Меняются старые тесты:
+  - `tests/test_codex_menu_config.py::test_provider_presets_drop_zai_and_kilo` — в ожидаемый список
+    `KNOWN_PROVIDERS` добавляется `"agy"` на то место, куда его ставит `src/config.py`; остальные
+    проверки теста не меняются.
+  - `tests/loop/test_resilience_misc.py::test_non_streaming_provider_gets_no_stall` — `"gemini"` теперь
+    ведёт в `AgyProvider` (streaming), поэтому не-streaming случай проверяется на stub-провайдере с
+    `streams = False`, подставленном в `_default_factory` через monkeypatch; смысл теста тот же:
+    не-streaming провайдер не получает `stall_timeout_s`, контрольная часть с `claude` не меняется.
 
 - [ ] `test_agy_argv_judge_and_player`: argv судьи содержит `--mode plan` и не содержит `--dangerously-skip-permissions`; у исполнителя наоборот; `--print-timeout` с единицей (`3600s`)
 - [ ] `test_agy_structured_output_is_final_text`: stub `agy` печатает поток из фактов выше → финальный текст = `structured_output`, строки инструментов видны через `_activity`
