@@ -32,6 +32,7 @@ from src.errors import scrub_data, scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
+from src.loop.compact import should_compact
 from src.loop.prompts import (
     judge_prompt,
     needs_user_reask_block,
@@ -179,6 +180,8 @@ class _State:
     last_red_tree: str | None = None
     protected: dict[str, ProtectedTest] = field(default_factory=dict)
     protected_by_id: dict[str, list[str]] = field(default_factory=dict)
+    compact_count: int = 0
+    judge_compact_used: bool = False
 
 
 async def run_phase(
@@ -311,6 +314,8 @@ class _PhaseRunner:
                 return self._halt("fuse")
             self.state.round += 1
             self._update_state(round=self.state.round)
+            self.state.compact_count = 0
+            self.state.judge_compact_used = False
             self._emit(
                 "start_step",
                 phase=self.phase.title,
@@ -325,6 +330,8 @@ class _PhaseRunner:
             )
             player_ok = await self._player()
             if player_ok is None:
+                if self.state.stop_reason == "snapshot_failed":
+                    return self._halt("snapshot_failed")
                 return self._halt(self.state.stop_reason or "provider_unavailable")
             if not player_ok:
                 # Падение исполнителя: дерево не откатывается, следующий
@@ -387,14 +394,83 @@ class _PhaseRunner:
                 return None
 
     async def _player(self) -> bool | None:
-        """True/False — обычный исход; None — auth/quota, caller делает halt."""
+        """True/False — обычный исход; None — auth/quota/snapshot_failed, caller делает halt."""
         model, provider, effort = self._player_identity()
+        while True:
+            check = self._player_compact_check()
+            data = await self._raw_player_call(
+                model, provider, effort, self._player_prompt(), check
+            )
+            if data is None:
+                return False
+            if data is False:
+                if self.state.last_provider_kind == "auth":
+                    self.state.stop_reason = "provider_auth"
+                    return None
+                if self.state.last_provider_kind == "quota":
+                    self.state.stop_reason = "provider_quota"
+                    return None
+                return False
+            if not data.get("__compacted__"):
+                break
+            if check is None:
+                # Компакт без запрошенного порога (лимит исчерпан, дальше
+                # вызов шёл без compact_check): проверенного снимка нет —
+                # останавливаемся без гейта и судьи (F5, F9).
+                return self._player_compact_failed()
+            self.state.compact_count += 1
+            ref = self._record_compact("player", data)
+            if ref is None:
+                # Снимок компакта не записался: без проверенного ref бриф
+                # для нового вызова не построить — останавливаемся без
+                # гейта и судьи (F5, F9).
+                return self._player_compact_failed()
+        ref = self._snapshot_after_player()
+        if data is None:
+            if self.state.last_provider_kind == "auth":
+                self.state.stop_reason = "provider_auth"
+                return None
+            if self.state.last_provider_kind == "quota":
+                self.state.stop_reason = "provider_quota"
+                return None
+            self.state.player_crashes += 1
+            self.state.resume_active = True
+            self.state.had_crash = True
+            if ref:
+                self.state.resume_ref = ref
+                self.state.resume_base = self.checkpoint
+            return False
+        if data.get("__invalid__"):
+            # Уже зарегистрировано в _raw_player_call: без повтора события.
+            # F14: любой некомпактный ответ (включая __invalid__) сбрасывает
+            # счётчик падений — иначе сбой, невалид, сбой считались бы двумя
+            # последовательными падениями.
+            self.state.player_crashes = 0
+            report = UNAVAILABLE_PLAYER
+        else:
+            self.state.player_crashes = 0
+            if ref:
+                # Успешный ответ не начинает чистую попытку: блок продолжения
+                # остаётся, ref обновляется под актуальное дерево.
+                self.state.resume_ref = ref
+                self.state.resume_base = self.checkpoint
+                self.state.resume_active = True
+            report = data if data.get("status") in {"done", "blocked"} else UNAVAILABLE_PLAYER
+        self.ledger.event("player", phase=self.phase.title, round=self.state.round, model=model)
+        self.ledger.artifact(self._round_file("player.json"), _dump(report))
+        line = f"  player: {report['status']}, изменений {len(report.get('changes') or [])}"
+        if report.get("blocked_reason"):
+            line += f" — {report['blocked_reason']}"
+        print(line, flush=True)
+        return True
+
+    def _player_prompt(self) -> str:
         continuation = ""
         if self.state.resume_active:
             continuation = _continuation_block(
                 self.repo, self.state.resume_base, self.state.resume_ref
             )
-        prompt = player_prompt(
+        return player_prompt(
             preamble=self.preamble,
             contract=self.contract,
             findings=[item.as_prompt() for item in self.state.open_findings],
@@ -405,6 +481,46 @@ class _PhaseRunner:
             continuation=self.state.resume_active,
             continuation_diff=continuation,
         )
+
+    def _player_compact_failed(self) -> None:
+        """Раунд после ответа __compacted__ без проверенного ref.
+
+        Гейт и судья не запускаются (F5): работа исполнителя не завершена,
+        вердикта нет. Останавливаемся (F5, F9): без проверенного ref бриф
+        для нового вызова не построить, следующий раунд без снимка и
+        compact-события запрещён. Компакт — не падение и не продолжение
+        (F9): счётчик player_crashes не растёт, had_crash не выставляется,
+        счётчики K_max не трогаем.
+        """
+        self.ledger.event(
+            "player_compact_failed",
+            round=self.state.round,
+            crashes=self.state.player_crashes,
+        )
+        self.state.stop_reason = "snapshot_failed"
+        return None
+
+    def _player_compact_check(self) -> Any:
+        from functools import partial
+
+        at_tokens = self.cfg.compact_player_at_tokens
+        if self.state.compact_count >= 3:
+            return None
+        return partial(should_compact, at_tokens=at_tokens, requested=False)
+
+    async def _raw_player_call(
+        self,
+        model: str,
+        provider: str,
+        effort: str,
+        prompt: str,
+        compact_check: Any,
+    ) -> dict[str, Any] | bool | None:
+        """None — исключение/недоступность провайдера (счётчик падений +1).
+
+        False — недоступный ответ провайдера (auth/quota handled via returns:
+        returns True + Sets stop_reason). Dict — сырой ответ агента.
+        """
         from datetime import datetime, timezone
 
         self._update_state(
@@ -423,6 +539,7 @@ class _PhaseRunner:
                 timeout=self.cfg.player_timeout_s,
                 ctx=ValidateCtx(),
                 emit=self._emit,
+                compact_check=compact_check,
             )
         except Exception as exc:
             ref = self._snapshot_after_player()
@@ -437,38 +554,76 @@ class _PhaseRunner:
             if ref:
                 self.state.resume_ref = ref
                 self.state.resume_base = self.checkpoint
-            return False
-        ref = self._snapshot_after_player()
+            return None
         data = self._check_reply("player", data, provider)
         if data is None:
-            if self.state.last_provider_kind == "auth":
-                self.state.stop_reason = "provider_auth"
-                return None
-            if self.state.last_provider_kind == "quota":
-                self.state.stop_reason = "provider_quota"
-                return None
+            if self.state.last_provider_kind in ("auth", "quota"):
+                return False
             self.state.player_crashes += 1
             self.state.resume_active = True
             self.state.had_crash = True
+            ref = self._snapshot_after_player()
             if ref:
                 self.state.resume_ref = ref
                 self.state.resume_base = self.checkpoint
-            return False
-        self.state.player_crashes = 0
-        if ref:
-            # Успешный ответ не начинает чистую попытку: блок продолжения
-            # остаётся, ref обновляется под актуальное дерево.
+            return None
+        return data
+
+    def _record_compact(self, role: str, data: dict[str, Any]) -> str | None:
+        run_id = self.ledger.run_dir.name
+        if role == "player":
+            ref = f"refs/tero/{run_id}/phase-{self.phase.index:02d}-round{self.state.round:02d}-compact{self.state.compact_count}"
+        else:
+            ref = f"refs/tero/{run_id}/phase-{self.phase.index:02d}-round{self.state.round:02d}-judge-compact"
+        try:
+            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
+            if not snapshot_mod.verify(self.repo, ref):
+                raise RuntimeError("snapshot verify failed")
+        except Exception as exc:
+            self._update_state(snapshot_ref="")
+            self._emit(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                role=role,
+                error=str(exc) or type(exc).__name__,
+                text=f"снимок работы не сделан (`{ref}`)",
+            )
+            self.ledger.event(
+                "snapshot_failed",
+                ref=ref,
+                base=self.checkpoint,
+                error=str(exc) or type(exc).__name__,
+                round=self.state.round,
+            )
+            return None
+        tokens = data.get("tokens", 0)
+        if role == "player":
+            self._update_state(snapshot_ref=ref, base=self.checkpoint)
+        text = f"компакт {role} ({tokens} токенов) — новый вызов, снимок `{ref}`"
+        self._emit(
+            "compact",
+            role=role,
+            tokens=tokens,
+            ref=ref or "",
+            text=text,
+        )
+        self.ledger.event(
+            "compact",
+            role=role,
+            tokens=tokens,
+            ref=ref,
+            round=self.state.round,
+            crashes=self.state.player_crashes,
+            kmax_flat=self.state.kmax_flat,
+        )
+        print(f"  компакт {role} ({tokens} токенов) — новый вызов", flush=True)
+        if ref and role == "player":
             self.state.resume_ref = ref
             self.state.resume_base = self.checkpoint
             self.state.resume_active = True
-        report = data if data.get("status") in {"done", "blocked"} else UNAVAILABLE_PLAYER
-        self.ledger.event("player", phase=self.phase.title, round=self.state.round, model=model)
-        self.ledger.artifact(self._round_file("player.json"), _dump(report))
-        line = f"  player: {report['status']}, изменений {len(report.get('changes') or [])}"
-        if report.get("blocked_reason"):
-            line += f" — {report['blocked_reason']}"
-        print(line, flush=True)
-        return True
+        # Компакт — не падение и не раунд: счётчики не трогаем.
+        return ref
 
     def _protect_tests(self) -> bool:
         # Restore every violation in one pass: one per round would burn a round
@@ -704,6 +859,7 @@ class _PhaseRunner:
                 timeout=self.cfg.judge_timeout_s,
                 ctx=ctx,
                 emit=self._emit,
+                compact_check=self._judge_compact_check(),
             )
             if snapshot_mod.tree_of(
                 self.repo, self.checkpoint
@@ -713,6 +869,38 @@ class _PhaseRunner:
                 print("  judge изменил рабочее дерево — откат", flush=True)
 
             data = self._check_reply("judge", data, self.cfg.judge_provider)
+            if data is not None and data.get("__compacted__"):
+                # Компакт судьи: повтор на уже проверенном ref раунда, без
+                # дополнительного обязательного снимка (F12), не считается
+                # сбоем судьи; второй компакт за раунд — как сбой (F7).
+                if not self.state.judge_compact_used:
+                    tokens = data.get("tokens", 0)
+                    text = f"компакт judge ({tokens} токенов) — новый вызов, снимок `{ref}`"
+                    self._emit(
+                        "compact",
+                        role="judge",
+                        tokens=tokens,
+                        ref=ref or "",
+                        text=text,
+                    )
+                    self.ledger.event(
+                        "compact",
+                        role="judge",
+                        tokens=tokens,
+                        ref=ref,
+                        round=self.state.round,
+                        crashes=self.state.player_crashes,
+                        kmax_flat=self.state.kmax_flat,
+                    )
+                    print(f"  компакт judge ({tokens} токенов) — новый вызов", flush=True)
+                    self.state.judge_compact_used = True
+                    continue
+                else:
+                    data = {
+                        "__invalid__": True,
+                        "errors": ["judge compacted twice in one round"],
+                        "raw": "",
+                    }
             if (
                 data is not None
                 and not data.get("__invalid__")
@@ -803,6 +991,17 @@ class _PhaseRunner:
         self.ledger.artifact(self._round_file("judge.json"), _dump(data))
         _print_verdict(data)
         return self._apply_verdict(data)
+
+    def _judge_compact_check(self) -> Any:
+        from functools import partial
+
+        if self.state.judge_compact_used:
+            return None
+        return partial(
+            should_compact,
+            at_tokens=self.cfg.compact_judge_at_tokens,
+            requested=False,
+        )
 
     def _judge_failed(self, attempt: int, error: str) -> None:
         text = f"судья: сбой {attempt}/{_JUDGE_MAX_FAILURES} — {error or 'без деталей'}"
@@ -1448,6 +1647,12 @@ def _stream_text(type: str, fields: dict[str, Any]) -> str:
         return str(fields.get("text", "") or fields.get("reason", "") or "")
     if type == "start_step":
         return f"раунд {fields.get('round', '')} начат"
+    if type == "compact":
+        return (
+            f"компакт {fields.get('role', '')} "
+            f"({fields.get('tokens', 0)} токенов) — "
+            f"новый вызов, снимок `{fields.get('ref', '')}`"
+        )
     return ""
 
 

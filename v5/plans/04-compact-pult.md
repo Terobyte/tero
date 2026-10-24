@@ -105,11 +105,11 @@
   одного компакта судьи на раунд.
 - Вне этой фазы: `tero compact`, `--autocompact` у `claude` (фаза 3).
 
-- [ ] `test_compact_player_gets_brief_with_diff`: stub-исполнитель №1 пишет файл и превышает порог → stub №2 получил промпт с его diff, файл в ref, гейт между ними не вызван
-- [ ] `test_compact_keeps_findings_verbatim`: раунд 2 с открытым замечанием → в промпте после компакта текст замечания дословно
-- [ ] `test_compact_does_not_grow_round_or_kmax`: компакт → `round` тот же, счётчик падений и K_max не изменились
-- [ ] `test_compact_capped_per_round`: исполнитель превышает порог каждый вызов → 3 компакта, 4-й вызов доживает до конца
-- [ ] `test_compact_judge_restarts_on_same_ref`: судья вернул `__compacted__` → второй вызов судьи, исполнитель не вызван, счётчик сбоев судьи 0
+- [x] `test_compact_player_gets_brief_with_diff`: stub-исполнитель №1 пишет файл и превышает порог → stub №2 получил промпт с его diff, файл в ref, гейт между ними не вызван
+- [x] `test_compact_keeps_findings_verbatim`: раунд 2 с открытым замечанием → в промпте после компакта текст замечания дословно
+- [x] `test_compact_does_not_grow_round_or_kmax`: компакт → `round` тот же, счётчик падений и K_max не изменились
+- [x] `test_compact_capped_per_round`: исполнитель превышает порог каждый вызов → 3 компакта, 4-й вызов доживает до конца
+- [x] `test_compact_judge_restarts_on_same_ref`: судья вернул `__compacted__` → второй вызов судьи, исполнитель не вызван, счётчик сбоев судьи 0
 - [x] реализовать
 
 ## tero compact и autocompact у claude
