@@ -22,6 +22,7 @@ from src.loop.git import (
     has_staged_changes,
     head,
     list_files,
+    list_ignored_files,
     list_worktree_files,
     rollback,
     secret_paths,
@@ -548,6 +549,7 @@ class _PhaseRunner:
             return True
         before_tree = write_tree(self.repo)
         before_files = set(list_worktree_files(self.repo))
+        before_ignored = _snapshot_ignored(self.repo)
         prompt = tester_prompt(
             preamble=self.preamble,
             contract=self.contract,
@@ -569,6 +571,9 @@ class _PhaseRunner:
         self.ledger.event("tester", round=self.state.round)
         self.ledger.artifact(self._round_file("tester.json"), _dump(data))
         self._revert_non_test(before_tree, before_files)
+        for rel in _restore_ignored(self.repo, before_ignored):
+            self.ledger.event("ignored_violation", path=rel, round=self.state.round)
+            print(f"  gitignored-файл изменён тестером: {rel} — откат", flush=True)
         written = 0
         red_confirmed = 0
         for test in data.get("tests") or []:
@@ -791,6 +796,59 @@ def _remove_guarded(target: Path) -> None:
         target.unlink()
     elif target.is_dir():
         shutil.rmtree(target)
+
+
+def _snapshot_ignored(repo: Path) -> dict[str, bytes]:
+    # _revert_non_test walks `git ls-files -co --exclude-standard`, so
+    # gitignored paths are invisible to it: snapshot them around the tester.
+    snap: dict[str, bytes] = {}
+    for rel in list_ignored_files(repo):
+        if Path(rel).parts[0] in _PRUNE_DIRS:
+            continue
+        target = repo / rel
+        if target.is_symlink() or not target.is_file():
+            continue
+        try:
+            snap[rel] = target.read_bytes()
+        except OSError:
+            continue
+    return snap
+
+
+def _restore_ignored(repo: Path, snap: dict[str, bytes]) -> list[str]:
+    # Returns the paths that had to be restored or removed.
+    changed: list[str] = []
+    now = {
+        rel for rel in list_ignored_files(repo) if Path(rel).parts[0] not in _PRUNE_DIRS
+    }
+    for rel in sorted(now | set(snap)):
+        target = repo / rel
+        original = snap.get(rel)
+        if original is None:
+            # Not there before the tester: created, not modified.
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
+                changed.append(rel)
+            continue
+        try:
+            same = (
+                not target.is_symlink()
+                and target.is_file()
+                and target.read_bytes() == original
+            )
+        except OSError:
+            continue
+        if same:
+            continue
+        try:
+            if target.is_symlink():
+                target.unlink()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(original)
+        except OSError:
+            continue
+        changed.append(rel)
+    return changed
 
 
 def _strip_unsafe_ancestors(repo: Path, rel: str) -> list[str]:

@@ -25,8 +25,8 @@ class CursorConfig:
 class CursorProvider:
     """Cursor provider via `agent -p --force --trust --output-format stream-json`.
 
-    ``-p`` is a boolean print-mode flag; the prompt is positional. Do not pass
-    ``--worktree`` — tero already isolates via WorktreeManager.
+    ``-p`` is a boolean print-mode flag; the prompt is read from stdin. Do not
+    pass ``--worktree`` — tero already isolates via WorktreeManager.
     """
 
     def __init__(self, config: CursorConfig | None = None):
@@ -56,12 +56,15 @@ class CursorProvider:
         cmd = self._build_command(
             model=model,
             working_dir=working_dir,
-            prompt=full_prompt,
             effort=effort,
             read_only=read_only,
         )
 
-        _gen = run_subprocess_jsonl(cmd, working_dir, env=env)
+        # The prompt goes through stdin: a judge prompt carries the whole diff
+        # and would overflow the per-argument limit (128 KB on Linux) in argv.
+        _gen = run_subprocess_jsonl(
+            cmd, working_dir, env=env, stdin_data=full_prompt.encode("utf-8")
+        )
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
@@ -81,6 +84,8 @@ class CursorProvider:
         effort: str = "",
         read_only: bool = False,
     ) -> list[str]:
+        # The prompt itself travels via stdin, not argv (see run()); the
+        # keyword is accepted for older callers and ignored.
         resolved_model = cursor_model_arg(model or self.config.default_model, effort)
         cmd = [self.config.command, "-p"]
         if read_only:
@@ -94,8 +99,6 @@ class CursorProvider:
             cmd.extend(["--workspace", working_dir])
         if resolved_model:
             cmd.extend(["--model", resolved_model])
-        if prompt:
-            cmd.append(prompt)
         return cmd
 
     @staticmethod

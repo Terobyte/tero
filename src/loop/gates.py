@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -138,12 +140,15 @@ def _expand_files(argv: list[str], paths: list[str]) -> list[str]:
 def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
     resolved = [_resolve_python(part) for part in argv]
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             resolved,
             cwd=repo,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_s,
+            # Test suites love non-UTF-8 output; it must not crash the gate.
+            errors="replace",
+            start_new_session=True,
         )
     except OSError as exc:
         return GateResult(
@@ -152,16 +157,24 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             output=f"{resolved[0]}: {exc}",
             command_name=name,
         )
-    except subprocess.TimeoutExpired as exc:
-        output = _text(exc.stdout) + _text(exc.stderr)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        # Own process group: killpg takes out grandchildren (dev servers,
+        # daemons) the suite spawned, not just the direct child.
+        _kill_group(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
         return GateResult(
             ok=False,
             exit_code=124,
-            output=output,
+            output=(stdout or "") + (stderr or ""),
             command_name=name,
             timed_out=True,
         )
-    output = (proc.stdout or "") + (proc.stderr or "")
+    output = (stdout or "") + (stderr or "")
     return GateResult(
         ok=proc.returncode == 0,
         exit_code=proc.returncode,
@@ -170,11 +183,18 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
     )
 
 
-def _text(stream: bytes | str | None) -> str:
-    # TimeoutExpired carries raw bytes even when run() was called with text=True
-    if isinstance(stream, bytes):
-        return stream.decode(errors="replace")
-    return stream or ""
+def _kill_group(proc: subprocess.Popen) -> None:
+    """Kill the subprocess and everything left in its process group."""
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
 
 
 def _resolve_python(token: str) -> str:

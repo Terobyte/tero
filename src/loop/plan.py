@@ -41,17 +41,25 @@ def load_phases(path: str | Path) -> list[Phase]:
 
 
 def mark_phase_done(path: str | Path, phase: Phase) -> None:
-    """Check every checkbox that belongs to ``phase``. Temp-file + rename."""
+    """Check every checkbox that belongs to ``phase``. Temp-file + rename.
+
+    Matching is by checkbox text, not by the line numbers captured at load
+    time: the player may edit the plan mid-phase and shift the lines. An
+    identical checkbox text in another phase is marked too (accepted
+    tradeoff — plan texts are expected to differ).
+    """
     target = Path(path)
     # newline="" keeps \r\n: read_text() would translate it and the rewrite
     # would turn a CRLF plan into LF on every ship
     with open(target, newline="") as f:
         lines = f.read().splitlines(keepends=True)
+    wanted = {box.text for box in phase.checkboxes}
     changed: list[str] = []
-    for i, line in enumerate(lines):
+    for line in lines:
         newline = _line_ending(line)
         raw = line.rstrip("\r\n")
-        if phase.start_line <= i < phase.end_line and _CHECKBOX.match(raw):
+        match = _CHECKBOX.match(raw)
+        if match and match.group(2) in wanted:
             raw = _CHECKBOX.sub(r"- [x] \2", raw)
         changed.append(raw + newline)
     _atomic_write(target, "".join(changed))

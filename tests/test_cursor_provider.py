@@ -23,7 +23,6 @@ def test_build_command_uses_print_force_trust_and_workspace():
     cmd = provider._build_command(
         model="composer-2.5",
         working_dir="/tmp/work",
-        prompt="do the thing",
     )
     assert cmd[:2] == ["agent", "-p"]
     assert "--force" in cmd
@@ -32,7 +31,8 @@ def test_build_command_uses_print_force_trust_and_workspace():
     assert cmd[cmd.index("--output-format") + 1] == "stream-json"
     assert cmd[cmd.index("--workspace") + 1] == "/tmp/work"
     assert cmd[cmd.index("--model") + 1] == "composer-2.5"
-    assert cmd[-1] == "do the thing"
+    # The prompt travels via stdin, never as an argv element.
+    assert "do the thing" not in cmd
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] != "do the thing"
 
 

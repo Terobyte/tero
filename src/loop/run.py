@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -16,7 +17,9 @@ from src.loop.git import (
     current_branch,
     ensure_clean,
     exclude_tero,
+    head,
     is_repo,
+    rollback,
     run_branch_exists,
     status_short,
 )
@@ -49,9 +52,18 @@ async def run(
     except UnknownProviderError as exc:
         return RunOutcome(status="error", exit_code=1, reason=str(exc))
 
+    command = detect(
+        repo,
+        test_command=cfg.test_command,
+        test_command_scoped=cfg.test_command_scoped,
+    )
+
     if check_ready:
         print("проверка провайдеров …", flush=True)
         for role, provider, model in _roles(cfg):
+            if role == "tester" and not (command and command.run_files):
+                # Without a scoped runner the tester is never called (phase.py).
+                continue
             ok, why = check_ready(provider, model)
             if not ok:
                 return RunOutcome(
@@ -104,11 +116,6 @@ async def run(
             phases_total=len(phases),
         )
 
-    command = detect(
-        repo,
-        test_command=cfg.test_command,
-        test_command_scoped=cfg.test_command_scoped,
-    )
     if command is not None:
         cmd_str = " ".join(command.run_all)
         detected = "" if cfg.test_command.strip() else f" (автодетект: {command.name})"
@@ -140,6 +147,9 @@ async def run(
         for phase in phases:
             if phase.done:
                 continue
+            # The rollback target for a crash in this phase: phases shipped
+            # before it stay shipped, this one's half-done work goes away.
+            base = head(repo)
             outcome = await run_phase(
                 phase,
                 repo=repo,
@@ -174,6 +184,23 @@ async def run(
             status="interrupted",
             exit_code=130,
             reason="interrupted",
+            phases_shipped=shipped,
+            phases_total=len(phases),
+            run_dir=str(run_dir),
+        )
+    except Exception as exc:
+        # Any other mid-phase crash must still stop clean: roll the failing
+        # phase back to the head it started from and leave a stop outcome
+        # instead of a dirty tree.
+        rollback(repo, base)
+        reason = f"crashed: {phase.title}: {exc}"
+        ledger.event("crashed", error=str(exc), phase=phase.title)
+        _end(reason)
+        traceback.print_exc()
+        return RunOutcome(
+            status="stop",
+            exit_code=2,
+            reason=reason,
             phases_shipped=shipped,
             phases_total=len(phases),
             run_dir=str(run_dir),

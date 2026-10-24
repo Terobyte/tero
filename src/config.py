@@ -176,7 +176,7 @@ def short_model_name(model: str) -> str:
     if "gemini-3-flash" in m:
         return "GEMINI-3-FL"
     if "gemini-3.1-flash-lite" in m:
-        return "GEMINI-3-LITE"
+        return "GEMINI-3.1-LITE"
     if "gemini-2.5-pro" in m:
         return "GEMINI-2.5-PRO"
     if "gemini-2.5-flash" in m:
