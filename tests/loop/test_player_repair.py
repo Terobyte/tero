@@ -75,3 +75,15 @@ def test_blocked_without_changes_stays_valid():
 def test_player_prompt_demands_file_edits():
     text = player_prompt(preamble="", contract="c")
     assert "done без правок" in text
+
+
+def test_player_prompt_red_test_first_and_priced_blocked():
+    text = player_prompt(preamble="", contract="c")
+    assert "Можно запускать тесты" not in text
+    assert "Первая правка — красный тест" in text
+    assert "«нужно ещё почитать» — не причина" in text
+
+
+def test_blocked_needs_reason():
+    data = {"status": "blocked", "changes": [], "start_here": [], "blocked_reason": " "}
+    assert validate("player", data)

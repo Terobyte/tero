@@ -933,3 +933,39 @@ def test_questionary_muse_provider_selects_spark_model(monkeypatch):
 
     assert updated.player_provider == "muse"
     assert updated.player_model == "muse-spark-1.3"
+
+
+# --- продолжение сессии: пинок и repair не начинают с чистого листа (прогон 231742) ---
+
+
+def test_build_command_continues_session():
+    provider = OpenCodeProvider(OpenCodeConfig())
+    cmd = provider._build_command(model="", working_dir=".", session_id="ses_abc")
+    assert cmd[cmd.index("--session") + 1] == "ses_abc"
+    assert cmd[-1] == "-"
+    assert "--session" not in provider._build_command(model="", working_dir=".")
+
+
+@pytest.mark.asyncio
+async def test_run_records_session_and_resumes_it():
+    provider = OpenCodeProvider(OpenCodeConfig())
+    events = [
+        {"type": "step_start", "sessionID": "ses_e8eb", "part": {"type": "step-start"}},
+        {"type": "text", "sessionID": "ses_e8eb", "part": {"type": "text", "text": "hi"}},
+    ]
+    seen: list = []
+
+    async def mock_create_subprocess(*args, **kwargs):
+        seen.append(args)
+        return MockProcess(_make_opencode_jsonl(*events))
+
+    session = {"id": "", "resume": False}
+    with patch("asyncio.create_subprocess_exec", mock_create_subprocess):
+        async for _ in provider.run("p", "", "/tmp/work", 10, session=session):
+            pass
+        assert session["id"] == "ses_e8eb"
+        assert "--session" not in seen[0]
+        session["resume"] = True
+        async for _ in provider.run("p", "", "/tmp/work", 10, session=session):
+            pass
+    assert seen[1][seen[1].index("--session") + 1] == "ses_e8eb"

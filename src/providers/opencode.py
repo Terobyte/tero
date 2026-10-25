@@ -66,12 +66,20 @@ class OpenCodeProvider:
         read_only: bool = False,
         effort: str = "",
         compact_check=None,
+        session: dict | None = None,
     ):
-        """Run OpenCode agent via CLI and yield adapted messages."""
+        """Run OpenCode agent via CLI and yield adapted messages.
+
+        `session` ({"id", "resume"}): id of the opencode session is recorded
+        there; with resume the call continues it instead of starting blank.
+        """
         from src.loop.compact import Compacted
 
         self._reset_usage()
-        cmd = self._build_command(model, working_dir, effort=effort, read_only=read_only)
+        resume_id = session["id"] if session and session.get("resume") else ""
+        cmd = self._build_command(
+            model, working_dir, effort=effort, read_only=read_only, session_id=resume_id
+        )
         full_prompt = self._build_system_prompt(system_prompt, prompt)
 
         _gen = run_subprocess_jsonl(
@@ -90,6 +98,8 @@ class OpenCodeProvider:
                         )
                     self._raise_for_returncode(event.returncode, event.stderr, errors)
                 else:
+                    if session is not None and isinstance(event, dict) and event.get("sessionID"):
+                        session["id"] = event["sessionID"]
                     if isinstance(event, dict) and event.get("type") == "error":
                         errors.append(self._error_text(event))
                     adapted = self._adapt_opencode_event(event)
@@ -111,7 +121,12 @@ class OpenCodeProvider:
             await _gen.aclose()
 
     def _build_command(
-        self, model: str = "", working_dir: str = "", effort: str = "", read_only: bool = False
+        self,
+        model: str = "",
+        working_dir: str = "",
+        effort: str = "",
+        read_only: bool = False,
+        session_id: str = "",
     ) -> list[str]:
         """Build opencode run CLI command."""
         resolved_model = model or self.config.default_model
@@ -134,6 +149,9 @@ class OpenCodeProvider:
 
         if resolved_effort:
             cmd.extend(["--variant", resolved_effort])
+
+        if session_id:
+            cmd.extend(["--session", session_id])
 
         cmd.append("-")  # read from stdin
 

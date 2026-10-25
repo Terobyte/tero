@@ -7,13 +7,14 @@ import inspect
 import json
 import re
 import time
-from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import classify_error, scrub_secrets
+from src.loop.activity import _activity
 from src.loop.compact import Compacted
 from src.loop.prompts import repair_prompt
 from src.loop.schemas import SCHEMAS, ValidateCtx, validate
+from src.loop.write_guard import ReadOnlyLoop, player_guard, watched
 from src.process_guard import ProcessGuard
 
 # Overridable in tests: how long a role can go silent before we print a
@@ -126,34 +127,36 @@ class LiveAgents:
         compact_check = kwargs.get("compact_check")
         compact_at_tokens = kwargs.get("compact_at_tokens", 0) or 0
 
-        try:
-            text = await self._call(
-                provider_name, model, with_schema(prompt, schema), schema, read_only, timeout, role, effort,
-                emit=kwargs.get("emit"),
-                compact_check=compact_check,
-                compact_at_tokens=compact_at_tokens,
-            )
-        except Compacted as exc:
-            return {"__compacted__": True, "tokens": exc.tokens}
-        if text is None:
-            return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
-        data = extract_json(text)
-        errors = validate_role(role, data, ctx)
-        if errors:
-            repair = repair_prompt(role, prompt, text, errors)
+        guard = player_guard(role, self.working_dir, kwargs.get("emit"))
+        emit = guard.emit if guard else kwargs.get("emit")
+        session = guard.session if guard else None
+
+        async def call(text_prompt: str) -> str | dict[str, Any]:
             try:
-                text = await self._call(
-                    provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
-                    emit=kwargs.get("emit"),
-                    compact_check=compact_check,
-                    compact_at_tokens=compact_at_tokens,
-                )
+                text = await watched(guard, text_prompt, lambda p: self._call(
+                    provider_name, model, with_schema(p, schema), schema, read_only, timeout, role, effort,
+                    emit=emit, compact_check=compact_check, compact_at_tokens=compact_at_tokens,
+                    session=session,
+                ))
             except Compacted as exc:
                 return {"__compacted__": True, "tokens": exc.tokens}
             if text is None:
                 return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
+            return text
+
+        text = await call(prompt)
+        if isinstance(text, dict):
+            return text
+        data = extract_json(text)
+        errors = validate_role(role, data, ctx)
+        if errors:
+            text = await call(repair_prompt(role, prompt, text, errors))
+            if isinstance(text, dict):
+                return text
             data = extract_json(text)
             errors = validate_role(role, data, ctx)
+        if errors and guard is not None and guard.never_wrote():
+            return guard.report()
         if errors:
             # The phase logs errors + raw text; without them a stop is unexplainable.
             return {"__invalid__": True, "errors": errors, "raw": text}
@@ -172,6 +175,7 @@ class LiveAgents:
         emit=None,
         compact_check=None,
         compact_at_tokens: int = 0,
+        session: dict[str, Any] | None = None,
     ) -> str | None:
         network_retry = 0
         other_retried = False
@@ -200,11 +204,12 @@ class LiveAgents:
                         emit=emit,
                         compact_check=compact_check,
                         compact_at_tokens=compact_at_tokens,
+                        session=session,
                     ),
                     timeout=timeout,
                 )
                 return text
-            except Compacted:
+            except (Compacted, ReadOnlyLoop):
                 raise
             except Exception as exc:  # provider auth/network
                 raw = scrub_secrets(str(exc) or type(exc).__name__)
@@ -317,62 +322,6 @@ def _default_factory(working_dir: str) -> Callable[[str], Any]:
     return factory
 
 
-_ACTIVITY_KEYS = (
-    "file_path",
-    "path",
-    "filePath",
-    "file",
-    "command",
-    "pattern",
-    "url",
-    "query",
-    "prompt",
-    "description",
-)
-_ACTIVITY_PATH_KEYS = {"file_path", "path", "filePath", "file"}
-
-
-def _activity(block: Any, working_dir: str = "", emit=None, role: str = "") -> str:
-    """One console line per tool call, so a long role call is not silent."""
-    name = getattr(block, "name", "")
-    if not name or getattr(block, "type", "tool_use") != "tool_use" or name == "StructuredOutput":
-        return ""
-    params = getattr(block, "input", None) or {}
-    key = next((k for k in _ACTIVITY_KEYS if params.get(k)), None)
-    if key is None:
-        if emit is not None:
-            emit("tool", role=role, text=name)
-        return name
-    arg = str(params[key])
-    if key in _ACTIVITY_PATH_KEYS and working_dir:
-        arg = ", ".join(_relative_path(p, working_dir) for p in arg.split(", "))
-    arg = " ".join(arg.split())
-    arg = _truncate_tail(arg, 100)
-    line = f"{name} {arg}".strip()
-    if emit is not None:
-        emit("tool", role=role, text=line)
-    return line
-
-
-def _relative_path(value: str, working_dir: str) -> str:
-    """Absolute paths inside working_dir read as `Read src/foo.py`, not a
-    100-char-truncated tmpdir prefix that hides the file name."""
-    try:
-        candidate = Path(value)
-        if not candidate.is_absolute():
-            return value
-        return str(candidate.resolve().relative_to(Path(working_dir).resolve()))
-    except (OSError, ValueError):
-        return value
-
-
-def _truncate_tail(text: str, limit: int) -> str:
-    """Truncate from the LEFT (keep the tail) so a long path keeps its file name."""
-    if len(text) <= limit:
-        return text
-    return "..." + text[-(limit - 3):]
-
-
 async def _collect_text(
     provider: Any,
     *,
@@ -388,6 +337,7 @@ async def _collect_text(
     emit=None,
     compact_check: Callable[[int], bool] | None = None,
     compact_at_tokens: int = 0,
+    session: dict[str, Any] | None = None,
 ) -> str:
     from src.providers.message_adapter import normalize_message
 
@@ -414,6 +364,8 @@ async def _collect_text(
         kwargs["compact_check"] = compact_check
     if "compact_at_tokens" in params:
         kwargs["compact_at_tokens"] = compact_at_tokens
+    if session is not None and "session" in params:
+        kwargs["session"] = session
     parts: list[str] = []
     stream = provider.run(**kwargs)
     try:
