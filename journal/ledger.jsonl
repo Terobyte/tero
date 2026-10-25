@@ -1,0 +1,9 @@
+{"ts": "2026-10-25T00:43:36.408305+00:00", "kind": "run_start", "plan": "v5/plans/06-pult-decisions.md", "slug": "06-pult-decisions"}
+{"ts": "2026-10-25T00:43:36.408405+00:00", "kind": "compact_config", "player_at_tokens": 0, "judge_at_tokens": 0}
+{"ts": "2026-10-25T00:43:36.452527+00:00", "kind": "phase_start", "phase": "resume со снимка остановленного прогона", "index": 0}
+{"ts": "2026-10-25T00:53:36.506588+00:00", "kind": "provider_error", "role": "player", "round": 1, "error": "player не уложился в таймаут 600 с"}
+{"ts": "2026-10-25T01:03:36.745267+00:00", "kind": "provider_error", "role": "player", "round": 2, "error": "player не уложился в таймаут 600 с"}
+{"ts": "2026-10-25T01:03:36.953258+00:00", "kind": "snapshot", "ref": "refs/tero/20261024-204040201125-06-pult-decisions/phase-00-round02", "base": "ca0ff8744c4a93e57281998d25b7964e7c7af421", "reason": "provider_unavailable", "round": 2}
+{"ts": "2026-10-25T01:03:36.978369+00:00", "kind": "rollback", "reason": "provider_unavailable", "round": 2}
+{"ts": "2026-10-25T01:03:36.979137+00:00", "kind": "stop", "status": "stopped", "reason": "provider_unavailable", "text": "player не уложился в таймаут 600 с", "round": 2}
+{"ts": "2026-10-25T01:03:36.979240+00:00", "kind": "run_end", "reason": "provider_unavailable", "phases_shipped": 0, "phases_total": 8}

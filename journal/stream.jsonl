@@ -1,0 +1,117 @@
+{"ts": "2026-10-25T00:43:36.453310+00:00", "type": "start_step", "phase": "resume со снимка остановленного прогона", "round": 1, "role": "player", "text": "раунд 1 начат"}
+{"ts": "2026-10-25T00:43:40.596998+00:00", "type": "tool", "role": "player", "text": "read .", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:40.673710+00:00", "type": "text", "role": "player", "text": "Building the stopped-run resume path — wiring snapshot restore and judge gates.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:42.258136+00:00", "type": "tool", "role": "player", "text": "read v5/code-map.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:42.261254+00:00", "type": "tool", "role": "player", "text": "read src/loop/run.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:42.567232+00:00", "type": "tool", "role": "player", "text": "read src/loop/phase.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:42.798100+00:00", "type": "tool", "role": "player", "text": "read src/loop/session.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:45.410495+00:00", "type": "tool", "role": "player", "text": "read src/loop/phase_ctx.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:45.661105+00:00", "type": "tool", "role": "player", "text": "read src/loop/prompts.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:45.888950+00:00", "type": "tool", "role": "player", "text": "read src/loop/judge_prompt.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:46.102471+00:00", "type": "tool", "role": "player", "text": "read src/cli_entry.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:48.193504+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_resume_judge.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:48.448625+00:00", "type": "tool", "role": "player", "text": "read tests/loop/fakes.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:48.701169+00:00", "type": "tool", "role": "player", "text": "read src/loop/judge_step.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:48.945231+00:00", "type": "tool", "role": "player", "text": "read src/loop/transition.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:49.247393+00:00", "type": "tool", "role": "player", "text": "read tests/test_structure.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:43:49.282162+00:00", "type": "text", "role": "player", "text": "I've mapped the current resume flow — now digging into the supporting modules.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:21.607530+00:00", "type": "tool", "role": "player", "text": "grep ...s|start_with_judge|start_checkpoint|start_round|resume_refusal|answer_block|ResumeFrom|ResumeStep", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:23.431694+00:00", "type": "tool", "role": "player", "text": "read v5/plans/06-pult-decisions.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:23.661165+00:00", "type": "tool", "role": "player", "text": "read src/loop/suite_guard.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:23.917602+00:00", "type": "tool", "role": "player", "text": "read src/loop/snapshot.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:23.943431+00:00", "type": "text", "role": "player", "text": "Let me pull the full phase specification before I start implementing.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:41.867862+00:00", "type": "tool", "role": "player", "text": "grep stuck", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:43.605369+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:43.853514+00:00", "type": "tool", "role": "player", "text": "read src/loop/git.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:54.251930+00:00", "type": "tool", "role": "player", "text": "glob v5/*.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:44:54.467493+00:00", "type": "text", "role": "player", "text": "I've sketched the implementation strategy — now confirming the exact contract details.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:45:07.922886+00:00", "type": "tool", "role": "player", "text": "grep ...|git_show_bytes|start_with_judge|start_checkpoint|_resume_config|resume_transition|_resume_phases", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:45:25.598775+00:00", "type": "tool", "role": "player", "text": "grep _resume_config|resume_refusal|resolve_run_dir|run_resume", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:45:27.532231+00:00", "type": "tool", "role": "player", "text": "grep v5/tero-master-plan.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:49:58.491841+00:00", "type": "tool", "role": "player", "text": "read src/loop/findings.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:49:58.784921+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase_modules.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:49:59.082366+00:00", "type": "tool", "role": "player", "text": "read src/errors.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:49:59.304872+00:00", "type": "tool", "role": "player", "text": "read src/loop/state.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:49:59.506228+00:00", "type": "text", "role": "player", "text": "Contract is clear. Reconnaissance of helpers and test constraints now.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:02.858060+00:00", "type": "tool", "role": "player", "text": "read src/loop/ledger.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:02.858740+00:00", "type": "tool", "role": "player", "text": "read src/loop/gates.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:02.859141+00:00", "type": "tool", "role": "player", "text": "read src/loop/stream.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:16.400759+00:00", "type": "text", "role": "player", "text": "Contract is clear — now I'll check the size constraints and helper modules before implementing.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:16.491150+00:00", "type": "tool", "role": "player", "text": "bash ...ineno-n.lineno+1) for n in ast.walk(t) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))])\"", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:19.116310+00:00", "type": "tool", "role": "player", "text": "read v5/tero-master-plan.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:19.391931+00:00", "type": "tool", "role": "player", "text": "read src/commands/__init__.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:19.706877+00:00", "type": "tool", "role": "player", "text": "read src/loop/pulse.py", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:32.412761+00:00", "type": "tool", "role": "player", "text": "grep ..._continuation_block|_git_show_bytes|resume_step|ResumeStep|ResumeFrom|answer_block|resume_refusal", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:32.422230+00:00", "type": "text", "role": "player", "text": "I've reviewed the structural limits — now mapping the remaining integration points.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:50:55.638078+00:00", "type": "tool", "role": "player", "text": "grep monkeypatch|patch\\(|snapshot|phase\\.rollback|phase\\._|run\\._restore|continuation|git_show", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:51:44.635563+00:00", "type": "tool", "role": "player", "text": "grep resume.*event|event.*resume|from_reason", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:51:46.326840+00:00", "type": "tool", "role": "player", "text": "grep sys\\.exit|cli_entry|capsys|subprocess.*cli_entry|judge_pending", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:27.430237+00:00", "type": "tool", "role": "player", "text": "read v5/archive/05-refactor.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:32.867586+00:00", "type": "text", "role": "player", "text": "Plan is clear — now verifying current behavior with baseline tests before I start refactoring.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:40.383367+00:00", "type": "tool", "role": "player", "text": "bash .../test_structure.py tests/loop/test_phase_modules.py tests/loop/test_run_modules.py 2>&1 | tail -5", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:45.288042+00:00", "type": "tool", "role": "player", "text": "glob v5/**/*.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:45.343257+00:00", "type": "text", "role": "player", "text": "Baseline is green — now I'll examine the current implementation to plan the extraction.", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:52:47.884229+00:00", "type": "tool", "role": "player", "text": "grep v5/tero-master-spec.md", "phase": "resume со снимка остановленного прогона", "round": 1}
+{"ts": "2026-10-25T00:53:36.647527+00:00", "type": "start_step", "phase": "resume со снимка остановленного прогона", "round": 2, "role": "player", "text": "раунд 2 начат"}
+{"ts": "2026-10-25T00:53:41.466410+00:00", "type": "tool", "role": "player", "text": "read .", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:41.612238+00:00", "type": "text", "role": "player", "text": "Doing the stopped-resume contract — wiring continue-from-snapshot.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:43.869785+00:00", "type": "tool", "role": "player", "text": "read v5/code-map.md", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:44.075626+00:00", "type": "tool", "role": "player", "text": "read v5/tero-master-spec.md", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:44.368515+00:00", "type": "tool", "role": "player", "text": "read v5/tero-resilience-spec.md", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:46.622150+00:00", "type": "tool", "role": "player", "text": "read src/loop/run.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:46.935788+00:00", "type": "tool", "role": "player", "text": "read src/loop/session.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:47.145453+00:00", "type": "tool", "role": "player", "text": "read src/loop/phase_ctx.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:47.400421+00:00", "type": "tool", "role": "player", "text": "read src/cli_entry.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:49.490397+00:00", "type": "tool", "role": "player", "text": "read src/loop/phase.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:49.699578+00:00", "type": "tool", "role": "player", "text": "read src/loop/prompts.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:49.966909+00:00", "type": "tool", "role": "player", "text": "read src/loop/judge_prompt.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:50.031301+00:00", "type": "text", "role": "player", "text": "Mapping the resume flow — checking current phase handling and judging before the new entry.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:52.305794+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_resume_judge.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:52.522768+00:00", "type": "tool", "role": "player", "text": "read tests/loop/fakes.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:53:52.770795+00:00", "type": "tool", "role": "player", "text": "read tests/test_structure.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:02.407424+00:00", "type": "tool", "role": "player", "text": "read src/loop/judge_step.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:02.706936+00:00", "type": "tool", "role": "player", "text": "read src/loop/suite_guard.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:03.002725+00:00", "type": "tool", "role": "player", "text": "read src/loop/snapshot.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:03.244030+00:00", "type": "tool", "role": "player", "text": "read src/loop/git.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:03.615333+00:00", "type": "tool", "role": "player", "text": "read src/loop/transition.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:03.659694+00:00", "type": "text", "role": "player", "text": "I've got the contract mapped — now digging into the existing resume and snapshot mechanics.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:06.716780+00:00", "type": "tool", "role": "player", "text": "read src/loop/findings.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:06.717333+00:00", "type": "tool", "role": "player", "text": "read src/loop/state.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:06.717763+00:00", "type": "tool", "role": "player", "text": "read src/loop/gates.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:07.000609+00:00", "type": "tool", "role": "player", "text": "read src/errors.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:55.380343+00:00", "type": "tool", "role": "player", "text": "grep ...inuation_block|_git_show_bytes|start_with_judge|resume_refusal|ResumeFrom|ResumeStep|answer_block", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:54:57.893006+00:00", "type": "tool", "role": "player", "text": "read v5/plans/06-pult-decisions.md", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:55:54.261383+00:00", "type": "tool", "role": "player", "text": "grep phase\\.rollback|phase\\._|run\\._restore|snapshot|resume", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:00.710110+00:00", "type": "tool", "role": "player", "text": "grep loop\\.phase\\.|loop\\.run\\.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:00.742766+00:00", "type": "text", "role": "player", "text": "I've sketched the implementation approach — now verifying structural limits before writing code.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:02.522271+00:00", "type": "tool", "role": "player", "text": "read src/loop/ledger.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:02.523244+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase_modules.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:31.925678+00:00", "type": "tool", "role": "player", "text": "grep resume_refusal|round_limit|gate_first|ResumeFrom|answer_block|PhaseState.*answer", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:40.264031+00:00", "type": "tool", "role": "player", "text": "grep v5/tero-master-plan.md", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:56:40.329447+00:00", "type": "text", "role": "player", "text": "Contract is clear — now I'll implement the stopped-resume entry.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:07.273890+00:00", "type": "tool", "role": "player", "text": "grep _resume_config|resume_refusal|run_resume|resume\\(", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:11.123057+00:00", "type": "tool", "role": "player", "text": "read src/config.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:11.369960+00:00", "type": "tool", "role": "player", "text": "read src/loop/pulse.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:11.599024+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_run_modules.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:11.652295+00:00", "type": "text", "role": "player", "text": "Contract mapped — now checking supporting pieces before implementation.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:13.875289+00:00", "type": "tool", "role": "player", "text": "read src/loop/stream.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:57:14.167262+00:00", "type": "tool", "role": "player", "text": "read src/commands/__init__.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:58:16.371477+00:00", "type": "tool", "role": "player", "text": "grep phase\\.rollback|phase\\.run_all|monkeypatch.*phase|monkeypatch.*run|monkeypatch.*snapshot", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:58:18.932600+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:58:19.216794+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_player_resume.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:36.335561+00:00", "type": "tool", "role": "player", "text": "grep phase\\.rollback|phase\\.run_all|phase\\._|run\\._", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:39.000270+00:00", "type": "tool", "role": "player", "text": "grep from src\\.loop\\.phase import|from src\\.loop import phase|import src\\.loop\\.phase", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:42.845578+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase_snapshot.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:45.106622+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_suite_guard.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:56.589225+00:00", "type": "text", "role": "player", "text": "I now understand the entry conditions and baseline protection needed — coding the resume continuation.", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T00:59:56.624943+00:00", "type": "tool", "role": "player", "text": "grep start_with_judge|start_checkpoint|start_round|judge_index|first_kwargs", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:01:36.066574+00:00", "type": "tool", "role": "player", "text": "todowrite", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:01:38.910670+00:00", "type": "tool", "role": "player", "text": "read src/loop/lock.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:01:38.911461+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_judge_pending.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:01:41.298186+00:00", "type": "tool", "role": "player", "text": "grep tests/loop/test_phase.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:01:43.932732+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_phase.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:03:27.531867+00:00", "type": "tool", "role": "player", "text": "grep Pulse|pulse_failed|setup_failure|restore_pending", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:03:31.470872+00:00", "type": "tool", "role": "player", "text": "read tests/loop/test_pulse.py", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:03:34.650154+00:00", "type": "tool", "role": "player", "text": "todowrite", "phase": "resume со снимка остановленного прогона", "round": 2}
+{"ts": "2026-10-25T01:03:36.953160+00:00", "type": "snapshot", "ref": "refs/tero/20261024-204040201125-06-pult-decisions/phase-00-round02", "base": "ca0ff8744c4a93e57281998d25b7964e7c7af421", "reason": "provider_unavailable", "text": "снимок работы в `refs/tero/20261024-204040201125-06-pult-decisions/phase-00-round02`", "phase": "resume со снимка остановленного прогона", "round": 2, "role": "player"}
+{"ts": "2026-10-25T01:03:36.979087+00:00", "type": "stop", "status": "stopped", "reason": "provider_unavailable", "role": "judge", "text": "player не уложился в таймаут 600 с", "phase": "resume со снимка остановленного прогона", "round": 2}
