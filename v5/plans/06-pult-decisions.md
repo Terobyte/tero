@@ -277,13 +277,13 @@ self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, 
 - Повторы без шума: точки решения по одной причине подряд — не больше одного `notify` в 30 мин.
 - Вне этой фазы: `judge_pending` (фаза 5), `stop` во время шага (фаза 6).
 
-- [ ] `test_human_timeout_to_waiting_agent`: подменённые таймауты → `waiting_human` → `waiting_agent`, вопрос открыт, `wait_run` вернул 3
-- [ ] `test_lease_written_by_wait`: `wait_run` пишет `lease` с `until` и pid; мёртвый pid → аренда недействительна
-- [ ] `test_autopilot_after_lease_expired`: нет ответа, аренда истекла → `notify` в `FakeRelay`, через grace `skip` от `autopilot` в журнале
-- [ ] `test_autopilot_no_relay_no_agent_10min`: `NoopRelay`, аренды нет → автопилот по таймеру 600 с (подменён)
-- [ ] `test_autopilot_not_chain`: фаза 1 пропущена автопилотом, фаза 2 тоже в точке решения → `stop`, notify «две фазы подряд»
-- [ ] `test_wake_command_once_when_lease_expired`: `wake_command` со stub-скриптом → запущен один раз с подставленными `{run_dir}` и `{question_id}`; при живой аренде не запущен; `woken`-ответ `more` отклонён
-- [ ] реализовать
+- [x] `test_human_timeout_to_waiting_agent`: подменённые таймауты → `waiting_human` → `waiting_agent`, вопрос открыт, `wait_run` вернул 3
+- [x] `test_lease_written_by_wait`: `wait_run` пишет `lease` с `until` и pid; мёртвый pid → аренда недействительна
+- [x] `test_autopilot_after_lease_expired`: нет ответа, аренда истекла → `notify` в `FakeRelay`, через grace `skip` от `autopilot` в журнале
+- [x] `test_autopilot_no_relay_no_agent_10min`: `NoopRelay`, аренды нет → автопилот по таймеру 600 с (подменён)
+- [x] `test_autopilot_not_chain`: фаза 1 пропущена автопилотом, фаза 2 тоже в точке решения → `stop`, notify «две фазы подряд»
+- [x] `test_wake_command_once_when_lease_expired`: `wake_command` со stub-скриптом → запущен один раз с подставленными `{run_dir}` и `{question_id}`; при живой аренде не запущен; `woken`-ответ `more` отклонён
+- [x] реализовать
 
 ## judge_pending как живое ожидание
 

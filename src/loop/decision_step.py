@@ -12,7 +12,6 @@ from src.loop.decision_actions import (
     wait_limit,
 )
 from src.loop.halt_text import _halt_text_fallback, _legacy_halt_text  # noqa: F401
-from src.loop.inbox import Inbox
 from src.loop.phase_ctx import PhaseContext, PhaseOutcome
 from src.loop.state import RunState, Status, owner_lock
 from src.loop.transition import phase_transition
@@ -38,6 +37,8 @@ class DecisionStep:
         poll_s: float | None = None,
         sleep: Callable[[float], None] | None = None,
         round_limit: Callable[[], int] | None = None,
+        now: Callable[[], float] | None = None,
+        popen: Any = None,
     ) -> None:
         self.ctx = ctx
         self.rollback = rollback_with_snapshot
@@ -46,11 +47,14 @@ class DecisionStep:
         self.relay = relay or NoopRelay()
         self.poll_s = DECISION_POLL_S if poll_s is None else poll_s
         self._sleep = sleep or time.sleep
+        self._now = now or time.time
+        self._popen = popen
         self._round_limit = round_limit
         self._reason = ""
         self._qid = ""
         self._auto_wait: int | None = None
         self.secret_paths: list[str] = []
+        self._opened_at: float | None = None
 
     def halt_text(self, reason: str, ref: str | None = None) -> str:
         if not getattr(self.ctx.cfg, "decisions", False):
@@ -113,6 +117,47 @@ class DecisionStep:
     def locked_rollback(self, reason: str) -> str | None:
         with self._lock():
             return self.rollback(reason)
+
+    def _repair_after_rollback(self) -> None:
+        """`git clean -fd` сносит run_dir: пересоздать каркас прогона."""
+        try:
+            self.ctx.run_dir.mkdir(parents=True, exist_ok=True)
+            (self.ctx.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+    def _restore_journal(self) -> None:
+        """Вернуть decisions/applied/budget из снапшота до отката."""
+        try:
+            snap = self._snap
+        except AttributeError:
+            return
+        try:
+            if not (RunState.read(self.ctx.run_dir / "state.json") or {}).get("decisions"):
+                RunState(self.ctx.run_dir / "state.json").update(
+                    decisions=snap.get("decisions") or [],
+                    applied_uuids=snap.get("applied_uuids") or [],
+                    **({"budget": snap["budget"]} if snap.get("budget") is not None else {}))
+        except Exception:
+            pass
+
+    def _rollback_keep_journal(self, reason: str) -> str | None:
+        """Откат дерева с сохранением журнала решений (F11)."""
+        try:
+            self._snap = RunState.read(self.ctx.run_dir / "state.json") or {}
+        except Exception:
+            self._snap = {}
+        try:
+            ref = self.locked_rollback(reason)
+        except Exception:
+            ref = None
+        self._repair_after_rollback()
+        self._restore_journal()
+        try:
+            self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
+        except Exception:
+            pass
+        return ref
 
     def tree_sha(self, reason: str) -> str | None:
         repo = Path(self.ctx.repo)
@@ -196,23 +241,10 @@ class DecisionStep:
         )
         return qid
 
-    def wait_answer(self, qid: str):
-        inbox = Inbox(self.ctx.run_dir)
-        while True:
-            try:
-                ans = inbox.take(qid, self.relay)
-            except Exception:
-                ans = None
-            try:
-                self.ctx.progress()
-            except Exception:
-                pass
-            if ans is not None:
-                return ans
-            try:
-                self._sleep(self.poll_s)
-            except Exception:
-                pass
+    def wait_answer(self, qid: str, opened_at: float | None = None):
+        from src.loop import autopilot as auto
+
+        return auto.wait_answer(self, qid, opened_at)
 
     def halt(self, reason: str) -> PhaseOutcome:
         """Открыть точку решения (без ожидания) или прежний стоп.
@@ -242,6 +274,10 @@ class DecisionStep:
             return self._old_halt(reason)
         self._reason = reason
         self._qid = qid
+        try:
+            self._opened_at = self._now()
+        except Exception:
+            self._opened_at = None
         return PhaseOutcome(
             status="waiting_human", reason=reason,
             user_question=self.ctx.st.user_question,
@@ -254,34 +290,36 @@ class DecisionStep:
         reason, qid = self._reason, self._qid
         if self._auto_wait is not None:
             return wait_limit(self, reason, qid, self._auto_wait)
-        ans = self.wait_answer(qid)
+        opened_at = getattr(self, "_opened_at", None)
+        ans = self.wait_answer(qid, opened_at)
+        if ans is None:
+            return self._old_halt(reason)
+        if isinstance(ans, PhaseOutcome):  # F28: автопилот уже вернул стоп.
+            return ans
         action = (ans.action or "").strip()
         who = (ans.who or "agent").strip() or "agent"
         if action == "stop":
-            try:
-                ref = self.locked_rollback(reason)
-            except Exception:
-                ref = None
-            try:
-                self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
-            except Exception:
-                pass
-            if ref is None:
-                t = "снимок не сделан, дерево не тронуто"
-            else:
-                t = self.halt_text(reason, ref)
+            ref = self._rollback_keep_journal(reason)
+            t = "снимок не сделан, дерево не тронуто" if ref is None else self.halt_text(reason, ref)
             self.write_stopped(reason, t)
+            self._restore_journal()
             return PhaseOutcome(
                 status="stop", reason=reason, user_question=self.ctx.st.user_question,
                 rounds=self.ctx.st.round, escalated=self.ctx.st.escalated, stop_text=t,
             )
         if action == "skip":
             try:
+                self._snap = RunState.read(self.ctx.run_dir / "state.json") or {}
+            except Exception:
+                self._snap = {}
+            try:
                 ref = self.locked_rollback(reason)
             except Exception:
                 ref = None
+            self._repair_after_rollback()
             if ref is None:
                 return self.stop_no_snapshot(reason)
+            self._restore_journal()
             try:
                 self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
             except Exception:

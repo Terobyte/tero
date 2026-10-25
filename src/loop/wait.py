@@ -1,13 +1,15 @@
 """Sleep/wake core for the agent-host: `tero wait` and `tero status`.
 
 Only reads `state.json` (written solely by the run owner) plus the
-`pulse`/`watch` side files. Never writes `state.json`, never touches git.
-All disk failures are swallowed: a broken side file looks like "no info",
-not like death.
+`pulse`/`watch` side files, and writes the `lease` side file
+(`<run_dir>/lease` — аренда агента). Never writes `state.json`,
+never touches git. All disk failures are swallowed: a broken side file
+looks like "no info", not like death.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -81,6 +83,40 @@ def done_line(status: str, debt: list | None) -> str:
     return hud_done_text(status, n)
 
 
+def _lease_pid(agent_pid: int | None) -> int:
+    try:
+        if agent_pid is not None:
+            return int(agent_pid)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(os.getppid())
+    except (AttributeError, OSError, ValueError):
+        return 0
+
+
+def _refresh_lease(run_path: Path, agent_pid: int | None) -> None:
+    from src.loop import autopilot as auto
+
+    try:
+        auto.write_lease(run_path, time.time() + auto.LEASE_REFRESH_S,
+                         _lease_pid(agent_pid))
+    except Exception:
+        pass
+
+
+def _settle_lease(run_path: Path, code: int, agent_pid: int | None) -> bool:
+    from src.loop import autopilot as auto
+
+    try:
+        timeout = auto.agent_timeout_of(run_path)
+        seconds = float(timeout) if code == NEED_AGENT else 300.0
+        return bool(auto.write_lease(run_path, time.time() + seconds,
+                                     _lease_pid(agent_pid)))
+    except Exception:
+        return False
+
+
 def wait_run(
     run_dir: str | Path,
     repo: str | Path,
@@ -89,6 +125,7 @@ def wait_run(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     poll_s: float = 2,
+    agent_pid: int | None = None,
 ) -> int:
     """Block until the agent is needed, the run ends, or it looks dead.
 
@@ -96,24 +133,41 @@ def wait_run(
     (waiting_agent/judge_pending), 5 dead or hung, 6 timeout expired.
     Terminal statuses win even when the owner process is gone; 5 fires
     only for unfinished statuses.
+
+    ``tero wait`` пишет аренду: пока ждёт — ``now + 120`` каждые 30 с;
+    при выходе с 3 — ``now + agent_timeout_s``; с 6 — ``now + 300``.
     """
+    import os as _os
+
+    if agent_pid is None:
+        try:
+            agent_pid = int(_os.environ.get("TERO_AGENT_PID", "") or 0) or None
+        except ValueError:
+            agent_pid = None
     run_path = Path(run_dir)
     repo_path = Path(repo)
     boot = boot_id()
     start = clock()
     last_alive: Any = None
     alive_since = start
+    _refresh_lease(run_path, agent_pid)
+    last_refresh = clock()
+
+    def _exit(code: int) -> int:
+        if code in (NEED_AGENT, TIMEOUT):
+            _settle_lease(run_path, code, agent_pid)
+        return code
 
     while True:
         state = _read_state(run_path)
         status = state.get("status") or ""
         if status == "done":
             debt = state.get("debt") or []
-            return DEBT_DONE if debt else DONE
+            return _exit(DEBT_DONE if debt else DONE)
         if status == "stopped":
-            return STOPPED
+            return _exit(STOPPED)
         if status in _AGENT_STATUSES:
-            return NEED_AGENT
+            return _exit(NEED_AGENT)
 
         if pid_is_alive(state.get("pid"), state.get("pid_started")):
             now = clock()
@@ -168,7 +222,12 @@ def wait_run(
             # so this run is not dead. Keep waiting.
 
         if timeout_s is not None and clock() - start >= timeout_s:
-            return TIMEOUT
+            return _exit(TIMEOUT)
+        from src.loop import autopilot as auto
+
+        if clock() - last_refresh >= auto.LEASE_REFRESH_EVERY_S:
+            _refresh_lease(run_path, agent_pid)
+            last_refresh = clock()
         try:
             sleep(poll_s)
         except Exception:

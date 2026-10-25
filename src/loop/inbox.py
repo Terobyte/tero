@@ -44,6 +44,18 @@ def _read_payload(path: Path) -> dict[str, Any] | None:
     return data
 
 
+def _pid_of(payload: dict[str, Any]) -> int | None:
+    """pid автора ответа: рядом могут лежать и `agent_pid`, и `pid`."""
+    for key in ("agent_pid", "pid"):
+        try:
+            num = int(payload.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if num > 0:
+            return num
+    return None
+
+
 def inbox_dir(run_dir: str | Path, create: bool = False) -> Path | None:
     """`<run_dir>/inbox`, если это настоящая папка внутри прогона, иначе None.
 
@@ -107,9 +119,20 @@ class Inbox:
         inbox = inbox_dir(self.run_dir)
         if inbox is None or not _is_safe_uuid(uid):
             return
+        # F16: overwrite — атомарно через fsio (temp+rename не следует по
+        # симлинкам, меняет саму ссылку); отказ без overwrite — O_EXCL+O_NOFOLLOW.
+        if overwrite:
+            try:
+                if (inbox / f"{uid}.result").is_symlink():
+                    return
+                atomic_write_text(inbox / f"{uid}.result", text,
+                                  encoding="utf-8", mode=0o644)
+            except (OSError, ValueError):
+                pass
+            return
         # O_NOFOLLOW: a symlink planted at <uid>.result is never written through
         flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        flags |= os.O_TRUNC if overwrite else os.O_EXCL
+        flags |= os.O_EXCL
         try:
             fd = os.open(inbox / f"{uid}.result", flags, 0o644)
         except OSError:
@@ -141,6 +164,8 @@ class Inbox:
                 return refusal
         if action == "allow" and who != "human":
             return "отклонено: allow только человек"
+        if action not in ("retry", "skip", "stop") and payload.get("woken"):
+            return "отклонено: разбуженному агенту только retry|skip|stop"
         return refuse_budget(state, qid, action, who)
 
     def _apply(self, answer: Answer, actions: list) -> bool:
@@ -150,14 +175,19 @@ class Inbox:
         state = RunState.read(self.run_dir / "state.json") or {}
         applied = list(state.get("applied_uuids") or [])
         if answer.uuid in applied:
-            return False
+            try:
+                self._write_result(answer.uuid, "принято", overwrite=True)
+            except Exception:
+                pass
+            return True
         open_q = state.get("question")
         open_id = open_q.get("id") if isinstance(open_q, dict) else None
         if open_id != answer.question_id:
             return False
         refusal = self._refuse(
             {"action": answer.action, "text": answer.text, "who": answer.who,
-             "question_id": answer.question_id},
+             "question_id": answer.question_id,
+             "woken": getattr(answer, "woken", False) if hasattr(answer, "woken") else False},
             actions, state,
         )
         if refusal is not None:
@@ -241,6 +271,9 @@ class Inbox:
                     f"отклонено: вопрос {payload.get('question_id')} не открыт",
                 )
                 continue
+            # F8/F20: владелец не дописывает woken и не верит заявленному
+            # agent_pid. Маркер woken ставит только tero answer после проверки
+            # идентичности сессии; здесь он только читается.
             refusal = self._refuse(payload, actions, state)
             if refusal is not None:
                 self._reject(path, payload, refusal)
@@ -252,6 +285,8 @@ class Inbox:
                 who=payload.get("who") or "agent",
                 why=payload.get("why") or "",
                 uuid=payload.get("uuid"),
+                woken=bool(payload.get("woken")),
+                agent_pid=_pid_of(payload),
             )
             if self._apply(candidate, actions):
                 self._reject_rest(question_id, candidate)

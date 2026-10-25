@@ -135,6 +135,10 @@ class Config:
     compact_judge_at_tokens: int = 0
     decisions: bool = False
     no_tester: bool = False
+    human_timeout_s: int = 900
+    agent_timeout_s: int = 1800
+    autopilot_grace_s: int = 900
+    wake_command: str = ""
 
 
 _ENV_MAP = {
@@ -507,7 +511,6 @@ def apply_cli_args(config: Config, args: Any) -> Config:
         elif provider and not getattr(cfg, model_field):
             # The role's own provider gets its default model; another provider
             # keeps "" and runs on that CLI's default.
-            defaults = Config()
-            if getattr(cfg, provider_field) == getattr(defaults, provider_field):
-                cfg = dataclasses.replace(cfg, **{model_field: getattr(defaults, model_field)})
+            if getattr(cfg, provider_field) == getattr(Config(), provider_field):
+                cfg = dataclasses.replace(cfg, **{model_field: getattr(Config(), model_field)})
     return cfg

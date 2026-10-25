@@ -14,6 +14,8 @@ class Answer:
     who: str = ""
     why: str = ""
     uuid: str = ""
+    woken: bool = False
+    agent_pid: int | None = None
 
 
 class RelayClient(Protocol):

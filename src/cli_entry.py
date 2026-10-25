@@ -116,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     wait_parser.add_argument("--working-dir", "-w", type=str, default=".")
     wait_parser.add_argument("--run", type=str, default=None)
     wait_parser.add_argument("--timeout", type=float, default=None)
+    wait_parser.add_argument("--agent-pid", type=int, default=None)
 
     status_parser = subparsers.add_parser("status", help="Show run status")
     status_parser.add_argument("--working-dir", "-w", type=str, default=".")
@@ -130,6 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     answer_parser.add_argument("--human", action="store_true", default=False)
     answer_parser.add_argument("--working-dir", "-w", type=str, default=".")
     answer_parser.add_argument("--run", type=str, default=None)
+    answer_parser.add_argument("--agent-pid", type=int, default=None,
+                               help="pid отвечающей сессии агента")
 
     return parser
 

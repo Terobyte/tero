@@ -23,6 +23,64 @@ def _answer_poll_s() -> float:
         return 0.2
 
 
+def _trusted_session_pid(want: int) -> int | None:
+    """Доверенный pid сессии answer при совпадении с разбуженной (F18).
+
+    Возвращает `want`, если сам процесс answer — ppid либо потомок
+    разбуженной сессии (цепочка предков через psutil). Иначе None.
+    В тестах _FakeProc без метода parents — только прямой ppid.
+    """
+    import os as _os
+
+    if want <= 0:
+        return None
+    try:
+        me = int(_os.getppid())
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    if me == want:
+        return want
+    try:
+        from psutil import Process as _Proc
+    except Exception:
+        return None
+    pid = me
+    seen = {pid}
+    try:
+        proc = _Proc(pid)
+    except Exception:
+        return None
+    for _ in range(32):
+        try:
+            parents = proc.parents()
+        except Exception:
+            return None
+        chain = parents() if callable(parents) else parents
+        try:
+            chain = list(chain or [])
+        except TypeError:
+            return None
+        found = False
+        for parent in chain:
+            try:
+                num = int(getattr(parent, "pid", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if num == want:
+                return want
+            if num > 0 and num not in seen:
+                seen.add(num)
+                try:
+                    proc = _Proc(num)
+                except Exception:
+                    continue
+                found = True
+                break
+        if not found:
+            return None
+    return None
+
+
 def run_answer(args) -> int:
     """Write inbox/<uuid>.json and wait for the owner's .result verdict."""
     import json
@@ -41,6 +99,41 @@ def run_answer(args) -> int:
     else:
         who = "agent"
     uid = _uuid.uuid4().hex
+    try:
+        agent_pid = int(getattr(args, "agent_pid", None) or 0) or None
+    except (TypeError, ValueError):
+        agent_pid = None
+    import os as _os
+
+    if agent_pid is None:
+        try:
+            agent_pid = int(_os.environ.get("TERO_AGENT_PID", "") or 0) or None
+        except ValueError:
+            agent_pid = None
+    if agent_pid is None and who == "agent":
+        try:
+            agent_pid = int(_os.getppid())
+        except (AttributeError, OSError, ValueError):
+            agent_pid = None
+    # F6+F17+F18: woken — только по доверенной идентичности сессии.
+    # Заявленные --agent-pid / TERO_AGENT_PID игнорируются (их задаёт сам
+    # отвечающий): доверенным считается только сам процесс answer — ppid
+    # либо любой предок через дочерний shell/tool-процесс. Совпадение с
+    # state.woken[question_id] означает: отвечает именно разбуженная сессия.
+    woken = False
+    if who == "agent":
+        try:
+            from src.loop.state import RunState as _RunState
+
+            _st = _RunState.read(run_dir / "state.json") or {}
+            _raw = _st.get("woken")
+            want = int((_raw.get(args.question_id) or 0)) if isinstance(_raw, dict) else 0
+        except (AttributeError, OSError, TypeError, ValueError):
+            want = 0
+        trusted = _trusted_session_pid(want)
+        if trusted is not None:
+            agent_pid = trusted
+            woken = True
     payload = scrub_data(
         {
             "uuid": uid,
@@ -50,6 +143,8 @@ def run_answer(args) -> int:
             "why": args.why,
             "who": who,
             "ts": time.time(),
+            **({"agent_pid": agent_pid} if agent_pid else {}),
+            **({"woken": True} if woken else {}),
         }
     )
     raw = json.dumps(payload, ensure_ascii=False)

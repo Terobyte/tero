@@ -33,7 +33,8 @@ def run_wait(args) -> int:
     if run_dir is None:
         return 1
     code = wait_run(
-        run_dir, repo, timeout_s=getattr(args, "timeout", None)
+        run_dir, repo, timeout_s=getattr(args, "timeout", None),
+        agent_pid=getattr(args, "agent_pid", None),
     )
     state = RunState.read(run_dir / "state.json") or {}
     why = {
