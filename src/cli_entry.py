@@ -185,6 +185,8 @@ async def run_go(args, config: Config | None = None):
             f"готово: закрыто фаз {outcome.phases_shipped} из {outcome.phases_total}",
             flush=True,
         )
+    elif outcome.exit_code == 4:
+        print(f"готово с долгом: {outcome.debt}", flush=True)
     elif outcome.reason:
         print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
     if outcome.run_dir:

@@ -119,9 +119,44 @@ def has_staged_changes(repo: str | Path) -> bool:
     return False
 
 
-def commit(repo: str | Path, msg: str) -> str:
-    _git(repo, "commit", "-m", msg)
+def commit(repo: str | Path, msg: str, *, trailer: str = "", allow_empty: bool = False) -> str:
+    args = ["commit", "-m", msg]
+    if allow_empty:
+        args.append("--allow-empty")
+    if trailer:
+        args += ["--trailer", trailer]
+    _git(repo, *args)
     return head(repo)
+
+
+def phase_shipped(repo: str | Path, base: str, run_id: str, n: int) -> bool:
+    """Есть ли коммит с трейлером `Tero-Phase: <run_id>/<n>` в `base..HEAD`."""
+    want = f"{run_id}/{n}"
+    log = _git(repo, "log", f"{base}..HEAD", "--format=%B%x1e")
+    for chunk in log.split("\x1e"):
+        if _trailers(chunk).get("Tero-Phase") == want:
+            return True
+    return False
+
+
+def _trailers(body: str) -> dict[str, str]:
+    """Git-трейлеры: только концевой `Key: value` блок после пустой строки."""
+    lines = body.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    found: dict[str, str] = {}
+    for line in reversed(lines):
+        s = line.strip()
+        if not s:
+            break
+        if ":" not in s:
+            break
+        key, _, val = s.partition(":")
+        key = key.strip()
+        if not key or any(c.isspace() for c in key):
+            break
+        found.setdefault(key, val.strip())
+    return found
 
 
 def exclude_tero(repo: str | Path) -> None:

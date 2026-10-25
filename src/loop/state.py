@@ -23,6 +23,21 @@ class Status(str, Enum):
     STOPPED = "stopped"
 
 
+_STATE_LOCKS: dict[str, threading.RLock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
+
+
+def owner_lock(path: str | Path) -> threading.RLock:
+    """Один lock на прогон: общий для записей state и git-операций."""
+    key = str(Path(path).expanduser().absolute())
+    with _STATE_LOCKS_GUARD:
+        lock = _STATE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _STATE_LOCKS[key] = lock
+        return lock
+
+
 class RunState:
     """Atomic read/write of a run dir's state.json.
 
@@ -30,9 +45,9 @@ class RunState:
     never raises, so the run continues without HUD files.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, lock: threading.RLock | None = None) -> None:
         self.path = Path(path)
-        self._lock = threading.Lock()
+        self._lock = lock if lock is not None else owner_lock(self.path)
         self._warned = False
 
     def update(self, **fields: Any) -> None:

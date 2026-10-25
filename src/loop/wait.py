@@ -73,6 +73,14 @@ def _write_watch(
         pass
 
 
+def done_line(status: str, debt: list | None) -> str:
+    """Строка финала для HUD/CLI: done с долгом рисуется через debt_line."""
+    from src.hud.app import hud_done_text
+
+    n = len(debt) if isinstance(debt, list) else 0
+    return hud_done_text(status, n)
+
+
 def wait_run(
     run_dir: str | Path,
     repo: str | Path,
@@ -211,6 +219,7 @@ def status_payload(
     debt = state.get("debt")
     if not isinstance(debt, list):
         debt = []
+    status = state.get("status") or ""
 
     payload = {
         "phase": f"{index + 1}/{total if total else '?'}",
@@ -219,8 +228,9 @@ def status_payload(
         "role": state.get("role") or "",
         "provider": state.get("provider") or "",
         "model": state.get("model") or "",
-        "status": state.get("status") or "",
+        "status": status,
         "doing": state.get("doing") or "",
+        "done_text": done_line(status, debt),
         "question": question,
         "decisions": decisions,
         "debt": debt,

@@ -95,7 +95,9 @@ class Inbox:
             return []
         try:
             return sorted(
-                p for p in inbox.glob("*.json") if p.is_file() and not p.is_symlink()
+                p for p in inbox.glob("*.json")
+                if p.is_file() and not p.is_symlink()
+                and p.name not in ("compact.json", "stop.json")
             )
         except OSError:
             return []

@@ -28,6 +28,7 @@ class RunOutcome:
     phases_shipped: int = 0
     phases_total: int = 0
     run_dir: str = ""
+    debt: int = 0
 
 
 class RunSession:
@@ -155,6 +156,7 @@ async def run_phases(
 
     index = start_index
     first = True
+    pending_extra: dict[str, Any] = {}
     try:
         while index < total:
             current = phases[index]
@@ -162,6 +164,9 @@ async def run_phases(
                 index += 1
                 continue
             extra = dict(first_kwargs or {}) if first else {}
+            if pending_extra:
+                extra.update(pending_extra)
+                pending_extra = {}
             first = False
             if judge_index is not None:
                 extra["start_with_judge"] = current.index == judge_index
@@ -177,6 +182,32 @@ async def run_phases(
                 shipped += 1
                 index += 1
                 continue
+            if outcome.status == "waiting_human" and getattr(outcome, "decider", None) is not None:
+                decider = outcome.decider
+                try:
+                    resolved = decider.resolve()
+                except Exception as exc:
+                    resolved = PhaseOutcome(
+                        status="stop", reason=outcome.reason,
+                        user_question=getattr(outcome, "user_question", ""),
+                        rounds=getattr(outcome, "rounds", 0),
+                        escalated=getattr(outcome, "escalated", False),
+                        stop_text=f"решение не применено: {exc}",
+                    )
+                if resolved is None or getattr(resolved, "status", "") == "waiting_human":
+                    outcome = resolved if resolved is not None else outcome
+                elif resolved.status == "answer":
+                    nxt = getattr(resolved, "rounds", 0) or 0
+                    if resolved.answer:
+                        pending_extra["start_answer"] = resolved.answer
+                    # F19: счётчик продолжается (nxt), grace-лимит — в round_limit.
+                    pending_extra["start_round"] = nxt
+                    continue
+                elif resolved.status == "skip":
+                    index += 1
+                    continue
+                else:
+                    outcome = resolved
             end_run(ledger(), outcome.reason, shipped, total)
             if outcome.status == "judge_pending":
                 on_pending()
@@ -193,8 +224,64 @@ async def run_phases(
         if isinstance(exc, asyncio.CancelledError):
             raise
         return _outcome("interrupted", 130, "interrupted")
-    on_done(shipped)
+    debt_n = _debt_count(run_dir)
+    try:
+        on_done(shipped)
+    except Exception:
+        pass
+    _done_transition(ledger, run_dir, debt_n)
+    if debt_n:
+        from src.hud.app import debt_line
+
+        print(debt_line(debt_n), flush=True)
+        oc = _outcome("ok", 4, "debt")
+        oc.debt = debt_n
+        return oc
     return _outcome("ok", 0, "ship")
+
+
+def _done_transition(ledger: Callable[[], Ledger], run_dir: Path, debt_n: int) -> None:
+    """Финал через transition: reason debt/ship един в state, stream и ledger."""
+    from src.loop.state import RunState
+    from src.loop.stream import Stream
+    from src.loop.transition import resume_transition
+
+    reason = "debt" if debt_n else "ship"
+    io = RunState(run_dir / "state.json")
+    try:
+        saved = RunState.read(run_dir / "state.json") or {}
+        saved_pid = saved.get("pid")
+        saved_started = saved.get("pid_started")
+        saved_round = saved.get("round", 0) or 0
+    except Exception:
+        saved_pid, saved_started, saved_round = None, None, 0
+    try:
+        resume_transition(
+            io, Stream(run_dir / "stream.jsonl"),
+            ledger, phase_title="", pid_started=saved_started,
+            status=Status.DONE.value, reason=reason, text=reason,
+            round_no=saved_round, run_end=True,
+        )
+        try:
+            if isinstance(saved_pid, int):
+                io.update(pid=saved_pid)
+        except Exception:
+            pass
+    except Exception:
+        try:
+            RunState(run_dir / "state.json").update(
+                status=Status.DONE.value, reason=reason, doing="стоп")
+        except Exception:
+            pass
+
+
+def _debt_count(run_dir: Path) -> int:
+    try:
+        state = RunState.read(run_dir / "state.json") or {}
+        debt = state.get("debt") or []
+        return len(debt) if isinstance(debt, list) else 0
+    except Exception:
+        return 0
 
 
 def _update(state: RunState, **fields: Any) -> None:

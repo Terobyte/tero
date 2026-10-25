@@ -25,10 +25,11 @@ from src.loop.plan import Phase, mark_phase_done
 from src.loop import snapshot as snapshot_mod
 from src.loop.prompts import player_prompt
 from src.loop.schemas import ValidateCtx
-from src.loop.state import RunState, Status
+from src.loop.state import RunState
 from src.loop.stream import Stream
 from src.loop import suite_guard
 from src.loop.compact_step import CompactStep
+from src.loop.decision_step import DecisionStep
 from src.loop.phase_ctx import (
     K_MAX,
     OpenFinding,
@@ -95,6 +96,7 @@ async def run_phase(
     start_with_judge: bool = False,
     start_checkpoint: str = "",
     start_round: int = 0,
+    start_answer: str = "",
     resume_from: ResumeFrom | None = None,
     pulse: Any = None,
 ) -> PhaseOutcome:
@@ -111,6 +113,7 @@ async def run_phase(
         start_with_judge=start_with_judge,
         start_checkpoint=start_checkpoint,
         start_round=start_round,
+        start_answer=start_answer,
         resume_from=resume_from,
         pulse=pulse,
     )
@@ -133,11 +136,13 @@ class _PhaseRunner:
         start_with_judge: bool = False,
         start_checkpoint: str = "",
         start_round: int = 0,
+        start_answer: str = "",
         resume_from: ResumeFrom | None = None,
         pulse: Any = None,
     ) -> None:
         self.start_with_judge = start_with_judge
         self.start_round = start_round
+        self.start_answer = start_answer
         self.resume_from = resume_from
         self.phase = phase
         self.repo = repo
@@ -151,6 +156,8 @@ class _PhaseRunner:
         self.checkpoint = start_checkpoint or head(repo)
         self.suite_hashes, self.guarded, self.link_targets = baseline_suite(repo, resume_from)
         self.state = _State()
+        self.state.answer = start_answer or ""
+        self.state.round = start_round or 0
         self.contract = phase.body or phase.title
         self._plan_bytes = self._remember_plan()
         self.run_dir = Path(ledger.run_dir)
@@ -209,10 +216,8 @@ class _PhaseRunner:
             from src.loop.resume_step import _git_show_bytes
 
             return _git_show_bytes(self.repo, self.checkpoint, resolved)
-        if not self.plan_path.is_file():
-            return None
         try:
-            return self.plan_path.read_bytes()
+            return self.plan_path.read_bytes() if self.plan_path.is_file() else None
         except OSError:
             return None
 
@@ -225,9 +230,7 @@ class _PhaseRunner:
         if self._plan_bytes is None:
             return
         try:
-            current = (
-                self.plan_path.read_bytes() if self.plan_path.is_file() else None
-            )
+            current = self.plan_path.read_bytes() if self.plan_path.is_file() else None
         except OSError:
             current = None
         if current == self._plan_bytes:
@@ -447,23 +450,22 @@ class _PhaseRunner:
         return True
 
     def round_limit(self) -> int:
-        from src.loop.resume_step import resume_limit
+        from src.loop.resume_step import resume_limit as _rl
 
-        return resume_limit(self.resume_from, self.cfg.max_rounds)
+        limit = _rl(self.resume_from, self.cfg.max_rounds)
+        return max(limit, self.start_round + 1) if self.start_answer else limit
 
     def resume_from_entry(self) -> Any:
-        from src.loop.resume_step import resume_entry
+        from src.loop.resume_step import resume_entry as _re
 
-        return resume_entry(self.resume_from)
+        return _re(self.resume_from)
 
     def _player_prompt(self) -> str:
         from src.loop.resume_step import _continuation_block
 
-        continuation = ""
-        if self.state.resume_active:
-            continuation = _continuation_block(
-                self.repo, self.state.resume_base, self.state.resume_ref
-            )
+        continuation = _continuation_block(
+            self.repo, self.state.resume_base, self.state.resume_ref
+        ) if self.state.resume_active else ""
         return player_prompt(
             preamble=self.preamble,
             contract=self.contract,
@@ -721,6 +723,8 @@ class _PhaseRunner:
         stage_and_diff(self.repo, self.checkpoint)
         secrets = secret_paths(self.repo)
         if secrets:
+            if getattr(self.cfg, "decisions", False):
+                return self._halt("secrets")
             ref = self._rollback_with_snapshot("secrets")
             snapshot_note = f", работа в `{ref}`" if ref else ""
             text = f"secrets: {', '.join(secrets)}{snapshot_note}"
@@ -737,13 +741,9 @@ class _PhaseRunner:
         plan_bytes = self.plan_path.read_bytes()
         mark_phase_done(self.plan_path, self.phase)
         stage_and_diff(self.repo, self.checkpoint)
+        msg, trl = self.phase.title.lower()[:60], f"Tero-Phase: {self.run_dir.name}/{self.phase.index + 1}" if getattr(self.cfg, "decisions", False) else ""
         try:
-            # Nothing to commit when the phase was already done and the plan
-            # lives outside the repo: the phase still ships, on the current HEAD.
-            if has_staged_changes(self.repo):
-                sha = commit(self.repo, self.phase.title.lower()[:60])
-            else:
-                sha = head(self.repo)
+            sha = commit(self.repo, msg, trailer=trl, allow_empty=bool(trl)) if trl or has_staged_changes(self.repo) else head(self.repo)
         except GitError:
             self.plan_path.write_bytes(plan_bytes)
             raise
@@ -758,62 +758,12 @@ class _PhaseRunner:
             escalated=self.state.escalated,
         )
 
-    def _halt_text(self, reason: str, ref: str | None = None) -> str:
-        if reason == "user":
-            return self.state.user_question or reason
-        if reason in ("provider_auth", "provider_quota"):
-            return self.ctx.provider_text("", self.state.last_provider or "?")
-        if reason == "provider_unavailable" and self.state.last_provider_kind in (
-            "timeout",
-            "stall",
-            "auth",
-            "quota",
-        ):
-            return self.state.last_provider_error or reason
-        tail = f", работа в `{ref}`" if ref else ""
-        texts = {
-            "stuck": f"нет прогресса → откат фазы{tail}",
-            "fuse": f"лимит раундов ({self.round_limit()}) исчерпан → откат фазы{tail}",
-            "provider_unavailable": f"провайдер недоступен → откат фазы{tail}",
-            "secrets": f"в дифе файлы-секреты → откат фазы{tail}",
-        }
-        return texts.get(reason, reason)
+    def _decider(self) -> DecisionStep:
+        return DecisionStep(self.ctx, self._rollback_with_snapshot, round_limit=self.round_limit)
 
     def _write_stopped(self, reason: str, text: str) -> None:
-        self.ctx.update_state(
-            status=Status.STOPPED.value,
-            reason=reason,
-            text=text,
-            doing="стоп",
-        )
-        self.ctx.emit(
-            "stop",
-            status=Status.STOPPED.value,
-            reason=reason,
-            text=text,
-        )
-        self.ledger.event(
-            "stop",
-            status=Status.STOPPED.value,
-            reason=reason,
-            text=text,
-            round=self.state.round,
-        )
+        self._decider().write_stopped(reason, text)
 
     def _halt(self, reason: str) -> PhaseOutcome:
-        ref = self._rollback_with_snapshot(reason)
-        self.ledger.event("rollback", reason=reason, round=self.state.round)
-        if ref is None:
-            text = "снимок не сделан, дерево не тронуто"
-        else:
-            text = self._halt_text(reason, ref)
-        self._write_stopped(reason, text)
-        return PhaseOutcome(
-            status="stop",
-            reason=reason,
-            user_question=self.state.user_question,
-            rounds=self.state.round,
-            escalated=self.state.escalated,
-            stop_text=text,
-        )
+        return self._decider().halt(reason)
 

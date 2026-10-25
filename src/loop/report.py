@@ -32,6 +32,16 @@ def phase_summary_line(phase: Phase, outcome: PhaseOutcome, *, total: int) -> st
             f"{text}JUDGE_PENDING ({outcome.reason}) "
             f"за {rounds} {rounds_word(rounds)}"
         )
+    if outcome.status == "waiting_human":
+        return (
+            f"{text}ожидание решения ({outcome.reason}) "
+            f"за {rounds} {rounds_word(rounds)}"
+        )
+    if outcome.status in ("answer", "skip"):
+        return (
+            f"{text}{outcome.status.upper()} ({outcome.reason}) "
+            f"за {rounds} {rounds_word(rounds)}"
+        )
     return f"{text}STOP ({outcome.reason}) за {rounds} {rounds_word(rounds)}"
 
 

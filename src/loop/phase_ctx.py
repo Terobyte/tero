@@ -74,6 +74,8 @@ class PhaseOutcome:
     commit_sha: str = ""
     escalated: bool = False
     stop_text: str = ""
+    decider: Any = None
+    answer: str = ""
 
 
 @dataclass

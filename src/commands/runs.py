@@ -71,6 +71,9 @@ def run_status(args) -> int:
     print(f"провайдер: {payload['provider']}")
     print(f"модель: {payload['model']}")
     print(f"статус: {payload['status']}")
+    done_text = payload.get("done_text") or ""
+    if done_text:
+        print(f"итог: {done_text}")
     print(f"doing: {payload['doing']}")
     question = payload.get("question")
     if question:

@@ -206,15 +206,15 @@ self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, 
 - Вне этой фазы: `more|model|retry|allow|wait` (фаза 3), таймауты, аренда, автопилот (фаза 4),
   `judge_pending` как ожидание (фаза 5).
 
-- [ ] `test_halt_opens_question_tree_untouched`: `decisions=True`, фейковый судья `NEEDS_USER` → `waiting_human`, `question.id == "1-1"`, файлы исполнителя на месте, `tree_sha` записан
-- [ ] `test_halt_without_decisions_unchanged`: `decisions=False` → `stopped` и откат, как раньше
-- [ ] `test_question_actions_only_implemented`: `stuck` → `question.actions == ["skip", "stop"]`; ответ `more` отклонён «действие недопустимо»; `snapshot_failed` → прежний `stopped` без вопроса
-- [ ] `test_answer_goes_to_prompts_marked`: ответ `answer "используй sqlite"` → в промптах player и judge раунда 2 текст внутри размеченного блока
-- [ ] `test_skip_is_debt_and_exit_4`: фаза 1 `stuck` → `skip` → фаза 2 сдана, `debt` с фазой 1, код 4, чекбоксы фазы 1 `[ ]`
-- [ ] `test_stop_rolls_back_exit_2`: `stop` → снимок в `refs/tero/...`, дерево у чекпоинта, код 2
-- [ ] `test_phase_trailer_and_empty_commit`: сданная фаза → трейлер `Tero-Phase: <run>/1`; фаза без изменений → пустой коммит с трейлером; `phase_shipped` → `True`
-- [ ] `test_hud_debt_icon`: HUD-модель для `done` с долгом 2 → текст «⚠ сдано с долгом 2»
-- [ ] реализовать
+- [x] `test_halt_opens_question_tree_untouched`: `decisions=True`, фейковый судья `NEEDS_USER` → `waiting_human`, `question.id == "1-1"`, файлы исполнителя на месте, `tree_sha` записан
+- [x] `test_halt_without_decisions_unchanged`: `decisions=False` → `stopped` и откат, как раньше
+- [x] `test_question_actions_only_implemented`: `stuck` → `question.actions == ["skip", "stop"]`; ответ `more` отклонён «действие недопустимо»; `snapshot_failed` → прежний `stopped` без вопроса
+- [x] `test_answer_goes_to_prompts_marked`: ответ `answer "используй sqlite"` → в промптах player и judge раунда 2 текст внутри размеченного блока
+- [x] `test_skip_is_debt_and_exit_4`: фаза 1 `stuck` → `skip` → фаза 2 сдана, `debt` с фазой 1, код 4, чекбоксы фазы 1 `[ ]`
+- [x] `test_stop_rolls_back_exit_2`: `stop` → снимок в `refs/tero/...`, дерево у чекпоинта, код 2
+- [x] `test_phase_trailer_and_empty_commit`: сданная фаза → трейлер `Tero-Phase: <run>/1`; фаза без изменений → пустой коммит с трейлером; `phase_shipped` → `True`
+- [x] `test_hud_debt_icon`: HUD-модель для `done` с долгом 2 → текст «⚠ сдано с долгом 2»
+- [x] реализовать
 
 ## Действия more, model, retry, allow, wait и бюджет
 

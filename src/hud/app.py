@@ -19,6 +19,23 @@ from typing import Any, Mapping
 HUD_HINT = "HUD: pip install tero[hud]"
 
 
+def debt_line(n: int) -> str:
+    return f"⚠ сдано с долгом {n}"
+
+
+def hud_done_text(status: str, debt: int) -> str:
+    """Текст финала HUD: done с долгом рисуется через debt_line."""
+    try:
+        n = int(debt or 0)
+    except Exception:
+        n = 0
+    if status == "done" and n > 0:
+        return debt_line(n)
+    if status == "done":
+        return "✓ сдано"
+    return ""
+
+
 def hud_should_launch(
     env: Mapping[str, str] | None,
     platform: str,

@@ -15,32 +15,63 @@ from src.loop.state import RunState, Status
 from src.loop.stream import Stream
 
 
+_UNSET: Any = object()
+
+
 def phase_transition(
-    ctx: PhaseContext, *, status: str, reason: str, text: str, ref: str = "", role: str = "judge"
+    ctx: PhaseContext, *, status: str, reason: str, text: str, ref: str = "", role: str = "judge",
+    event: str = "stop", kind: str = "judge_pending", doing: str = "стоп",
+    question: Any = _UNSET, tree_sha: Any = _UNSET, decision_seq: Any = _UNSET,
+    question_id: Any = _UNSET, debt: Any = _UNSET, answer: Any = _UNSET,
 ) -> None:
+    """Single place writing status to state.json, stream.jsonl and ledger.
+
+    Optional fields (question, tree_sha, decision_seq, question_id, debt,
+    answer) are written only when passed; passing None explicitly clears
+    the field in state.json.
+    """
+    state_fields: dict[str, Any] = {
+        "status": status,
+        "reason": reason,
+        "text": text,
+        "doing": doing,
+    }
+    if ref:
+        state_fields["snapshot_ref"] = ref
+    for name, value in (
+        ("question", question), ("tree_sha", tree_sha),
+        ("decision_seq", decision_seq), ("question_id", question_id),
+        ("debt", debt), ("answer", answer),
+    ):
+        if value is not _UNSET:
+            state_fields[name] = value
     ctx.ledger.event(
-        "judge_pending",
+        kind,
         status=status,
         reason=reason,
         ref=ref,
         text=text,
         round=ctx.st.round,
     )
-    ctx.update_state(
-        status=status,
-        reason=reason,
-        text=text,
-        snapshot_ref=ref,
-        doing="стоп",
-    )
-    ctx.emit(
-        "stop",
-        status=status,
-        reason=reason,
-        ref=ref,
-        role=role,
-        text=text,
-    )
+    ctx.update_state(**state_fields)
+    emit_fields: dict[str, Any] = {
+        "status": status,
+        "reason": reason,
+        "ref": ref,
+        "role": role,
+        "text": text,
+    }
+    if question is not _UNSET and question is not None:
+        emit_fields["question"] = question
+        try:
+            qid = question.get("id") if isinstance(question, dict) else question_id
+        except Exception:
+            qid = question_id
+        if qid is not None and qid is not _UNSET:
+            emit_fields["question_id"] = qid
+    elif question_id is not _UNSET and question_id is not None:
+        emit_fields["question_id"] = question_id
+    ctx.emit(event, **emit_fields)
 
 
 def resume_transition(

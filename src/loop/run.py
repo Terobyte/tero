@@ -31,7 +31,6 @@ from src.loop.session import (
     _refuse,
     _resume_config,
     _update,
-    end_run,
     run_phases,
 )
 from src.loop.resume_step import _restore_resume_tree, _stopped_phases
@@ -143,8 +142,6 @@ async def run(
             session.release()
 
         def _done(shipped: int) -> None:
-            end_run(ledger, "ship", shipped, len(phases))
-            _update(state, status=Status.DONE.value, doing="стоп")
             session.release()
 
         return await run_phases(
