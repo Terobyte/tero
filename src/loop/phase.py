@@ -649,6 +649,8 @@ class _PhaseRunner:
         return same
 
     def _no_progress(self) -> bool:
+        if self.cfg.escalate_at_round:
+            return self.state.round >= self.cfg.escalate_at_round
         if not self.state.escalated and self.cfg.escalation_provider:
             self.state.escalated = True
             self.ledger.event(

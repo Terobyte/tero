@@ -121,6 +121,7 @@ class Config:
     escalation_provider: str = "claude"
     escalation_model: str = "opus"
     escalation_effort: str = ""
+    escalate_at_round: int = 0
     test_command: str = ""
     test_command_scoped: str = ""
     hud: bool = True
@@ -483,6 +484,8 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     if max_rounds is not None:
         cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
 
+    if getattr(args, "escalate_at", None) is not None:
+        cfg = dataclasses.replace(cfg, escalate_at_round=int(args.escalate_at))
     if getattr(args, "no_tester", False):
         cfg = dataclasses.replace(cfg, no_tester=True)
 

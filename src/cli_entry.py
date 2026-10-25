@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--test-command", default=None)
     go_parser.add_argument("--test-command-scoped", default=None)
     go_parser.add_argument("--max-rounds", type=int, default=None)
+    go_parser.add_argument("--escalate-at", type=int, default=None)
 
     history_parser = subparsers.add_parser("history", help="Show run history")
     history_parser.add_argument("--limit", "-l", type=int, default=10)
