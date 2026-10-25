@@ -5,7 +5,8 @@
 в stream: после READ_ONLY_LIMIT вызовов подряд без записи вызов обрывается
 (`opencode run` не принимает сообщений на ходу) и продолжается в той же сессии
 с пинком; после пинка на первую запись KICK_LIMIT вызовов, иначе blocked
-read_only_loop.
+read_only_loop. Запись возвращает обычный порог: 06-pult-decisions фаза 2 —
+поводок в 3 вызова держался до конца хода и обрывал игрока на прогоне тестов.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import os
 import subprocess
 from typing import Any, Awaitable, Callable
 
-READ_ONLY_LIMIT = 18
+READ_ONLY_LIMIT = 30
 KICK_LIMIT = 3
 READ_ONLY_REASON = "read_only_loop"
 WRITE_TOOLS = frozenset(
@@ -90,6 +91,7 @@ class WriteGuard:
     def _written(self) -> None:
         self.wrote = True
         self.streak = 0
+        self.limit = READ_ONLY_LIMIT
         self._mark = tree_mark(self.working_dir)
 
     def never_wrote(self) -> bool:
@@ -106,7 +108,8 @@ class WriteGuard:
         )
 
     def report(self) -> dict[str, Any]:
-        reason = f"{READ_ONLY_REASON}: {self.total} вызовов инструментов, в дерево ничего не записано"
+        tail = "в дерево ничего не записано" if self.never_wrote() else f"последние {self.streak} без записи"
+        reason = f"{READ_ONLY_REASON}: {self.total} вызовов инструментов, {tail}"
         self.emit("read_only_loop", role="player", calls=self.total, text=reason)
         return {"status": "blocked", "changes": [], "start_here": [], "blocked_reason": reason}
 

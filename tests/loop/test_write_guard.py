@@ -70,7 +70,7 @@ def _kinds(events) -> list[str]:
 
 
 def test_limits():
-    assert READ_ONLY_LIMIT == 18
+    assert READ_ONLY_LIMIT == 30
     assert KICK_LIMIT == 3
 
 
@@ -105,6 +105,28 @@ async def test_kicked_player_that_writes_finishes(tmp_path):
     data = await _player(tmp_path, provider, events)
     assert _kinds(events).count("kick") == 1
     assert data["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_kicked_player_that_writes_may_verify(tmp_path):
+    # 06-pult-decisions фаза 2: после пинка игрок правил, запускал pytest —
+    # 3 вызова без записи, и ход обрывался посреди проверки (11 раундов из 12)
+    verify = reads(READ_ONLY_LIMIT - 1)
+    provider = _Scripted([reads(40), [_tool("edit", filePath="a.py")] + verify + [GOOD]])
+    events: list = []
+    data = await _player(tmp_path, provider, events)
+    assert data["status"] == "done"
+    assert "read_only_loop" not in _kinds(events)
+
+
+@pytest.mark.asyncio
+async def test_read_only_loop_after_writes_does_not_claim_nothing_written(tmp_path):
+    provider = _Scripted([[_tool("write", filePath="a.py")] + reads(40), reads(40)])
+    events: list = []
+    data = await _player(tmp_path, provider, events)
+    assert data["status"] == "blocked"
+    assert data["blocked_reason"].startswith("read_only_loop")
+    assert "ничего не записано" not in data["blocked_reason"]
 
 
 @pytest.mark.asyncio
