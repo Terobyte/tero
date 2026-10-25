@@ -238,20 +238,51 @@ def _cfg_from_state_fields(saved: dict) -> Config:
     return Config(**clean)
 
 
-def _resume_config(state: dict) -> tuple[Config | None, str]:
-    """The saved config of a judge_pending run, or (None, why resume refuses)."""
+_STOPPED_RESUME_REASONS = frozenset({
+    "user", "stuck", "fuse",
+    "provider_unavailable", "provider_auth", "provider_quota",
+})
+
+
+def resume_refusal(state: dict, answer: str = "") -> str:
+    """Why resume refuses ("" means it can continue). Single copy of the rule."""
     status = state.get("status") or ""
-    if status != Status.JUDGE_PENDING.value:
-        return None, f"resume для `{status}` пока не умеет"
+    if status == Status.JUDGE_PENDING.value:
+        saved = state.get("config")
+        if not isinstance(saved, dict) or not saved:
+            return "прогон старше resume, запусти `tero go`"
+        if not (state.get("snapshot_ref") or "") or not (state.get("base") or ""):
+            return "прогон старше resume, запусти `tero go`"
+        return ""
+    if status != Status.STOPPED.value:
+        return f"resume для `{status}` пока не умеет"
     saved = state.get("config")
     if not isinstance(saved, dict) or not saved:
-        return None, "прогон старше resume, запусти `tero go`"
+        return "прогон старше resume, запусти `tero go`"
+    reason = state.get("reason") or ""
+    if not (state.get("snapshot_ref") or "") or not (state.get("base") or ""):
+        return "снимка нет, запусти `tero go`"
+    if reason == "secrets":
+        return "стоп по секретам: разберись с файлами и запусти `tero go`"
+    if reason not in _STOPPED_RESUME_REASONS:
+        return f"resume для причины `{reason}` не умеет"
+    if reason == "user" and not (answer or "").strip():
+        q = state.get("text") or ""
+        return f"прогон ждал ответа: `tero resume --answer \"…\"`\n{q}"
+    return ""
+
+
+def _resume_config(state: dict, answer: str = "") -> tuple[Config | None, str]:
+    """The saved config of a resumable run, or (None, why resume refuses)."""
+    refusal = resume_refusal(state, answer)
+    if refusal:
+        return None, refusal
+    saved = state.get("config")
+    assert isinstance(saved, dict) and saved
     try:
         cfg = _cfg_from_state_fields(saved)
     except (TypeError, ValueError) as exc:
         return None, f"прогон старше resume, запусти `tero go` ({exc})"
-    if not (state.get("snapshot_ref") or "") or not (state.get("base") or ""):
-        return None, "прогон старше resume, запусти `tero go`"
     return cfg, ""
 
 

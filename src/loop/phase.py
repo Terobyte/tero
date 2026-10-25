@@ -12,7 +12,6 @@ from src.loop.git import (
     GitError,
     commit,
     exclude_tero,
-    file_hashes,
     has_staged_changes,
     head,
     rollback,
@@ -41,6 +40,7 @@ from src.loop.phase_ctx import (
     _Next,
     _tail,
 )
+from src.loop.resume_step import ResumeFrom, baseline_suite
 from src.loop.tester_step import TesterStep
 from src.loop.findings import in_continuation
 from src.loop.judge_step import JudgeStep
@@ -49,8 +49,6 @@ from src.loop.suite_guard import (
     AGENT_INSTRUCTION_NAMES,
     SUITE_CONFIG_NAMES,
     SUITE_HOOK_NAMES,
-    _snapshot_guarded,
-    _suite_paths,
     is_test_path,
 )
 
@@ -97,6 +95,7 @@ async def run_phase(
     start_with_judge: bool = False,
     start_checkpoint: str = "",
     start_round: int = 0,
+    resume_from: ResumeFrom | None = None,
     pulse: Any = None,
 ) -> PhaseOutcome:
     runner = _PhaseRunner(
@@ -112,6 +111,7 @@ async def run_phase(
         start_with_judge=start_with_judge,
         start_checkpoint=start_checkpoint,
         start_round=start_round,
+        resume_from=resume_from,
         pulse=pulse,
     )
     return await runner.run()
@@ -133,10 +133,12 @@ class _PhaseRunner:
         start_with_judge: bool = False,
         start_checkpoint: str = "",
         start_round: int = 0,
+        resume_from: ResumeFrom | None = None,
         pulse: Any = None,
     ) -> None:
         self.start_with_judge = start_with_judge
         self.start_round = start_round
+        self.resume_from = resume_from
         self.phase = phase
         self.repo = repo
         self.plan_path = plan_path
@@ -147,8 +149,7 @@ class _PhaseRunner:
         self.ledger = ledger
         exclude_tero(repo)
         self.checkpoint = start_checkpoint or head(repo)
-        self.suite_hashes = file_hashes(repo, _suite_paths(repo))
-        self.guarded, self.link_targets = _snapshot_guarded(repo, self.suite_hashes)
+        self.suite_hashes, self.guarded, self.link_targets = baseline_suite(repo, resume_from)
         self.state = _State()
         self.contract = phase.body or phase.title
         self._plan_bytes = self._remember_plan()
@@ -205,6 +206,8 @@ class _PhaseRunner:
             # правка плана в ref старого прогона могла уже лежать, диску
             # тут верить нельзя. Нет блоба (план не отслеживается) —
             # проверки нет.
+            from src.loop.resume_step import _git_show_bytes
+
             return _git_show_bytes(self.repo, self.checkpoint, resolved)
         if not self.plan_path.is_file():
             return None
@@ -265,27 +268,14 @@ class _PhaseRunner:
         from datetime import datetime, timezone
 
         if self.start_with_judge:
-            # resume from judge_pending: continue on the restored ref tree,
-            # starting with the judge — no player call, no gate rerun.
-            self.ctx.update_state(round=self.start_round)
-            self.state.round = self.start_round
-            self.state.judge_failures = 0
-            self.ledger.event("resume_judge", round=self.state.round)
-            print(
-                f"  {self.ctx.tag()} judge "
-                f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
-                flush=True,
+            from src.loop.resume_step import ResumeStep
+
+            announcer = ResumeStep(
+                self.ctx, self.judge, self._gate, self._protect_tests, self._after_judge,
             )
-            verdict = await self.judge._judge()
-            self.ctx.progress()
-            outcome = await self._after_judge(verdict)
-            if outcome is not None:
-                if outcome.status == "ship":
-                    self.ctx.progress()
-                return outcome
-            # F9: resumed judge returned non-terminal verdict — keep the
-            # saved round so the normal cycle continues with start_round + 1.
-            self.state.round = self.start_round
+            entered = await announcer.enter(self.resume_from_entry(), self.start_round)
+            if entered is not None:
+                return entered
         self.ctx.update_state(
             phase=self.phase.title,
             phase_index=self.phase.index,
@@ -295,7 +285,8 @@ class _PhaseRunner:
             round=self.state.round,
         )
         while True:
-            if self.state.round + 1 > self.cfg.max_rounds:
+            limit = self.round_limit()
+            if self.state.round + 1 > limit:
                 return self._halt("fuse")
             self.state.round += 1
             self.ctx.update_state(round=self.state.round)
@@ -455,7 +446,19 @@ class _PhaseRunner:
         print(line, flush=True)
         return True
 
+    def round_limit(self) -> int:
+        from src.loop.resume_step import resume_limit
+
+        return resume_limit(self.resume_from, self.cfg.max_rounds)
+
+    def resume_from_entry(self) -> Any:
+        from src.loop.resume_step import resume_entry
+
+        return resume_entry(self.resume_from)
+
     def _player_prompt(self) -> str:
+        from src.loop.resume_step import _continuation_block
+
         continuation = ""
         if self.state.resume_active:
             continuation = _continuation_block(
@@ -471,6 +474,7 @@ class _PhaseRunner:
             discarded=self.state.discarded,
             continuation=self.state.resume_active,
             continuation_diff=continuation,
+            answer=self.state.answer,
         )
 
     async def _raw_player_call(
@@ -769,7 +773,7 @@ class _PhaseRunner:
         tail = f", работа в `{ref}`" if ref else ""
         texts = {
             "stuck": f"нет прогресса → откат фазы{tail}",
-            "fuse": f"лимит раундов ({self.cfg.max_rounds}) исчерпан → откат фазы{tail}",
+            "fuse": f"лимит раундов ({self.round_limit()}) исчерпан → откат фазы{tail}",
             "provider_unavailable": f"провайдер недоступен → откат фазы{tail}",
             "secrets": f"в дифе файлы-секреты → откат фазы{tail}",
         }
@@ -812,38 +816,4 @@ class _PhaseRunner:
             escalated=self.state.escalated,
             stop_text=text,
         )
-
-
-def _git_show_bytes(repo: Path, base: str, plan: Path) -> bytes | None:
-    """`git show <base>:<план>` байтами; None — плана нет в этом коммите."""
-    import subprocess
-
-    try:
-        rel = plan.relative_to(repo).as_posix()
-    except ValueError:
-        return None
-    try:
-        proc = subprocess.run(
-            ["git", "show", f"{base}:{rel}"],
-            cwd=repo,
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
-
-def _continuation_block(repo: Path, base: str, ref: str) -> str:
-    if not base or not ref:
-        return ""
-    try:
-        diff = snapshot_mod.diff_for(repo, base, ref)
-    except Exception:
-        return f"обрезано, полный дифф: `git diff {base} {ref}`"
-    if len(diff) > 20_000:
-        return diff[:20_000] + f"\n…обрезано, полный дифф: `git diff {base} {ref}`"
-    return diff
 

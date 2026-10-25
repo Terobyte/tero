@@ -96,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser("resume", help="Continue a stopped run from state.json")
     resume_parser.add_argument("--working-dir", "-w", type=str, default=".")
     resume_parser.add_argument("--run", type=str, default=None)
+    resume_parser.add_argument("--answer", type=str, default="")
 
     hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
     hud_parser.add_argument("--run", type=str, default=None)
@@ -192,9 +193,10 @@ async def run_go(args, config: Config | None = None):
 
 
 async def run_resume(args) -> int:
-    """Continue a stopped run. Only judge_pending is supported in this step."""
+    """Continue a stopped run. judge_pending and stopped with a ref."""
     from src.loop.agents import LiveAgents
     from src.loop.run import resume as resume_run
+    from src.loop.session import resume_refusal
     from src.loop.state import RunState
 
     repo = Path(args.working_dir).expanduser().resolve()
@@ -203,14 +205,16 @@ async def run_resume(args) -> int:
         return 1
     state = RunState.read(run_dir / "state.json") or {}
     status = state.get("status") or ""
-    if status != "judge_pending":
-        print(f"стоп: resume для `{status}` пока не умеет (код 1)", flush=True)
+    answer = getattr(args, "answer", "") or ""
+    refusal = resume_refusal(state, answer)
+    if refusal:
+        print(f"стоп: {refusal} (код 1)", flush=True)
         return 1
     cfg_state = state.get("config") or {}
     cfg_fields = cfg_state.get("fields") if isinstance(cfg_state.get("fields"), dict) else cfg_state
     working_dir = cfg_fields.get("working_dir") or str(repo)
     agents = LiveAgents(working_dir, verbose=bool(cfg_fields.get("verbose", False)))
-    outcome = await resume_run(repo, run_dir, agents=agents)
+    outcome = await resume_run(repo, run_dir, agents=agents, answer=answer)
     if outcome.reason:
         print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
     if outcome.run_dir:

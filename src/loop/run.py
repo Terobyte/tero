@@ -14,7 +14,6 @@ from src.loop.gates import detect
 from src.loop.git import (
     checkout_run_branch,
     exclude_tero,
-    force_checkout_run_branch,
     is_repo,
     run_branch_exists,
 )
@@ -35,10 +34,17 @@ from src.loop.session import (
     end_run,
     run_phases,
 )
+from src.loop.resume_step import _restore_resume_tree, _stopped_phases
 from src.loop.state import RunState, Status
 from src.loop.transition import resume_transition
 
-__all__ = ["RunOutcome", "phase_summary_line", "rounds_word", "slugify"]
+__all__ = [
+    "RunOutcome",
+    "phase_summary_line",
+    "rounds_word",
+    "slugify",
+    "_restore_resume_tree",
+]
 
 
 async def run(
@@ -167,6 +173,7 @@ async def resume(
     run_dir: str | Path,
     *,
     agents: AgentRunner,
+    answer: str = "",
 ) -> RunOutcome:
     """Continue a stopped run from its state.json. Only judge_pending yet."""
     from src.loop.stream import Stream
@@ -175,7 +182,7 @@ async def resume(
     run_path = Path(run_dir).expanduser().resolve()
     state = RunState.read(run_path / "state.json") or {}
     status = state.get("status") or ""
-    cfg, refusal = _resume_config(state)
+    cfg, refusal = _resume_config(state, answer)
     if cfg is None:
         return _refuse(run_path, refusal)
     ref = state.get("snapshot_ref") or ""
@@ -184,6 +191,10 @@ async def resume(
     phase_index = state.get("phase_index", 0) or 0
     round_no = state.get("round", 1) or 1
 
+    from src.loop.resume_step import pre_lock_refusal as _e
+
+    if (_o := _e(repo_path, run_path, cfg, state)) is not None:
+        return _o
     lock = acquire(repo_path)
     if lock is None:
         return _refuse(run_path, "another run holds this repo")
@@ -196,11 +207,6 @@ async def resume(
             done_io.update(hang_after_s=_hang_after_s(cfg))
     except Exception:
         pass
-    # F5: resume owns the run again via the shared status helper — the
-    # starting transition is recorded in state.json, stream.jsonl and
-    # ledger.jsonl like every other status change, so a setup failure or
-    # early return below can restore judge_pending and a retry stays
-    # possible.
     slug = slugify(Path(cfg.plan_file).stem)
     pid_started = current_pid_started()
     ledger: Ledger | None = None
@@ -216,38 +222,35 @@ async def resume(
         phase_title=phase_title, pid_started=pid_started,
     )
 
-    # F6: pulse startup and all subsequent setup live inside one session
-    # that always stops the pulse and releases the lock, so a setup failure
-    # cannot leak the daemon ticker thread.
-    # F5: a Pulse startup failure also restores judge_pending first, so the
-    # retry stays possible. Any other unexpected failure inside the whole
-    # resume body below (including a Ledger init failure or a crash in the
-    # judge loop) also restores judge_pending; the pulse still stops and
-    # the lock still releases on the session exit.
+    def _restore_stopped() -> None:
+        try:
+            r = state.get("reason") or ""
+            _write(status=Status.STOPPED.value, reason=r,
+                   text=state.get("text") or "", round_no=state.get("round", 1) or 1)
+        except Exception:
+            pass
+
     def _restore_pending() -> None:
         try:
-            _write(
-                status=Status.JUDGE_PENDING.value, reason="resume_setup_failed",
-                text="resume: настройка не удалась, повтор возможен",
-                round_no=round_no,
-            )
+            _write(status=Status.JUDGE_PENDING.value, reason="resume_setup_failed",
+                   text="resume: настройка не удалась, повтор возможен", round_no=round_no)
         except Exception:
             pass
 
     session = RunSession(
         lock, run_path, pid_started=pid_started, release_on_exit=True,
-        on_pulse_failed=_restore_pending,
+        on_pulse_failed=_restore_stopped if status == Status.STOPPED.value else _restore_pending,
     )
     session.register()
-    try:
-        _write(
-            status=Status.STARTING.value, reason="resume",
-            text="resume: старт", round_no=round_no,
-        )
-    except Exception:
-        pass
 
     with session:
+        if status == Status.STOPPED.value:
+            return await _stopped_phases(
+                repo_path, run_path, cfg,
+                agents=agents, session=session, write=_write, ledger=_ledger,
+                saved=state, slug=slug, answer=answer, phase_runner=run_phase,
+                restore_stopped=_restore_stopped,
+            )
         return await _resume_phases(
             repo_path, run_path, cfg,
             agents=agents, session=session, write=_write, ledger=_ledger,
@@ -255,6 +258,7 @@ async def resume(
             phase_index=phase_index, phase_title=phase_title, round_no=round_no,
             status=status,
         )
+
 
 async def _resume_phases(
     repo_path: Path,
@@ -279,7 +283,9 @@ async def _resume_phases(
     # любая ошибка checkout/восстановления оставляет judge_pending
     # и resume можно повторить.
     try:
-        _restore_resume_tree(repo_path, run_path, slug, base, ref)
+        from src.loop.resume_step import _restore_resume_tree as _restore
+
+        _restore(repo_path, run_path, slug, base, ref)
         plan_path = repo_path / cfg.plan_file
         if not plan_path.is_file():
             restore_pending()
@@ -375,40 +381,6 @@ def _start_ledger(run_dir: Path, cfg: Config, slug: str) -> Ledger:
         judge_at_tokens=cfg.compact_judge_at_tokens,
     )
     return ledger
-
-
-def _restore_resume_tree(repo_path: Path, run_path: Path, slug: str, base: str, ref: str) -> None:
-    """Back to the run branch with the tree of ``ref``; manual edits go to before-resume."""
-    from src.loop import snapshot as snapshot_mod
-    from src.loop.git import head as git_head
-
-    # F16: существующий before-resume не перезаписываем — повторные попытки
-    # сохраняют своё дерево в before-resume-2, -3, …, чтобы ручные правки
-    # первой попытки оставались доступны.
-    def _before_ref() -> str:
-        base_ref = f"refs/tero/{run_path.name}/before-resume"
-        if not snapshot_mod.verify(repo_path, base_ref):
-            return base_ref
-        n = 2
-        while snapshot_mod.verify(repo_path, f"{base_ref}-{n}"):
-            n += 1
-        return f"{base_ref}-{n}"
-
-    before = _before_ref()
-    before_saved = False
-    if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
-        snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
-        before_saved = True
-    # Конфликтующие ручные правки не останавливают resume: before-resume
-    # уже сохранён, поэтому checkout идёт с -f, а дерево выравнивается
-    # на ref — судья получает код из ref.
-    force_checkout_run_branch(repo_path, slug)
-    if snapshot_mod.tree_of(repo_path, base) != snapshot_mod.ref_tree(repo_path, ref):
-        if not before_saved:
-            before = _before_ref()
-            snapshot_mod.take_snapshot(repo_path, git_head(repo_path), before)
-            before_saved = True
-        snapshot_mod.restore_snapshot(repo_path, ref)
 
 
 def agy_preflight_check(role: str, model: str, working_dir: str) -> str | None:

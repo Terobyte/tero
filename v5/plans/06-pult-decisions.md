@@ -159,13 +159,13 @@ self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, 
 `ship`), как в `tests/loop/test_resume_judge.py`: сначала `run(...)` доводит прогон до нужного `stopped`,
 потом `resume(...)`.
 
-- [ ] `test_resume_stopped_stuck_continues_from_ref`: прогон `stuck` → `resume` → гейт и судья по дереву ref (файл исполнителя на месте до вызова судьи); судья NO_SHIP → исполнитель следующего раунда получает блок продолжения с диффом ref; дальше SHIP, фаза сдана, код 0
-- [ ] `test_resume_stopped_red_gate_skips_judge`: в ref красный тест → `resume` → судья не вызван, исполнитель получил вывод гейта; ослабленный в ref старый тест есть в `suite_delta` промпта судьи следующего раунда
-- [ ] `test_resume_stopped_fuse_new_round_budget`: `fuse` при `max_rounds=2` → `resume` → раунды 3 и 4, снимки раундов 1–2 на месте, снова `fuse` только после раунда 4
-- [ ] `test_resume_user_needs_answer`: стоп `user` без `--answer` → код 1, в выводе вопрос; с `--answer "используй sqlite"` → текст в промптах судьи и исполнителя внутри размеченного блока; без ответа промпты байт в байт прежние
-- [ ] `test_resume_stopped_refusals`: нет `snapshot_ref` → код 1 «снимка нет»; `secrets` → код 1; `interrupted` → код 1; ветка ушла вперёд → код 1; `done` → прежний текст (через CLI-подпроцесс `[sys.executable, "-m", "src.cli_entry", "resume", ...]`); во всех отказах `state.json` не изменился
-- [ ] `test_resume_stopped_setup_failure_keeps_status`: `Pulse` падает при старте → `state.json` снова `stopped` с прежними `reason`, `text`, `snapshot_ref`; лок свободен
-- [ ] реализовать
+- [x] `test_resume_stopped_stuck_continues_from_ref`: прогон `stuck` → `resume` → гейт и судья по дереву ref (файл исполнителя на месте до вызова судьи); судья NO_SHIP → исполнитель следующего раунда получает блок продолжения с диффом ref; дальше SHIP, фаза сдана, код 0
+- [x] `test_resume_stopped_red_gate_skips_judge`: в ref красный тест → `resume` → судья не вызван, исполнитель получил вывод гейта; ослабленный в ref старый тест есть в `suite_delta` промпта судьи следующего раунда
+- [x] `test_resume_stopped_fuse_new_round_budget`: `fuse` при `max_rounds=2` → `resume` → раунды 3 и 4, снимки раундов 1–2 на месте, снова `fuse` только после раунда 4
+- [x] `test_resume_user_needs_answer`: стоп `user` без `--answer` → код 1, в выводе вопрос; с `--answer "используй sqlite"` → текст в промптах судьи и исполнителя внутри размеченного блока; без ответа промпты байт в байт прежние
+- [x] `test_resume_stopped_refusals`: нет `snapshot_ref` → код 1 «снимка нет»; `secrets` → код 1; `interrupted` → код 1; ветка ушла вперёд → код 1; `done` → прежний текст (через CLI-подпроцесс `[sys.executable, "-m", "src.cli_entry", "resume", ...]`); во всех отказах `state.json` не изменился
+- [x] `test_resume_stopped_setup_failure_keeps_status`: `Pulse` падает при старте → `state.json` снова `stopped` с прежними `reason`, `text`, `snapshot_ref`; лок свободен
+- [x] реализовать
 
 ## Точки решения: answer, skip, stop, долг
 

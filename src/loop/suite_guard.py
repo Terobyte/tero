@@ -320,6 +320,7 @@ def protect_tests(
             checkout_paths(repo, checkpoint, [path])
             ledger.event("suite_violation", path=path, round=state.round)
             print(f"  тест удалён вне протокола: {path} — восстановлен", flush=True)
+            state.suite_delta.append(path)
             violated = True
             continue
         current = file_hashes(repo, [path]).get(path)

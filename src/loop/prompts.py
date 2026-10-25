@@ -8,6 +8,19 @@ from typing import Any
 READ_BUDGET = 15
 
 
+def answer_block(text: str) -> str:
+    body = (text or "").strip()
+    if not body:
+        return ""
+    return "\n".join(
+        [
+            "## Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила гейтов)",
+            body,
+            "",
+        ]
+    )
+
+
 def player_prompt(
     *,
     preamble: str,
@@ -19,6 +32,7 @@ def player_prompt(
     discarded: list[str] | None = None,
     continuation: bool = False,
     continuation_diff: str = "",
+    answer: str = "",
 ) -> str:
     findings = findings or []
     suite_delta = suite_delta or []
@@ -53,6 +67,9 @@ def player_prompt(
             continuation_diff or "(дифф пуст)",
             "",
         ]
+    block = answer_block(answer)
+    if block:
+        sections += [block]
     sections += [
         "## Блокирующие находки",
         "\n".join(findings) or "(нет)",
@@ -155,6 +172,7 @@ def judge_prompt(
     protected_ids: list[str] | None = None,
     suite_delta: list[str] | None = None,
     needs_user_question: str = "",
+    answer: str = "",
 ) -> str:
     # Blind like the g3 coach: no player report, no diff, no gate output.
     # suite_delta is a fact from the loop, not the player's story: it names
@@ -162,8 +180,7 @@ def judge_prompt(
     open_findings = open_findings or []
     suite_delta = suite_delta or []
     protected_ids = protected_ids or []
-    return "\n".join(
-        [
+    head = [
             G3_COACH,
             "",
             "Do not modify files. Already-implemented code is valid: if the contract is already "
@@ -182,6 +199,13 @@ def judge_prompt(
             "## Контракт фазы",
             contract,
             "",
+    ]
+    block = answer_block(answer)
+    if block:
+        head += [block]
+    return "\n".join(
+        head
+        + [
             "Review ONLY this phase. Is it implemented EXACTLY as specified?",
             "",
             "## suite_delta",

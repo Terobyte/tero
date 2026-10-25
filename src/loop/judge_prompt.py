@@ -17,6 +17,7 @@ def build_prompt(ctx: PhaseContext, reask_question: str) -> str:
         protected_ids=list(ctx.st.protected_by_id),
         suite_delta=ctx.st.suite_delta,
         needs_user_question=reask_question,
+        answer=ctx.st.answer,
     )
 
 

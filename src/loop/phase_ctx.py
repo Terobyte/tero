@@ -100,6 +100,7 @@ class PhaseState:
     resume_ref: str = ""
     resume_base: str = ""
     resume_active: bool = False
+    answer: str = ""
     had_crash: bool = False
     kmax_flat: int = 0
     kmax_prev: tuple[int, frozenset] | None = None
