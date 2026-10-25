@@ -222,7 +222,8 @@ class _FailThenSucceed:
         self.calls = 0
         self._fails = fails
         self._payload = payload or (
-            '{"status": "done", "changes": [], "start_here": [], "blocked_reason": ""}'
+            '{"status": "done", "changes": [{"file": "a.py", "what": "w", "why": "y"}], '
+            '"start_here": [], "blocked_reason": ""}'
         )
 
     async def run(self, prompt, system_prompt, working_dir, model="", **kwargs):

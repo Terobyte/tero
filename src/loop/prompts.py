@@ -28,6 +28,8 @@ def player_prompt(
         "Не коммитить.",
         "Не менять файлы из protected и не удалять тестовые файлы с checkpoint.",
         "Если контракт неясен — не выдумывай: верни status blocked.",
+        "Результат раунда — правки файлов в рабочем дереве: читай только нужное "
+        "и пиши код; status done без правок не принимается.",
         "Финальное сообщение — только JSON PlayerReport "
         '(status, changes, start_here, blocked_reason). Поля «тесты прошли» нет.',
         "",
@@ -64,6 +66,25 @@ def player_prompt(
         gate_output or "(нет)",
     ]
     return "\n".join(sections)
+
+
+def repair_prompt(role: str, prompt: str, text: str, errors: list[str]) -> str:
+    """Повтор после негодного отчёта. opencode и др. не хранят сессию: голое
+    «верни только JSON» в новом вызове без контракта давало done без правок."""
+    tail = f"твой прошлый ответ:\n{text[-4000:]}\nошибки: {errors}"
+    if role == "judge":
+        return f"верни только JSON по схеме; {tail}"
+    return "\n".join(
+        [
+            prompt,
+            "",
+            "## Повтор: прошлый вызов кончился без годного отчёта",
+            "Это новый вызов, памяти о прошлом нет. Уже записанное в дереве — твоё: "
+            "начни с git status и git diff, не переписывай готовое.",
+            "Доведи контракт до конца правками файлов, потом верни отчёт.",
+            tail,
+        ]
+    )
 
 
 # g3 coach, verbatim (main:src/prompts.py COACH_STRICT_SYSTEM_PROMPT); only the

@@ -137,6 +137,11 @@ def validate(role: str, data: dict, ctx: ValidateCtx | None = None) -> list[str]
         return errors
     if role == "judge":
         errors.extend(_semantic_judge(data, ctx or ValidateCtx()))
+    if role == "player" and data["status"] == "done" and not data["changes"]:
+        errors.append(
+            "changes: done без правок не принимается — запиши код и перечисли файлы; "
+            "если контракт уже выполнен, перечисли файлы, где он выполнен"
+        )
     return errors
 
 

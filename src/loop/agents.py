@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from src.errors import classify_error, scrub_secrets
 from src.loop.compact import Compacted
+from src.loop.prompts import repair_prompt
 from src.loop.schemas import SCHEMAS, ValidateCtx, validate
 from src.process_guard import ProcessGuard
 
@@ -139,10 +140,7 @@ class LiveAgents:
         data = extract_json(text)
         errors = validate_role(role, data, ctx)
         if errors:
-            repair = (
-                "верни только JSON по схеме; твой прошлый ответ:\n"
-                f"{text[-4000:]}\nошибки: {errors}"
-            )
+            repair = repair_prompt(role, prompt, text, errors)
             try:
                 text = await self._call(
                     provider_name, model, with_schema(repair, schema), schema, read_only, timeout, role, effort,
