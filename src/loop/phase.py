@@ -15,7 +15,6 @@ from src.loop.git import (
     has_staged_changes,
     head,
     rollback,
-    secret_paths,
     stage_and_diff,
     write_tree,
 )
@@ -477,6 +476,7 @@ class _PhaseRunner:
             continuation=self.state.resume_active,
             continuation_diff=continuation,
             answer=self.state.answer,
+            forbidden=getattr(self.resume_from, "forbidden", None),
         )
 
     async def _raw_player_call(
@@ -665,6 +665,8 @@ class _PhaseRunner:
                 flush=True,
             )
             return False
+        if self.state.round <= getattr(self.resume_from, "grace_until", 0):
+            return False  # действие more: эти раунды без stuck
         print("  нет прогресса → откат фазы", flush=True)
         return True
 
@@ -721,7 +723,7 @@ class _PhaseRunner:
 
     def _ship(self) -> PhaseOutcome:
         stage_and_diff(self.repo, self.checkpoint)
-        secrets = secret_paths(self.repo)
+        secrets = self._decider().blocked_secrets()
         if secrets:
             if getattr(self.cfg, "decisions", False):
                 return self._halt("secrets")

@@ -33,6 +33,7 @@ def player_prompt(
     continuation: bool = False,
     continuation_diff: str = "",
     answer: str = "",
+    forbidden: list[str] | None = None,
 ) -> str:
     findings = findings or []
     suite_delta = suite_delta or []
@@ -70,6 +71,13 @@ def player_prompt(
     block = answer_block(answer)
     if block:
         sections += [block]
+    if forbidden:
+        sections += [
+            "## Эти файлы не создавать",
+            "Прошлый заход остановлен: в дифе были файлы-секреты. Не создавать: "
+            + ", ".join(forbidden),
+            "",
+        ]
     sections += [
         "## Блокирующие находки",
         "\n".join(findings) or "(нет)",

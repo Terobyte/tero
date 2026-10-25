@@ -157,6 +157,7 @@ async def run_phases(
     index = start_index
     first = True
     pending_extra: dict[str, Any] = {}
+    phase_cfg: tuple[int, Any] | None = None  # model: роль сменена до конца фазы
     try:
         while index < total:
             current = phases[index]
@@ -164,36 +165,30 @@ async def run_phases(
                 index += 1
                 continue
             extra = dict(first_kwargs or {}) if first else {}
+            if judge_index is not None:
+                extra["start_with_judge"] = current.index == judge_index
             if pending_extra:
                 extra.update(pending_extra)
                 pending_extra = {}
             first = False
-            if judge_index is not None:
-                extra["start_with_judge"] = current.index == judge_index
+            if phase_cfg is not None and phase_cfg[0] != index:
+                phase_cfg = None
+            kwargs = {**phase_kwargs, **extra}
+            if phase_cfg is not None:
+                kwargs["cfg"] = phase_cfg[1]
             outcome = await run_phase(
                 current,
                 ledger=ledger(),
                 total_phases=total,
-                **phase_kwargs,
-                **extra,
+                **kwargs,
             )
             _print_phase_summary(current, outcome, total=total)
             if outcome.status == "ship":
                 shipped += 1
                 index += 1
                 continue
-            if outcome.status == "waiting_human" and getattr(outcome, "decider", None) is not None:
-                decider = outcome.decider
-                try:
-                    resolved = decider.resolve()
-                except Exception as exc:
-                    resolved = PhaseOutcome(
-                        status="stop", reason=outcome.reason,
-                        user_question=getattr(outcome, "user_question", ""),
-                        rounds=getattr(outcome, "rounds", 0),
-                        escalated=getattr(outcome, "escalated", False),
-                        stop_text=f"решение не применено: {exc}",
-                    )
+            if outcome.status in ("waiting_human", "waiting_limit") and getattr(outcome, "decider", None) is not None:
+                resolved = _resolve(outcome)
                 if resolved is None or getattr(resolved, "status", "") == "waiting_human":
                     outcome = resolved if resolved is not None else outcome
                 elif resolved.status == "answer":
@@ -202,6 +197,12 @@ async def run_phases(
                         pending_extra["start_answer"] = resolved.answer
                     # F19: счётчик продолжается (nxt), grace-лимит — в round_limit.
                     pending_extra["start_round"] = nxt
+                    continue
+                elif resolved.status == "continue":
+                    more = dict(resolved.extra or {})
+                    if "cfg" in more:
+                        phase_cfg = (index, more.pop("cfg"))
+                    pending_extra.update(more)
                     continue
                 elif resolved.status == "skip":
                     index += 1
@@ -238,6 +239,20 @@ async def run_phases(
         oc.debt = debt_n
         return oc
     return _outcome("ok", 0, "ship")
+
+
+def _resolve(outcome: PhaseOutcome) -> PhaseOutcome | None:
+    """Ответ на точку решения; сбой применения — стоп с текстом сбоя."""
+    try:
+        return outcome.decider.resolve()
+    except Exception as exc:
+        return PhaseOutcome(
+            status="stop", reason=outcome.reason,
+            user_question=getattr(outcome, "user_question", ""),
+            rounds=getattr(outcome, "rounds", 0),
+            escalated=getattr(outcome, "escalated", False),
+            stop_text=f"решение не применено: {exc}",
+        )
 
 
 def _done_transition(ledger: Callable[[], Ledger], run_dir: Path, debt_n: int) -> None:

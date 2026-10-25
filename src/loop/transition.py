@@ -23,12 +23,13 @@ def phase_transition(
     event: str = "stop", kind: str = "judge_pending", doing: str = "стоп",
     question: Any = _UNSET, tree_sha: Any = _UNSET, decision_seq: Any = _UNSET,
     question_id: Any = _UNSET, debt: Any = _UNSET, answer: Any = _UNSET,
+    extra: dict | None = None,
 ) -> None:
     """Single place writing status to state.json, stream.jsonl and ledger.
 
     Optional fields (question, tree_sha, decision_seq, question_id, debt,
     answer) are written only when passed; passing None explicitly clears
-    the field in state.json.
+    the field in state.json. `extra` goes to state.json in the same write.
     """
     state_fields: dict[str, Any] = {
         "status": status,
@@ -45,6 +46,7 @@ def phase_transition(
     ):
         if value is not _UNSET:
             state_fields[name] = value
+    state_fields.update(extra or {})
     ctx.ledger.event(
         kind,
         status=status,

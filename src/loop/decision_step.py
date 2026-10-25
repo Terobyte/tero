@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.loop import snapshot as snapshot_mod
-from src.loop.decision import actions_for
+from src.loop.decision_actions import (
+    LIMIT_REASONS, LIMIT_WAITS_S, apply_action, full_actions, limit_chain, question_actions,
+    wait_limit,
+)
+from src.loop.halt_text import _halt_text_fallback, _legacy_halt_text  # noqa: F401
 from src.loop.inbox import Inbox
 from src.loop.phase_ctx import PhaseContext, PhaseOutcome
 from src.loop.state import RunState, Status, owner_lock
@@ -15,95 +19,10 @@ from src.loop.transition import phase_transition
 from src.relay.iface import NoopRelay, RelayClient
 
 DECISION_POLL_S = 10
-IMPLEMENTED = ("answer", "skip", "stop")
 
 
 def implemented_actions(reason: str) -> list[str]:
-    order = {"answer": 0, "skip": 1, "stop": 2}
-    got = [a for a in actions_for(reason) if a in IMPLEMENTED]
-    got = list(got)
-    if reason == "secrets" and "answer" in got:
-        # Фаза 2: только skip|stop (allow добавит фаза 3).
-        got.remove("answer")
-    return sorted(got, key=lambda a: order.get(a, 99))
-
-
-def _legacy_halt_text(ctx: PhaseContext, reason: str, limit: Any, ref: str | None) -> str:
-    """Тексты стопа при decisions=False — дословно как до точек решения."""
-    st = ctx.st
-    if reason == "user":
-        return st.user_question or reason
-    if reason in ("provider_auth", "provider_quota"):
-        return ctx.provider_text("", st.last_provider or "?")
-    if reason == "provider_unavailable" and st.last_provider_kind in (
-        "timeout",
-        "stall",
-        "auth",
-        "quota",
-    ):
-        return st.last_provider_error or reason
-    tail = f", работа в `{ref}`" if ref else ""
-    texts = {
-        "stuck": f"нет прогресса → откат фазы{tail}",
-        "fuse": f"лимит раундов ({limit}) исчерпан → откат фазы{tail}",
-        "provider_unavailable": f"провайдер недоступен → откат фазы{tail}",
-        "secrets": f"в дифе файлы-секреты → откат фазы{tail}",
-    }
-    return texts.get(reason, reason)
-
-
-def _halt_text_fallback(ctx: PhaseContext, reason: str, ref: str | None = None) -> str:
-    try:
-        n = ctx.phase.index + 1
-    except Exception:
-        n = 1
-    if reason == "user":
-        return ctx.st.user_question or reason
-    if reason in ("provider_auth", "provider_quota"):
-        return ctx.provider_text("", ctx.st.last_provider or "?")
-    if reason == "provider_unavailable":
-        kind = getattr(ctx.st, "last_provider_kind", "") or ""
-        if kind in ("timeout", "stall", "auth", "quota"):
-            return ctx.st.last_provider_error or reason
-        prov = getattr(ctx.st, "last_provider", "") or "?"
-        err = getattr(ctx.st, "last_provider_error", "") or ""
-        base = f"провайдер {prov} не отвечает"
-        if err:
-            base += f" ({err})"
-        return base
-    if reason == "stuck":
-        try:
-            finds = [f.as_prompt() for f in (ctx.st.open_findings or [])[-5:]]
-        except Exception:
-            finds = []
-        tail = f": {'; '.join(finds)}" if finds else ""
-        text = f"фаза {n} застряла{tail}"
-        if ref:
-            text += f", работа в `{ref}`"
-        return text
-    if reason == "fuse":
-        try:
-            lim = ctx.cfg.max_rounds
-        except Exception:
-            lim = "?"
-        text = f"фаза {n}: {lim} раундов без SHIP"
-        if ref:
-            text += f", работа в `{ref}`"
-        return text
-    if reason == "secrets":
-        try:
-            from src.loop.git import secret_paths as _sp
-
-            paths = _sp(ctx.repo)
-        except Exception:
-            paths = []
-        tail = f": {', '.join(paths)}" if paths else ""
-        text = f"в дифе файлы-секреты{tail}"
-        if ref:
-            text += f", работа в `{ref}`"
-        return text
-    tail = f", работа в `{ref}`" if ref else ""
-    return f"{reason}{tail}"
+    return full_actions(reason)
 
 
 class DecisionStep:
@@ -130,6 +49,8 @@ class DecisionStep:
         self._round_limit = round_limit
         self._reason = ""
         self._qid = ""
+        self._auto_wait: int | None = None
+        self.secret_paths: list[str] = []
 
     def halt_text(self, reason: str, ref: str | None = None) -> str:
         if not getattr(self.ctx.cfg, "decisions", False):
@@ -228,22 +149,50 @@ class DecisionStep:
         seq_map[str(n)] = seq
         return f"{n}-{seq}", seq_map
 
+    def _saved(self) -> dict:
+        try:
+            return RunState.read(Path(self.ctx.run_dir) / "state.json") or {}
+        except Exception:
+            return {}
+
+    def blocked_secrets(self) -> list[str]:
+        """Секреты в индексе, кроме разрешённых `allow` до конца прогона."""
+        from src.loop.git import secret_paths
+
+        allowed = set(self._saved().get("allowed_secrets") or [])
+        return [p for p in secret_paths(self.ctx.repo) if p not in allowed]
+
+    def stop_no_snapshot(self, reason: str) -> PhaseOutcome:
+        text = "снимок не сделан, дерево не тронуто"
+        self.write_stopped(reason, text)
+        return PhaseOutcome(
+            status="stop", reason=reason, user_question=self.ctx.st.user_question,
+            rounds=self.ctx.st.round, escalated=self.ctx.st.escalated, stop_text=text,
+        )
+
     def open_question(self, reason: str, text: str) -> str | None:
-        actions = implemented_actions(reason)
-        if not actions:
+        full = implemented_actions(reason)
+        if not full:
             return None
+        n = self.ctx.phase.index + 1
+        actions = question_actions(reason, self._saved(), n)
+        if reason == "secrets":
+            try:
+                self.secret_paths = self.blocked_secrets()
+            except Exception:
+                self.secret_paths = []
         sha = self.tree_sha(reason)
         if not sha:
             return None
-        n = self.ctx.phase.index + 1
         qid, seq_map = self._next_seq(n)
-        question = {"id": qid, "reason": reason, "text": text, "actions": actions}
+        question = {"id": qid, "reason": reason, "text": text, "actions": actions,
+                    "all_actions": full}
         phase_transition(
             self.ctx, status=Status.WAITING_HUMAN.value,
             reason=reason, text=text, ref="", role="judge",
             event="question", kind="question", doing="ожидание",
             question=question, tree_sha=sha, decision_seq=seq_map,
-            question_id=qid,
+            question_id=qid, extra={"limit_wait": None},
         )
         return qid
 
@@ -278,6 +227,15 @@ class DecisionStep:
             decisions = False
         if not decisions or not implemented_actions(reason):
             return self._old_halt(reason)
+        waits = limit_chain(self._saved(), self.ctx.phase.index + 1)
+        if reason in LIMIT_REASONS and waits is not None and waits < len(LIMIT_WAITS_S):
+            # Цепочка wait: повторная неудача — следующая пауза без вопроса.
+            self._reason, self._auto_wait = reason, waits
+            self._qid = str(self._saved().get("question_id") or "")
+            return PhaseOutcome(
+                status="waiting_limit", reason=reason, rounds=self.ctx.st.round,
+                escalated=self.ctx.st.escalated, decider=self,
+            )
         text = self.halt_text(reason, None)
         qid = self.open_question(reason, text)
         if qid is None:
@@ -294,6 +252,8 @@ class DecisionStep:
     def resolve(self) -> PhaseOutcome:
         """Дождаться ответа на открытый halt() вопрос и применить его."""
         reason, qid = self._reason, self._qid
+        if self._auto_wait is not None:
+            return wait_limit(self, reason, qid, self._auto_wait)
         ans = self.wait_answer(qid)
         action = (ans.action or "").strip()
         who = (ans.who or "agent").strip() or "agent"
@@ -321,14 +281,7 @@ class DecisionStep:
             except Exception:
                 ref = None
             if ref is None:
-                text = "снимок не сделан, дерево не тронуто"
-                self.write_stopped(reason, text)
-                return PhaseOutcome(
-                    status="stop", reason=reason,
-                    user_question=self.ctx.st.user_question,
-                    rounds=self.ctx.st.round, escalated=self.ctx.st.escalated,
-                    stop_text=text,
-                )
+                return self.stop_no_snapshot(reason)
             try:
                 self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
             except Exception:
@@ -380,4 +333,5 @@ class DecisionStep:
                 status="answer", reason=reason, rounds=self.ctx.st.round,
                 escalated=self.ctx.st.escalated, stop_text="", answer=txt,
             )
-        return self._old_halt(reason)
+        out = apply_action(self, action, reason, qid, ans)
+        return out if out is not None else self._old_halt(reason)

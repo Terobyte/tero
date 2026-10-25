@@ -16,6 +16,7 @@ from typing import Any
 
 from src.fsio import atomic_write_text
 
+from src.loop.decision_actions import refuse_budget, refuse_model, spend_budget
 from src.loop.state import RunState
 from src.relay.iface import Answer, RelayClient
 
@@ -123,17 +124,24 @@ class Inbox:
         self._write_result(str(payload.get("uuid")), text)
 
     @staticmethod
-    def _refuse(payload: dict[str, Any], actions: list) -> str | None:
-        action = payload.get("action")
+    def _refuse(payload: dict[str, Any], actions: list, state: dict | None = None) -> str | None:
+        state = state or {}
+        action, who = payload.get("action"), payload.get("who") or "agent"
+        open_q = state.get("question") if isinstance(state.get("question"), dict) else {}
+        qid = str(payload.get("question_id") or open_q.get("id") or "")
         if action not in actions:
-            return "отклонено: действие недопустимо"
+            # Бюджет сузил вопрос до skip|stop: у человека бюджета нет.
+            if action not in (open_q.get("all_actions") or []):
+                return "отклонено: действие недопустимо"
+            if who != "human":
+                return "отклонено: бюджет исчерпан"
         if action == "model":
-            words = str(payload.get("text") or "").strip().lower().split()
-            if words and words[0] == "judge":
-                return "отклонено: судью менять нельзя"
-        if action == "allow" and payload.get("who") != "human":
+            refusal = refuse_model(payload.get("text"))
+            if refusal is not None:
+                return refusal
+        if action == "allow" and who != "human":
             return "отклонено: allow только человек"
-        return None
+        return refuse_budget(state, qid, action, who)
 
     def _apply(self, answer: Answer, actions: list) -> bool:
         """Одна атомарная запись state.json, затем `.result` «принято»."""
@@ -148,8 +156,9 @@ class Inbox:
         if open_id != answer.question_id:
             return False
         refusal = self._refuse(
-            {"action": answer.action, "text": answer.text, "who": answer.who},
-            actions,
+            {"action": answer.action, "text": answer.text, "who": answer.who,
+             "question_id": answer.question_id},
+            actions, state,
         )
         if refusal is not None:
             self._write_result(answer.uuid, refusal, overwrite=True)
@@ -166,7 +175,11 @@ class Inbox:
                 "question_id": answer.question_id,
             }
         )
-        self._state.update(applied_uuids=applied + [answer.uuid], decisions=decisions)
+        fields: dict[str, Any] = {"applied_uuids": applied + [answer.uuid], "decisions": decisions}
+        budget = spend_budget(state, answer.question_id, answer.action, answer.who)
+        if budget is not None:
+            fields["budget"] = budget
+        self._state.update(**fields)
         fresh = RunState.read(self.run_dir / "state.json")
         if fresh is None or answer.uuid not in (fresh.get("applied_uuids") or []):
             return False
@@ -228,7 +241,7 @@ class Inbox:
                     f"отклонено: вопрос {payload.get('question_id')} не открыт",
                 )
                 continue
-            refusal = self._refuse(payload, actions)
+            refusal = self._refuse(payload, actions, state)
             if refusal is not None:
                 self._reject(path, payload, refusal)
                 continue

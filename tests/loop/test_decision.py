@@ -134,12 +134,12 @@ async def test_question_actions_only_implemented(tmp_path: Path):
     outcome, ledger = await _run(repo, agents, _cfg(decisions=True))
     state = _state_of(ledger)
     q = state.get("question") or {}
-    assert q.get("actions") == ["skip", "stop"]
+    assert q.get("actions") == ["more", "model", "skip", "stop"]
     inbox = Inbox(ledger.run_dir)
     (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
     (ledger.run_dir / "inbox" / "m.json").write_text(
         json.dumps({"uuid": "m1", "question_id": q.get("id"),
-                    "action": "more", "text": "x"}),
+                    "action": "answer", "text": "x"}),
         encoding="utf-8",
     )
     assert inbox.take(q.get("id"), FakeRelay()) is None
@@ -928,3 +928,244 @@ async def test_decision_git_ops_hold_owner_lock(tmp_path: Path):
 
     DecisionStep(ctx, rollback).halt("stuck")
     assert held == [True]
+
+
+# --- фаза 3: more, model, retry, allow, wait и бюджет ---------------------
+
+
+def _answerer(run_dir: Path, plan: list[list[dict]]):
+    """Поток: на каждый новый открытый вопрос кладёт свою пачку ответов."""
+    import threading
+    import time as _t
+
+    from src.loop.state import RunState
+
+    seen: list[str] = []
+
+    def _go() -> None:
+        n, stuck_since, stopped = 0, 0.0, set()
+        for _ in range(6000):
+            state = RunState.read(run_dir / "state.json") or {}
+            q = state.get("question") or {}
+            qid = q.get("id")
+            waiting = state.get("status") == "waiting_human" and qid
+            if waiting and (qid in seen or n >= len(plan)) and qid not in stopped:
+                # Страховка: вопрос без принятого ответа → stop, тест падает, а не висит.
+                stuck_since = stuck_since or _t.monotonic()
+                if _t.monotonic() - stuck_since > 2:
+                    stopped.add(qid)
+                    (run_dir / "inbox" / f"zz-{qid}.json").write_text(json.dumps(
+                        {"uuid": f"zz-{qid}", "question_id": qid, "action": "stop",
+                         "who": "human"}), encoding="utf-8")
+                _t.sleep(0.005)
+                continue
+            stuck_since = 0.0
+            if n >= len(plan) and not waiting:
+                if state.get("status") in ("done", "stopped"):
+                    return
+            if waiting and qid not in seen and n < len(plan):
+                seen.append(qid)
+                for i, payload in enumerate(plan[n]):
+                    body = {"uuid": f"u{n}x{i}", "question_id": qid,
+                            "text": "", "who": "agent", **payload}
+                    (run_dir / "inbox" / f"{n:02d}{i}.json").write_text(
+                        json.dumps(body), encoding="utf-8")
+                n += 1
+            _t.sleep(0.005)
+
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    return t, seen
+
+
+async def _drive(repo: Path, agents, cfg: Config, plan: list[list[dict]], monkeypatch):
+    import src.loop.decision_step as ds_mod
+    from src.loop.inbox import inbox_dir
+    from src.loop.phase import run_phase
+    from src.loop.plan import load_phases, load_preamble
+    from src.loop.session import run_phases
+
+    monkeypatch.setattr(ds_mod, "DECISION_POLL_S", 0.005)
+    ledger = Ledger(new_run_dir(repo, "demo"))
+    inbox_dir(ledger.run_dir, create=True)
+    kwargs = dict(
+        repo=repo, plan_path=repo / "plan.md",
+        preamble=load_preamble(repo / "plan.md"), cfg=cfg,
+        agents=agents, test_command=detect(repo),
+    )
+    t, seen = _answerer(ledger.run_dir, plan)
+    outcome = await run_phases(
+        run_phase, load_phases(repo / "plan.md"), ledger=lambda: ledger,
+        phase_kwargs=kwargs, run_dir=ledger.run_dir, on_pending=lambda: None,
+        on_stop=lambda o: None, on_done=lambda s: None,
+    )
+    t.join(timeout=5)
+    return outcome, ledger, seen
+
+
+def _stream(ledger: Ledger) -> list[dict]:
+    path = ledger.run_dir / "stream.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _stuck_script(repo: Path, rounds: int) -> list:
+    stuck = no_ship([finding(problem="still broken")],
+                    previous=[{"id": "F1", "state": "still_open"}])
+    steps = [
+        player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n"),
+        judge_returns(no_ship([finding(problem="still broken")])),
+    ]
+    for _ in range(rounds - 1):
+        steps += [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'a'\n"),
+            judge_returns(stuck),
+        ]
+    return steps
+
+
+@pytest.mark.asyncio
+async def test_more_gives_five_rounds_without_stuck(tmp_path: Path, monkeypatch):
+    repo = _repo(tmp_path)
+    agents = FakeAgents(repo, _stuck_script(repo, 8))
+    cfg = _cfg(decisions=True, max_rounds=4, escalation_provider="",
+               escalation_model="", escalation_effort="")
+    outcome, ledger, seen = await _drive(
+        repo, agents, cfg, [[{"action": "more"}], [{"action": "stop"}]], monkeypatch)
+    assert outcome.exit_code == 2, outcome
+    questions = [e for e in _stream(ledger) if e.get("type") == "question"]
+    reasons = [e.get("reason") for e in questions]
+    assert reasons == ["stuck", "fuse"], reasons
+    first = questions[0].get("round")
+    assert first and first < cfg.max_rounds
+    assert questions[1].get("round") == first + 5, "more: ровно 5 раундов, лимит сдвинут"
+    assert agents.calls.count("player") == first + 5, agents.calls
+
+
+@pytest.mark.asyncio
+async def test_model_switches_next_round(tmp_path: Path, monkeypatch):
+    repo = _repo(tmp_path)
+    used: list[tuple[str, str]] = []
+
+    def _player(role: str, kwargs: dict) -> dict:
+        used.append((kwargs.get("provider"), kwargs.get("model")))
+        scripted.write_file(repo, "src/greet.py", HELLO)
+        return scripted.PLAYER_DONE
+
+    script = _stuck_script(repo, 3) + [_player, judge_returns(ship())]
+    agents = FakeAgents(repo, script)
+    cfg = _cfg(decisions=True, escalation_provider="", escalation_model="",
+               escalation_effort="")
+    plan = [[{"action": "model", "text": "player nosuch:y"},
+             {"action": "model", "text": "player opencode:x"}]]
+    outcome, ledger, seen = await _drive(repo, agents, cfg, plan, monkeypatch)
+    assert outcome.exit_code == 0, outcome
+    assert used == [("opencode", "x")]
+    rejected = (ledger.run_dir / "inbox" / "u0x0.result").read_text(encoding="utf-8")
+    assert "неизвестный провайдер" in rejected
+    accepted = (ledger.run_dir / "inbox" / "u0x1.result").read_text(encoding="utf-8")
+    assert accepted == "принято"
+
+
+@pytest.mark.asyncio
+async def test_secrets_allow_and_retry(tmp_path: Path, monkeypatch):
+    from src.loop.state import RunState
+
+    repo = _repo(tmp_path)
+
+    def _player_example(role: str, kwargs: dict) -> dict:
+        scripted.write_file(repo, "src/greet.py", HELLO)
+        scripted.write_file(repo, ".env.example", "KEY=\n")
+        return scripted.PLAYER_DONE
+
+    agents = FakeAgents(repo, [_player_example, judge_returns(ship()), judge_returns(ship())])
+    plan = [[{"action": "allow", "text": ".env.example", "who": "human"}]]
+    outcome, ledger, _ = await _drive(repo, agents, _cfg(decisions=True), plan, monkeypatch)
+    assert outcome.exit_code == 0, outcome
+    state = RunState.read(ledger.run_dir / "state.json") or {}
+    assert ".env.example" in (state.get("allowed_secrets") or [])
+    files = scripted.git(repo, "show", "--name-only", "--format=", "HEAD")
+    assert ".env.example" in files.split()
+    assert agents.calls == ["player", "judge", "judge"], agents.calls
+
+    (tmp_path / "second").mkdir()
+    repo2 = _repo(tmp_path / "second")
+    prompts: list[str] = []
+
+    def _player_env(role: str, kwargs: dict) -> dict:
+        prompts.append(kwargs.get("prompt") or "")
+        scripted.write_file(repo2, "src/greet.py", HELLO)
+        scripted.write_file(repo2, ".env", "SECRET=1\n")
+        return scripted.PLAYER_DONE
+
+    def _player_clean(role: str, kwargs: dict) -> dict:
+        prompts.append(kwargs.get("prompt") or "")
+        assert not (repo2 / ".env").exists(), "retry после secrets: дерево откачено"
+        scripted.write_file(repo2, "src/greet.py", HELLO)
+        return scripted.PLAYER_DONE
+
+    agents2 = FakeAgents(repo2, [_player_env, judge_returns(ship()),
+                                 _player_clean, judge_returns(ship())])
+    outcome2, ledger2, _ = await _drive(
+        repo2, agents2, _cfg(decisions=True), [[{"action": "retry"}]], monkeypatch)
+    assert outcome2.exit_code == 0, outcome2
+    assert "не создавать" not in prompts[0]
+    assert "не создавать" in prompts[1] and ".env" in prompts[1]
+    snaps = scripted.git(repo2, "for-each-ref", "--format=%(refname)", "refs/tero")
+    assert snaps.strip(), "retry после secrets: снимок сделан"
+
+
+@pytest.mark.asyncio
+async def test_wait_backoff_then_question(tmp_path: Path, monkeypatch):
+    import src.loop.decision_actions as da
+
+    monkeypatch.setattr(da, "LIMIT_WAITS_S", (0.01, 0.02, 0.03))
+    pauses: list[float] = []
+    real_sleep = da.time.sleep
+    monkeypatch.setattr(da, "_limit_sleep", lambda s: (pauses.append(s), real_sleep(0))[1])
+    repo = _repo(tmp_path)
+
+    def _quota(role: str, kwargs: dict) -> dict:
+        return {"__unavailable__": True, "error": "usage limit", "kind": "quota"}
+
+    agents = FakeAgents(repo, [_quota] * 4)
+    plan = [[{"action": "wait"}], [{"action": "stop"}]]
+    outcome, ledger, seen = await _drive(repo, agents, _cfg(decisions=True), plan, monkeypatch)
+    assert outcome.exit_code == 2, outcome
+    events = _stream(ledger)
+    waits = [e for e in events if e.get("status") == "waiting_limit"]
+    assert len(waits) == 3, [e.get("type") for e in events]
+    assert pauses == [0.01, 0.02, 0.03]
+    assert seen == ["1-1", "1-2"]
+    assert agents.calls == ["player"] * 4
+
+
+def test_budget_three_per_phase(tmp_path: Path):
+    from src.loop.decision_actions import question_actions
+    from src.loop.inbox import Inbox
+    from src.loop.state import RunState
+    from src.relay.iface import FakeRelay
+
+    run_dir = tmp_path / "run"
+    (run_dir / "inbox").mkdir(parents=True)
+    io = RunState(run_dir / "state.json")
+    actions = ["retry", "wait", "model", "stop"]
+
+    def _ask(qid: str, who: str) -> str:
+        io.update(question={"id": qid, "reason": "provider_quota", "text": "q",
+                            "actions": actions})
+        uid = f"{qid}-{who}"
+        (run_dir / "inbox" / f"{uid}.json").write_text(json.dumps(
+            {"uuid": uid, "question_id": qid, "action": "retry", "who": who}),
+            encoding="utf-8")
+        Inbox(run_dir).take(qid, FakeRelay())
+        return (run_dir / "inbox" / f"{uid}.result").read_text(encoding="utf-8")
+
+    assert [_ask(f"1-{i}", "agent") for i in (1, 2, 3)] == ["принято"] * 3
+    assert "бюджет исчерпан" in _ask("1-4", "agent")
+    assert _ask("1-5", "human") == "принято"
+    assert _ask("2-1", "agent") == "принято", "бюджет — на фазу"
+    state = RunState.read(run_dir / "state.json") or {}
+    assert state.get("budget", {}).get("1") == 3
+    assert question_actions("stuck", state, 1) == ["skip", "stop"]
+    assert question_actions("stuck", state, 2) == ["more", "model", "skip", "stop"]
+    assert question_actions("judge_pending", state, 2) == []

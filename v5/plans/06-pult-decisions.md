@@ -244,12 +244,12 @@ self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, 
 
 Меняются старые тесты: `test_question_actions_only_implemented` (`tests/loop/test_decision.py`).
 
-- [ ] `test_more_gives_five_rounds_without_stuck`: фейк без прогресса → `more` → 5 раундов без `stuck`, потом вопрос `fuse`
-- [ ] `test_model_switches_next_round`: `model player opencode:x` → раунд 2 исполнитель `opencode:x`; неизвестный провайдер отклонён
-- [ ] `test_secrets_allow_and_retry`: `secrets` + `allow .env.example` от человека → сдача; `retry` → откат, в промпте player «не создавать: .env»
-- [ ] `test_wait_backoff_then_question`: провайдер `quota` три раза при подменённых паузах → `waiting_limit` трижды, потом новый вопрос
-- [ ] `test_budget_three_per_phase`: агент `retry` ×3 принято, 4-й отклонён «бюджет исчерпан»; человек — без ограничения
-- [ ] реализовать
+- [x] `test_more_gives_five_rounds_without_stuck`: фейк без прогресса → `more` → 5 раундов без `stuck`, потом вопрос `fuse`
+- [x] `test_model_switches_next_round`: `model player opencode:x` → раунд 2 исполнитель `opencode:x`; неизвестный провайдер отклонён
+- [x] `test_secrets_allow_and_retry`: `secrets` + `allow .env.example` от человека → сдача; `retry` → откат, в промпте player «не создавать: .env»
+- [x] `test_wait_backoff_then_question`: провайдер `quota` три раза при подменённых паузах → `waiting_limit` трижды, потом новый вопрос
+- [x] `test_budget_three_per_phase`: агент `retry` ×3 принято, 4-й отклонён «бюджет исчерпан»; человек — без ограничения
+- [x] реализовать
 
 ## Ожидание, аренда агента, автопилот
 

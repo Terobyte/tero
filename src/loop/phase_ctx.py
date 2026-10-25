@@ -76,6 +76,7 @@ class PhaseOutcome:
     stop_text: str = ""
     decider: Any = None
     answer: str = ""
+    extra: Any = None
 
 
 @dataclass

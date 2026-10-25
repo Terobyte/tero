@@ -19,6 +19,8 @@ class ResumeFrom:
     suite_hashes: Any = None
     guarded: Any = None
     link_targets: Any = None
+    grace_until: int = 0
+    forbidden: Any = None
 
 
 def resume_limit(entry: Any, fallback: int) -> int:
