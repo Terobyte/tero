@@ -1,0 +1,4 @@
+{"ts": "2026-10-25T02:43:06.107027+00:00", "kind": "run_start", "plan": "v5/plans/06-pult-decisions.md", "slug": "06-pult-decisions"}
+{"ts": "2026-10-25T02:43:06.107263+00:00", "kind": "compact_config", "player_at_tokens": 0, "judge_at_tokens": 0}
+{"ts": "2026-10-25T02:43:06.229870+00:00", "kind": "phase_start", "phase": "resume со снимка остановленного прогона", "index": 0}
+{"ts": "2026-10-25T03:03:19.827860+00:00", "kind": "player", "phase": "resume со снимка остановленного прогона", "round": 1, "model": "meta-model-api/muse-spark-1.3-contributor"}
