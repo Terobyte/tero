@@ -261,6 +261,51 @@ async def test_green_tester_file_is_deleted(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_tester_timeout_falls_back_to_player(tmp_path: Path):
+    repo = _repo(tmp_path)
+
+    def tester_timeout(role, _kw):
+        assert role == "tester"
+        return {"__unavailable__": True, "error": "tester timed out", "kind": "timeout"}
+
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(no_ship([finding(route="tester")])),
+            tester_timeout,
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, _ = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert agents.calls.count("player") == 2
+    assert "tester" in agents.calls
+
+
+@pytest.mark.asyncio
+async def test_tester_auth_still_halts(tmp_path: Path):
+    repo = _repo(tmp_path)
+
+    def tester_auth(role, _kw):
+        assert role == "tester"
+        return {"__unavailable__": True, "error": "bad key", "kind": "auth"}
+
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(no_ship([finding(route="tester")])),
+            tester_auth,
+        ],
+    )
+    outcome, _ = await _run(repo, agents)
+    assert outcome.status == "stop"
+    assert outcome.reason == "provider_auth"
+
+
+@pytest.mark.asyncio
 async def test_player_cannot_edit_protected_tester_file(tmp_path: Path, capsys):
     repo = _repo(tmp_path)
 

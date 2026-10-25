@@ -19,7 +19,8 @@ class TesterStep:
         self.guard_plan = guard_plan
 
     async def _tester(self) -> bool | None:
-        """True/False — обычный исход; None — auth/quota, caller делает halt."""
+        """True — tests written or tester skipped/failed over to the player;
+        False — unused; None — auth/quota, caller makes halt."""
         routed = [
             item
             for item in self.ctx.st.open_findings
@@ -62,7 +63,14 @@ class TesterStep:
             if self.ctx.st.last_provider_kind == "quota":
                 self.ctx.st.stop_reason = "provider_quota"
                 return None
-            return False
+            # Transient failure (timeout, unavailable): don't stop the run.
+            # The player repairs without red tests; the tester stays off for
+            # the rest of the phase so the next rounds don't burn a call on it.
+            kind = self.ctx.st.last_provider_kind or "provider_unavailable"
+            self.ctx.ledger.event("tester_fallback", error_kind=kind)
+            print(f"  tester упал ({kind}) — дальше правит player", flush=True)
+            self.ctx.tester_enabled = False
+            return True
         self.ctx.emit(
             "tester",
             round=self.ctx.st.round,
