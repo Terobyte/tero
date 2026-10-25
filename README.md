@@ -102,7 +102,7 @@ tero history                       # recent runs: slug, stop reason, phases ship
 ```
 tero go [--plan PLAN] [--working-dir DIR] [--no-menu] [--verbose]
         [--player P[:MODEL]] [--judge P[:MODEL]] [--tester P[:MODEL]]
-        [--escalation P[:MODEL]] [--no-escalation]
+        [--escalation P[:MODEL]] [--no-escalation] [--no-tester]
         [--test-command CMD] [--test-command-scoped CMD]
         [--max-rounds N]
 tero history [--limit N] [--working-dir DIR]
@@ -110,7 +110,7 @@ tero history [--limit N] [--working-dir DIR]
 
 Short forms: `-p`, `-w`, `-v`, `-l`. The plan path is relative to `--working-dir` (default `.`). The default plan file is `requirements.md`. `tero history` shows 10 runs by default.
 
-Role flags take `provider` or `provider:model`, for example `--judge claude:opus` or `--player cursor`. When no test command is set, tero auto-detects one: pytest (`pyproject.toml`, `pytest.ini`, `conftest.py` or `tests/*.py`), then npm (a `test` script), then `cargo test`, then `go test ./...`. The tester needs a *scoped* command, one that can run single files. pytest and npm have one, and you can set your own with `--test-command-scoped` (use `{files}` as the placeholder). Without one, findings meant for the tester go to the player.
+Role flags take `provider` or `provider:model`, for example `--judge claude:opus` or `--player cursor`. When no test command is set, tero auto-detects one: pytest (`pyproject.toml`, `pytest.ini`, `conftest.py` or `tests/*.py`), then npm (a `test` script), then `cargo test`, then `go test ./...`. The tester needs a *scoped* command, one that can run single files. pytest and npm have one, and you can set your own with `--test-command-scoped` (use `{files}` as the placeholder). Without one, findings meant for the tester go to the player. `--no-tester` does the same on purpose: the tester is never called.
 
 ### Exit codes
 
@@ -143,7 +143,7 @@ Default roles:
 | tester | `gemini` | `gemini-3.8-flash` |
 | escalation | `claude` | `opus` (an empty provider turns escalation off) |
 
-Timeouts: player 600 s, judge 600 s, tester 300 s, test gate 900 s. `max_rounds` is 15.
+Timeouts: player 3600 s, judge 1200 s, tester 300 s, test gate 900 s. `max_rounds` is 15.
 
 YAML files use a `defaults:` section with `Config` field names (including `player_effort`, `judge_effort`, … which are only settable here or in the menu). A `providers:` section overrides per-provider settings such as `command`, `default_model` or `type` (for running several accounts of one CLI):
 

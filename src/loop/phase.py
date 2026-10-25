@@ -162,7 +162,8 @@ class _PhaseRunner:
             cfg=cfg,
             agents=agents,
             test_command=test_command,
-            tester_enabled=bool(test_command and test_command.run_files),
+            tester_enabled=not cfg.no_tester
+            and bool(test_command and test_command.run_files),
             ledger=ledger,
             run_dir=self.run_dir,
             state_io=RunState(self.run_dir / "state.json"),
@@ -785,7 +786,6 @@ class _PhaseRunner:
             "stop",
             status=Status.STOPPED.value,
             reason=reason,
-            role="judge",
             text=text,
         )
         self.ledger.event(

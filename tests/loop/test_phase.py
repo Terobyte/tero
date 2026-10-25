@@ -285,6 +285,44 @@ async def test_tester_timeout_falls_back_to_player(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_no_tester_sends_tester_finding_to_player(tmp_path: Path):
+    repo = _repo(tmp_path)
+    agents = FakeAgents(
+        repo,
+        [
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'nope'\n"),
+            judge_returns(no_ship([finding(route="tester", problem="returns nope")])),
+            player_writes(repo, "src/greet.py", "def greet():\n    return 'hello'\n"),
+            judge_returns(ship(previous=[{"id": "F1", "state": "resolved"}])),
+        ],
+    )
+    outcome, _ = await _run(repo, agents, _cfg(no_tester=True))
+    assert outcome.status == "ship"
+    assert "tester" not in agents.calls
+
+
+@pytest.mark.asyncio
+async def test_player_timeout_stop_event_names_player(tmp_path: Path):
+    import json
+
+    repo = _repo(tmp_path)
+
+    def player_timeout(role, _kw):
+        assert role == "player"
+        return {"__unavailable__": True, "error": "timed out", "kind": "timeout"}
+
+    agents = FakeAgents(repo, [player_timeout, player_timeout])
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "stop"
+    events = [
+        json.loads(line)
+        for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
+    ]
+    stop = [e for e in events if e["type"] == "stop"]
+    assert stop and stop[-1]["role"] == "player"
+
+
+@pytest.mark.asyncio
 async def test_tester_auth_still_halts(tmp_path: Path):
     repo = _repo(tmp_path)
 

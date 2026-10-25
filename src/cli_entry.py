@@ -77,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     go_parser.add_argument("--tester", dest="tester_spec", default=None)
     go_parser.add_argument("--escalation", dest="escalation_spec", default=None)
     go_parser.add_argument("--no-escalation", action="store_true", default=False)
+    go_parser.add_argument("--no-tester", action="store_true", default=False)
     go_parser.add_argument("--decisions", action="store_true", default=False)
     go_parser.add_argument("--detach", action="store_true", default=False)
     go_parser.add_argument("--owner", action="store_true", default=False, help=argparse.SUPPRESS)
@@ -150,8 +151,12 @@ async def run_go(args, config: Config | None = None):
         f"{' ' + loop_cfg.player_effort if loop_cfg.player_effort else ''})  "
         f"judge {loop_cfg.judge_provider}({loop_cfg.judge_model}"
         f"{' ' + loop_cfg.judge_effort if loop_cfg.judge_effort else ''})  "
-        f"tester {loop_cfg.tester_provider}({loop_cfg.tester_model}"
-        f"{' ' + loop_cfg.tester_effort if loop_cfg.tester_effort else ''})",
+        + (
+            "tester выкл"
+            if loop_cfg.no_tester
+            else f"tester {loop_cfg.tester_provider}({loop_cfg.tester_model}"
+            f"{' ' + loop_cfg.tester_effort if loop_cfg.tester_effort else ''})"
+        ),
         flush=True,
     )
     print(f"тесты {loop_cfg.test_command or 'автодетект'}", flush=True)

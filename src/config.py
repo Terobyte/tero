@@ -124,8 +124,8 @@ class Config:
     test_command: str = ""
     test_command_scoped: str = ""
     hud: bool = True
-    player_timeout_s: int = 600
-    judge_timeout_s: int = 600
+    player_timeout_s: int = 3600
+    judge_timeout_s: int = 1200
     tester_timeout_s: int = 300
     test_timeout_s: int = 900
     stall_timeout_s: int = 900
@@ -134,6 +134,7 @@ class Config:
     compact_player_at_tokens: int = 0
     compact_judge_at_tokens: int = 0
     decisions: bool = False
+    no_tester: bool = False
 
 
 _ENV_MAP = {
@@ -481,6 +482,9 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     max_rounds = getattr(args, "max_rounds", None)
     if max_rounds is not None:
         cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
+
+    if getattr(args, "no_tester", False):
+        cfg = dataclasses.replace(cfg, no_tester=True)
 
     if getattr(args, "no_escalation", False):
         cfg = dataclasses.replace(cfg, escalation_provider="", escalation_model="", escalation_effort="")

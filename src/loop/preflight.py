@@ -132,8 +132,9 @@ def _roles(cfg: Config) -> list[tuple[str, str, str]]:
     rows = [
         ("player", cfg.player_provider, cfg.player_model),
         ("judge", cfg.judge_provider, cfg.judge_model),
-        ("tester", cfg.tester_provider, cfg.tester_model),
     ]
+    if not cfg.no_tester:
+        rows.append(("tester", cfg.tester_provider, cfg.tester_model))
     if cfg.escalation_provider:
         rows.append(("escalation", cfg.escalation_provider, cfg.escalation_model))
     return rows

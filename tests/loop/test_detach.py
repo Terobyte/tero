@@ -283,3 +283,9 @@ def test_go_decisions_flag():
         escalation_spec=None, decisions=False, detach=False, owner=False,
     ))
     assert plain.decisions is False
+
+
+def test_owner_argv_passes_no_tester(tmp_path):
+    argv = detach_mod.owner_argv(_go_args(tmp_path, no_tester=True))
+    assert "--no-tester" in argv
+    assert "--no-tester" not in detach_mod.owner_argv(_go_args(tmp_path))

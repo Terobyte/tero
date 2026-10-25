@@ -438,3 +438,20 @@ def test_family_key_splits_other_by_vendor():
     assert family_key("cursor:composer-2.5") == family_key("cursor:composer-9")
     assert family_key("cursor:cursor-grok-4.6") == family_key("opencode:openrouter/x-ai/grok-4:free")
     assert family_key("codex:gpt-5.6-terra") == "openai"
+
+
+def test_apply_cli_args_no_tester():
+    args = SimpleNamespace(
+        plan=None, player_spec=None, judge_spec=None, tester_spec=None,
+        escalation_spec=None, no_escalation=False, test_command=None,
+        test_command_scoped=None, max_rounds=None, verbose=False,
+    )
+    assert apply_cli_args(Config(), args).no_tester is False
+    args.no_tester = True
+    assert apply_cli_args(Config(), args).no_tester is True
+
+
+def test_default_role_timeouts():
+    cfg = Config()
+    assert cfg.player_timeout_s == 3600
+    assert cfg.judge_timeout_s == 1200

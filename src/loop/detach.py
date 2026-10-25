@@ -40,6 +40,7 @@ _OWNER_FLAGS: tuple[tuple[str, str, bool], ...] = (
     ("test_command_scoped", "--test-command-scoped", True),
     ("max_rounds", "--max-rounds", True),
     ("no_escalation", "--no-escalation", False),
+    ("no_tester", "--no-tester", False),
 )
 
 
