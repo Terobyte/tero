@@ -372,15 +372,15 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   - Возраст последнего события — не отдельной строкой, а мелко в конце шапки:
     `Фаза 4/9 · раунд 2 · 06:12 · 3 с`; `last_event_age_s` > 60 → цифра жёлтая, > 300 → красная.
 
-- [ ] `test_window_uses_inline_html_no_server`: фейковый `webview` → `create_window` получил `html=`, не `url=`; `frameless`, `on_top`, `focus=False`; `start(http_server=False)`
-- [ ] `test_window_uses_inline_html_no_server` также: `transparent=True`, `vibrancy=True`
-- [ ] `test_view_html_is_self_contained`: в `view.html` нет `http://`, `https://`, внешних `src=`/`href=`; шрифт через `data:`
-- [ ] `test_age_color_thresholds`: функция цвета возраста в `view.py` (или данные моста): 3 → обычный, 61 → жёлтый, 301 → красный
-- [ ] `test_bridge_view_reads_run_files`: временная папка прогона со `state.json` и `stream.jsonl` → `bridge.view()` отдаёт `header` и `doing`; битый `state.json` → прошлый снимок
-- [ ] `test_no_focus_steal_order`: импорт `webview.platforms.cocoa` → `no_focus_steal` → `start`; после него `activateIgnoringOtherApps_` не активирует
-- [ ] `test_position_and_mode_persist`: `save_pos` + `toggle` → `hud.json`; новый запуск читает их
-- [ ] `test_hud_main_no_webview_hint`: без `webview` → подсказка установки, код 1 (как сейчас)
-- [ ] реализовать
+- [x] `test_window_uses_inline_html_no_server`: фейковый `webview` → `create_window` получил `html=`, не `url=`; `frameless`, `on_top`, `focus=False`; `start(http_server=False)`
+- [x] `test_window_uses_inline_html_no_server` также: `transparent=True`, `vibrancy=True`
+- [x] `test_view_html_is_self_contained`: в `view.html` нет `http://`, `https://`, внешних `src=`/`href=`; шрифт через `data:`
+- [x] `test_age_color_thresholds`: функция цвета возраста в `view.py` (или данные моста): 3 → обычный, 61 → жёлтый, 301 → красный
+- [x] `test_bridge_view_reads_run_files`: временная папка прогона со `state.json` и `stream.jsonl` → `bridge.view()` отдаёт `header` и `doing`; битый `state.json` → прошлый снимок
+- [x] `test_no_focus_steal_order`: импорт `webview.platforms.cocoa` → `no_focus_steal` → `start`; после него `activateIgnoringOtherApps_` не активирует
+- [x] `test_position_and_mode_persist`: `save_pos` + `toggle` → `hud.json`; новый запуск читает их
+- [x] `test_hud_main_no_webview_hint`: без `webview` → подсказка установки, код 1 (как сейчас)
+- [x] реализовать
 
 ## Одно окно HUD на машину
 

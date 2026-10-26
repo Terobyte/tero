@@ -66,6 +66,19 @@ def atomic_write_json(
     atomic_write_text(path, json.dumps(data, ensure_ascii=ensure_ascii), mode=mode)
 
 
+def append_text(
+    path: str | Path,
+    text: str,
+    *,
+    encoding: str | None = "utf-8",
+) -> None:
+    """Append ``text`` to ``path`` (creates parents). For logs, not snapshots."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "a", encoding=encoding) as fh:
+        fh.write(text)
+
+
 def read_json_dict(path: str | Path) -> dict[str, Any] | None:
     """The JSON object in ``path``; None when missing, broken or not a dict."""
     try:

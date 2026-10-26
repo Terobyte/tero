@@ -4,7 +4,7 @@
 --no-hud / hud:false -> not macOS -> SSH -> no pywebview (+ hint).
 pywebview is detected cheaply via `importlib.util.find_spec`, never imported.
 
-The window itself (view.html) is T4b: `tero hud --run <dir>` without
+The window lives in `src/hud/view.py`; `tero hud --run <dir>` without
 pywebview exits with the install hint.
 """
 
@@ -106,7 +106,7 @@ def maybe_launch_hud(cfg: Any, run_dir: "str | Path") -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run `tero hud --run <run_dir>` — window comes in T4b."""
+    """Run `tero hud --run <run_dir>`: open the window (`src/hud/view.py`)."""
     args = list(sys.argv[1:] if argv is None else argv)
     run_dir = ""
     for i, token in enumerate(args):
@@ -118,9 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     if importlib.util.find_spec("webview") is None:
         print(HUD_HINT, file=sys.stderr)
         return 1
-    from src.hud import view  # noqa: F401  (T4b: the window)
+    from src.hud import view
 
-    raise NotImplementedError("HUD window is T4b")
+    return view.run(run_dir)
 
 
 if __name__ == "__main__":
