@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any
 
 
+from src.loop.resume_kill import kill_hung_owner  # noqa: F401  (re-export)
+
+
+from src.loop.resume_crash import dispatch  # noqa: F401  (re-export)
+
+
 @dataclass
 class ResumeFrom:
     ref: str = ""
@@ -229,6 +235,27 @@ def _continuation_block(repo: Path, base: str, ref: str) -> str:
     return diff[:20_000] + f"\n…обрезано, полный дифф: `git diff {base} {ref}`" if len(diff) > 20_000 else diff
 
 
+def make_wait_runner(phase, repo_path, plan_path, preamble, cfg, agents,
+                     session, ledger, base, round_no, state):
+    """_PhaseRunner с восстановленным вопросом: тот же id и round."""
+    from src.loop.phase import _PhaseRunner
+
+    question = state.get("question") if isinstance(state.get("question"), dict) else {}
+    limit = state.get("limit_wait") if isinstance(state.get("limit_wait"), dict) else {}
+    runner = _PhaseRunner(
+        phase=phase, repo=repo_path, plan_path=plan_path, preamble=preamble,
+        cfg=cfg, agents=agents, test_command=None, ledger=ledger(),
+        total_phases=0, start_with_judge=False, start_checkpoint=base,
+        start_round=round_no, resume_from=None, pulse=session.pulse,
+    )
+    runner.start_question = {
+        "status": state.get("status") or "", "reason": state.get("reason") or "",
+        "qid": question.get("id") or state.get("question_id") or "",
+        "waits": limit.get("waits", 0),
+    }
+    return runner
+
+
 def run_branch_head(repo_path, slug):
     """HEAD ветки прогона (не текущего checkout) через rev-parse."""
     name = slug if str(slug).startswith("tero/") else f"tero/{slug}"
@@ -313,57 +340,16 @@ def base_suite_state(repo, base):
         return hashes, guarded, targets
 
 
-class ResumeStep:
-    """Stopped-resume entry: protect+gate on the ref tree, then judge, then normal cycle."""
-
-    def __init__(self, ctx, judge, gate, protect, after_judge, stop_check=None) -> None:
-        self.ctx = ctx
-        self.judge = judge
-        self.gate = gate
-        self.protect = protect
-        self.after_judge = after_judge
-        self.stop_check = stop_check
-
-    def _gate_entry(self, resume_from) -> bool:
-        if not resume_from.gate_first:
-            return True
-        ctx, gate_out = self.ctx, None
-        ctx.st.resume_ref = resume_from.ref
-        ctx.st.resume_base = resume_from.base
-        ctx.st.resume_active = True
-        self.protect()
-        gate = self.gate()
-        ctx.progress()
-        if gate is not None and not gate.ok:
-            gate_out = gate.output
-        else:
-            gate_out = gate.output if gate else "тесты не обнаружены"
-        ctx.st.gate_output = gate_out
-        return gate is None or gate.ok
-
-    async def enter(self, resume_from, start_round):
-        ctx = self.ctx
-        ctx.st.round = start_round
-        ctx.st.judge_failures = 0
-        if resume_from.answer:
-            ctx.st.answer = resume_from.answer
-        if not self._gate_entry(resume_from):
-            return None
-        if self.stop_check is not None:
-            hit = self.stop_check()
-            if hit is not None:
-                return hit
-        ctx.ledger.event("resume_judge", round=ctx.st.round)
-        print(f"  {ctx.tag()} judge {ctx.cfg.judge_provider}({ctx.cfg.judge_model}) …",
-              flush=True)
-        if getattr(resume_from, "judge_reuse_ref", False) and resume_from.ref:
-            verdict = await self.judge._judge(resume_from.ref)
-        else:
-            verdict = await self.judge._judge()
-        ctx.progress()
-        outcome = await self.after_judge(verdict)
-        if outcome is not None and getattr(outcome, "status", "") == "ship":
-            ctx.progress()
-        elif outcome is None:
-            ctx.st.round = start_round
-        return outcome
+from src.loop.resume_crash import (  # noqa: F401  (re-export)
+    crash_decision,
+    crash_phase_shipped,
+    crash_rollback_to_head,
+    crash_tree_of,
+    dispatch,
+)
+from src.loop.resume_lock import (  # noqa: F401  (re-export)
+    _remove_index_lock,
+    acquire_for_crash,
+)
+from src.loop.resume_recover import crash_resume  # noqa: F401  (re-export)
+from src.loop.resume_entry import ResumeStep  # noqa: F401  (re-export)

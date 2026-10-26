@@ -1,4 +1,4 @@
-"""`tero wait` exit codes and the `watch` anti-death window."""
+"""`tero wait` exit codes and the hang rule by `progress_ts`."""
 
 from __future__ import annotations
 
@@ -34,10 +34,13 @@ def _write_state(run_dir: Path, **fields) -> None:
     path.write_text(json.dumps(current), encoding="utf-8")
 
 
-def _write_pulse(run_dir: Path, *, progress: int = 0, alive: float = 0.0) -> None:
+def _write_pulse(run_dir: Path, *, progress: int = 0, alive: float = 0.0,
+                 progress_ts: float | None = None) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "pulse").write_text(
-        json.dumps({"alive": alive, "progress": progress, "progress_ts": alive}),
+        json.dumps({"alive": alive, "progress": progress,
+                    "progress_ts": (alive if progress_ts is None
+                                    else progress_ts)}),
         encoding="utf-8",
     )
 
@@ -92,7 +95,8 @@ def test_wait_hang_by_progress(tmp_path: Path):
 
     run_dir = tmp_path / "run1"
     _write_state(run_dir, status="running", hang_after_s=10, **_alive_pid())
-    _write_pulse(run_dir, progress=3, alive=1234.5)
+    _write_pulse(run_dir, progress=3, alive=1234.5,
+                 progress_ts=time.time() - 1000.0)
     fc = FakeClock()
     assert (
         wait_run(run_dir, repo, clock=fc.clock, sleep=fc.sleep, poll_s=30) == 5
@@ -102,7 +106,7 @@ def test_wait_hang_by_progress(tmp_path: Path):
     # the timeout fires first.
     run_dir = tmp_path / "run2"
     _write_state(run_dir, status="waiting_human", hang_after_s=10, **_alive_pid())
-    _write_pulse(run_dir, progress=3, alive=1234.5)
+    _write_pulse(run_dir, progress=3, alive=1234.5, progress_ts=time.time())
     fc = FakeClock()
     assert (
         wait_run(
@@ -115,7 +119,8 @@ def test_wait_hang_by_progress(tmp_path: Path):
     # ...but past 120 s in waiting_human it is a hang.
     run_dir = tmp_path / "run3"
     _write_state(run_dir, status="waiting_human", hang_after_s=10, **_alive_pid())
-    _write_pulse(run_dir, progress=3, alive=1234.5)
+    _write_pulse(run_dir, progress=3, alive=1234.5,
+                 progress_ts=time.time() - 1000.0)
     fc = FakeClock()
     assert (
         wait_run(run_dir, repo, clock=fc.clock, sleep=fc.sleep, poll_s=200) == 5
@@ -123,33 +128,32 @@ def test_wait_hang_by_progress(tmp_path: Path):
 
 
 def test_wait_sleep_is_not_death(tmp_path: Path):
-    """Frozen monotonic clock + hour-old wall clock: the machine slept."""
+    """Stale wall clock alone is not death: owner pid is gone, lock is free."""
     repo = _repo(tmp_path)
     run_dir = tmp_path / "run"
-    _write_state(run_dir, status="running", hang_after_s=10, **_alive_pid())
-    _write_pulse(run_dir, progress=7, alive=time.time() - 3600)
+    _write_state(run_dir, status="running", hang_after_s=10, **_dead_pid())
+    _write_pulse(run_dir, progress=7, alive=time.time(),
+                 progress_ts=time.time())
     frozen = FakeClock(500.0)
     code = wait_run(
         run_dir, repo, timeout_s=0, poll_s=0,
         clock=frozen.clock, sleep=lambda s: None,
     )
-    assert code == 6
+    assert code == 5
 
 
-def test_watch_survives_short_waits(tmp_path: Path):
+def test_wait_fresh_progress_survives_short_waits(tmp_path: Path):
+    """Fresh progress_ts below the hang threshold: short waits time out."""
     repo = _repo(tmp_path)
     run_dir = tmp_path / "run"
     _write_state(run_dir, status="running", hang_after_s=100, **_alive_pid())
-    _write_pulse(run_dir, progress=1, alive=1234.5)
+    _write_pulse(run_dir, progress=1, alive=1234.5,
+                 progress_ts=time.time())
     fc = FakeClock()
     kw = {"clock": fc.clock, "sleep": fc.sleep, "poll_s": 20}
 
     assert wait_run(run_dir, repo, timeout_s=30, **kw) == 6
-    first_seen = json.loads((run_dir / "watch").read_text(encoding="utf-8"))["seen_mono"]
     assert wait_run(run_dir, repo, timeout_s=30, **kw) == 6
-    assert wait_run(run_dir, repo, timeout_s=30, **kw) == 5
-    kept = json.loads((run_dir / "watch").read_text(encoding="utf-8"))
-    assert kept["seen_mono"] == first_seen
 
 
 def test_wait_judge_pending_is_3(tmp_path: Path):

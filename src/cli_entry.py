@@ -100,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--working-dir", "-w", type=str, default=".")
     resume_parser.add_argument("--run", type=str, default=None)
     resume_parser.add_argument("--answer", type=str, default="")
+    resume_parser.add_argument("--force", action="store_true", default=False)
 
     hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
     hud_parser.add_argument("--run", type=str, default=None)
@@ -216,9 +217,9 @@ async def run_resume(args) -> int:
     if run_dir is None:
         return 1
     state = RunState.read(run_dir / "state.json") or {}
-    status = state.get("status") or ""
     answer = getattr(args, "answer", "") or ""
-    refusal = resume_refusal(state, answer)
+    force = bool(getattr(args, "force", False))
+    refusal = resume_refusal(state, answer, force)
     if refusal:
         print(f"стоп: {refusal} (код 1)", flush=True)
         return 1
@@ -226,7 +227,7 @@ async def run_resume(args) -> int:
     cfg_fields = cfg_state.get("fields") if isinstance(cfg_state.get("fields"), dict) else cfg_state
     working_dir = cfg_fields.get("working_dir") or str(repo)
     agents = LiveAgents(working_dir, verbose=bool(cfg_fields.get("verbose", False)))
-    outcome = await resume_run(repo, run_dir, agents=agents, answer=answer)
+    outcome = await resume_run(repo, run_dir, agents=agents, answer=answer, force=force)
     if outcome.reason:
         print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
     if outcome.run_dir:

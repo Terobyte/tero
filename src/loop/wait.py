@@ -1,7 +1,7 @@
 """Sleep/wake core for the agent-host: `tero wait` and `tero status`.
 
 Only reads `state.json` (written solely by the run owner) plus the
-`pulse`/`watch` side files, and writes the `lease` side file
+`pulse` side files, and writes the `lease` side file
 (`<run_dir>/lease` — аренда агента). Never writes `state.json`,
 never touches git. All disk failures are swallowed: a broken side file
 looks like "no info", not like death.
@@ -10,14 +10,12 @@ looks like "no info", not like death.
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import scrub_data
-from src.fsio import atomic_write_json, read_json_dict
+from src.fsio import read_json_dict
 from src.hud.registry import pid_is_alive
 
 DONE = 0
@@ -33,22 +31,29 @@ _WAITING_THRESHOLD_S = 120.0
 _ALIVE_STALE_S = 600.0
 
 
-def boot_id() -> str:
-    """Stable id of the current OS boot; "" when unknown."""
+def _hung_threshold(state: dict) -> float | None:
+    status = (state or {}).get("status") or ""
+    if status == "running":
+        return (state or {}).get("hang_after_s")
+    if status in _WAITING_STATUSES:
+        return _WAITING_THRESHOLD_S
+    return None
+
+
+def is_hung(state: dict, pulse: dict | None, now: float) -> bool:
+    """Shared hung-owner rule for wait_run and resume."""
+    threshold = _hung_threshold(state or {})
+    if not isinstance(threshold, (int, float)) or threshold <= 0:
+        return False
+    ts = (pulse or {}).get("progress_ts") if isinstance(pulse, dict) else None
+    if not isinstance(ts, (int, float)):
+        return False
+    if not pid_is_alive((state or {}).get("pid"), (state or {}).get("pid_started")):
+        return False
     try:
-        if sys.platform == "darwin":
-            proc = subprocess.run(
-                ["sysctl", "-n", "kern.bootsessionuuid"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                return proc.stdout.strip()
-            return ""
-        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    except Exception:
-        return ""
+        return (float(now) - float(ts)) >= float(threshold)
+    except (TypeError, ValueError):
+        return False
 
 
 def _read_state(run_dir: Path) -> dict[str, Any]:
@@ -57,22 +62,6 @@ def _read_state(run_dir: Path) -> dict[str, Any]:
 
 def _read_pulse(run_dir: Path) -> dict[str, Any] | None:
     return read_json_dict(run_dir / "pulse")
-
-
-def _read_watch(run_dir: Path) -> dict[str, Any] | None:
-    return read_json_dict(run_dir / "watch")
-
-
-def _write_watch(
-    run_dir: Path, boot: str, progress: Any, seen_mono: float
-) -> None:
-    """Record when this progress value was first seen. Best effort."""
-    try:
-        payload = {"boot_id": boot, "progress": progress, "seen_mono": seen_mono}
-        run_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(run_dir / "watch", payload, mode=0o600)
-    except Exception:
-        pass
 
 
 def done_line(status: str, debt: list | None) -> str:
@@ -146,7 +135,6 @@ def wait_run(
             agent_pid = None
     run_path = Path(run_dir)
     repo_path = Path(repo)
-    boot = boot_id()
     start = clock()
     last_alive: Any = None
     alive_since = start
@@ -170,40 +158,22 @@ def wait_run(
             return _exit(NEED_AGENT)
 
         if pid_is_alive(state.get("pid"), state.get("pid_started")):
-            now = clock()
             pulse = _read_pulse(run_path)
             if pulse is not None:
                 progress = pulse.get("progress")
                 if isinstance(progress, (int, float)):
-                    watch = _read_watch(run_path)
-                    if (
-                        watch is not None
-                        and watch.get("boot_id") == boot
-                        and watch.get("progress") == progress
-                        and isinstance(watch.get("seen_mono"), (int, float))
-                    ):
-                        seen = watch["seen_mono"]
-                    else:
-                        seen = now
-                        _write_watch(run_path, boot, progress, seen)
-                    if status == "running":
-                        threshold = state.get("hang_after_s")
-                    elif status in _WAITING_STATUSES:
-                        threshold = _WAITING_THRESHOLD_S
-                    else:
-                        threshold = None
-                    if (
-                        isinstance(threshold, (int, float))
-                        and threshold > 0
-                        and now - seen >= threshold
-                    ):
-                        return DEAD
+                    try:
+                        if bool(is_hung(state, pulse, time.time())):
+                            return DEAD
+                    except Exception:
+                        pass
                 alive_val = pulse.get("alive")
                 if isinstance(alive_val, (int, float)):
+                    now_mono = clock()
                     if last_alive is None or alive_val != last_alive:
                         last_alive = alive_val
-                        alive_since = now
-                    elif now - alive_since >= _ALIVE_STALE_S:
+                        alive_since = now_mono
+                    elif now_mono - alive_since >= _ALIVE_STALE_S:
                         return DEAD
         else:
             try:

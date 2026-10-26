@@ -171,6 +171,7 @@ async def resume(
     *,
     agents: AgentRunner,
     answer: str = "",
+    force: bool = False,
 ) -> RunOutcome:
     """Continue a stopped run from its state.json. Only judge_pending yet."""
     from src.loop.stream import Stream
@@ -179,7 +180,7 @@ async def resume(
     run_path = Path(run_dir).expanduser().resolve()
     state = RunState.read(run_path / "state.json") or {}
     status = state.get("status") or ""
-    cfg, refusal = _resume_config(state, answer)
+    cfg, refusal = _resume_config(state, answer, force)
     if cfg is None:
         return _refuse(run_path, refusal)
     ref = state.get("snapshot_ref") or ""
@@ -188,13 +189,15 @@ async def resume(
     phase_index = state.get("phase_index", 0) or 0
     round_no = state.get("round", 1) or 1
 
+    from src.loop.resume_lock import _remove_index_lock, acquire_for_crash as _acq
     from src.loop.resume_step import pre_lock_refusal as _e
 
     if (_o := _e(repo_path, run_path, cfg, state)) is not None:
         return _o
-    lock = acquire(repo_path)
-    if lock is None:
-        return _refuse(run_path, "another run holds this repo")
+    lock, denied = _acq(repo_path, run_path, state)
+    if denied is not None:
+        return denied
+    _remove_index_lock(repo_path)
 
     done_io = RunState(run_path / "state.json")
     stream = Stream(run_path / "stream.jsonl")
@@ -248,13 +251,15 @@ async def resume(
                 saved=state, slug=slug, answer=answer, phase_runner=run_phase,
                 restore_stopped=_restore_stopped,
             )
-        return await _resume_phases(
-            repo_path, run_path, cfg,
+        from src.loop.resume_recover import crash_resume as _cr
+
+        return await _cr(
+            repo_path, run_path, cfg, state, force,
             agents=agents, session=session, write=_write, ledger=_ledger,
             restore_pending=_restore_pending, slug=slug, base=base, ref=ref,
-            phase_index=phase_index, phase_title=phase_title, round_no=round_no,
-            status=status,
-        )
+            phase_index=phase_index, phase_title=phase_title,
+            round_no=round_no, status=status, phase_runner=run_phase,
+            judge_resume=_resume_phases)
 
 
 async def _resume_phases(
