@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import dataclasses
 import re
 import warnings
@@ -141,21 +140,12 @@ class Config:
     agent_timeout_s: int = 1800
     autopilot_grace_s: int = 900
     wake_command: str = ""
+    jev_enabled: bool = False
 
 
-_ENV_MAP = {
-    "TERO_PLAYER_PROVIDER": "player_provider",
-    "TERO_PLAYER_MODEL": "player_model",
-    "TERO_JUDGE_PROVIDER": "judge_provider",
-    "TERO_JUDGE_MODEL": "judge_model",
-    "TERO_TESTER_PROVIDER": "tester_provider",
-    "TERO_TESTER_MODEL": "tester_model",
-    "TERO_ESCALATION_PROVIDER": "escalation_provider",
-    "TERO_ESCALATION_MODEL": "escalation_model",
-    "TERO_TEST_COMMAND": "test_command",
-    "TERO_TEST_COMMAND_SCOPED": "test_command_scoped",
-    "TERO_GATE_SCOPE": "gate_scope",
-}
+from src.config_env import _ENV_MAP, apply_env  # noqa: E402,F401
+
+__all__ = ["_ENV_MAP", "apply_env"]
 
 # Roles whose empty provider/model/effort means "not set, keep default".
 # Escalation is excluded: "" there is a valid value (escalation off).
@@ -420,21 +410,7 @@ def resolve_config(cli_args: dict) -> Config:
             merged[key] = value
 
     # Env overrides
-    for env_key, cfg_key in _ENV_MAP.items():
-        raw = os.environ.get(env_key)
-        if not raw:
-            continue
-        if cfg_key.endswith("_provider"):
-            current = merged.get(cfg_key, Config.__dataclass_fields__[cfg_key].default)
-            try:
-                same = normalize_provider(raw) == normalize_provider(str(current))
-            except UnknownProviderError:
-                same = raw == current
-            if not same:
-                # Same as the menu: a new provider does not inherit the old model.
-                # The matching TERO_*_MODEL comes next in _ENV_MAP and wins.
-                merged[cfg_key.replace("_provider", "_model")] = ""
-        merged[cfg_key] = raw
+    apply_env(merged, normalize_provider)
 
     # CLI overrides (highest priority, skip None)
     for key, value in cli.items():

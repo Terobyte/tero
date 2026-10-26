@@ -26,8 +26,8 @@ from src.loop.judge_prompt import (
 )
 from src.loop.prompts import needs_user_reask_block
 from src.loop.schemas import ValidateCtx
-from src.loop.state import RunState, Status
-from src.loop.transition import phase_transition
+from src.loop.pending import stop_judge_pending  # noqa: F401
+from src.loop.situation_step import maybe_query_jev  # noqa: F401
 
 
 class JudgeStep:
@@ -254,39 +254,9 @@ class JudgeStep:
         return self._apply_verdict(data)
 
     def _stop_judge_pending(self, reason: str = "judge_failed") -> PhaseOutcome:
-        state = RunState.read(self.ctx.run_dir / "state.json") or {}
-        ref = state.get("snapshot_ref") or ""
-        if reason in ("judge_auth", "judge_quota"):
-            provider = self.ctx.cfg.judge_provider or "?"
-            text = self.ctx.provider_text("judge", provider) + " `tero resume` после входа"
-        elif reason == "needs_user":
-            question = self.ctx.st.user_question or ""
-            text = f"нужен человек: `{question}`; `tero review`, `tero resume`"
-        else:
-            text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
-        try:
-            decisions = bool(self.ctx.cfg.decisions)
-        except Exception:
-            decisions = False
-        if decisions:
-            from src.loop.decision_step import DecisionStep
+        from src.loop.pending import stop_judge_pending
 
-            step = DecisionStep(self.ctx, self.rollback_with_snapshot)
-            return step.jp_open(reason, text, ref)
-        phase_transition(
-            self.ctx,
-            status=Status.JUDGE_PENDING.value,
-            reason=reason,
-            text=text,
-            ref=ref,
-        )
-        return PhaseOutcome(
-            status="judge_pending",
-            reason=reason,
-            rounds=self.ctx.st.round,
-            escalated=self.ctx.st.escalated,
-            stop_text=text,
-        )
+        return stop_judge_pending(self, reason)
 
     def _apply_verdict(self, data: dict[str, Any]) -> _Next:
         verdict = data.get("verdict")
@@ -299,6 +269,8 @@ class JudgeStep:
         findings = data.get("findings") or []
         self._discard_tests(findings)
         previous = {row["id"]: row["state"] for row in data.get("previous") or []}
+        n_closed = sum(1 for v in previous.values() if v == "resolved")
+        maybe_query_jev(self.ctx, findings, n_closed=n_closed)
         if in_continuation(self.ctx.st):
             return self._apply_verdict_continuation(findings, previous)
         if stalled(self.ctx.st, previous) and self.no_progress():

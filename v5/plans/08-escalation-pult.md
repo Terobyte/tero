@@ -116,14 +116,14 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
 - **Сбой jev не трогает цикл:** нет ключа, сеть, не-200, мусор, таймаут → событие `jev_sev` с `error`
   (без ключа и без тела ответа), раунд идёт дальше. `jev_enabled=False` → вызова нет вовсе.
 
-- [ ] `test_redact`: токен посреди 500-символьной строки вырезан; `src/loop/phase.py` и `relay/src/worker.js` целы; путь из `secret_paths` → имя файла
-- [ ] `test_jev_body_matches_bench`: тело запроса = как в бенче, без `polishing`, `problem` прошёл `redact` и обрезан до 600
-- [ ] `test_jev_splits_over_8_and_sorts_numerically`: 11 находок → два вызова; `s10` попадает на своё место
-- [ ] `test_jev_skips_discard_test`: находка `discard_test` в запрос не идёт, `sev` выровнен по остальным
-- [ ] `test_jev_failure_does_not_block`: `post=` бросает / отдаёт 402 / спит дольше общего таймаута → событие с `error`, ключа в событии нет, фаза продолжается
-- [ ] `test_jev_off_by_default`: без флага `post=` не зовётся
-- [ ] вынос из `judge_step.py` и `config.py` сделан, старые имена импортируются, `test_structure` зелёный
-- [ ] реализовать
+- [x] `test_redact`: токен посреди 500-символьной строки вырезан; `src/loop/phase.py` и `relay/src/worker.js` целы; путь из `secret_paths` → имя файла
+- [x] `test_jev_body_matches_bench`: тело запроса = как в бенче, без `polishing`, `problem` прошёл `redact` и обрезан до 600
+- [x] `test_jev_splits_over_8_and_sorts_numerically`: 11 находок → два вызова; `s10` попадает на своё место
+- [x] `test_jev_skips_discard_test`: находка `discard_test` в запрос не идёт, `sev` выровнен по остальным
+- [x] `test_jev_failure_does_not_block`: `post=` бросает / отдаёт 402 / спит дольше общего таймаута → событие с `error`, ключа в событии нет, фаза продолжается
+- [x] `test_jev_off_by_default`: без флага `post=` не зовётся
+- [x] вынос из `judge_step.py` и `config.py` сделан, старые имена импортируются, `test_structure` зелёный
+- [x] реализовать
 
 **Вне этой фазы:** `diagnose`, событие `situation`.
 

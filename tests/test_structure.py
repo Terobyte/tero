@@ -11,7 +11,7 @@ FILE_CEILINGS = {
     "src/loop/run.py": 421,
     "src/menu.py": 548,
     "src/providers/codex.py": 345,
-    "src/config.py": 524,
+    "src/config.py": 497,
     "src/loop/agents.py": 409,
     "src/providers/subprocess_runner.py": 403,
 }
