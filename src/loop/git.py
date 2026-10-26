@@ -203,6 +203,10 @@ def list_worktree_files(repo: str | Path) -> list[str]:
     return _names(repo, "ls-files", "-co", "--exclude-standard")
 
 
+def list_ignored_files(repo: str | Path) -> list[str]:
+    return _names(repo, "ls-files", "--others", "--ignored", "--exclude-standard")
+
+
 def current_branch(repo: str | Path) -> str:
     return _git(repo, "branch", "--show-current").strip()
 

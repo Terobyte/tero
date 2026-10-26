@@ -44,7 +44,7 @@ def _calls_to(name: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
 
 def test_run_and_resume_share_loop():
     places, calls = _calls_to("run_phase")
-    assert places == [("src/loop/session.py", "run_phases")]
+    assert places == [("src/loop/session.py", "_run_one")]  # called only from run_phases
     assert len(calls) == 1
 
 

@@ -13,7 +13,7 @@ from src.config import (
     normalize_provider,
 )
 from src.loop.free import check_free_models
-from src.loop.gates import TestCommand, print_red_tail, run_all
+from src.loop.gates import TestCommand, detect, print_red_tail, run_all
 from src.loop.git import DirtyWorktreeError, current_branch, ensure_clean, status_short
 from src.loop.state import RunState
 from src.providers import free_models
@@ -68,7 +68,14 @@ def start_checks(
 
     if check_ready:
         print("проверка провайдеров …", flush=True)
+        # without a scoped runner the tester is never called (phase.py tester_enabled),
+        # so its CLI must not block the run (v4 BUG-005)
+        command = detect(repo, test_command=cfg.test_command,
+                         test_command_scoped=cfg.test_command_scoped)
+        scoped = bool(command and command.run_files)
         for role, provider, model in _roles(cfg):
+            if role == "tester" and not scoped:
+                continue
             ok, why = check_ready(provider, model)
             if not ok:
                 return f"{role} provider ({provider}) not ready: {why}", "error"

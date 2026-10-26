@@ -13,6 +13,7 @@ from src.config import Config
 from src.hud.app import maybe_launch_hud
 from src.hud.registry import Registry
 from src.loop import pulse as pulse_mod
+from src.loop.crash_step import crash_outcome, phase_base
 from src.loop.ledger import Ledger
 from src.loop.phase_ctx import PhaseOutcome
 from src.loop.plan import Phase
@@ -176,12 +177,7 @@ async def run_phases(
             kwargs = {**phase_kwargs, **extra}
             if phase_cfg is not None:
                 kwargs["cfg"] = phase_cfg[1]
-            outcome = await run_phase(
-                current,
-                ledger=ledger(),
-                total_phases=total,
-                **kwargs,
-            )
+            outcome = await _run_one(run_phase, current, ledger(), total, kwargs, run_dir)
             _print_phase_summary(current, outcome, total=total)
             if outcome.status == "ship":
                 shipped += 1
@@ -243,6 +239,16 @@ async def run_phases(
         oc.debt = debt_n
         return oc
     return _outcome("ok", 0, "ship")
+
+
+async def _run_one(run_phase: Callable[..., Awaitable[PhaseOutcome]], current: Phase,
+                   ledger: Ledger, total: int, kwargs: dict[str, Any], run_dir: Path) -> PhaseOutcome:
+    """One phase; a bug in tero is a stop with snapshot + rollback, not a dirty-tree crash (v4 BUG-001)."""
+    base = phase_base(kwargs.get("repo"))
+    try:
+        return await run_phase(current, ledger=ledger, total_phases=total, **kwargs)
+    except Exception as exc:
+        return crash_outcome(kwargs.get("repo"), base, run_dir, current.index, exc)
 
 
 def _resolve(outcome: PhaseOutcome) -> PhaseOutcome | None:

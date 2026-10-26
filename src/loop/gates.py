@@ -167,6 +167,8 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # test suites print non-UTF-8 bytes; that must not crash the gate (v4 BUG-002)
+            errors="replace",
             start_new_session=True,
         )
     except OSError as exc:

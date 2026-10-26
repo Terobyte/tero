@@ -7,6 +7,7 @@ from typing import Callable
 from src.loop import suite_guard
 from src.loop.gates import run_files
 from src.loop.git import file_hashes, list_worktree_files, stage_and_diff, write_tree
+from src.loop.ignored_guard import restore_ignored, snapshot_ignored
 from src.loop.phase_ctx import PhaseContext, ProtectedTest, _dump
 from src.loop.prompts import tester_prompt
 from src.loop.schemas import ValidateCtx
@@ -38,22 +39,29 @@ class TesterStep:
         )
         before_tree = write_tree(self.ctx.repo)
         before_files = set(list_worktree_files(self.ctx.repo))
+        before_ignored = snapshot_ignored(self.ctx.repo)
         prompt = tester_prompt(
             preamble=self.ctx.preamble,
             contract=self.ctx.contract,
             diff=stage_and_diff(self.ctx.repo, self.ctx.checkpoint),
             findings=[item.as_dict() for item in routed],
         )
-        data = await self.ctx.agents.run_role(
-            role="tester",
-            provider=self.ctx.cfg.tester_provider,
-            model=self.ctx.cfg.tester_model,
-            effort=self.ctx.cfg.tester_effort,
-            prompt=prompt,
-            timeout=self.ctx.cfg.tester_timeout_s,
-            ctx=ValidateCtx(),
-            emit=self.ctx.emit,
-        )
+        try:
+            data = await self.ctx.agents.run_role(
+                role="tester",
+                provider=self.ctx.cfg.tester_provider,
+                model=self.ctx.cfg.tester_model,
+                effort=self.ctx.cfg.tester_effort,
+                prompt=prompt,
+                timeout=self.ctx.cfg.tester_timeout_s,
+                ctx=ValidateCtx(),
+                emit=self.ctx.emit,
+            )
+        finally:
+            # also when the tester call raises: its edits to ignored files never stay
+            for rel in restore_ignored(self.ctx.repo, before_ignored):
+                self.ctx.ledger.event("ignored_violation", path=rel, round=self.ctx.st.round)
+                print(f"  gitignored-файл изменён тестером: {rel} — откат", flush=True)
         self.guard_plan("tester")
         data = self.ctx.check_reply("tester", data, self.ctx.cfg.tester_provider)
         if data is None:

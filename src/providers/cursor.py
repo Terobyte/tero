@@ -26,7 +26,7 @@ class CursorConfig:
 class CursorProvider:
     """Cursor provider via `agent -p --force --trust --output-format stream-json`.
 
-    ``-p`` is a boolean print-mode flag; the prompt is positional. Do not pass
+    ``-p`` is a boolean print-mode flag; the prompt is read from stdin. Do not pass
     ``--worktree`` — tero already isolates via WorktreeManager.
     """
 
@@ -62,13 +62,15 @@ class CursorProvider:
         cmd = self._build_command(
             model=model,
             working_dir=working_dir,
-            prompt=full_prompt,
             effort=effort,
             read_only=read_only,
         )
 
+        # stdin, not argv: a judge prompt carries the whole diff and overflows the
+        # per-argument limit (128 KB on Linux) (v4 BUG-003)
         _gen = run_subprocess_jsonl(
-            cmd, working_dir, env=env, stall_timeout=self.config.stall_timeout_s
+            cmd, working_dir, env=env, stdin_data=full_prompt.encode("utf-8"),
+            stall_timeout=self.config.stall_timeout_s,
         )
         try:
             async for event in _gen:
