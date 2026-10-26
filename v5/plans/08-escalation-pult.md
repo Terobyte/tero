@@ -150,13 +150,13 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
 - Сбой `diagnose` (исключение) → событие `situation` с `error`, раунд идёт дальше.
 - Пишется при `jev_enabled` и без него (тогда тяжесть только от судьи).
 
-- [ ] `test_situation_matches_bench`: 24 перенесённых теста бенча зелёные
-- [ ] `test_situation_event_after_no_ship`: фейковый прогон NO_SHIP→NO_SHIP→SHIP → два события `situation`; вердикты, раунды и итоговые статусы совпадают с тем же прогоном при подменённом `situation_step` = no-op (сравнение в одном тесте, а не со «снимком до плана»)
-- [ ] `test_situation_on_stalled_stop`: раунд, где `stalled()` даёт STOP, всё равно пишет `situation`
-- [ ] `test_history_survives_more`: после `more` новый раннер видит историю прошлых раундов фазы
-- [ ] `test_player_is_actual_not_flag`: режим `round`, эскалация на r5 → r5 `sonnet`, r1–r4 `muse`; повтор после `more` на игроке плана → `muse`
-- [ ] `test_situation_crash_is_event`: подменённый `diagnose` бросает → событие с `error`, фаза сдаётся как обычно
-- [ ] реализовать
+- [x] `test_situation_matches_bench`: 24 перенесённых теста бенча зелёные
+- [x] `test_situation_event_after_no_ship`: фейковый прогон NO_SHIP→NO_SHIP→SHIP → два события `situation`; вердикты, раунды и итоговые статусы совпадают с тем же прогоном при подменённом `situation_step` = no-op (сравнение в одном тесте, а не со «снимком до плана»)
+- [x] `test_situation_on_stalled_stop`: раунд, где `stalled()` даёт STOP, всё равно пишет `situation`
+- [x] `test_history_survives_more`: после `more` новый раннер видит историю прошлых раундов фазы
+- [x] `test_player_is_actual_not_flag`: режим `round`, эскалация на r5 → r5 `sonnet`, r1–r4 `muse`; повтор после `more` на игроке плана → `muse`
+- [x] `test_situation_crash_is_event`: подменённый `diagnose` бросает → событие с `error`, фаза сдаётся как обычно
+- [x] реализовать
 
 **Вне этой фазы:** любое действие по `situation`, Opus, шип с долгом.
 

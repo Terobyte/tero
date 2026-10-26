@@ -27,7 +27,7 @@ from src.loop.judge_prompt import (
 from src.loop.prompts import needs_user_reask_block
 from src.loop.schemas import ValidateCtx
 from src.loop.pending import stop_judge_pending  # noqa: F401
-from src.loop.situation_step import maybe_query_jev  # noqa: F401
+from src.loop.situation_step import record_situation  # noqa: F401
 
 
 class JudgeStep:
@@ -266,11 +266,15 @@ class JudgeStep:
             self.ctx.st.user_question = data.get("user_question", "")
             return _Next.USER
 
+        raw_level = {
+            item.get("file", "") + "\x00" + item.get("problem", ""): item.get("level")
+            for item in data.get("findings") or [] if isinstance(item, dict)
+        }
         findings = data.get("findings") or []
         self._discard_tests(findings)
         previous = {row["id"]: row["state"] for row in data.get("previous") or []}
         n_closed = sum(1 for v in previous.values() if v == "resolved")
-        maybe_query_jev(self.ctx, findings, n_closed=n_closed)
+        record_situation(self.ctx, findings, previous, data, raw_level)
         if in_continuation(self.ctx.st):
             return self._apply_verdict_continuation(findings, previous)
         if stalled(self.ctx.st, previous) and self.no_progress():
