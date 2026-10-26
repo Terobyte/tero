@@ -42,6 +42,23 @@ def _no_real_opencode_models(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_hud_window(monkeypatch, request):
+    """No real HUD window from tests (phase 7+).
+
+    `run()` goes through `RunSession`, which calls
+    `src.loop.session.maybe_launch_hud`; on macOS with pywebview installed
+    that would open a real window in every test calling `run()`.
+    Only `tests/hud/test_launch_rule.py` exercises the real launcher.
+    """
+    nodeid = getattr(request.node, "nodeid", "") or ""
+    if "tests/hud/test_launch_rule" in nodeid.replace("\\", "/"):
+        return
+    import src.loop.session as _session
+
+    monkeypatch.setattr(_session, "maybe_launch_hud", lambda *a, **k: None)
+
+
 def pytest_pyfunc_call(pyfuncitem):
     if "asyncio" not in pyfuncitem.keywords:
         return None

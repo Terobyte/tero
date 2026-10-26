@@ -296,9 +296,11 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
         if advance:
             nxt = next((p for p in phases if p.index == cur + 1), None)
             title = nxt.title if nxt is not None else ""
+            field_entries = [{"title": p.title, "done": bool(p.done)} for p in phases]
             write(status=_St.RUNNING.value, reason="resume",
                   text=f"resume: фаза {cur + 1} сдана, догоняю git",
-                  round_no=round_no)
+                  round_no=round_no, phases=field_entries,
+                  total_phases=len(field_entries))
             from src.loop.state import RunState as _RS
 
             _store_crashes(run_path, 0, cur + 1)
@@ -314,9 +316,11 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
                 pass
             start, first = cur + 1, None
         else:
+            field_entries = [{"title": p.title, "done": bool(p.done)} for p in phases]
             write(status=_St.RUNNING.value, reason="resume",
                   text=f"resume: перезапускаю фазу после краша (раунд {round_no})",
-                  round_no=round_no)
+                  round_no=round_no, phases=field_entries,
+                  total_phases=len(field_entries))
             _store_crashes(run_path, crashes, cur)
             try:
                 ledger().event("crash_resume", status=status, round=round_no,

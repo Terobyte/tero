@@ -320,12 +320,12 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
 - `state.json` не прочитался → вызывающий передаёт прошлый снимок; `build_view(None, …)` → серый круг,
   «нет данных», не исключение.
 
-- [ ] `test_sectors_colors_by_phase_status`: три фазы done/active/todo и одна в долге → зелёный, жёлтый, красный, оранжевый
-- [ ] `test_icon_per_role_and_status`: player/judge/tester/gate/stopped/judge_pending/done/вопрос → свои иконки
-- [ ] `test_doing_prefers_role_text_then_tool_then_gate_timer`: последний `text` роли; без него — `tool`; на гейте — таймер по подменённому `now`
-- [ ] `test_dead_owner_shows_broken`: `running` + `alive` ложно → «прогон оборвался»; `alive` истинно + событие 20 мин назад → не оборвался, возраст 1200
-- [ ] `test_none_state_is_grey_not_crash` и `test_tabs_capped`: `None` → серый круг; 5000 событий → вкладка ≤ `TAB_LIMIT`
-- [ ] реализовать
+- [x] `test_sectors_colors_by_phase_status`: три фазы done/active/todo и одна в долге → зелёный, жёлтый, красный, оранжевый
+- [x] `test_icon_per_role_and_status`: player/judge/tester/gate/stopped/judge_pending/done/вопрос → свои иконки
+- [x] `test_doing_prefers_role_text_then_tool_then_gate_timer`: последний `text` роли; без него — `tool`; на гейте — таймер по подменённому `now`
+- [x] `test_dead_owner_shows_broken`: `running` + `alive` ложно → «прогон оборвался»; `alive` истинно + событие 20 мин назад → не оборвался, возраст 1200
+- [x] `test_none_state_is_grey_not_crash` и `test_tabs_capped`: `None` → серый круг; 5000 событий → вкладка ≤ `TAB_LIMIT`
+- [x] реализовать
 
 ## Окно HUD
 

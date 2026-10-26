@@ -183,8 +183,8 @@ async def _stopped_phases(repo_path, run_path, cfg, *, agents, session,
 
         write(
             status=_St.RUNNING.value, reason="resume",
-            text=f"resume: продолжаю со снимка (раунд {round0})",
-            round_no=round0,
+            text=f"resume: продолжаю со снимка (раунд {round0})", round_no=round0,
+            phases=[{"title": p.title, "done": bool(p.done)} for p in phases], total_phases=len(phases),
         )
         ledger().event(
             "resume", status="stopped", round=round0, ref=ref,

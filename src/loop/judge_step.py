@@ -235,17 +235,14 @@ class JudgeStep:
         return False
 
     def _accept_verdict(self, data: dict[str, Any]) -> _Next:
-        self.ctx.emit(
-            "verdict",
-            verdict=data.get("verdict"),
-            round=self.ctx.st.round,
-            role="judge",
-        )
+        summary = verdict_state(data)
+        self.ctx.emit("verdict", verdict=data.get("verdict"), blocking=summary["blocking"],
+                      first=summary["first"], round=self.ctx.st.round, role="judge")
         self.ctx.update_state(
             role="judge",
             provider=self.ctx.cfg.judge_provider,
             model=self.ctx.cfg.judge_model,
-            verdict=verdict_state(data),
+            verdict=summary,
         )
         self.ctx.ledger.event(
             "judge",

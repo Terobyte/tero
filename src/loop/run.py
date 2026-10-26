@@ -134,7 +134,8 @@ async def run(
             return _fail_start("red_start")
 
         checkout_run_branch(repo, slug)
-        _update(state, status=Status.RUNNING.value, doing="фаза 1", config=_public_config(cfg))
+        entries = [{"title": p.title, "done": bool(p.done)} for p in phases]
+        _update(state, status=Status.RUNNING.value, doing="фаза 1", config=_public_config(cfg), phases=entries, total_phases=len(entries))
         ledger = _start_ledger(run_dir, cfg, slug)
 
         def _stopped(reason: str, text: str) -> None:
@@ -307,13 +308,12 @@ async def _resume_phases(
             test_command=cfg.test_command,
             test_command_scoped=cfg.test_command_scoped,
         )
-        # F8: resume owns the run again — running from the start, so a later
-        # player snapshot can never be mistaken for a gate-passed ref.
-        # judge_pending returns only via the judge failing again below.
+        # F8: resume owns the run again; judge_pending returns only via the judge failing below.
+        t = [{"title": p.title, "done": bool(p.done)} for p in phases]
         write(
             status=Status.RUNNING.value, reason="resume",
             text=f"resume: продолжаю с судьи (раунд {round_no})",
-            round_no=round_no,
+            round_no=round_no, phases=t, total_phases=len(t),
         )
         ledger().event("resume", status=status, round=round_no, ref=ref)
 

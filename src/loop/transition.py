@@ -88,12 +88,20 @@ def resume_transition(
     text: str,
     round_no: int = 0,
     run_end: bool = False,
+    phases: list | None = None,
+    total_phases: int | None = None,
 ) -> None:
+    fields: dict = {}
+    if phases is not None:
+        fields["phases"] = phases
+    if total_phases is not None:
+        fields["total_phases"] = total_phases
     done_io.update(
         status=status, reason=reason, text=text,
         doing="стоп" if status != Status.RUNNING.value else "resume",
         pid=os.getpid(),
         pid_started=pid_started,
+        **fields,
     )
     try:
         stream.emit(
