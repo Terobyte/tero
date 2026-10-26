@@ -119,11 +119,11 @@
   прогона нет → снимок → откат фазы к чекпоинту → `stopped`, причина `user_stop`, код 2.
 - В точке решения `stop.json` действует как ответ `stop`.
 
-- [ ] `test_stop_midstep_kills_fast`: stub-исполнитель `sleep 600`, `STOP_POLL_S=0.1` → `stop.json` → прогон `stopped` меньше чем за 5 с, процесс stub мёртв, снимок есть
-- [ ] `test_stop_removes_stale_index_lock`: убитый шаг оставил `.git/index.lock` → после стопа его нет, откат прошёл
-- [ ] `test_stop_json_answers_decision_point`: `decisions=True`, `waiting_human`, появился `stop.json` → итог `stopped`, причина `user_stop`
-- [ ] `test_stop_cli_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
-- [ ] реализовать
+- [x] `test_stop_midstep_kills_fast`: stub-исполнитель `sleep 600`, `STOP_POLL_S=0.1` → `stop.json` → прогон `stopped` меньше чем за 5 с, процесс stub мёртв, снимок есть
+- [x] `test_stop_removes_stale_index_lock`: убитый шаг оставил `.git/index.lock` → после стопа его нет, откат прошёл
+- [x] `test_stop_json_answers_decision_point`: `decisions=True`, `waiting_human`, появился `stop.json` → итог `stopped`, причина `user_stop`
+- [x] `test_stop_cli_refuses_when_not_running`: `status=done` → код 1 (через CLI-подпроцесс)
+- [x] реализовать
 
 ## tero resume после краша
 
@@ -167,12 +167,12 @@
   `stopped`, причина «фаза N падает при каждом запуске»; `resume --force` обходит. Событие `crash_resume`
   в ledger. Грязная ветка `tero/<slug>` для `resume` ожидаема.
 
-- [ ] `test_crash_between_tick_and_commit`: чекбоксы отмечены, коммита с трейлером нет → откат, фаза заново, чекбоксы `[ ]`
-- [ ] `test_crash_after_commit_before_state`: коммит с трейлером есть, `state.json` на старой фазе → фаза засчитана, идём к следующей
-- [ ] `test_crash_in_decision_point_restores_question`: дерево совпало с `tree_sha` → `waiting_human`, тот же id и текст
-- [ ] `test_resume_kills_hung_owner`: stub-владелец жив, `progress` стоит дольше порога → убит, лок взят; не завис → «прогон жив», код 1
-- [ ] `test_third_crash_resume_refused`: третий `resume` подряд → `stopped`; `--force` проходит
-- [ ] реализовать
+- [x] `test_crash_between_tick_and_commit`: чекбоксы отмечены, коммита с трейлером нет → откат, фаза заново, чекбоксы `[ ]`
+- [x] `test_crash_after_commit_before_state`: коммит с трейлером есть, `state.json` на старой фазе → фаза засчитана, идём к следующей
+- [x] `test_crash_in_decision_point_restores_question`: дерево совпало с `tree_sha` → `waiting_human`, тот же id и текст
+- [x] `test_resume_kills_hung_owner`: stub-владелец жив, `progress` стоит дольше порога → убит, лок взят; не завис → «прогон жив», код 1
+- [x] `test_third_crash_resume_refused`: третий `resume` подряд → `stopped`; `--force` проходит
+- [x] реализовать
 
 ## tero guide и tero notify
 
