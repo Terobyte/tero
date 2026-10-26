@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from src.config import Config
-from src.loop.gates import GateResult, TestCommand, fingerprint, print_red_tail, run_all
+from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_files
+from src.loop import gate_scope
 from src.loop.git import (
     GitError,
     commit,
@@ -353,6 +354,9 @@ class _PhaseRunner:
             case _Next.STOP:
                 return self._halt("stuck")
             case _Next.SHIP:
+                if not self._full_gate_before_ship():
+                    # Полный гейт красный: не шипать, следующий раунд — игрок.
+                    return None
                 return self._ship()
             case _Next.TESTER:
                 print(
@@ -559,22 +563,9 @@ class _PhaseRunner:
 
     def _gate(self) -> GateResult | None:
         if self.test_command is None:
-            from datetime import datetime, timezone
-
-            print("  тесты пропущены (нет команды)", flush=True)
-            self.ctx.emit("gate", result="skipped", role="gate")
-            self.ctx.update_state(
-                role="gate",
-                provider="",
-                model="",
-                step_started=datetime.now(timezone.utc).isoformat(),
-                gate={"ok": True, "result": "skipped"},
-            )
-            self.ledger.event("gate", result="skipped")
+            gate_scope.report_skipped(self.ctx, self.ledger)
             return None
         from datetime import datetime, timezone
-
-        from src.loop.gates import tail_lines
 
         print("  тесты …", flush=True)
         self.ctx.update_state(
@@ -590,49 +581,32 @@ class _PhaseRunner:
             text="тесты идут …",
         )
         started = time.monotonic()
-        result = run_all(
+        files = gate_scope.scoped_files(
             self.test_command,
             repo=self.repo,
-            timeout_s=self.cfg.test_timeout_s,
+            enabled=self.cfg.gate_scope == "changed",
+            checkpoint=self.checkpoint,
         )
-        duration = time.monotonic() - started
-        tail = tail_lines(result.output)
-        self.ctx.emit(
-            "gate",
-            ok=result.ok,
-            exit_code=result.exit_code,
-            round=self.state.round,
-            role="gate",
-            tail=tail,
-        )
-        self.ctx.update_state(
-            gate={
-                "ok": result.ok,
-                "exit_code": result.exit_code,
-                "tail": tail,
-            }
-        )
-        self.ledger.event(
-            "gate",
-            ok=result.ok,
-            exit_code=result.exit_code,
-            round=self.state.round,
-        )
-        self.ledger.artifact(
-            self.ctx.round_file("tests.log"),
-            result.output,
-        )
-        if result.ok:
-            print(
-                f"  тесты: зелёные (код {result.exit_code}, {duration:.1f} с)",
-                flush=True,
+        scope, run = gate_scope.describe(files)
+        if run is None:
+            result = run_all(
+                self.test_command,
+                repo=self.repo,
+                timeout_s=self.cfg.test_timeout_s,
             )
-        elif result.timed_out:
-            print(f"  тесты: таймаут ({self.cfg.test_timeout_s} с)", flush=True)
-            print_red_tail(result.output)
         else:
-            print(f"  тесты: КРАСНЫЕ (код {result.exit_code})", flush=True)
-            print_red_tail(result.output)
+            result = run_files(
+                self.test_command,
+                run,
+                repo=self.repo,
+                timeout_s=self.cfg.test_timeout_s,
+            )
+        gate_scope.finish_gate(
+            self.ctx, self.ledger, self.state,
+            command=self.test_command, result=result, run=run, scope=scope,
+            repo=self.repo, marked=self.cfg.gate_scope == "changed",
+            timeout_s=self.cfg.test_timeout_s, duration=time.monotonic() - started,
+        )
         return result
 
     def _same_red(self, result: GateResult) -> bool:
@@ -718,6 +692,17 @@ class _PhaseRunner:
         )
         rollback(self.repo, self.checkpoint)
         return ref
+
+    def _full_gate_before_ship(self) -> bool:
+        """Полный прогон перед SHIP в scoped-режиме. True — можно шипать."""
+        if self.test_command is None:
+            return True
+        outcome = gate_scope.full_gate(
+            self.test_command, self.repo, self.ctx, self.ledger, self.state,
+            timeout_s=self.cfg.test_timeout_s,
+            enabled=self.cfg.gate_scope == "changed",
+        )
+        return outcome is None or outcome == "green"
 
     def _ship(self) -> PhaseOutcome:
         stage_and_diff(self.repo, self.checkpoint)
