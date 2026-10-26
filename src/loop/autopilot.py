@@ -53,7 +53,9 @@ def choose(decision: dict, state: dict) -> Answer:
     if prev is not None and phase_n and prev == phase_n - 1:
         return Answer(question_id=qid, action="stop", text=NOT_CHAIN_TEXT,
                       who="autopilot", why="not_chain", uuid=f"autopilot-{qid}")
-    if reason in PROVIDER_REASONS:
+    if reason == "judge_pending":
+        action = "retry" if budget_used(state or {}, phase_n) < BUDGET_PER_PHASE else "skip"
+    elif reason in PROVIDER_REASONS:
         action = "skip" if budget_used(state or {}, phase_n) >= BUDGET_PER_PHASE else "wait"
     else:
         action = "skip"

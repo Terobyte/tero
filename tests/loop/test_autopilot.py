@@ -879,3 +879,11 @@ def test_f29_failed_wake_marker_never_rewrites_state(tmp_path: Path, monkeypatch
                         lambda p, t, **k: rewrites.append(str(p)), raising=False)
     assert _auto._remember_wake(run_dir, "1-1", 5) is False
     assert rewrites == [], "неудачный маркер не восстанавливает state.json целиком"
+
+
+def test_autopilot_judge_pending_retry_then_skip():
+    assert auto.choose({"reason": "judge_pending", "question_id": "1-1",
+                        "phase": 1}, {}).action == "retry"
+    full = {"budget": {"1": 3}}
+    assert auto.choose({"reason": "judge_pending", "question_id": "1-1",
+                        "phase": 1}, full).action == "skip"

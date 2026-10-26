@@ -198,6 +198,10 @@ async def run_phases(
                     # F19: счётчик продолжается (nxt), grace-лимит — в round_limit.
                     pending_extra["start_round"] = nxt
                     continue
+                elif resolved.status == "ship" and outcome.reason == "judge_pending":
+                    shipped += 1
+                    index += 1
+                    continue
                 elif resolved.status == "continue":
                     more = dict(resolved.extra or {})
                     if "cfg" in more:

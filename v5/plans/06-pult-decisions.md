@@ -300,11 +300,11 @@ self.start_with_judge:` из `_PhaseRunner.run` (шаг `ResumeStep(ctx, judge, 
   `who=human` (`accept` → фаза сдана с этим ref, `reject` → как `retry` исполнителя с новым раундом).
 - При `decisions=False` поведение не меняется (выход с кодом 3, `tero resume` с судьи).
 
-- [ ] `test_judge_pending_waits_holding_lock`: судья трижды мусор, `decisions=True` → процесс жив, лок занят, `wait_run` → 3
-- [ ] `test_judge_pending_retry_calls_judge_only`: `retry` → вызван только судья, на том же ref
-- [ ] `test_autopilot_judge_pending_retry_then_skip`: автопилот: `retry` ×3, потом `skip` в долг
-- [ ] `test_accept_reject_human_only`: `accept` от агента отклонён; от человека → фаза сдана с трейлером
-- [ ] реализовать
+- [x] `test_judge_pending_waits_holding_lock`: судья трижды мусор, `decisions=True` → процесс жив, лок занят, `wait_run` → 3
+- [x] `test_judge_pending_retry_calls_judge_only`: `retry` → вызван только судья, на том же ref
+- [x] `test_autopilot_judge_pending_retry_then_skip`: автопилот: `retry` ×3, потом `skip` в долг
+- [x] `test_accept_reject_human_only`: `accept` от агента отклонён; от человека → фаза сдана с трейлером
+- [x] реализовать
 
 ## tero stop во время шага
 

@@ -164,6 +164,8 @@ class Inbox:
                 return refusal
         if action == "allow" and who != "human":
             return "отклонено: allow только человек"
+        if action in ("accept", "reject") and who != "human":
+            return "отклонено: accept/reject только человек"
         if action not in ("retry", "skip", "stop") and payload.get("woken"):
             return "отклонено: разбуженному агенту только retry|skip|stop"
         return refuse_budget(state, qid, action, who)

@@ -16,6 +16,7 @@ class ResumeFrom:
     answer: str = ""
     round_limit: int | None = None
     gate_first: bool = False
+    judge_reuse_ref: bool = False
     suite_hashes: Any = None
     guarded: Any = None
     link_targets: Any = None
@@ -350,7 +351,10 @@ class ResumeStep:
         ctx.ledger.event("resume_judge", round=ctx.st.round)
         print(f"  {ctx.tag()} judge {ctx.cfg.judge_provider}({ctx.cfg.judge_model}) …",
               flush=True)
-        verdict = await self.judge._judge()
+        if getattr(resume_from, "judge_reuse_ref", False) and resume_from.ref:
+            verdict = await self.judge._judge(resume_from.ref)
+        else:
+            verdict = await self.judge._judge()
         ctx.progress()
         outcome = await self.after_judge(verdict)
         if outcome is not None and getattr(outcome, "status", "") == "ship":

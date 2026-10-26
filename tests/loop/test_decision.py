@@ -1168,4 +1168,4 @@ def test_budget_three_per_phase(tmp_path: Path):
     assert state.get("budget", {}).get("1") == 3
     assert question_actions("stuck", state, 1) == ["skip", "stop"]
     assert question_actions("stuck", state, 2) == ["more", "model", "skip", "stop"]
-    assert question_actions("judge_pending", state, 2) == []
+    assert question_actions("judge_pending", state, 2) == ["retry", "skip", "stop"]

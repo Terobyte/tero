@@ -12,7 +12,7 @@ ACTIONS_BY_REASON: dict[str, list[str]] = {
     "provider_auth": ["retry", "wait", "model", "stop"],
     "provider_quota": ["retry", "wait", "model", "stop"],
     "secrets": ["allow", "retry", "skip", "stop"],
-    "judge_pending": ["retry", "skip", "stop"],
+    "judge_pending": ["retry", "skip", "stop", "accept", "reject"],
 }
 
 

@@ -30,8 +30,68 @@ def _limit_sleep(seconds: float) -> None:
 
 
 def full_actions(reason: str) -> list[str]:
-    """Все действия причины; judge_pending — фаза 5, здесь без вопроса."""
-    return [] if reason == "judge_pending" else actions_for(reason)
+    """Все действия причины, включая judge_pending (фаза 5)."""
+    return actions_for(reason)
+
+
+def judge_pending_action(step: Any, action: str, reason: str, qid: str, ans: Any) -> PhaseOutcome | None:
+    """retry — только судья на том же ref; accept/reject — только human (см. inbox)."""
+    if action == "retry":
+        state = RunState.read(step.ctx.run_dir / "state.json") or {}
+        rounds = step.ctx.st.round
+        rf = _resume_from(step, max(_limit(step), rounds + 1),
+                          ref=state.get("snapshot_ref") or "",
+                          base=step.ctx.checkpoint, judge_reuse_ref=True)
+        return _go_on(step, reason, qid, "retry", "повтор вызова судьи",
+                      {"start_round": rounds, "start_with_judge": True,
+                       "start_checkpoint": step.ctx.checkpoint, "resume_from": rf})
+    if action == "accept":
+        return _accept_manual(step, reason, qid)
+    if action == "reject":
+        return _reject(step, reason, qid, ans)
+    return None
+
+
+def _accept_manual(step: Any, reason: str, qid: str) -> PhaseOutcome:
+    """accept от человека: фаза сдана кодом из snapshot_ref (F3)."""
+    from src.loop import snapshot as _snap
+    from src.loop.git import commit as _commit, stage_and_diff as _stage
+    from src.loop.plan import mark_phase_done as _done
+    from src.loop.transition import phase_transition as _pt
+
+    ctx = step.ctx
+    state = RunState.read(ctx.run_dir / "state.json") or {}
+    ref = state.get("snapshot_ref") or ""
+    if not ref:
+        return step.stop_no_snapshot(reason)
+    try:
+        if not _snap.verify(ctx.repo, ref):
+            raise RuntimeError(f"snapshot not found: {ref}")
+        _snap.restore_snapshot(ctx.repo, ref)
+    except Exception:
+        return step.stop_no_snapshot(reason)
+    _done(ctx.plan_path, ctx.phase)
+    _stage(ctx.repo, ctx.checkpoint)
+    msg = ctx.phase.title.lower()[:60]
+    trl = f"Tero-Phase: {ctx.run_dir.name}/{ctx.phase.index + 1}"
+    sha = _commit(ctx.repo, msg, trailer=trl, allow_empty=True)
+    ctx.ledger.event("ship", commit=sha, rounds=ctx.st.round, ref=ref)
+    ctx.emit("ship", commit=sha, round=ctx.st.round, role="judge")
+    ctx.update_state(commit=sha, phase_done=True)
+    _pt(ctx, status=Status.RUNNING.value, reason=reason,
+        text=f"фаза {ctx.phase.index + 1} сдана вручную",
+        role="judge", event="accept", kind="accept", doing="фаза сдана",
+        question=None, question_id=qid)
+    return PhaseOutcome(status="ship", reason="ship", rounds=ctx.st.round,
+                        escalated=ctx.st.escalated, commit_sha=sha)
+
+
+def _reject(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
+    """reject от человека: новый раунд исполнителя в пределах лимита."""
+    rounds = step.ctx.st.round
+    rf = _resume_from(step, max(_limit(step), rounds + 1))
+    return _go_on(step, reason, qid, "reject", "новый раунд исполнителя",
+                  {"start_round": rounds, "resume_from": rf})
 
 
 def budget_used(state: dict, phase_n: int) -> int:
@@ -45,6 +105,8 @@ def budget_used(state: dict, phase_n: int) -> int:
 def question_actions(reason: str, state: dict, phase_n: int) -> list[str]:
     """Действия в вопросе: бюджет фазы исчерпан → только skip|stop."""
     full = full_actions(reason)
+    if reason == "judge_pending":
+        return ["retry", "skip", "stop"]
     if budget_used(state, phase_n) >= BUDGET_PER_PHASE:
         return [a for a in full if a in ("skip", "stop")]
     return full

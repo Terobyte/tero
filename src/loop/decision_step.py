@@ -168,6 +168,14 @@ class DecisionStep:
                     snapshot_mod._git_plain(repo, "reset")
                 except Exception:
                     pass
+            if reason == "judge_pending":
+                try:
+                    ref = (RunState.read(self.ctx.run_dir / "state.json") or {}).get(
+                        "snapshot_ref") or ""
+                    if ref:
+                        return snapshot_mod.ref_tree(repo, ref)
+                except Exception:
+                    return None
             try:
                 return snapshot_mod.tree_of(repo, base)
             except Exception:
@@ -215,7 +223,7 @@ class DecisionStep:
             rounds=self.ctx.st.round, escalated=self.ctx.st.escalated, stop_text=text,
         )
 
-    def open_question(self, reason: str, text: str) -> str | None:
+    def open_question(self, reason: str, text: str, status: str | None = None) -> str | None:
         full = implemented_actions(reason)
         if not full:
             return None
@@ -233,7 +241,7 @@ class DecisionStep:
         question = {"id": qid, "reason": reason, "text": text, "actions": actions,
                     "all_actions": full}
         phase_transition(
-            self.ctx, status=Status.WAITING_HUMAN.value,
+            self.ctx, status=status or Status.WAITING_HUMAN.value,
             reason=reason, text=text, ref="", role="judge",
             event="question", kind="question", doing="ожидание",
             question=question, tree_sha=sha, decision_seq=seq_map,
@@ -241,9 +249,25 @@ class DecisionStep:
         )
         return qid
 
+    def jp_open(self, reason: str, text: str, ref: str) -> PhaseOutcome:
+        """judge_pending при decisions=True: лок держим, дерево не откатываем."""
+        t = f"{text}, работа в `{ref}`" if ref else text
+        qid = self.open_question("judge_pending", t, Status.JUDGE_PENDING.value)
+        if qid is None:
+            return self._old_halt(reason)
+        self._reason, self._qid = "judge_pending", qid
+        try:
+            self._opened_at = self._now()
+        except Exception:
+            self._opened_at = None
+        return PhaseOutcome(
+            status="waiting_human", reason="judge_pending",
+            rounds=self.ctx.st.round, escalated=self.ctx.st.escalated,
+            stop_text=text, decider=self,
+        )
+
     def wait_answer(self, qid: str, opened_at: float | None = None):
         from src.loop import autopilot as auto
-
         return auto.wait_answer(self, qid, opened_at)
 
     def halt(self, reason: str) -> PhaseOutcome:
@@ -285,6 +309,48 @@ class DecisionStep:
             stop_text=text, decider=self,
         )
 
+    def _skip_to_debt(self, reason: str, qid: str, who: str) -> PhaseOutcome:
+        try:
+            self._snap = RunState.read(self.ctx.run_dir / "state.json") or {}
+        except Exception:
+            self._snap = {}
+        try:
+            ref = self.locked_rollback(reason)
+        except Exception:
+            ref = None
+        self._repair_after_rollback()
+        if ref is None:
+            return self.stop_no_snapshot(reason)
+        self._restore_journal()
+        try:
+            self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
+        except Exception:
+            pass
+        try:
+            findings = [f.as_prompt() for f in (self.ctx.st.open_findings or [])[-5:]]
+        except Exception:
+            findings = []
+        entry = {"phase": self.ctx.phase.index + 1, "reason": reason,
+                 "findings": findings, "who": who, "ref": ref or ""}
+        try:
+            cur = RunState.read(self.ctx.run_dir / "state.json") or {}
+            debt = list(cur.get("debt") or [])
+            debt.append(entry)
+        except Exception:
+            debt = [entry]
+        try:
+            self.ctx.st.answer = ""
+        except Exception:
+            pass
+        phase_transition(
+            self.ctx, status=Status.RUNNING.value, reason=reason,
+            text=f"фаза {self.ctx.phase.index + 1} в долг",
+            role="judge", event="skip", kind="skip", doing="фаза в долг",
+            question=None, answer="", debt=debt, question_id=qid,
+        )
+        return PhaseOutcome(status="skip", reason=reason, rounds=self.ctx.st.round,
+                            escalated=self.ctx.st.escalated, stop_text="")
+
     def resolve(self) -> PhaseOutcome:
         """Дождаться ответа на открытый halt() вопрос и применить его."""
         reason, qid = self._reason, self._qid
@@ -308,54 +374,7 @@ class DecisionStep:
                 rounds=self.ctx.st.round, escalated=self.ctx.st.escalated, stop_text=t,
             )
         if action == "skip":
-            try:
-                self._snap = RunState.read(self.ctx.run_dir / "state.json") or {}
-            except Exception:
-                self._snap = {}
-            try:
-                ref = self.locked_rollback(reason)
-            except Exception:
-                ref = None
-            self._repair_after_rollback()
-            if ref is None:
-                return self.stop_no_snapshot(reason)
-            self._restore_journal()
-            try:
-                self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
-            except Exception:
-                pass
-            findings = []
-            try:
-                findings = [f.as_prompt() for f in (self.ctx.st.open_findings or [])[-5:]]
-            except Exception:
-                findings = []
-            entry = {
-                "phase": self.ctx.phase.index + 1,
-                "reason": reason,
-                "findings": findings,
-                "who": who,
-                "ref": ref or "",
-            }
-            try:
-                cur = RunState.read(self.ctx.run_dir / "state.json") or {}
-                debt = list(cur.get("debt") or [])
-                debt.append(entry)
-            except Exception:
-                debt = [entry]
-            try:
-                self.ctx.st.answer = ""
-            except Exception:
-                pass
-            phase_transition(
-                self.ctx, status=Status.RUNNING.value, reason=reason,
-                text=f"фаза {self.ctx.phase.index + 1} в долг",
-                role="judge", event="skip", kind="skip", doing="фаза в долг",
-                question=None, answer="", debt=debt, question_id=qid,
-            )
-            return PhaseOutcome(
-                status="skip", reason=reason, rounds=self.ctx.st.round,
-                escalated=self.ctx.st.escalated, stop_text="",
-            )
+            return self._skip_to_debt(reason, qid, who)
         if action == "answer":
             txt = (ans.text or "").strip()
             try:
@@ -371,5 +390,11 @@ class DecisionStep:
                 status="answer", reason=reason, rounds=self.ctx.st.round,
                 escalated=self.ctx.st.escalated, stop_text="", answer=txt,
             )
+        if reason == "judge_pending" and action in ("retry", "accept", "reject"):
+            from src.loop.decision_actions import judge_pending_action
+
+            got = judge_pending_action(self, action, reason, qid, ans)
+            if got is not None:
+                return got
         out = apply_action(self, action, reason, qid, ans)
         return out if out is not None else self._old_halt(reason)

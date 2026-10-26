@@ -72,14 +72,26 @@ class JudgeStep:
             return None
         return ref
 
-    async def _judge(self) -> _Next:
+    async def _judge(self, ref: str | None = None) -> _Next:
+        # ref — повторный вход судьи без снимка (F6); нет снимка — судить нельзя.
+        if ref is None:
+            ref = self._snapshot_before_judge()
+            if ref is None:
+                return _Next.NEXT
+        else:
+            try:  # ref невосстановим: fail closed, без нового снимка и без игрока (F7).
+                if not snapshot_mod.verify(self.ctx.repo, ref):
+                    raise RuntimeError(f"snapshot not found: {ref}")
+                snapshot_mod.restore_snapshot(self.ctx.repo, ref)
+            except Exception:
+                self.ctx.st.pending_reason = "judge_failed"
+                return _Next.JUDGE_PENDING
+        self.compact._clear_compact_requested("judge")
+        return await self._judge_on_ref(ref)
+
+    async def _judge_on_ref(self, ref: str) -> _Next:
         from datetime import datetime, timezone
 
-        ref = self._snapshot_before_judge()
-        if ref is None:
-            # The round tree is unverified: the judge must not review it.
-            return _Next.NEXT
-        self.compact._clear_compact_requested("judge")
         self.ctx.update_state(
             role="judge",
             provider=self.ctx.cfg.judge_provider,
@@ -94,21 +106,17 @@ class JudgeStep:
             snapshot_mod.restore_snapshot(self.ctx.repo, ref)
         ctx = validate_ctx(self.ctx.st)
         reask_question = ""
+        shippable = ("SHIP", "NO_SHIP")
         while True:
             data = await self._call_judge(ref, ctx, reask_question)
             if data is not None and data.get("__compacted__"):
                 data = self._judge_compacted(data, ref)
                 if data is None:
                     continue
-            if (
-                data is not None
-                and not data.get("__invalid__")
-                and not (
-                    data.get("verdict") == "NEEDS_USER"
-                    and not self.ctx.cfg.escalation_provider
-                )
-            ):
-                if data.get("verdict") in ("SHIP", "NO_SHIP"):
+            bad = (data is None or data.get("__invalid__") or
+                   (data.get("verdict") == "NEEDS_USER" and not self.ctx.cfg.escalation_provider))
+            if not bad:
+                if data.get("verdict") in shippable:
                     self.ctx.st.needs_user_attempts = 0
                 break
             if data is not None and data.get("verdict") == "NEEDS_USER":
@@ -164,22 +172,9 @@ class JudgeStep:
         if not self.ctx.st.judge_compact_used:
             tokens = data.get("tokens", 0)
             text = f"компакт judge ({tokens} токенов) — новый вызов, снимок `{ref}`"
-            self.ctx.emit(
-                "compact",
-                role="judge",
-                tokens=tokens,
-                ref=ref or "",
-                text=text,
-            )
-            self.ctx.ledger.event(
-                "compact",
-                role="judge",
-                tokens=tokens,
-                ref=ref,
-                round=self.ctx.st.round,
-                crashes=self.ctx.st.player_crashes,
-                kmax_flat=self.ctx.st.kmax_flat,
-            )
+            self.ctx.emit("compact", role="judge", tokens=tokens, ref=ref or "", text=text)
+            self.ctx.ledger.event("compact", role="judge", tokens=tokens, ref=ref,
+                                  round=self.ctx.st.round)
             print(f"  компакт judge ({tokens} токенов) — новый вызов", flush=True)
             self.ctx.st.judge_compact_used = True
             return None
@@ -272,6 +267,15 @@ class JudgeStep:
             text = f"нужен человек: `{question}`; `tero review`, `tero resume`"
         else:
             text = f"код готов, не принят: `{ref}`; `tero review`, `tero resume`"
+        try:
+            decisions = bool(self.ctx.cfg.decisions)
+        except Exception:
+            decisions = False
+        if decisions:
+            from src.loop.decision_step import DecisionStep
+
+            step = DecisionStep(self.ctx, self.rollback_with_snapshot)
+            return step.jp_open(reason, text, ref)
         phase_transition(
             self.ctx,
             status=Status.JUDGE_PENDING.value,
