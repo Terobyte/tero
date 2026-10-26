@@ -148,9 +148,11 @@ def run_answer(args) -> int:
         }
     )
     if who == "human":
+        from pathlib import Path
+
         from src.loop.human_key import sign_answer
 
-        sign_answer(payload)
+        sign_answer(Path(run_dir).name, payload)
     raw = json.dumps(payload, ensure_ascii=False)
     if not write_inbox_file(run_dir, f"{uid}.json", raw):
         print("не могу записать inbox")

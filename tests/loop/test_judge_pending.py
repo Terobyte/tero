@@ -296,7 +296,7 @@ async def test_judge_pending_waits_holding_lock(tmp_path: Path, monkeypatch):
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
         import json as _j
 
-        (ledger.run_dir / "inbox" / "s.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "s.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "s1", "question_id": q.get("id"),
              "action": "skip", "who": "human"})))
     finally:
@@ -363,7 +363,7 @@ async def test_judge_pending_retry_calls_judge_only(tmp_path: Path, monkeypatch)
         import json as _j
 
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "r1", "question_id": qid,
              "action": "retry", "who": "human"})))
     finally:
@@ -438,7 +438,7 @@ async def test_accept_reject_human_only(tmp_path: Path, monkeypatch):
         assert Inbox(ledger.run_dir).take(qid, FakeRelay()) is None
         rej = (ledger.run_dir / "inbox" / "a1.result").read_text()
         assert "отклонено" in rej
-        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "a2", "question_id": qid,
              "action": "accept", "who": "human"})))
     finally:
@@ -538,7 +538,7 @@ async def test_judge_pending_records_agree_and_holds_repo_lock(tmp_path: Path, m
         assert acquire(repo) is None, "лок репо занят, пока владелец ждёт"
         qid = (state.get("question") or {}).get("id")
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "s.json").write_text(json.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "s.json").write_text(json.dumps(human_signed(ledger.run_dir,
             {"uuid": "s-lock", "question_id": qid,
              "action": "skip", "who": "human"})))
     finally:
@@ -675,7 +675,7 @@ async def test_judge_pending_retry_reviews_recorded_ref(tmp_path: Path, monkeypa
         import json as _j
 
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "r-f6", "question_id": qid,
              "action": "retry", "who": "human"})))
     finally:
@@ -747,7 +747,7 @@ async def test_accept_ships_recorded_ref_and_marks_plan(tmp_path: Path, monkeypa
         import json as _j
 
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "a-f3", "question_id": qid,
              "action": "accept", "who": "human"})))
     finally:
@@ -816,7 +816,7 @@ async def test_judge_retry_restore_failure_fails_closed(tmp_path, monkeypatch):
         import json as _j
 
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "r.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "r-f7", "question_id": qid,
              "action": "retry", "who": "human"})))
     finally:
@@ -884,7 +884,7 @@ async def test_accept_without_ref_stops(tmp_path, monkeypatch):
         import json as _j
 
         (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
-        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(
+        (ledger.run_dir / "inbox" / "a.json").write_text(_j.dumps(human_signed(ledger.run_dir,
             {"uuid": "a-f8", "question_id": qid,
              "action": "accept", "who": "human"})))
     finally:

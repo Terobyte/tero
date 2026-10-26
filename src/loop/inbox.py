@@ -277,7 +277,7 @@ class Inbox:
             # agent_pid. Маркер woken ставит только tero answer после проверки
             # идентичности сессии; здесь он только читается.
             # B7: human только с подписью ключа вне дерева, иначе agent.
-            payload = {**payload, "who": who_of(payload)}
+            payload = {**payload, "who": who_of(self.run_dir.name, payload)}
             refusal = self._refuse(payload, actions, state)
             if refusal is not None:
                 self._reject(path, payload, refusal)

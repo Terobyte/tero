@@ -35,27 +35,28 @@ def test_unsigned_human_is_agent(tmp_path):
 def test_signed_human_allowed_and_tamper_breaks_signature(tmp_path):
     run = tmp_path / "run"
     _state(run, ["allow", "skip", "stop"])
-    ok = sign_answer({"uuid": "h1", "question_id": "1-1", "action": "allow",
+    ok = sign_answer("run", {"uuid": "h1", "question_id": "1-1", "action": "allow",
                       "text": ".env", "who": "human"})
-    assert who_of(ok) == "human"
+    assert who_of("run", ok) == "human"
     assert (key_path().stat().st_mode & 0o777) == 0o600
     key_path().chmod(0o644)
-    assert who_of(ok) == "human"
+    assert who_of("run", ok) == "human"
     assert (key_path().stat().st_mode & 0o777) == 0o600
-    assert who_of({**ok, "text": "secrets/prod.env"}) == "agent"
+    assert who_of("run", {**ok, "text": "secrets/prod.env"}) == "agent"
     assert _answer(run, ok) == "принято"
 
 
 def test_autopilot_who_passes_through():
-    assert who_of({"who": "autopilot"}) == "autopilot"
-    assert who_of({}) == "agent"
+    assert who_of("run", {"who": "autopilot"}) == "autopilot"
+    assert who_of("run", {}) == "agent"
 
 
 def test_allowed_secrets_list_needs_signature():
     items = [".env.example"]
-    assert trusted_list(items, sign_list(items)) == items
-    assert trusted_list(items + [".env"], sign_list(items)) == []
-    assert trusted_list(items, None) == []
+    assert trusted_list("run", items, sign_list("run", items)) == items
+    assert trusted_list("run", items + [".env"], sign_list("run", items)) == []
+    assert trusted_list("run", items, None) == []
+    assert trusted_list("other-run", items, sign_list("run", items)) == []
 
 
 def test_blocked_secrets_ignores_edited_list(tmp_path, monkeypatch):
@@ -72,7 +73,7 @@ def test_blocked_secrets_ignores_edited_list(tmp_path, monkeypatch):
     (run / "state.json").write_text(json.dumps({"allowed_secrets": [".env"]}))
     assert step.blocked_secrets() == [".env"]
     (run / "state.json").write_text(json.dumps(
-        {"allowed_secrets": [".env"], "allowed_secrets_sig": sign_list([".env"])}))
+        {"allowed_secrets": [".env"], "allowed_secrets_sig": sign_list("run", [".env"])}))
     assert step.blocked_secrets() == []
 
 
@@ -90,3 +91,11 @@ def test_accept_refuses_ref_outside_run_namespace(tmp_path):
         (run / "state.json").write_text(json.dumps({"snapshot_ref": ref}))
         assert _accept_manual(step, "judge_pending", "1-1") == "stop"
     assert stopped == ["judge_pending", "judge_pending"]
+
+
+def test_signed_answer_from_another_run_is_agent(tmp_path):
+    run = tmp_path / "run"
+    _state(run, ["allow", "skip", "stop"])
+    replayed = sign_answer("old-run", {"uuid": "o1", "question_id": "1-1", "action": "allow",
+                                       "text": ".env", "who": "human"})
+    assert "allow только человек" in _answer(run, replayed)

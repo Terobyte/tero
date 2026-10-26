@@ -223,7 +223,8 @@ def _allow(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     ctx = step.ctx
     path = str(ans.text or "").strip()
     state = RunState.read(ctx.run_dir / "state.json") or {}
-    allowed = trusted_list(state.get("allowed_secrets"), state.get("allowed_secrets_sig"))
+    allowed = trusted_list(ctx.run_dir.name, state.get("allowed_secrets"),
+                           state.get("allowed_secrets_sig"))
     if path and path not in allowed:
         allowed.append(path)
     rounds = ctx.st.round
@@ -234,7 +235,7 @@ def _allow(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     extra = {"start_round": rounds, "start_with_judge": True,
              "start_checkpoint": ctx.checkpoint, "resume_from": rf}
     return _go_on(step, reason, qid, "allow", f"разрешён {path}", extra,
-                  {"allowed_secrets": allowed, "allowed_secrets_sig": sign_list(allowed)})
+                  {"allowed_secrets": allowed, "allowed_secrets_sig": sign_list(ctx.run_dir.name, allowed)})
 
 
 def limit_chain(state: dict, phase_n: int) -> int | None:

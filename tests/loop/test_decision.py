@@ -970,7 +970,7 @@ def _answerer(run_dir: Path, plan: list[list[dict]]):
                     body = {"uuid": f"u{n}x{i}", "question_id": qid,
                             "text": "", "who": "agent", **payload}
                     (run_dir / "inbox" / f"{n:02d}{i}.json").write_text(
-                        json.dumps(human_signed(body)), encoding="utf-8")
+                        json.dumps(human_signed(run_dir, body)), encoding="utf-8")
                 n += 1
             _t.sleep(0.005)
 
@@ -1155,7 +1155,7 @@ def test_budget_three_per_phase(tmp_path: Path):
         io.update(question={"id": qid, "reason": "provider_quota", "text": "q",
                             "actions": actions})
         uid = f"{qid}-{who}"
-        (run_dir / "inbox" / f"{uid}.json").write_text(json.dumps(human_signed(
+        (run_dir / "inbox" / f"{uid}.json").write_text(json.dumps(human_signed(run_dir,
             {"uuid": uid, "question_id": qid, "action": "retry", "who": who})),
             encoding="utf-8")
         Inbox(run_dir).take(qid, FakeRelay())

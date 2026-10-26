@@ -58,7 +58,7 @@ def _answer_file(
         "ts": time.time(),
     }
     path = inbox / name
-    path.write_text(json.dumps(human_signed(payload), ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(human_signed(run, payload), ensure_ascii=False), encoding="utf-8")
     return path
 
 

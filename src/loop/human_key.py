@@ -46,19 +46,22 @@ def _mac(key: bytes, message: str) -> str:
     return hmac.new(key, message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def _answer_message(payload: Mapping[str, Any]) -> str:
+def _answer_message(run_id: str, payload: Mapping[str, Any]) -> str:
+    # run id in the message: an old signed answer copied from another run's inbox
+    # (question ids like "1-1" repeat across runs) does not verify here
     parts = ("uuid", "question_id", "action", "text")
-    return "\n".join(str(payload.get(k) or "") for k in parts)
+    return json.dumps(["answer", run_id, *(str(payload.get(k) or "") for k in parts)],
+                      ensure_ascii=False)
 
 
-def sign_answer(payload: dict[str, Any]) -> dict[str, Any]:
-    """Add `sig` to a human answer (creates the key on first use)."""
+def sign_answer(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Add `sig` to a human answer for run `run_id` (creates the key on first use)."""
     key = _key(create=True)
-    payload["sig"] = _mac(key, _answer_message(payload)) if key else ""
+    payload["sig"] = _mac(key, _answer_message(run_id, payload)) if key else ""
     return payload
 
 
-def who_of(payload: Mapping[str, Any]) -> str:
+def who_of(run_id: str, payload: Mapping[str, Any]) -> str:
     """Declared `who`, except `human` without a valid signature becomes `agent`.
 
     Only `human` carries rights (allow, accept/reject, no budget), so it is
@@ -69,28 +72,28 @@ def who_of(payload: Mapping[str, Any]) -> str:
             return str(payload.get("who") or "agent")
         key = _key()
         sig = str(payload.get("sig") or "")
-        if key and sig and hmac.compare_digest(sig, _mac(key, _answer_message(payload))):
+        if key and sig and hmac.compare_digest(sig, _mac(key, _answer_message(run_id, payload))):
             return "human"
     except Exception:
         pass
     return "agent"
 
 
-def _list_message(items: list[str]) -> str:
-    return json.dumps(sorted(items), ensure_ascii=False)
+def _list_message(run_id: str, items: list[str]) -> str:
+    return json.dumps(["allowed_secrets", run_id, sorted(items)], ensure_ascii=False)
 
 
-def sign_list(items: list[str]) -> str:
+def sign_list(run_id: str, items: list[str]) -> str:
     key = _key(create=True)
-    return _mac(key, _list_message(items)) if key else ""
+    return _mac(key, _list_message(run_id, items)) if key else ""
 
 
-def trusted_list(items: Any, sig: Any) -> list[str]:
-    """`items` when `sig` matches, else []. Never raises."""
+def trusted_list(run_id: str, items: Any, sig: Any) -> list[str]:
+    """`items` when `sig` matches for this run, else []. Never raises."""
     try:
         values = [str(x) for x in (items or [])]
         key = _key()
-        if key and sig and hmac.compare_digest(str(sig), _mac(key, _list_message(values))):
+        if key and sig and hmac.compare_digest(str(sig), _mac(key, _list_message(run_id, values))):
             return values
     except Exception:
         pass

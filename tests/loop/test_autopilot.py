@@ -182,7 +182,7 @@ def test_human_timeout_to_waiting_agent(tmp_path: Path, monkeypatch):
     while time.time() < deadline:
         state = RunState.read(ledger.run_dir / "state.json") or {}
         if (state.get("question") or {}).get("id") and not out:
-            write_inbox_file(ledger.run_dir, "a.json", json.dumps(human_signed({
+            write_inbox_file(ledger.run_dir, "a.json", json.dumps(human_signed(ledger.run_dir, {
                 "uuid": "h1", "question_id": state["question"]["id"],
                 "action": "skip", "who": "human"})))
             break
@@ -218,7 +218,7 @@ def test_human_timeout_to_waiting_agent(tmp_path: Path, monkeypatch):
             saw_agent = True
             rc = wait_run(ledger3.run_dir, repo3, timeout_s=2, poll_s=0)
             assert rc == 3, "wait_run на том же прогоне возвращает 3"
-            write_inbox_file(ledger3.run_dir, "ans.json", json.dumps(human_signed({
+            write_inbox_file(ledger3.run_dir, "ans.json", json.dumps(human_signed(ledger3.run_dir, {
                 "uuid": "stop-1", "question_id": qid3,
                 "action": "stop", "who": "human"})))
             break
@@ -579,7 +579,7 @@ def test_wake_only_after_waiting_agent(tmp_path: Path, monkeypatch):
         assert str(ledger.run_dir) in " ".join(calls[0])
         assert qid in " ".join(calls[0])
         assert not any("агента нет" in n for n in relay.notified)
-        write_inbox_file(ledger.run_dir, "fin.json", json.dumps(human_signed({
+        write_inbox_file(ledger.run_dir, "fin.json", json.dumps(human_signed(ledger.run_dir, {
             "uuid": "fin1", "question_id": qid,
             "action": "skip", "who": "human"})))
     finally:
@@ -599,7 +599,7 @@ def test_f19_human_with_matching_agent_pid_not_woken(tmp_path: Path):
                      "actions": ["retry", "more", "skip", "stop"],
                      "all_actions": ["retry", "more", "skip", "stop"]},
         "woken": {"1-1": 424242}}))
-    (run_dir / "inbox" / "h.json").write_text(json.dumps(human_signed(
+    (run_dir / "inbox" / "h.json").write_text(json.dumps(human_signed(run_dir,
         {"uuid": "h1", "question_id": "1-1", "action": "more",
          "who": "human", "agent_pid": 424242})))
     got = Inbox(run_dir).take("1-1", FakeRelay())

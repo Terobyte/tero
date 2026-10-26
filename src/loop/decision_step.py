@@ -218,7 +218,8 @@ class DecisionStep:
         from src.loop.human_key import trusted_list
 
         saved = self._saved()
-        allowed = set(trusted_list(saved.get("allowed_secrets"), saved.get("allowed_secrets_sig")))
+        allowed = set(trusted_list(Path(self.ctx.run_dir).name, saved.get("allowed_secrets"),
+                                   saved.get("allowed_secrets_sig")))
         return [p for p in secret_paths(self.ctx.repo) if p not in allowed]
 
     def stop_no_snapshot(self, reason: str) -> PhaseOutcome:
