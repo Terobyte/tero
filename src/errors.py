@@ -57,6 +57,18 @@ ERROR_TEXT_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 
+def strip_mcp_noise(text: str) -> str:
+    """Drop MCP-server noise lines (rmcp::, AuthRequired) from error text."""
+    if not text:
+        return text
+    kept = [
+        ln
+        for ln in text.splitlines()
+        if "rmcp::" not in ln.lower() and "authrequired" not in ln.lower()
+    ]
+    return "\n".join(kept).strip()
+
+
 def classify_error(exc: BaseException | None, text: str) -> str:
     """One of auth | quota | network | timeout | stall | other."""
     if isinstance(exc, ProviderStalled):
@@ -65,7 +77,7 @@ def classify_error(exc: BaseException | None, text: str) -> str:
         return "timeout"
     if isinstance(exc, ConnectionError):
         return "network"
-    hay = f"{text or ''} {exc or ''}".lower()
+    hay = strip_mcp_noise(f"{text or ''} {exc or ''}").lower()
     for kind in ("auth", "quota", "network"):
         if any(marker in hay for marker in ERROR_TEXT_MARKERS[kind]):
             return kind

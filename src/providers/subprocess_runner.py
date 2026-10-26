@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from src.constants import STDOUT_READ_CHUNK_SIZE
-from src.errors import ProviderError
+from src.errors import ProviderError, strip_mcp_noise as strip_noise
 
 
 @dataclass
@@ -375,15 +375,14 @@ def raise_for_exit(
         return
 
     if isinstance(stderr_data, bytes):
-        stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+        stderr_text = strip_noise(stderr_data.decode("utf-8", errors="replace").strip())
     else:
-        stderr_text = (stderr_data or "").strip()
-
+        stderr_text = strip_noise((stderr_data or "").strip())
     if errors is None:
         detail = stderr_text or "subprocess exited without stderr output"
     else:
-        parts = [*(errors or []), stderr_text] if stderr_text else list(errors or [])
-        detail = "; ".join(parts) or "subprocess exited without stderr output"
+        parts = [*(strip_noise(e) for e in errors), stderr_text] if stderr_text else [strip_noise(e) for e in errors]
+        detail = "; ".join(p for p in parts if p) or "subprocess exited without stderr output"
     raise ProviderError(f"{name} exited with code {returncode}: {detail}")
 
 

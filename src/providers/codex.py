@@ -10,16 +10,13 @@ from typing import AsyncIterator
 
 from src.constants import (
     LARGE_PROMPT_THRESHOLD_BYTES,
-    MAX_TOOL_OUTPUT_CHARS,
 )
 from src.errors import ProviderStalled
 from .message_adapter import (
     AdaptedMessage,
-    TextBlock,
-    ToolUseBlock,
-    ToolResultBlock,
 )
 from .effort import normalize_effort
+from .codex_events import adapt_codex_event, adapt_item, stream_error_text
 from .subprocess_runner import SubprocessExit, raise_for_exit, run_subprocess_jsonl
 
 
@@ -119,6 +116,7 @@ class CodexProvider:
             stdin_data=prompt.encode("utf-8"),
             stall_timeout=self.config.stall_timeout_s,
         )
+        self._stream_errors: list[str] = []
         try:
             async for event in _gen:
                 if isinstance(event, SubprocessExit):
@@ -126,8 +124,13 @@ class CodexProvider:
                         raise ProviderStalled(
                             f"нет вывода {self.config.stall_timeout_s:g} с"
                         )
-                    self._raise_for_returncode(event.returncode, event.stderr)
+                    self._raise_for_returncode(
+                        event.returncode, event.stderr, self._stream_errors[-10:]
+                    )
                 else:
+                    err = stream_error_text(event)
+                    if err:
+                        self._stream_errors.append(err[:2000])
                     tokens_before = self._last_input_tokens
                     adapted = self._adapt_codex_event(event)
                     if adapted is None:
@@ -286,229 +289,31 @@ class CodexProvider:
                 pass
 
     def _raise_for_returncode(
-        self, returncode: int | None, stderr_data: bytes | str
+        self, returncode: int | None, stderr_data: bytes | str,
+        errors: list[str] | None = None,
     ) -> None:
         """Raise when the Codex subprocess exits unsuccessfully."""
-        raise_for_exit("codex", returncode, stderr_data)
+        raise_for_exit("codex", returncode, stderr_data, errors)
 
     def _adapt_codex_event(self, event: dict) -> AdaptedMessage | None:
         """Convert Codex JSONL event to AdaptedMessage."""
-        if not isinstance(event, dict):
-            return None
-        etype = event.get("type", "")
-
-        # Thread / Turn lifecycle
-        if etype == "thread.started":
-            return None  # metadata only, ignore
-
-        if etype == "turn.started":
-            return AdaptedMessage(
-                role="assistant",
-                content=[],
-                type="assistant",
-            )
-
-        # Item events
-        if etype in ("item.completed", "item.started"):
-            item = event.get("item") or {}
-            return self._adapt_item(item, etype)
-
-        # Turn completion (contains usage)
-        if etype == "turn.completed":
+        if isinstance(event, dict) and event.get("type", "") in (
+            "item.completed",
+            "item.started",
+        ):
+            return self._adapt_item(event.get("item") or {}, event["type"])
+        adapted = adapt_codex_event(event, self._codex_started_ids)
+        if adapted is not None and adapted.type == "result" and not adapted.content:
             usage = event.get("usage") or {}
-            self._last_input_tokens = usage.get("input_tokens", 0)
-            self._last_output_tokens = usage.get("output_tokens", 0)
-            return AdaptedMessage(
-                role="assistant",
-                content=[],
-                stop_reason="end_turn",
-                type="result",
-            )
-
-        # Errors
-        if etype == "error":
-            msg = event.get("message", "Unknown error")
-            return AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text=f"⚠ Codex error: {msg}")],
-                type="text",
-            )
-
-        if etype == "turn.failed":
-            error = event.get("error") or {}
-            msg = (
-                error.get("message", "Turn failed")
-                if isinstance(error, dict)
-                else str(error)
-            )
-            return AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text=f"⚠ Codex turn failed: {msg}")],
-                type="text",
-            )
-
-        return None
+            inputs = usage.get("input_tokens", 0)
+            outputs = usage.get("output_tokens", 0)
+            self._last_input_tokens = inputs
+            self._last_output_tokens = outputs
+        return adapted
 
     def _adapt_item(self, item: dict, event_type: str) -> AdaptedMessage | None:
         """Convert a single Codex item to AdaptedMessage."""
-        if not isinstance(item, dict):
-            return None
-        item_type = item.get("type", "")
-
-        if item_type == "agent_message":
-            return self._adapt_agent_message_item(item)
-
-        if item_type == "command_execution":
-            return self._adapt_command_item(item, event_type)
-
-        # Codex 0.147 real item types: file_change / mcp_tool_call / web_search.
-        # Emit a ToolUseBlock on item.started; file_change may arrive with
-        # only item.completed (no started seen), so emit there too in that
-        # case, but never emit twice for the same item id.
-        if item_type in ("file_change", "mcp_tool_call", "web_search"):
-            return self._adapt_tool_item(item, item_type, event_type)
-
-        if item_type in ("file_edit", "file_write", "file_read"):
-            return self._adapt_file_op_item(item, item_type, event_type)
-
-        # Error item
-        if item_type == "error":
-            msg = item.get("message", "Unknown item error")
-            return AdaptedMessage(
-                role="assistant",
-                content=[TextBlock(text=f"⚠ {msg}")],
-                type="text",
-            )
-
-        return None
-
-    def _adapt_agent_message_item(self, item: dict) -> AdaptedMessage | None:
-        # Agent message (text response)
-        text = item.get("text", "")
-        if not text:
-            return None
-        return AdaptedMessage(
-            role="assistant",
-            content=[TextBlock(text=text)],
-            type="text",
-        )
-
-    def _adapt_command_item(self, item: dict, event_type: str) -> AdaptedMessage | None:
-        # Command execution (tool use)
-        command = item.get("command", "")
-        exit_code = item.get("exit_code")
-        output = item.get("aggregated_output", "")
-
-        if event_type == "item.started":
-            return AdaptedMessage(
-                role="assistant",
-                content=[
-                    ToolUseBlock(
-                        name="shell",
-                        input={"command": command},
-                        id=item.get("id", ""),
-                    )
-                ],
-                stop_reason="tool_use",
-                type="tool_use",
-            )
-
-        if event_type == "item.completed":
-            is_error = exit_code is not None and exit_code != 0
-            result_text = output or ""
-            if exit_code is not None:
-                result_text = f"[exit code: {exit_code}]\n{result_text}"
-
-            if len(result_text) > MAX_TOOL_OUTPUT_CHARS:
-                result_text = (
-                    result_text[:MAX_TOOL_OUTPUT_CHARS] + "\n... (truncated)"
-                )
-
-            return AdaptedMessage(
-                role="tool",
-                content=[
-                    ToolResultBlock(
-                        tool_use_id=item.get("id", ""),
-                        content=result_text,
-                        is_error=is_error,
-                    )
-                ],
-                type="tool_result",
-            )
-
-        return None
-
-    def _adapt_tool_item(
-        self, item: dict, item_type: str, event_type: str
-    ) -> AdaptedMessage | None:
-        item_id = item.get("id", "")
-        started = event_type == "item.started"
-        if started:
-            self._codex_started_ids.add(item_id)
-        elif item_id in self._codex_started_ids:
-            return None  # already reported on item.started
-
-        if item_type == "file_change":
-            paths = [c.get("path", "") for c in item.get("changes") or [] if c.get("path")]
-            name = "edit"
-            tool_input: dict = {"path": ", ".join(paths)}
-        elif item_type == "mcp_tool_call":
-            server = item.get("server", "")
-            tool = item.get("tool", "")
-            name = f"{server}.{tool}"
-            args = item.get("arguments")
-            if isinstance(args, dict):
-                tool_input = dict(args)
-            elif args is None:
-                tool_input = {}
-            else:
-                tool_input = {"arguments": str(args)}
-        else:  # web_search
-            name = "web_search"
-            tool_input = {"query": item.get("query", "")}
-
-        return AdaptedMessage(
-            role="assistant",
-            content=[ToolUseBlock(name=name, input=tool_input, id=item_id)],
-            stop_reason="tool_use",
-            type="tool_use",
-        )
-
-    def _adapt_file_op_item(
-        self, item: dict, item_type: str, event_type: str
-    ) -> AdaptedMessage | None:
-        # File edit operations (if Codex emits these)
-        path = item.get("path", item.get("file", ""))
-        content = item.get("content", item.get("text", ""))
-
-        if event_type == "item.started":
-            return AdaptedMessage(
-                role="assistant",
-                content=[
-                    ToolUseBlock(
-                        name=item_type,
-                        input={"path": path},
-                        id=item.get("id", ""),
-                    )
-                ],
-                stop_reason="tool_use",
-                type="tool_use",
-            )
-
-        if event_type == "item.completed":
-            return AdaptedMessage(
-                role="tool",
-                content=[
-                    ToolResultBlock(
-                        tool_use_id=item.get("id", ""),
-                        content=content or f"[{item_type}: {path}]",
-                        is_error=False,
-                    )
-                ],
-                type="tool_result",
-            )
-
-        return None
+        return adapt_item(item, event_type, self._codex_started_ids)
 
     def check_ready(self) -> tuple[bool, str]:
         """Check if Codex CLI is installed and available."""

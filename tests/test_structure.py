@@ -10,7 +10,7 @@ FILE_CEILINGS = {
     "src/loop/phase.py": 689,
     "src/loop/run.py": 421,
     "src/menu.py": 548,
-    "src/providers/codex.py": 540,
+    "src/providers/codex.py": 345,
     "src/config.py": 524,
     "src/loop/agents.py": 409,
     "src/providers/subprocess_runner.py": 403,

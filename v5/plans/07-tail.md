@@ -246,10 +246,10 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   и до показа человеку.
 - Секреты в тексте ошибки по-прежнему вычищаются (`scrub_secrets`).
 
-- [ ] `test_codex_quota_in_stream_is_quota`: stub-codex пишет событие ошибки `You’ve hit your usage limit…` в поток, в stderr только `rmcp … AuthRequired`, выход 1 → вид `quota`, прогон уходит в `provider_quota` без повторов «сеть»
-- [ ] `test_rmcp_noise_stripped_from_error_text`: текст ошибки, который видит человек, не содержит строк `rmcp::`
-- [ ] `test_classify_error_old_markers_unchanged`: прежние маркеры auth/quota/network классифицируются как раньше
-- [ ] реализовать
+- [x] `test_codex_quota_in_stream_is_quota`: stub-codex пишет событие ошибки `You’ve hit your usage limit…` в поток, в stderr только `rmcp … AuthRequired`, выход 1 → вид `quota`, прогон уходит в `provider_quota` без повторов «сеть»
+- [x] `test_rmcp_noise_stripped_from_error_text`: текст ошибки, который видит человек, не содержит строк `rmcp::`
+- [x] `test_classify_error_old_markers_unchanged`: прежние маркеры auth/quota/network классифицируются как раньше
+- [x] реализовать
 
 ## Отчёт игрока без эха схемы
 

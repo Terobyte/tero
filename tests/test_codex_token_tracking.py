@@ -343,3 +343,66 @@ def test_build_command_disables_tools_for_text_only_runs():
     assert "multi_agent" in cmd
     assert "apps" in cmd
 
+
+@pytest.mark.asyncio
+async def test_codex_quota_in_stream_is_quota(monkeypatch, tmp_path):
+    """B6: usage-limit message arrives in the event stream, stderr is MCP noise."""
+    import src.providers.codex as codex_mod
+    from src.loop.agents import LiveAgents
+    from src.loop.schemas import ValidateCtx
+    from src.providers.subprocess_runner import SubprocessExit
+
+    async def _fake(cmd, working_dir, env=None, stdin_data=None, stall_timeout=0):
+        yield {"type": "error", "message": "You’ve hit your usage limit, reset at 5pm"}
+        yield SubprocessExit(returncode=1, stderr=b"rmcp::server boom AuthRequired\n")
+
+    monkeypatch.setattr(codex_mod, "run_subprocess_jsonl", _fake)
+    provider = CodexProvider(CodexConfig())
+    agents = LiveAgents(str(tmp_path), factory=lambda _n: provider, retry_wait_s=0)
+    data = await agents.run_role(
+        "judge", provider="codex", model="m", prompt="P", timeout=5, ctx=ValidateCtx()
+    )
+    assert data["__unavailable__"] is True
+    assert data["kind"] == "quota"
+    assert agents._last_kind == "quota"
+    assert "rmcp::" not in agents.last_error
+
+
+@pytest.mark.asyncio
+async def test_run_phase_with_quota_stub_stops_provider_quota(tmp_path):
+    """run_phase with a quota FakeAgents stops as provider_quota, one call."""
+    from src.config import Config
+    from src.loop.gates import detect
+    from src.loop.ledger import Ledger, new_run_dir
+    from src.loop.phase import run_phase
+    from src.loop.plan import load_phases, load_preamble
+    from tests.loop import fakes as scripted
+
+    repo = scripted.init_repo(tmp_path, "# Demo\n\n## One\n\n- [ ] x\n")
+    agents = scripted.FakeAgents(
+        repo,
+        [
+            lambda _r, _k: {
+                "__unavailable__": True,
+                "error": "You’ve hit your usage limit",
+                "kind": "quota",
+            }
+        ],
+    )
+    cfg = Config(plan_file="plan.md", max_rounds=8, test_timeout_s=30)
+    ledger = Ledger(new_run_dir(repo, "demo"))
+    phases = load_phases(repo / "plan.md")
+    outcome = await run_phase(
+        phases[0],
+        repo=repo,
+        plan_path=repo / "plan.md",
+        preamble=load_preamble(repo / "plan.md"),
+        cfg=cfg,
+        agents=agents,
+        test_command=detect(repo),
+        ledger=ledger,
+    )
+    assert outcome.status == "stop"
+    assert outcome.reason == "provider_quota"
+    assert agents.calls == ["player"]
+
