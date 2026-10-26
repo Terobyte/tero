@@ -13,6 +13,7 @@ Any error in `run` is written to `.tero/hud.log` and the process exits;
 from __future__ import annotations
 
 import json
+import os
 import time
 import traceback
 from importlib import resources
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from src.errors import scrub_secrets
 from src.fsio import append_text, atomic_write_json, read_json_dict
+from src.hud import registry, single
 from src.hud.model import build_view
 from src.hud.registry import is_dead
 from src.hud.tail import Tail
@@ -110,13 +112,47 @@ class Bridge:
     """`js_api` bridge: run files -> `build_view` (phase 7)."""
 
     def __init__(self, run_dir: str | Path) -> None:
+        self._open(run_dir)
+        self._expanded = bool(_load_cfg().get("expanded", False))
+
+    def _open(self, run_dir: str | Path) -> None:
         self.run_dir = Path(run_dir)
         self._tail = Tail(self.run_dir / "stream.jsonl")
         self._events: list[dict] = []
         self._state: dict | None = None
-        self._expanded = bool(_load_cfg().get("expanded", False))
+
+    def _live(self) -> list[Path]:
+        """Run dirs of all live runs in the registry, in registry order."""
+        out: list[Path] = []
+        for entry in registry.Registry().list_live():
+            try:
+                run_dir = Path(entry["state_path"]).parent.resolve()
+            except Exception:
+                continue
+            if run_dir not in out:
+                out.append(run_dir)
+        return out
+
+    def _others(self) -> list[Path]:
+        """Other live runs, starting right after the shown one (so `+N` cycles)."""
+        live = self._live()
+        mine = self.run_dir.resolve()
+        if mine in live:
+            i = live.index(mine)
+            live = live[i + 1:] + live[:i]
+        return live
+
+    def switch(self, run_dir: str = "") -> str:
+        """Show `run_dir`, or the next live run when empty. Returns the shown dir."""
+        target = Path(run_dir) if run_dir else next(iter(self._others()), None)
+        if target is not None and target.resolve() != self.run_dir.resolve():
+            self._open(target)
+        return str(self.run_dir)
 
     def view(self) -> dict:
+        target = single.take_target()
+        if target is not None:
+            self.switch(str(target))
         try:
             raw = (self.run_dir / "state.json").read_text(encoding="utf-8")
             parsed = json.loads(raw)
@@ -133,6 +169,11 @@ class Bridge:
         data = build_view(self._state, self._events, now, lambda s: not is_dead(s))
         data["age_color"] = age_color(data.get("last_event_age_s"))
         data["expanded"] = self._expanded
+        try:
+            others = len(self._others())
+        except Exception:
+            others = 0
+        data["plus"] = f"+{others}" if others else ""
         if isinstance(self._state, dict):
             data["stop_text"] = _stop_text(self._state)
         else:
@@ -173,45 +214,61 @@ def _read_html() -> str:
 
 def run(run_dir: str | Path) -> int:
     """Open the HUD window for a run directory. Never raises."""
+    lock = None
     try:
-        import webview
-        import webview.platforms.cocoa  # noqa: F401 (order: import -> no_focus_steal -> start)
-
-        no_focus_steal()
-        html = _read_html()
-        bridge = Bridge(run_dir)
-        cfg = _load_cfg()
-        expanded = bool(cfg.get("expanded", False))
-        bridge._expanded = expanded
-        kwargs: dict = {
-            "html": html,
-            "js_api": bridge,
-            "frameless": True,
-            "on_top": True,
-            "focus": False,
-            "transparent": True,
-            "vibrancy": True,
-            "width": WINDOW_W,
-            "height": EXPANDED_H if expanded else COLLAPSED_H,
-        }
-        if isinstance(cfg.get("x"), int) and isinstance(cfg.get("y"), int):
-            kwargs["x"] = cfg["x"]
-            kwargs["y"] = cfg["y"]
-        window = webview.create_window("tero HUD", **kwargs)
-        try:
-            bridge._window = window
-        except Exception:
-            pass
-        webview.start(http_server=False)
+        lock = single.acquire_lock()
+        if lock is None:
+            single.write_target(run_dir)
+            return 0
+        _open_window(run_dir)
         return 0
     except Exception as exc:
-        try:
-            try:
-                path = run_log_path(run_dir)
-            except Exception:
-                path = log_path()
-            append_text(path, f"{time.time():.0f} view.run failed: {scrub_secrets(repr(exc))}\n")
-            append_text(path, scrub_secrets(traceback.format_exc()))
-        except Exception:
-            pass
+        _log_failure(run_dir, exc)
         return 1
+    finally:
+        if lock is not None:
+            os.close(lock)
+
+
+def _open_window(run_dir: str | Path) -> None:
+    import webview
+    import webview.platforms.cocoa  # noqa: F401 (order: import -> no_focus_steal -> start)
+
+    no_focus_steal()
+    html = _read_html()
+    bridge = Bridge(run_dir)
+    cfg = _load_cfg()
+    expanded = bool(cfg.get("expanded", False))
+    bridge._expanded = expanded
+    kwargs: dict = {
+        "html": html,
+        "js_api": bridge,
+        "frameless": True,
+        "on_top": True,
+        "focus": False,
+        "transparent": True,
+        "vibrancy": True,
+        "width": WINDOW_W,
+        "height": EXPANDED_H if expanded else COLLAPSED_H,
+    }
+    if isinstance(cfg.get("x"), int) and isinstance(cfg.get("y"), int):
+        kwargs["x"] = cfg["x"]
+        kwargs["y"] = cfg["y"]
+    window = webview.create_window("tero HUD", **kwargs)
+    try:
+        bridge._window = window
+    except Exception:
+        pass
+    webview.start(http_server=False)
+
+
+def _log_failure(run_dir: str | Path, exc: Exception) -> None:
+    try:
+        try:
+            path = run_log_path(run_dir)
+        except Exception:
+            path = log_path()
+        append_text(path, f"{time.time():.0f} view.run failed: {scrub_secrets(repr(exc))}\n")
+        append_text(path, scrub_secrets(traceback.format_exc()))
+    except Exception:
+        pass

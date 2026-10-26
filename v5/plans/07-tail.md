@@ -394,8 +394,8 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   без других прогонов значка нет; клик по значку — мост `switch(run_dir)` переключает на следующий.
 - После конца прогона окно остаётся с итогом, пока не придёт новый `hud-target` или не закроют.
 
-- [ ] `test_second_hud_writes_target_and_exits`: лок занят (держит тест) → `main` пишет `hud-target`, код 0, `create_window` не вызван
-- [ ] `test_window_switches_on_target`: окно (фейковый `webview`, мост) видит новый `hud-target` → `view()` отдаёт данные нового прогона
-- [ ] `test_free_lock_opens_window`: лок свободен → окно открыто; изнутри фейкового `start` видно, что `flock` занят
-- [ ] `test_plus_n_label_from_registry`: два живых прогона в реестре (подменённый `src.hud.registry.pid_is_alive`) → значок «+1»; один прогон → значка нет
-- [ ] реализовать
+- [x] `test_second_hud_writes_target_and_exits`: лок занят (держит тест) → `main` пишет `hud-target`, код 0, `create_window` не вызван
+- [x] `test_window_switches_on_target`: окно (фейковый `webview`, мост) видит новый `hud-target` → `view()` отдаёт данные нового прогона
+- [x] `test_free_lock_opens_window`: лок свободен → окно открыто; изнутри фейкового `start` видно, что `flock` занят
+- [x] `test_plus_n_label_from_registry`: два живых прогона в реестре (подменённый `src.hud.registry.pid_is_alive`) → значок «+1»; один прогон → значка нет
+- [x] реализовать

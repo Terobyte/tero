@@ -52,6 +52,10 @@ body {
 #tabs button.on { background: rgba(255,255,255,0.22); color: #fff; }
 #log { font-size: 10px; color: #aeb7c6; max-height: 90px; overflow-y: auto; white-space: pre-wrap; }
 #foot { font-size: 11px; margin-top: 6px; color: #ffd479; }
+#plus {
+  display: none; align-self: flex-start; font-size: 10px; color: #cfd6e2; cursor: pointer;
+  background: rgba(255,255,255,0.12); border-radius: 999px; padding: 1px 7px;
+}
 </style>
 </head>
 <body>
@@ -63,6 +67,7 @@ body {
       <div id="role"></div>
       <div id="doing"></div>
     </div>
+    <span id="plus"></span>
   </div>
   <div id="detail">
     <div id="phases"></div>
@@ -83,7 +88,8 @@ function getApi() {
 window.addEventListener("pywebviewready", function () { getApi(); poll(); });
 
 function esc(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function sectorColor(v) {
   var map = {green: "#3ddc84", yellow: "#f5c542", red: "#ff6b6b", orange: "#ff9f43", grey: "#555b66"};
@@ -110,6 +116,9 @@ function render(d) {
     '<span class="' + ageCls + '">' + esc(ageTxt) + "</span>";
   document.getElementById("role").textContent = d.role_line || "";
   document.getElementById("doing").textContent = d.doing || "";
+  var plus = document.getElementById("plus");
+  plus.textContent = d.plus || "";
+  plus.style.display = d.plus ? "inline-block" : "none";
   var detail = document.getElementById("detail");
   detail.style.display = expanded ? "block" : "none";
   if (!expanded) return;
@@ -170,6 +179,15 @@ function poll() {
     }
   } catch (e) {}
 }
+document.getElementById("plus").onclick = function () {
+  var a = getApi();
+  if (!a) return;
+  try {
+    var p = a.switch("");
+    if (p && typeof p.then === "function") p.then(function () { poll(); });
+    else poll();
+  } catch (e) {}
+};
 document.getElementById("circle").onclick = function () {
   var a = getApi();
   if (!a) {
