@@ -365,9 +365,17 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   `tero go` об этом не знает (как сейчас).
 - **Тесты не открывают настоящее окно:** фейковый модуль `webview` в `sys.modules` записывает аргументы
   `create_window`/`start`.
+- **Дизайн (решения 2026-10-26, главнее макетов выше):** внешний вид — liquid glass из
+  `tero-v5-logs/hud-design/` (только демо, данные — из `build_view`).
+  - Стекло: `create_window(..., transparent=True, vibrancy=True)`, фон страницы прозрачный.
+  - Шрифты — внутри `view.html` (`@font-face` с `data:` base64), без внешних ссылок.
+  - Возраст последнего события — не отдельной строкой, а мелко в конце шапки:
+    `Фаза 4/9 · раунд 2 · 06:12 · 3 с`; `last_event_age_s` > 60 → цифра жёлтая, > 300 → красная.
 
 - [ ] `test_window_uses_inline_html_no_server`: фейковый `webview` → `create_window` получил `html=`, не `url=`; `frameless`, `on_top`, `focus=False`; `start(http_server=False)`
-- [ ] `test_view_html_is_self_contained`: в `view.html` нет `http://`, `https://`, внешних `src=`/`href=`
+- [ ] `test_window_uses_inline_html_no_server` также: `transparent=True`, `vibrancy=True`
+- [ ] `test_view_html_is_self_contained`: в `view.html` нет `http://`, `https://`, внешних `src=`/`href=`; шрифт через `data:`
+- [ ] `test_age_color_thresholds`: функция цвета возраста в `view.py` (или данные моста): 3 → обычный, 61 → жёлтый, 301 → красный
 - [ ] `test_bridge_view_reads_run_files`: временная папка прогона со `state.json` и `stream.jsonl` → `bridge.view()` отдаёт `header` и `doing`; битый `state.json` → прошлый снимок
 - [ ] `test_no_focus_steal_order`: импорт `webview.platforms.cocoa` → `no_focus_steal` → `start`; после него `activateIgnoringOtherApps_` не активирует
 - [ ] `test_position_and_mode_persist`: `save_pos` + `toggle` → `hud.json`; новый запуск читает их
@@ -382,12 +390,12 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   `tero hud --run <папка>` при занятом локе не открывает окно: атомарно пишет папку в `~/.tero/hud-target`
   и выходит с кодом 0. Окно раз в секунду смотрит `hud-target` и переключается на новый прогон.
 - Лок отпущен (окно закрыто, процесс умер) → следующий `tero hud` открывает окно сам.
-- В окне метка «+N прогон», если в реестре (`src/hud/registry.py`) есть живые прогоны кроме показанного;
-  мост `switch(run_dir)` переключает.
+- В окне значок `+N` (не кнопка; число живых прогонов в реестре `src/hud/registry.py` кроме показанного),
+  без других прогонов значка нет; клик по значку — мост `switch(run_dir)` переключает на следующий.
 - После конца прогона окно остаётся с итогом, пока не придёт новый `hud-target` или не закроют.
 
 - [ ] `test_second_hud_writes_target_and_exits`: лок занят (держит тест) → `main` пишет `hud-target`, код 0, `create_window` не вызван
 - [ ] `test_window_switches_on_target`: окно (фейковый `webview`, мост) видит новый `hud-target` → `view()` отдаёт данные нового прогона
 - [ ] `test_free_lock_opens_window`: лок свободен → окно открыто; изнутри фейкового `start` видно, что `flock` занят
-- [ ] `test_plus_n_label_from_registry`: два живых прогона в реестре (подменённый `src.hud.registry.pid_is_alive`) → метка «+1»
+- [ ] `test_plus_n_label_from_registry`: два живых прогона в реестре (подменённый `src.hud.registry.pid_is_alive`) → значок «+1»; один прогон → значка нет
 - [ ] реализовать
