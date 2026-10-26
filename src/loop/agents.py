@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import re
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import classify_error, scrub_secrets
 from src.loop.activity import _activity
 from src.loop.compact import Compacted
 from src.loop.prompts import repair_prompt
-from src.loop.schemas import SCHEMAS, ValidateCtx, validate
+from src.loop.role_report import extract_json, with_schema
+from src.loop.schemas import SCHEMAS, ValidateCtx
 from src.loop.write_guard import ReadOnlyLoop, player_guard, watched
 from src.process_guard import ProcessGuard
+
+__all__ = ["LiveAgents", "extract_json", "with_schema", "validate_role"]
 
 # Overridable in tests: how long a role can go silent before we print a
 # "still working" line, so a slow provider (opencode: 81s to first event,
@@ -28,57 +31,7 @@ HEARTBEAT_S = 30.0
 RETRY_DELAYS_S = (60, 120, 300, 600, 3600)
 RETRY_DEADLINE_S = 7200
 
-_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _STALL_SECS = re.compile(r"(\d+(?:\.\d+)?)\s*с")
-
-
-def extract_json(text: str) -> dict[str, Any] | None:
-    """Last JSON object in the assistant text: fenced block, else bare `{...}`."""
-    fenced: list[tuple[int, dict[str, Any]]] = []
-    for match in _FENCE.finditer(text or ""):
-        parsed = _loads_object(match.group(1))
-        if parsed is not None:
-            fenced.append((match.start(), parsed))
-    bare = _bare_objects(text or "")
-    if fenced and (not bare or fenced[-1][0] > bare[-1][0]):
-        return fenced[-1][1]
-    return bare[-1][1] if bare else None
-
-
-def _bare_objects(text: str) -> list[tuple[int, dict[str, Any]]]:
-    decoder = json.JSONDecoder()
-    found: list[tuple[int, dict[str, Any]]] = []
-    index = 0
-    while index < len(text):
-        start = text.find("{", index)
-        if start < 0:
-            break
-        try:
-            obj, end = decoder.raw_decode(text, start)
-        except json.JSONDecodeError:
-            index = start + 1
-            continue
-        if isinstance(obj, dict):
-            found.append((start, obj))
-        index = end
-    return found
-
-
-def _loads_object(text: str) -> dict[str, Any] | None:
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def with_schema(prompt: str, schema: dict) -> str:
-    """Spell the schema out: opencode/gemini/cursor ignore output_schema."""
-    return (
-        f"{prompt}\n\n## Формат финального сообщения\n"
-        "Один JSON-объект строго по этой JSON Schema, без текста вокруг:\n"
-        f"```json\n{json.dumps(schema, ensure_ascii=False)}\n```"
-    )
 
 
 def validate_role(
@@ -88,6 +41,8 @@ def validate_role(
 ) -> list[str]:
     if data is None:
         return ["no JSON object in the final message"]
+    from src.loop.schemas import validate
+
     return validate(role, data, ctx)
 
 
@@ -110,6 +65,14 @@ class LiveAgents:
         self._last_kind = "other"
         self._last_exc: BaseException | None = None
         self._last_output_ts = 0.0
+        self.run_dir: str | None = None
+        try:
+            from src.loop import stop_flag as _flag
+
+            if _flag.live(Path(working_dir), require_pid=True):
+                self.run_dir = str(working_dir)
+        except Exception:
+            pass
 
     async def run_role(
         self,
@@ -182,6 +145,9 @@ class LiveAgents:
         overall_start = _now()
         while True:
             before = self.guard.snapshot_pids()
+            from src.loop import watchdog as _w
+
+            _w.note_step_before(before)
             call_start = _now()
             self._last_output_ts = call_start
             heartbeat = asyncio.ensure_future(
@@ -216,6 +182,8 @@ class LiveAgents:
                 self.last_error = raw
                 self._last_kind = classify_error(exc, raw)
                 self._last_exc = exc
+                if stop_requested_flag(self.run_dir or self.working_dir):
+                    break
                 if self._last_kind in ("timeout", "stall", "auth", "quota"):
                     if self._last_kind in ("timeout", "stall"):
                         self.last_error = self.error_text(role, timeout)
@@ -236,14 +204,8 @@ class LiveAgents:
                     )
                     print(f"  {line}", flush=True)
                     if emit is not None:
-                        emit(
-                            "retry",
-                            role=role,
-                            attempt=network_retry,
-                            wait_s=wait_s,
-                            error=raw,
-                            text=line,
-                        )
+                        emit("retry", role=role, attempt=network_retry,
+                             wait_s=wait_s, error=raw, text=line)
                     await asyncio.sleep(wait_s)
                     continue
                 if other_retried:
@@ -259,7 +221,11 @@ class LiveAgents:
                     await heartbeat
                 except asyncio.CancelledError:
                     pass
-                self.guard.kill_new_processes(before)
+                if self.run_dir and stop_requested_flag(self.run_dir):
+                    _w._kill_new_processes(_w.step_before())
+                else:
+                    self.guard.kill_new_processes(before)
+                _w.note_step_before(None)
         return None
 
     def error_text(self, role: str, timeout: float) -> str:
@@ -296,6 +262,30 @@ class LiveAgents:
 
 def _now() -> float:
     return time.monotonic()
+
+
+def stop_requested_flag(run_dir: str | None) -> bool:
+    """True when a stop was requested for this run dir (else its `.tero/runs`).
+
+    Never raises.
+    """
+    try:
+        from pathlib import Path
+
+        from src.loop import stop_flag as _flag
+
+        if not run_dir:
+            return False
+        direct = Path(run_dir)
+        if (direct / "inbox").is_dir() or (direct / "state.json").is_file():
+            return bool(_flag.live(direct, require_pid=True))
+        runs = direct / ".tero" / "runs"
+        if not runs.is_dir():
+            return False
+        return any(
+            _flag.live(c, require_pid=True) for c in runs.iterdir())
+    except Exception:
+        return False
 
 
 def _default_factory(working_dir: str) -> Callable[[str], Any]:

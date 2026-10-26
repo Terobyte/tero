@@ -316,12 +316,13 @@ def base_suite_state(repo, base):
 class ResumeStep:
     """Stopped-resume entry: protect+gate on the ref tree, then judge, then normal cycle."""
 
-    def __init__(self, ctx, judge, gate, protect, after_judge) -> None:
+    def __init__(self, ctx, judge, gate, protect, after_judge, stop_check=None) -> None:
         self.ctx = ctx
         self.judge = judge
         self.gate = gate
         self.protect = protect
         self.after_judge = after_judge
+        self.stop_check = stop_check
 
     def _gate_entry(self, resume_from) -> bool:
         if not resume_from.gate_first:
@@ -348,6 +349,10 @@ class ResumeStep:
             ctx.st.answer = resume_from.answer
         if not self._gate_entry(resume_from):
             return None
+        if self.stop_check is not None:
+            hit = self.stop_check()
+            if hit is not None:
+                return hit
         ctx.ledger.event("resume_judge", round=ctx.st.round)
         print(f"  {ctx.tag()} judge {ctx.cfg.judge_provider}({ctx.cfg.judge_model}) …",
               flush=True)

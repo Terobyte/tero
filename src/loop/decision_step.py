@@ -8,14 +8,17 @@ from typing import Any, Callable
 
 from src.loop import snapshot as snapshot_mod
 from src.loop.decision_actions import (
-    LIMIT_REASONS, LIMIT_WAITS_S, apply_action, full_actions, limit_chain, question_actions,
-    wait_limit,
+    LIMIT_REASONS, LIMIT_WAITS_S, full_actions, limit_chain, question_actions,
 )
+from src.loop.decision_resolve import _skip_to_debt, resolve_step
 from src.loop.halt_text import _halt_text_fallback, _legacy_halt_text  # noqa: F401
 from src.loop.phase_ctx import PhaseContext, PhaseOutcome
 from src.loop.state import RunState, Status, owner_lock
 from src.loop.transition import phase_transition
+from src.loop.watchdog import stop_requested
 from src.relay.iface import NoopRelay, RelayClient
+
+__all__ = ["DecisionStep", "implemented_actions"]
 
 DECISION_POLL_S = 10
 
@@ -281,6 +284,11 @@ class DecisionStep:
             decisions = bool(self.ctx.cfg.decisions)
         except Exception:
             decisions = False
+        try:
+            if stop_requested(self.ctx.run_dir):
+                reason = "user_stop"
+        except Exception:
+            pass
         if not decisions or not implemented_actions(reason):
             return self._old_halt(reason)
         waits = limit_chain(self._saved(), self.ctx.phase.index + 1)
@@ -309,92 +317,9 @@ class DecisionStep:
             stop_text=text, decider=self,
         )
 
-    def _skip_to_debt(self, reason: str, qid: str, who: str) -> PhaseOutcome:
-        try:
-            self._snap = RunState.read(self.ctx.run_dir / "state.json") or {}
-        except Exception:
-            self._snap = {}
-        try:
-            ref = self.locked_rollback(reason)
-        except Exception:
-            ref = None
-        self._repair_after_rollback()
-        if ref is None:
-            return self.stop_no_snapshot(reason)
-        self._restore_journal()
-        try:
-            self.ctx.ledger.event("rollback", reason=reason, round=self.ctx.st.round)
-        except Exception:
-            pass
-        try:
-            findings = [f.as_prompt() for f in (self.ctx.st.open_findings or [])[-5:]]
-        except Exception:
-            findings = []
-        entry = {"phase": self.ctx.phase.index + 1, "reason": reason,
-                 "findings": findings, "who": who, "ref": ref or ""}
-        try:
-            cur = RunState.read(self.ctx.run_dir / "state.json") or {}
-            debt = list(cur.get("debt") or [])
-            debt.append(entry)
-        except Exception:
-            debt = [entry]
-        try:
-            self.ctx.st.answer = ""
-        except Exception:
-            pass
-        phase_transition(
-            self.ctx, status=Status.RUNNING.value, reason=reason,
-            text=f"фаза {self.ctx.phase.index + 1} в долг",
-            role="judge", event="skip", kind="skip", doing="фаза в долг",
-            question=None, answer="", debt=debt, question_id=qid,
-        )
-        return PhaseOutcome(status="skip", reason=reason, rounds=self.ctx.st.round,
-                            escalated=self.ctx.st.escalated, stop_text="")
-
     def resolve(self) -> PhaseOutcome:
         """Дождаться ответа на открытый halt() вопрос и применить его."""
-        reason, qid = self._reason, self._qid
-        if self._auto_wait is not None:
-            return wait_limit(self, reason, qid, self._auto_wait)
-        opened_at = getattr(self, "_opened_at", None)
-        ans = self.wait_answer(qid, opened_at)
-        if ans is None:
-            return self._old_halt(reason)
-        if isinstance(ans, PhaseOutcome):  # F28: автопилот уже вернул стоп.
-            return ans
-        action = (ans.action or "").strip()
-        who = (ans.who or "agent").strip() or "agent"
-        if action == "stop":
-            ref = self._rollback_keep_journal(reason)
-            t = "снимок не сделан, дерево не тронуто" if ref is None else self.halt_text(reason, ref)
-            self.write_stopped(reason, t)
-            self._restore_journal()
-            return PhaseOutcome(
-                status="stop", reason=reason, user_question=self.ctx.st.user_question,
-                rounds=self.ctx.st.round, escalated=self.ctx.st.escalated, stop_text=t,
-            )
-        if action == "skip":
-            return self._skip_to_debt(reason, qid, who)
-        if action == "answer":
-            txt = (ans.text or "").strip()
-            try:
-                self.ctx.st.answer = txt
-            except Exception:
-                pass
-            phase_transition(
-                self.ctx, status=Status.RUNNING.value, reason=reason, text=txt,
-                role="judge", event="answer", kind="answer", doing="новый раунд",
-                question=None, answer=txt, question_id=qid,
-            )
-            return PhaseOutcome(
-                status="answer", reason=reason, rounds=self.ctx.st.round,
-                escalated=self.ctx.st.escalated, stop_text="", answer=txt,
-            )
-        if reason == "judge_pending" and action in ("retry", "accept", "reject"):
-            from src.loop.decision_actions import judge_pending_action
+        return resolve_step(self)
 
-            got = judge_pending_action(self, action, reason, qid, ans)
-            if got is not None:
-                return got
-        out = apply_action(self, action, reason, qid, ans)
-        return out if out is not None else self._old_halt(reason)
+    def _skip_to_debt(self, reason: str, qid: str, who: str) -> PhaseOutcome:
+        return _skip_to_debt(self, reason, qid, who)

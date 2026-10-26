@@ -114,6 +114,41 @@ def judge_returns(payload: dict[str, Any]) -> Step:
     return step
 
 
+def sleep_provider(tmp_path: Path, seconds: float = 60.0):
+    """Provider stub whose process sleeps: stands in for a CLI long call."""
+    import asyncio as _asyncio
+    import sys as _sys
+
+    class _SleepProvider:
+        def __init__(self) -> None:
+            self.proc: Any = None
+
+        async def run(self, prompt, system_prompt, working_dir, model="",
+                      **kw):  # async generator like a real provider
+            self.proc = subprocess.Popen(
+                [_sys.executable, "-c",
+                 f"import time; time.sleep({seconds})"],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            yield "started\n"
+            try:
+                code = await _asyncio.get_running_loop().run_in_executor(
+                    None, self.proc.wait)
+            except BaseException:
+                try:
+                    if self.proc is not None and self.proc.poll() is None:
+                        self.proc.kill()
+                except Exception:
+                    pass
+                raise
+            if code not in (0, None):
+                raise RuntimeError(f"stub exited {code}")
+            yield f"exit={code}\n"
+
+    return _SleepProvider()
+
+
 def write_tester_file(repo: Path, rel: str, content: str, finding_id: str, name: str) -> Step:
     def step(role: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         assert role == "tester"

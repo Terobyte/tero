@@ -141,7 +141,13 @@ def _expand_files(argv: list[str], paths: list[str]) -> list[str]:
 
 
 def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
+    from src.loop import watchdog as _wd
+
+    from src.process_guard import ProcessGuard
+
     resolved = [_resolve_python(part) for part in argv]
+    before = ProcessGuard().snapshot_pids()
+    _wd.note_step_before(before)
     try:
         proc = subprocess.run(
             resolved,
@@ -149,6 +155,7 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            start_new_session=True,
         )
     except OSError as exc:
         return GateResult(
@@ -159,6 +166,7 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
         )
     except subprocess.TimeoutExpired as exc:
         output = _text(exc.stdout) + _text(exc.stderr)
+        _wd._kill_new_processes(before)
         return GateResult(
             ok=False,
             exit_code=124,
@@ -166,6 +174,8 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
             command_name=name,
             timed_out=True,
         )
+    finally:
+        _wd.note_step_before(None)
     output = (proc.stdout or "") + (proc.stderr or "")
     return GateResult(
         ok=proc.returncode == 0,

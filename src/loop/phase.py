@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from src.config import Config
 from src.loop.gates import GateResult, TestCommand, fingerprint, run_all, run_files
 from src.loop import gate_scope
-from src.loop.git import (
+from src.loop.git import (  # noqa: F401 — rollback точка подмены
     GitError,
     commit,
     exclude_tero,
@@ -22,7 +22,7 @@ from src.loop.git import (
 from src.errors import scrub_secrets
 from src.loop.ledger import Ledger
 from src.loop.plan import Phase, mark_phase_done
-from src.loop import snapshot as snapshot_mod
+from src.loop import snapshot as snapshot_mod  # noqa: F401 — snapshot_mod точка подмены
 from src.loop.prompts import player_prompt
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState
@@ -161,6 +161,10 @@ class _PhaseRunner:
         self.contract = phase.body or phase.title
         self._plan_bytes = self._remember_plan()
         self.run_dir = Path(ledger.run_dir)
+        try:
+            agents.run_dir = str(self.run_dir)
+        except Exception:
+            pass
         self.ctx = PhaseContext(
             phase=phase,
             total_phases=total_phases,
@@ -195,78 +199,17 @@ class _PhaseRunner:
         )
 
     def _remember_plan(self) -> bytes | None:
-        """Байты плана на входе в фазу; None — план не отслеживаем.
+        from src.loop import plan_guard as _pg
 
-        На resume (start_with_judge) правка плана в ref старого прогона
-        могла уже лежать, поэтому эталон — `git show <base>:<план>`, а не
-        диск. Нет файла или план вне репо — проверки нет, не исключение.
-        """
-        try:
-            resolved = self.plan_path.resolve()
-            repo_root = self.repo.resolve()
-        except OSError:
-            return None
-        if not resolved.is_relative_to(repo_root):
-            return None
-        if self.start_with_judge and self.checkpoint:
-            # Эталон resume — коммит (файла на диске может уже не быть):
-            # правка плана в ref старого прогона могла уже лежать, диску
-            # тут верить нельзя. Нет блоба (план не отслеживается) —
-            # проверки нет.
-            from src.loop.resume_step import _git_show_bytes
-
-            return _git_show_bytes(self.repo, self.checkpoint, resolved)
-        try:
-            return self.plan_path.read_bytes() if self.plan_path.is_file() else None
-        except OSError:
-            return None
+        return _pg.remember_plan(self)
 
     def _guard_plan(self, role: str) -> None:
-        """Вернуть план, если роль его меняла: запись в план — только tero.
+        from src.loop import plan_guard as _pg
 
-        Зовётся сразу после run_role роли, до любого снимка раунда: в снимке
-        план уже чистый. Единственная легальная запись — mark_phase_done.
-        """
-        if self._plan_bytes is None:
-            return
-        try:
-            current = self.plan_path.read_bytes() if self.plan_path.is_file() else None
-        except OSError:
-            current = None
-        if current == self._plan_bytes:
-            return
-        try:
-            self.plan_path.parent.mkdir(parents=True, exist_ok=True)
-            self.plan_path.write_bytes(self._plan_bytes)
-        except OSError as exc:
-            # План остаётся изменённым: молчать нельзя — событие и в ledger,
-            # и в stream, чтобы правка была видна в HUD и истории.
-            print(f"  план изменён, восстановить не удалось: {exc}", flush=True)
-            self.ledger.event(
-                "plan_restore_failed",
-                path=self.plan_path.name,
-                phase=self.phase.title,
-                round=self.state.round,
-                role=role,
-                error=str(exc),
-            )
-            self.ctx.emit(
-                "plan_restore_failed",
-                role=role,
-                text=f"{role} менял план, восстановить не удалось",
-            )
-            return
-        self.ledger.event(
-            "plan_restored",
-            path=self.plan_path.name,
-            phase=self.phase.title,
-            round=self.state.round,
-            role=role,
-            text=f"{role} менял план, вернул",
-        )
-        self.ctx.emit("plan_restored", role=role, text=f"{role} менял план, вернул")
+        return _pg.guard_plan(self, role)
 
-    async def run(self) -> PhaseOutcome:
+
+    async def run(self) -> PhaseOutcome:  # noqa: C901
         self.ledger.event("phase_start", phase=self.phase.title, index=self.phase.index)
         from datetime import datetime, timezone
 
@@ -274,7 +217,7 @@ class _PhaseRunner:
             from src.loop.resume_step import ResumeStep
 
             announcer = ResumeStep(
-                self.ctx, self.judge, self._gate, self._protect_tests, self._after_judge,
+                self.ctx, self.judge, self._gate, self._protect_tests, self._after_judge, self._stop_checks()[0],
             )
             entered = await announcer.enter(self.resume_from_entry(), self.start_round)
             if entered is not None:
@@ -293,6 +236,8 @@ class _PhaseRunner:
                 return self._halt("fuse")
             self.state.round += 1
             self.ctx.update_state(round=self.state.round)
+            if (hit := self._stop_checks()[0]()) is not None:
+                return hit
             self.state.compact_count = 0
             self.state.judge_compact_used = False
             self.ctx.emit(
@@ -309,6 +254,9 @@ class _PhaseRunner:
             )
             player_ok = await self._player()
             self.ctx.progress()
+            hit = self._stop_checks()[1](player_ok)
+            if hit is not None:
+                return hit
             if player_ok is None:
                 if self.state.stop_reason == "snapshot_failed":
                     return self._halt("snapshot_failed")
@@ -324,15 +272,23 @@ class _PhaseRunner:
                 if not in_continuation(self.state) and self._no_progress():
                     return self._halt("stuck")
                 continue
+            if (hit := self._stop_checks()[0]()) is not None:
+                return hit
             gate = self._gate()
             self.ctx.progress()
             if gate is not None and not gate.ok:
+                hit = self._stop_checks()[2](gate)
+                if hit is not None:
+                    return hit
                 if self._same_red(gate):
                     if not in_continuation(self.state) and self._no_progress():
                         return self._halt("stuck")
                 self.state.gate_output = gate.output
                 continue
             self.state.gate_output = gate.output if gate else "тесты не обнаружены"
+            hit = self._stop_checks()[3]()
+            if hit is not None:
+                return hit
             print(
                 f"  {self.ctx.tag()} judge "
                 f"{self.cfg.judge_provider}({self.cfg.judge_model}) …",
@@ -340,6 +296,8 @@ class _PhaseRunner:
             )
             verdict = await self.judge._judge()
             self.ctx.progress()
+            if (hit := self._stop_checks()[4]()) is not None:
+                return hit
             outcome = await self._after_judge(verdict)
             if outcome is not None:
                 if outcome.status == "ship":
@@ -357,8 +315,14 @@ class _PhaseRunner:
                 return self._halt("stuck")
             case _Next.SHIP:
                 if not self._full_gate_before_ship():
+                    hit = self._stop_checks()[5]()
+                    if hit is not None:
+                        return hit
                     # Полный гейт красный: не шипать, следующий раунд — игрок.
                     return None
+                hit = self._stop_checks()[5]()
+                if hit is not None:
+                    return hit
                 return self._ship()
             case _Next.TESTER:
                 print(
@@ -366,6 +330,9 @@ class _PhaseRunner:
                     f"{self.cfg.tester_provider}({self.cfg.tester_model}) …",
                     flush=True,
                 )
+                hit = self._stop_checks()[3]()
+                if hit is not None:
+                    return hit
                 tester_ok = await self.tester._tester()
                 self.ctx.progress()
                 if tester_ok is None:
@@ -646,56 +613,15 @@ class _PhaseRunner:
         print("  нет прогресса → откат фазы", flush=True)
         return True
 
-    def _snapshot_after_player(self) -> str | None:
-        run_id = self.ledger.run_dir.name
-        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
-        try:
-            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
-            if not snapshot_mod.verify(self.repo, ref):
-                raise RuntimeError("snapshot verify failed")
-        except Exception as exc:
-            self.ctx.update_state(snapshot_ref="")
-            self.ctx.emit(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                error=str(exc) or type(exc).__name__,
-                text=f"снимок работы не сделан (`{ref}`)",
-            )
-            self.ledger.event(
-                "snapshot_failed",
-                ref=ref,
-                base=self.checkpoint,
-                error=str(exc) or type(exc).__name__,
-                round=self.state.round,
-            )
-            return None
-        self.ctx.update_state(snapshot_ref=ref, base=self.checkpoint)
-        return ref
+    def _snapshot_after_player(self, *a: Any, **k: Any) -> str | None:
+        from src.loop import snapshot_step as _snap
 
-    def _rollback_with_snapshot(self, reason: str) -> str | None:
-        run_id = self.ledger.run_dir.name
-        ref = snapshot_mod.ref_name(run_id, self.phase.index, self.state.round)
-        try:
-            snapshot_mod.take_snapshot(self.repo, self.checkpoint, ref)
-            if not snapshot_mod.verify(self.repo, ref):
-                return None
-        except Exception:
-            return None
-        self.ctx.update_state(snapshot_ref=ref, base=self.checkpoint)
-        self.ctx.emit(
-            "snapshot",
-            ref=ref,
-            base=self.checkpoint,
-            reason=reason,
-            text=f"снимок работы в `{ref}`",
-        )
-        self.ledger.event(
-            "snapshot", ref=ref, base=self.checkpoint, reason=reason,
-            round=self.state.round,
-        )
-        rollback(self.repo, self.checkpoint)
-        return ref
+        return _snap.take_after_player(self, *a, **k)
+
+    def _rollback_with_snapshot(self, *a: Any, **k: Any) -> str | None:
+        from src.loop import snapshot_step as _snap
+
+        return _snap.rollback_with_snapshot(self, *a, **k)
 
     def _full_gate_before_ship(self) -> bool:
         """Полный прогон перед SHIP в scoped-режиме. True — можно шипать."""
@@ -753,6 +679,11 @@ class _PhaseRunner:
     def _write_stopped(self, reason: str, text: str) -> None:
         self._decider().write_stopped(reason, text)
 
+    def _stop_checks(self) -> Any:
+        from src.loop.stop_step import checks
+        return checks(self)
+
     def _halt(self, reason: str) -> PhaseOutcome:
-        return self._decider().halt(reason)
+        from src.loop.stop_step import halt
+        return halt(self, reason)
 

@@ -11,6 +11,7 @@ from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args
 from src.commands import resolve_run_dir
 from src.commands.inbox_cmds import run_answer, run_compact
 from src.commands.runs import run_history, run_review, run_status, run_wait
+from src.commands.stop_cmd import run_stop
 
 __all__ = [
     "build_parser",
@@ -19,6 +20,7 @@ __all__ = [
     "run_answer",
     "run_compact",
     "run_go",
+    "run_stop",
     "run_history",
     "run_resume",
     "run_review",
@@ -134,6 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
     answer_parser.add_argument("--run", type=str, default=None)
     answer_parser.add_argument("--agent-pid", type=int, default=None,
                                help="pid отвечающей сессии агента")
+
+    stop_parser = subparsers.add_parser("stop", help="Request the running run to stop")
+    stop_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    stop_parser.add_argument("--run", type=str, default=None)
 
     return parser
 
@@ -265,6 +271,8 @@ def main():
         sys.exit(run_status(args))
     elif args.command == "answer":
         sys.exit(run_answer(args))
+    elif args.command == "stop":
+        sys.exit(run_stop(args))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 

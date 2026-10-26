@@ -12,10 +12,16 @@ from typing import Any, Callable
 
 from src.fsio import atomic_write_json, read_json_dict
 from src.loop.decision_actions import BUDGET_PER_PHASE, budget_used
-from src.loop.inbox import Inbox, write_inbox_file
+from src.loop.inbox import Inbox
 from src.loop.state import RunState, Status, owner_lock
 from src.loop.transition import phase_transition
+from src.loop.watchdog import stop_requested
 from src.relay.iface import Answer, NoopRelay, RelayClient
+
+__all__ = [
+    "autopilot_answer", "_inbox_autopilot", "stop_as_answer",
+    "wait_answer", "choose", "lease_valid", "write_lease",
+]
 
 PROVIDER_REASONS = frozenset({"provider_unavailable", "provider_auth", "provider_quota"})
 NO_RELAY_GRACE_S, NOTIFY_COOLDOWN_S = 600, 1800
@@ -275,6 +281,11 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
     warned, warned_at = False, 0.0
     while True:
         try:
+            if stop_requested(ctx.run_dir):
+                return stop_as_answer(step, qid)
+        except Exception:
+            pass
+        try:
             ans = Inbox(ctx.run_dir).take(qid, step.relay)
         except Exception:
             ans = None
@@ -327,74 +338,44 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
             pass
 
 
-def _stop_outcome(step: Any, reason: str, text: str) -> Any:
-    from src.loop.phase_ctx import PhaseOutcome as _Outcome
-    st = step.ctx.st
-    return _Outcome(status="stop", reason=reason, user_question=st.user_question,
-                    rounds=st.round, escalated=st.escalated, stop_text=text)
-
-
 def autopilot_answer(step: Any, qid: str, reason: str) -> Any:
-    ctx = step.ctx
-    try:
-        state = RunState.read(ctx.run_dir / "state.json") or {}
-    except Exception:
-        state = {}
-    try:
-        n = _phase_of(qid) or ctx.phase.index + 1
-    except Exception:
-        n = ctx.phase.index + 1
-    ans = choose({"reason": reason, "question_id": qid, "id": qid, "phase": n}, state)
-    if ans.action == "stop" and (ans.why or "") == "not_chain":
-        try:
-            notify_once(step.relay, ctx.run_dir, f"{reason}:not_chain", NOT_CHAIN_TEXT,
-                        now=step._now())
-            got = _inbox_autopilot(ctx, step, ans, qid)
-        except Exception:
-            got = None
-        decided = got is not None
-        snap = RunState.read(ctx.run_dir / "state.json") or {}
-        try:
-            ref = step.locked_rollback(reason)
-        except Exception:
-            ref = None
-        step._repair_after_rollback()
-        if decided:
-            step._snap = snap
-            step._restore_journal()
-        try:
-            ctx.ledger.event("rollback", reason=reason, round=ctx.st.round)
-        except Exception:
-            pass
-        text = step.halt_text(reason, ref) if ref else step.halt_text(reason, None)
-        if ref is None and not decided:
-            text = "снимок не сделан, дерево не тронуто"
-        step.write_stopped(reason, text)
-        if decided:
-            step._restore_journal()
-            try:  # F16: .result атомарно через fsio.
-                write_inbox_file(ctx.run_dir, f"{ans.uuid}.result", "принято")
-            except Exception:
-                pass
-        return _stop_outcome(step, reason, text)
-    try:
-        return _inbox_autopilot(ctx, step, ans, qid)
-    except Exception:
-        return ans
+    from src.loop.autopilot_answer import autopilot_answer as _impl
+
+    return _impl(step, qid, reason)
 
 
 def _inbox_autopilot(ctx: Any, step: Any, ans: Any, qid: str) -> Any:
-    import json as _j
+    from src.loop.autopilot_answer import _inbox_autopilot as _impl
 
-    ans.uuid = ans.uuid or f"autopilot-{qid}"
+    return _impl(ctx, step, ans, qid)
+
+
+def stop_as_answer(step: Any, qid: str, reason: str = "user_stop") -> Any:
+    """stop.json in a decision point acts as a `stop` answer."""
+    from src.loop import autopilot_answer as _mod
+    from src.loop.phase_ctx import PhaseOutcome as _Outcome
+
     try:
-        write_inbox_file(ctx.run_dir, f"{ans.uuid}.json", _j.dumps(
-            {"uuid": ans.uuid, "question_id": qid, "action": ans.action,
-             "text": ans.text or "", "who": "autopilot", "why": ans.why or ""},
-            ensure_ascii=False))
+        ref = step._rollback_keep_journal(reason)
+    except Exception:
+        ref = None
+    step._repair_after_rollback()
+    text = (
+        "снимок не сделан, дерево не тронуто"
+        if ref is None else step.halt_text(reason, ref)
+    )
+    try:
+        step.write_stopped(reason, text)
     except Exception:
         pass
     try:
-        return Inbox(ctx.run_dir).take(qid, step.relay) or ans
+        step._restore_journal()
     except Exception:
-        return ans
+        pass
+    try:
+        _mod._stop_outcome(step, reason, text)
+    except Exception:
+        pass
+    st = step.ctx.st
+    return _Outcome(status="stop", reason=reason, user_question=st.user_question,
+                    rounds=st.round, escalated=st.escalated, stop_text=text)

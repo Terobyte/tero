@@ -5,12 +5,16 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from src.fsio import atomic_write_json
 
 
 class Pulse:
     """Background alive ticker + completed-step counter.
+
+    The stop watchdog lives next to the pulse: same owner thread family,
+    started/stopped together, never breaking the run.
 
     A separate daemon thread (not an asyncio task: the gate and git
     block the event loop) refreshes ``alive`` every ``interval_s``.
@@ -42,6 +46,13 @@ class Pulse:
         # steps — surface a startup failure instead of silently proceeding
         # without the required thread.
         self._thread.start()
+        try:
+            from src.loop.watchdog import Watchdog
+
+            self.watchdog: Any = Watchdog(self.run_dir)
+            self.watchdog.start()
+        except Exception:
+            self.watchdog = None
 
     def progress(self) -> None:
         """Record one completed step: counter +1 with a fresh progress_ts."""
@@ -54,7 +65,13 @@ class Pulse:
             pass
 
     def stop(self) -> None:
-        """Stop the ticker thread. Never raises, safe to call twice."""
+        """Stop ticker and watchdog. Never raises, safe to call twice."""
+        try:
+            wd = getattr(self, "watchdog", None)
+            if wd is not None:
+                wd.stop()
+        except Exception:
+            pass
         try:
             self._stop_event.set()
         except Exception:
