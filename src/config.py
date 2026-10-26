@@ -121,8 +121,10 @@ class Config:
     escalation_provider: str = "claude"
     escalation_model: str = "opus"
     escalation_effort: str = ""
+    escalate_at_round: int = 0
     test_command: str = ""
     test_command_scoped: str = ""
+    gate_scope: str = ""
     hud: bool = True
     player_timeout_s: int = 3600
     judge_timeout_s: int = 1200
@@ -152,6 +154,7 @@ _ENV_MAP = {
     "TERO_ESCALATION_MODEL": "escalation_model",
     "TERO_TEST_COMMAND": "test_command",
     "TERO_TEST_COMMAND_SCOPED": "test_command_scoped",
+    "TERO_GATE_SCOPE": "gate_scope",
 }
 
 # Roles whose empty provider/model/effort means "not set, keep default".
@@ -487,6 +490,8 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     if max_rounds is not None:
         cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
 
+    if getattr(args, "escalate_at", None) is not None:
+        cfg = dataclasses.replace(cfg, escalate_at_round=int(args.escalate_at))
     if getattr(args, "no_tester", False):
         cfg = dataclasses.replace(cfg, no_tester=True)
 

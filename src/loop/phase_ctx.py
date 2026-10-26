@@ -114,6 +114,11 @@ class PhaseState:
     gate_output: str = ""
     last_red_fp: frozenset[str] | None = None
     last_red_tree: str | None = None
+    gate_scope: str = ""
+    gate_files: list[str] = field(default_factory=list)
+    gate_command: str = ""
+    gate_exit_code: int = 0
+    last_green_full_tree: str | None = None
     protected: dict[str, ProtectedTest] = field(default_factory=dict)
     protected_by_id: dict[str, list[str]] = field(default_factory=dict)
     compact_count: int = 0
@@ -227,7 +232,9 @@ class PhaseContext:
             print(f"  {role}: {error}", flush=True)
 
     def player_identity(self) -> tuple[str, str, str]:
-        if self.st.escalated and self.cfg.escalation_provider:
+        # escalate_at_round: эскалация ровно на этом раунде, до и после — игрок.
+        at = self.cfg.escalate_at_round
+        if self.cfg.escalation_provider and (self.st.round == at if at else self.st.escalated):
             return (
                 self.cfg.escalation_model,
                 self.cfg.escalation_provider,

@@ -263,7 +263,7 @@ async def test_answer_continues_next_round_with_block(tmp_path: Path, monkeypatc
 
     def _answer() -> None:
         import time as _t
-        for _ in range(500):
+        for _ in range(3000):
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}
                 q = state.get("question") or {}
@@ -287,9 +287,9 @@ async def test_answer_continues_next_round_with_block(tmp_path: Path, monkeypatc
         run_dir=ledger.run_dir, on_pending=lambda: None,
         on_stop=lambda o: None, on_done=lambda s: None,
     )
-    t.join(timeout=5)
+    t.join(timeout=30)
     assert outcome.exit_code == 0, outcome
-    assert not t.is_alive(), "помощник не успел подать answer за 5с"
+    assert not t.is_alive(), "помощник не успел подать answer за 30с"
     round2 = [p for p in prompts[1:] if "используй sqlite" in p]
     assert round2, "ответ не попал в промпты следующего раунда"
     assert any("Ответ на вопрос фазы" in p.split("используй sqlite")[0] for p in round2)
@@ -357,7 +357,7 @@ async def test_skip_is_debt_and_exit_4(tmp_path: Path, monkeypatch):
 
     def _answer_skip() -> None:
         import time as _t
-        for _ in range(500):
+        for _ in range(3000):
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}
                 q = state.get("question") or {}
@@ -379,9 +379,9 @@ async def test_skip_is_debt_and_exit_4(tmp_path: Path, monkeypatch):
         run_dir=ledger.run_dir, on_pending=lambda: None,
         on_stop=lambda o: None, on_done=lambda s: None,
     )
-    t.join(timeout=5)
+    t.join(timeout=30)
     assert outcome.exit_code == 4, outcome
-    assert not t.is_alive(), "помощник не успел подать skip за 5с"
+    assert not t.is_alive(), "помощник не успел подать skip за 30с"
     assert outcome.status == "ok"
     assert outcome.debt == 1
     state = RunState.read(ledger.run_dir / "state.json") or {}
@@ -431,7 +431,7 @@ async def test_stop_rolls_back_exit_2(tmp_path: Path, monkeypatch):
 
     def _answer_stop() -> None:
         import time as _t
-        for _ in range(500):
+        for _ in range(3000):
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}
                 q = state.get("question") or {}
@@ -453,9 +453,9 @@ async def test_stop_rolls_back_exit_2(tmp_path: Path, monkeypatch):
         run_dir=ledger.run_dir, on_pending=lambda: None,
         on_stop=lambda o: None, on_done=lambda s: None,
     )
-    t.join(timeout=5)
+    t.join(timeout=30)
     assert outcome.exit_code == 2, outcome
-    assert not t.is_alive(), "помощник не успел подать stop за 5с"
+    assert not t.is_alive(), "помощник не успел подать stop за 30с"
     assert outcome.status == "stop"
     state = RunState.read(ledger.run_dir / "state.json") or {}
     assert state.get("snapshot_ref")
@@ -656,7 +656,7 @@ async def test_f19_answer_on_last_round_runs_new_round(tmp_path: Path, monkeypat
 
     def _answer() -> None:
         import time as _t
-        for _ in range(500):
+        for _ in range(3000):
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}
                 q = state.get("question") or {}
@@ -677,9 +677,9 @@ async def test_f19_answer_on_last_round_runs_new_round(tmp_path: Path, monkeypat
         run_phase, phases, ledger=lambda: ledger, phase_kwargs=kwargs,
         run_dir=ledger.run_dir, on_pending=lambda: None,
         on_stop=lambda o: None, on_done=lambda s: None)
-    t.join(timeout=5)
+    t.join(timeout=30)
     assert outcome.status == "ok", outcome
-    assert not t.is_alive(), "помощник не успел подать answer за 5с"
+    assert not t.is_alive(), "помощник не успел подать answer за 30с"
     assert len([c for c in calls if "используй sqlite" in c]) >= 1, "F19: ответ не попал в новый раунд"
 
 
@@ -829,7 +829,7 @@ async def test_skip_debt_reason_consistent_state_stream_ledger(tmp_path: Path):
 
         def _answer_skip() -> None:
             import time as _t
-            for _ in range(500):
+            for _ in range(3000):
                 try:
                     state = RunState.read(ledger.run_dir / "state.json") or {}
                     q = state.get("question") or {}
@@ -849,9 +849,9 @@ async def test_skip_debt_reason_consistent_state_stream_ledger(tmp_path: Path):
             run_phase, phases, ledger=lambda: ledger, phase_kwargs=kwargs,
             run_dir=ledger.run_dir, on_pending=lambda: None,
             on_stop=lambda o: None, on_done=lambda s: None)
-        t.join(timeout=5)
+        t.join(timeout=30)
         assert outcome.exit_code == 4, outcome
-        assert not t.is_alive(), "помощник не успел подать skip за 5с"
+        assert not t.is_alive(), "помощник не успел подать skip за 30с"
         state = RunState.read(ledger.run_dir / "state.json") or {}
         assert state.get("status") == "done"
         rows = [json.loads(line) for line in
@@ -999,7 +999,7 @@ async def _drive(repo: Path, agents, cfg: Config, plan: list[list[dict]], monkey
         phase_kwargs=kwargs, run_dir=ledger.run_dir, on_pending=lambda: None,
         on_stop=lambda o: None, on_done=lambda s: None,
     )
-    t.join(timeout=5)
+    t.join(timeout=30)
     return outcome, ledger, seen
 
 

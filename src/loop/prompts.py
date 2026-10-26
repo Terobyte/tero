@@ -181,8 +181,11 @@ def judge_prompt(
     suite_delta: list[str] | None = None,
     needs_user_question: str = "",
     answer: str = "",
+    gate_fact: str = "",
 ) -> str:
-    # Blind like the g3 coach: no player report, no diff, no gate output.
+    # Blind like the g3 coach: no player report, no diff.
+    # The gate fact is loop-measured (command, exit code, pytest tail), not the
+    # player's story — the judge sees the fact, not the player's report.
     # suite_delta is a fact from the loop, not the player's story: it names
     # existing tests the player rewrote, so the judge can't miss a weakened one.
     open_findings = open_findings or []
@@ -227,6 +230,8 @@ def judge_prompt(
         "",
         "## protected_ids (можно discard_test)",
         ", ".join(protected_ids) or "(нет)",
+        "",
+        gate_fact or "## Тесты цикла\n(гейт ещё не прошёл — факта нет)",
     ]
     + (
         [

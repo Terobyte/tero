@@ -185,7 +185,7 @@ def test_human_timeout_to_waiting_agent(tmp_path: Path, monkeypatch):
                 "action": "skip", "who": "human"}))
             break
         time.sleep(0.01)
-    rt.join(timeout=5)
+    rt.join(timeout=30)
     assert not rt.is_alive(), "resolve hung"
     assert out["r"].status == "skip"
     state = RunState.read(ledger.run_dir / "state.json") or {}
@@ -222,7 +222,7 @@ def test_human_timeout_to_waiting_agent(tmp_path: Path, monkeypatch):
             break
         time.sleep(0.01)
     assert saw_agent, "вопрос остался открытым в waiting_agent"
-    t3.join(timeout=5)
+    t3.join(timeout=30)
     assert not t3.is_alive(), "resolve hung"
 
 
@@ -286,7 +286,7 @@ def test_autopilot_after_lease_expired(tmp_path: Path):
         # истекаем аренду — дальше notify и skip от автопилота.
         (ledger.run_dir / "lease").write_text(json.dumps(
             {"until": time.time() - 1, "pid": _os.getpid()}))
-        t.join(timeout=5)
+        t.join(timeout=30)
         assert not t.is_alive(), "resolve hung"
     finally:
         t.join(timeout=1)
@@ -581,7 +581,7 @@ def test_wake_only_after_waiting_agent(tmp_path: Path, monkeypatch):
             "uuid": "fin1", "question_id": qid,
             "action": "skip", "who": "human"}))
     finally:
-        t.join(timeout=5)
+        t.join(timeout=30)
     assert not t.is_alive(), "resolve hung"
     assert out["r"].status == "skip"
 

@@ -18,6 +18,24 @@ def build_prompt(ctx: PhaseContext, reask_question: str) -> str:
         suite_delta=ctx.st.suite_delta,
         needs_user_question=reask_question,
         answer=ctx.st.answer,
+        gate_fact=gate_fact_of(ctx.st),
+    )
+
+
+def gate_fact_of(st: PhaseState) -> str:
+    """Факт последнего гейта для промпта судьи. Пусто — гейт ещё не прошёл."""
+    from src.loop.gate_scope import format_gate_fact
+    from src.loop.phase_ctx import _tail
+
+    if not st.gate_command and not st.gate_output:
+        return ""
+    scope = st.gate_scope or "full"
+    return format_gate_fact(
+        command=st.gate_command,
+        scope=scope,
+        files=list(st.gate_files),
+        exit_code=st.gate_exit_code,
+        tail=_tail(st.gate_output),
     )
 
 
