@@ -215,7 +215,10 @@ class DecisionStep:
         """Секреты в индексе, кроме разрешённых `allow` до конца прогона."""
         from src.loop.git import secret_paths
 
-        allowed = set(self._saved().get("allowed_secrets") or [])
+        from src.loop.human_key import trusted_list
+
+        saved = self._saved()
+        allowed = set(trusted_list(saved.get("allowed_secrets"), saved.get("allowed_secrets_sig")))
         return [p for p in secret_paths(self.ctx.repo) if p not in allowed]
 
     def stop_no_snapshot(self, reason: str) -> PhaseOutcome:

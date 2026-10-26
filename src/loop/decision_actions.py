@@ -13,6 +13,7 @@ from typing import Any
 
 from src.config import KNOWN_PROVIDERS, split_role_spec
 from src.loop.decision import actions_for
+from src.loop.human_key import sign_list, trusted_list
 from src.loop.phase_ctx import PhaseOutcome
 from src.loop.resume_step import ResumeFrom
 from src.loop.state import RunState, Status
@@ -62,7 +63,8 @@ def _accept_manual(step: Any, reason: str, qid: str) -> PhaseOutcome:
     ctx = step.ctx
     state = RunState.read(ctx.run_dir / "state.json") or {}
     ref = state.get("snapshot_ref") or ""
-    if not ref:
+    # B10: only this run's snapshot namespace; state.json lives in the player's tree
+    if not ref or not ref.startswith(f"refs/tero/{ctx.run_dir.name}/"):
         return step.stop_no_snapshot(reason)
     try:
         if not _snap.verify(ctx.repo, ref):
@@ -221,7 +223,7 @@ def _allow(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     ctx = step.ctx
     path = str(ans.text or "").strip()
     state = RunState.read(ctx.run_dir / "state.json") or {}
-    allowed = list(state.get("allowed_secrets") or [])
+    allowed = trusted_list(state.get("allowed_secrets"), state.get("allowed_secrets_sig"))
     if path and path not in allowed:
         allowed.append(path)
     rounds = ctx.st.round
@@ -232,7 +234,7 @@ def _allow(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     extra = {"start_round": rounds, "start_with_judge": True,
              "start_checkpoint": ctx.checkpoint, "resume_from": rf}
     return _go_on(step, reason, qid, "allow", f"разрешён {path}", extra,
-                  {"allowed_secrets": allowed})
+                  {"allowed_secrets": allowed, "allowed_secrets_sig": sign_list(allowed)})
 
 
 def limit_chain(state: dict, phase_n: int) -> int | None:

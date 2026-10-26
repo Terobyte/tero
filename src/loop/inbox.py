@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from src.fsio import atomic_write_text
-
 from src.loop.decision_actions import refuse_budget, refuse_model, spend_budget
+from src.loop.human_key import who_of
 from src.loop.state import RunState
 from src.relay.iface import Answer, RelayClient
 
@@ -276,6 +276,8 @@ class Inbox:
             # F8/F20: владелец не дописывает woken и не верит заявленному
             # agent_pid. Маркер woken ставит только tero answer после проверки
             # идентичности сессии; здесь он только читается.
+            # B7: human только с подписью ключа вне дерева, иначе agent.
+            payload = {**payload, "who": who_of(payload)}
             refusal = self._refuse(payload, actions, state)
             if refusal is not None:
                 self._reject(path, payload, refusal)
@@ -284,7 +286,7 @@ class Inbox:
                 question_id=question_id,
                 action=payload.get("action"),
                 text=_cap(payload.get("action"), payload.get("text")),
-                who=payload.get("who") or "agent",
+                who=payload["who"],
                 why=payload.get("why") or "",
                 uuid=payload.get("uuid"),
                 woken=bool(payload.get("woken")),

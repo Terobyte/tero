@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.loop.state import RunState
 from src.relay.iface import Answer, FakeRelay, NoopRelay
+from tests.loop.fakes import human_signed
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -57,7 +58,7 @@ def _answer_file(
         "ts": time.time(),
     }
     path = inbox / name
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(human_signed(payload), ensure_ascii=False), encoding="utf-8")
     return path
 
 

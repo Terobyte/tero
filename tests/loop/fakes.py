@@ -17,6 +17,13 @@ PLAYER_DONE = {
 }
 
 
+def human_signed(payload: dict[str, Any]) -> dict[str, Any]:
+    """Inbox answer as `tero answer --human` writes it: `who: human` is signed (B7)."""
+    from src.loop.human_key import sign_answer
+
+    return sign_answer(payload) if payload.get("who") == "human" else payload
+
+
 def ship(**overrides: Any) -> dict[str, Any]:
     data = {
         "verdict": "SHIP",

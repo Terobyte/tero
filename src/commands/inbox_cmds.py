@@ -147,6 +147,10 @@ def run_answer(args) -> int:
             **({"woken": True} if woken else {}),
         }
     )
+    if who == "human":
+        from src.loop.human_key import sign_answer
+
+        sign_answer(payload)
     raw = json.dumps(payload, ensure_ascii=False)
     if not write_inbox_file(run_dir, f"{uid}.json", raw):
         print("не могу записать inbox")
