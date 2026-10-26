@@ -162,7 +162,8 @@ async def _after_wait_decision(outcome: Any, repo_path: Path, run_path: Path,
                         run_dir=str(run_path))
     else:
         return _stopped(outcome)
-    if start_index >= total:
+    # skip on the last phase: run_phases with nothing left ends the run (done/debt)
+    if start_index >= total and status != "skip":
         restore_pending()
         return _deny(run_path, "фаза не найдена")
     return await _rp(

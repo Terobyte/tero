@@ -240,3 +240,38 @@ def test_waiting_resume_keeps_question_and_round(tmp_path: Path):
     assert out.status == "waiting_human" and out.reason == "stuck"
     assert out.rounds == 3 and out.decider is not None
     assert out.decider._qid == "1-2" and out.decider._reason == "stuck"
+
+
+def test_restored_question_skip_on_last_phase_ends_run(tmp_path: Path):
+    """Skip on the last phase after a crash restore finishes the run, not «фаза не найдена»."""
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    from src.config import Config
+    from src.loop.plan import load_phases
+    from src.loop.resume_recover import _after_wait_decision
+
+    repo = _init_repo(tmp_path / "r6", PLAN.replace("- [ ] a", "- [x] a"))
+    run_dir = repo / ".tero" / "runs" / "run-s"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(json.dumps(
+        {"status": "waiting_human", "phase_index": 1, "round": 2,
+         "debt": [{"phase": 2, "reason": "skip"}]}))
+    events: list = []
+    ledger = SimpleNamespace(event=lambda *a, **k: events.append((a, k)))
+    writes: list = []
+    phases = load_phases(repo / "plan.md")
+    assert phases[0].done and not phases[1].done
+
+    async def _never(*a, **k):
+        raise AssertionError("no phase left to run")
+
+    out = asyncio.run(_after_wait_decision(
+        SimpleNamespace(status="skip"), repo, run_dir, Config(plan_file="plan.md"),
+        phases, "", repo / "plan.md", agents=None, session=SimpleNamespace(pulse=None),
+        ledger=lambda: ledger, restore_pending=lambda: None, base="b", round_no=2,
+        phase_runner=_never, pos=1, write=lambda **k: writes.append(k)))
+    assert out.status == "ok", out
+    assert out.reason in ("ship", "debt")
+    assert "фаза не найдена" not in (out.reason or "")

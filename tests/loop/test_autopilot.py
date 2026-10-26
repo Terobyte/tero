@@ -133,7 +133,8 @@ def _resolve_in_thread(step, ledger, timeout=5, tick=None):
             except Exception:
                 pass
             time.sleep(0.005)
-    t.join(timeout=1)
+    # without tick the whole budget goes to join: git rollback under -n auto takes >1 s
+    t.join(timeout=1 if tick is not None else timeout)
     assert not t.is_alive(), "resolve hung"
     assert "e" not in out, out.get("e")
     return out["r"], RunState.read(ledger.run_dir / "state.json") or {}

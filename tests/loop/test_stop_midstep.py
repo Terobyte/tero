@@ -300,6 +300,7 @@ def test_watchdog_kills_only_current_step(tmp_path: Path):
             if proc is not None and proc.poll() is None:
                 try:
                     proc.kill()
+                    proc.wait(timeout=5)
                 except Exception:
                     pass
 
