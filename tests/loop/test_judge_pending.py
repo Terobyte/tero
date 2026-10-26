@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -213,7 +214,7 @@ async def test_judge_failure_does_not_escalate_player(tmp_path: Path):
     assert cfg.escalation_model not in agents.models
 
 
-def _wait_question(ledger, timeout=5.0):
+def _wait_question(ledger, timeout=30.0):
     import time as _t
 
     deadline = _t.time() + timeout
@@ -514,11 +515,17 @@ async def test_judge_pending_records_agree_and_holds_repo_lock(tmp_path: Path, m
     try:
         state = _wait_question(ledger)
         assert state.get("status") == "judge_pending"
-        stream_rows = [
-            json.loads(line)
-            for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
-        ]
-        asked = [r for r in stream_rows if r.get("type") == "question"]
+        # phase_transition пишет stream.jsonl после state.json — ждём строку
+        deadline = time.time() + 30
+        while True:
+            stream_rows = [
+                json.loads(line)
+                for line in (ledger.run_dir / "stream.jsonl").read_text().splitlines()
+            ]
+            asked = [r for r in stream_rows if r.get("type") == "question"]
+            if asked or time.time() > deadline:
+                break
+            time.sleep(0.01)
         assert asked, "вопрос должен попасть в stream.jsonl"
         assert all(r.get("status") == "judge_pending" for r in asked)
         ledger_rows = _ledger_rows(ledger)
