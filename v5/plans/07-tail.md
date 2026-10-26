@@ -276,11 +276,11 @@ stderr чужого MCP-сервера (`rmcp … AuthRequired`). Итог: ви
   `text` с кратким списком ошибок валидации, без секретов), как сейчас пишется `kick`.
 - Финальное сообщение роли, которое разобралось как отчёт (или эхо схемы), не печатается как `✎`-реплика.
 
-- [ ] `test_with_schema_shows_example_not_schema`: промпт для провайдера без нативной схемы не содержит `"additionalProperties"`, содержит пример, который проходит `validate_role`
-- [ ] `test_schema_echo_gets_specific_repair`: stub-игрок первым ответом присылает схему, вторым — отчёт → повтор с текстом «схему, а не отчёт», итог — отчёт принят
-- [ ] `test_repair_emits_stream_event`: после повтора в `stream.jsonl` есть событие `repair` с `role` и `round`
-- [ ] `test_final_report_not_printed_as_text`: `LiveAgents(verbose=True)` с фейковым провайдером через `factory=`, capsys → нет `✎ {"status"`
-- [ ] реализовать
+- [x] `test_with_schema_shows_example_not_schema`: промпт для провайдера без нативной схемы не содержит `"additionalProperties"`, содержит пример, который проходит `validate_role`
+- [x] `test_schema_echo_gets_specific_repair`: stub-игрок первым ответом присылает схему, вторым — отчёт → повтор с текстом «схему, а не отчёт», итог — отчёт принят
+- [x] `test_repair_emits_stream_event`: после повтора в `stream.jsonl` есть событие `repair` с `role` и `round`
+- [x] `test_final_report_not_printed_as_text`: `LiveAgents(verbose=True)` с фейковым провайдером через `factory=`, capsys → нет `✎ {"status"`
+- [x] реализовать
 
 ## Модель экрана HUD
 

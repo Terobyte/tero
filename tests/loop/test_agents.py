@@ -121,10 +121,30 @@ async def _judge(agents):
 @pytest.mark.asyncio
 async def test_prompt_carries_role_schema(tmp_path):
     provider = _TextProvider([json.dumps(_VALID_JUDGE)])
+    agents = _live(tmp_path, provider)
+    data = await agents.run_role(
+        "judge",
+        provider="codex",
+        model="m",
+        prompt="P",
+        timeout=5,
+        ctx=ValidateCtx(),
+    )
+    assert data["verdict"] == "SHIP"
+    assert '"user_question"' in provider.prompts[0]
+    assert '"additionalProperties"' in provider.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_prompt_for_plain_provider_carries_example_not_schema(tmp_path):
+    provider = _TextProvider([json.dumps(_VALID_JUDGE)])
     data = await _judge(_live(tmp_path, provider))
     assert data["verdict"] == "SHIP"
     assert '"user_question"' in provider.prompts[0]
-    assert '"NO_SHIP"' in provider.prompts[0]
+    # opencode ignores output_schema (B2): the prompt carries a filled
+    # example, never the raw JSON Schema.
+    assert '"additionalProperties"' not in provider.prompts[0]
+    assert extract_json(provider.prompts[0]) is not None
 
 
 @pytest.mark.asyncio

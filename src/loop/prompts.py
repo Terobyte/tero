@@ -97,17 +97,32 @@ def player_prompt(
     return "\n".join(sections)
 
 
-def repair_prompt(role: str, prompt: str, text: str, errors: list[str]) -> str:
+def repair_prompt(
+    role: str,
+    prompt: str,
+    text: str,
+    errors: list[str],
+    *,
+    schema_echo: bool = False,
+) -> str:
     """Повтор после негодного отчёта. opencode и др. не хранят сессию: голое
     «верни только JSON» в новом вызове без контракта давало done без правок."""
     tail = f"твой прошлый ответ:\n{text[-4000:]}\nошибки: {errors}"
-    if role == "judge":
+    if role == "judge" and not schema_echo:
         return f"верни только JSON по схеме; {tail}"
+    head = [prompt, "", "## Повтор: прошлый вызов кончился без годного отчёта"]
+    if schema_echo:
+        from src.loop.role_report import schema_echo_repair_block
+
+        head += [
+            "Ты прислал схему, а не отчёт: в прошлом ответе JSON Schema "
+            "(type/properties/required) вместо отчёта по ней. "
+            "Схему в ответ не копируй — верни только заполненный отчёт.",
+            schema_echo_repair_block(role),
+        ]
     return "\n".join(
-        [
-            prompt,
-            "",
-            "## Повтор: прошлый вызов кончился без годного отчёта",
+        head
+        + [
             "Это новый вызов, памяти о прошлом нет. Уже записанное в дереве — твоё: "
             "начни с git status и git diff, не переписывай готовое.",
             "Доведи контракт до конца правками файлов, потом верни отчёт.",

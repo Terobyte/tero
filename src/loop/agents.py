@@ -12,13 +12,19 @@ from typing import Any, Callable
 from src.errors import classify_error, scrub_secrets
 from src.loop.activity import _activity
 from src.loop.compact import Compacted
-from src.loop.prompts import repair_prompt
-from src.loop.role_report import extract_json, with_schema
+from src.loop.role_report import (
+    example_report,
+    extract_json,
+    repair_once,
+    validate_role as _validate_role,
+    verbose_snippet,
+    with_schema,
+)
 from src.loop.schemas import SCHEMAS, ValidateCtx
 from src.loop.write_guard import ReadOnlyLoop, player_guard, watched
 from src.process_guard import ProcessGuard
 
-__all__ = ["LiveAgents", "extract_json", "with_schema", "validate_role"]
+__all__ = ["LiveAgents", "example_report", "extract_json", "repair_once", "verbose_snippet", "with_schema", "validate_role"]
 
 # Overridable in tests: how long a role can go silent before we print a
 # "still working" line, so a slow provider (opencode: 81s to first event,
@@ -39,11 +45,7 @@ def validate_role(
     data: dict[str, Any] | None,
     ctx: ValidateCtx | None = None,
 ) -> list[str]:
-    if data is None:
-        return ["no JSON object in the final message"]
-    from src.loop.schemas import validate
-
-    return validate(role, data, ctx)
+    return _validate_role(role, data, ctx)
 
 
 class LiveAgents:
@@ -97,9 +99,10 @@ class LiveAgents:
         async def call(text_prompt: str) -> str | dict[str, Any]:
             try:
                 text = await watched(guard, text_prompt, lambda p: self._call(
-                    provider_name, model, with_schema(p, schema), schema, read_only, timeout, role, effort,
-                    emit=emit, compact_check=compact_check, compact_at_tokens=compact_at_tokens,
-                    session=session,
+                    provider_name, model, with_schema(p, schema, provider_name, role),
+                    schema, read_only, timeout, role, effort,
+                    emit=emit, compact_check=compact_check,
+                    compact_at_tokens=compact_at_tokens, session=session,
                 ))
             except Compacted as exc:
                 return {"__compacted__": True, "tokens": exc.tokens}
@@ -113,11 +116,11 @@ class LiveAgents:
         data = extract_json(text)
         errors = validate_role(role, data, ctx)
         if errors:
-            text = await call(repair_prompt(role, prompt, text, errors))
+            text, data, errors = await repair_once(
+                call, role, prompt, text, data, ctx, emit=emit
+            )
             if isinstance(text, dict):
                 return text
-            data = extract_json(text)
-            errors = validate_role(role, data, ctx)
         if errors and guard is not None and guard.never_wrote():
             return guard.report()
         if errors:
@@ -379,10 +382,6 @@ async def _collect_text(
                 parts.append(text)
                 if emit is not None:
                     emit("text", role=role, text=text[:300])
-                if verbose:
-                    snippet = " ".join(text.split())[:200]
-                    if snippet:
-                        print(f"    ✎ {snippet}", flush=True)
             if compact_check is not None:
                 tokens = getattr(provider, "last_context_tokens", 0) or 0
                 if compact_check(tokens):
@@ -396,4 +395,9 @@ async def _collect_text(
                 raise
             except Exception:
                 pass
-    return "\n".join(parts)
+    joined = "\n".join(parts)
+    if verbose:
+        snippet = verbose_snippet(joined, role)
+        if snippet:
+            print(f"    ✎ {snippet}", flush=True)
+    return joined
