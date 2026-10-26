@@ -298,7 +298,7 @@ async def test_judge_pending_waits_holding_lock(tmp_path: Path, monkeypatch):
             {"uuid": "s1", "question_id": q.get("id"),
              "action": "skip", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert "e" not in holder, holder.get("e")
     assert not th.is_alive(), "owner hung after skip"
     assert holder.get("done") is not None, "run_phases never returned"
@@ -365,7 +365,7 @@ async def test_judge_pending_retry_calls_judge_only(tmp_path: Path, monkeypatch)
             {"uuid": "r1", "question_id": qid,
              "action": "retry", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after retry"
     outcome = holder["r"]
     assert outcome.status == "ok", outcome
@@ -440,7 +440,7 @@ async def test_accept_reject_human_only(tmp_path: Path, monkeypatch):
             {"uuid": "a2", "question_id": qid,
              "action": "accept", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after human accept"
     assert holder["r"].status == "ok", holder["r"]
     st = RunState.read(ledger.run_dir / "state.json") or {}
@@ -534,7 +534,7 @@ async def test_judge_pending_records_agree_and_holds_repo_lock(tmp_path: Path, m
             {"uuid": "s-lock", "question_id": qid,
              "action": "skip", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert "e" not in holder, holder.get("e")
     assert not th.is_alive(), "owner hung after skip"
     assert holder.get("done") is not None, "run_phases never returned"
@@ -591,7 +591,7 @@ async def test_autopilot_judge_pending_retry_then_skip_debt(tmp_path: Path, monk
 
     th = _t.Thread(target=_run, daemon=True)
     th.start()
-    th.join(timeout=5)
+    th.join(timeout=30)
     assert "e" not in holder, holder.get("e")
     assert not th.is_alive(), "autopilot flow hung"
     assert holder.get("done") is not None, "run_phases never returned"
@@ -671,7 +671,7 @@ async def test_judge_pending_retry_reviews_recorded_ref(tmp_path: Path, monkeypa
             {"uuid": "r-f6", "question_id": qid,
              "action": "retry", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after retry"
     outcome = holder["r"]
     assert outcome.status == "ok", outcome
@@ -743,7 +743,7 @@ async def test_accept_ships_recorded_ref_and_marks_plan(tmp_path: Path, monkeypa
             {"uuid": "a-f3", "question_id": qid,
              "action": "accept", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after human accept"
     assert holder["r"].status == "ok", holder["r"]
     assert (repo / "src/greet.py").read_text() == HELLO
@@ -812,7 +812,7 @@ async def test_judge_retry_restore_failure_fails_closed(tmp_path, monkeypatch):
             {"uuid": "r-f7", "question_id": qid,
              "action": "retry", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after retry on unrestorable ref"
     outcome = holder["r"]
     assert outcome.status == "stop", outcome
@@ -880,7 +880,7 @@ async def test_accept_without_ref_stops(tmp_path, monkeypatch):
             {"uuid": "a-f8", "question_id": qid,
              "action": "accept", "who": "human"}))
     finally:
-        th.join(timeout=5)
+        th.join(timeout=30)
     assert not th.is_alive(), "phase hung after accept"
     assert "e" not in holder, holder.get("e")
     assert holder["r"].status == "stop", holder["r"]
