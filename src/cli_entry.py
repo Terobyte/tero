@@ -142,6 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
     stop_parser.add_argument("--working-dir", "-w", type=str, default=".")
     stop_parser.add_argument("--run", type=str, default=None)
 
+    subparsers.add_parser("guide", help="Print the agent protocol and sleep guide")
+    notify_parser = subparsers.add_parser("notify", help="Send a notification via relay")
+    notify_parser.add_argument("text", type=str)
+    notify_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    notify_parser.add_argument("--run", type=str, default=None)
+
     return parser
 
 
@@ -274,6 +280,14 @@ def main():
         sys.exit(run_answer(args))
     elif args.command == "stop":
         sys.exit(run_stop(args))
+    elif args.command == "guide":
+        from src.commands.guide_cmds import run_guide
+
+        sys.exit(run_guide(args))
+    elif args.command == "notify":
+        from src.commands.guide_cmds import run_notify
+
+        sys.exit(run_notify(args))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 

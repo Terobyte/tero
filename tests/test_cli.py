@@ -329,3 +329,102 @@ def test_smoke_parse_requires_subcommand():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args([])
+
+
+def _cli_subprocess(*argv):
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    return subprocess.run(
+        [sys.executable, "-m", "src.cli_entry", *argv],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_guide_prints_protocol_and_hosts():
+    """`tero guide` prints AGENT_PROTOCOL and the three host sleep sections."""
+    from src.loop.detach import AGENT_PROTOCOL
+
+    proc = _cli_subprocess("guide")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = proc.stdout
+    assert AGENT_PROTOCOL in out
+    for code in ("`0`", "`2`", "`3`", "`4`", "`5`", "`6`"):
+        assert code in out, code
+    assert "Claude Code" in out
+    assert "opencode" in out
+    assert "Muse" in out
+    assert "по умолчанию 2 мин" in out
+    assert "убивают" in out and "будят" in out
+    assert "Значит," in out
+
+
+def test_notify_noop_relay(monkeypatch, capsys):
+    """No relay -> 'no relay' text, code 0; secrets scrubbed before relay."""
+    proc = _cli_subprocess("notify", "hello")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "ретранслятора нет" in proc.stdout
+
+    from src.commands import guide_cmds
+    from src.relay.iface import FakeRelay
+
+    secret = "tok-notify-secret-53"
+    monkeypatch.setenv("TERO_NOTIFY_TEST_TOKEN", secret)
+    fake = FakeRelay()
+    monkeypatch.setattr(guide_cmds, "make_relay", lambda: fake)
+    args = SimpleNamespace(text=f"ping {secret}", working_dir=".", run=None)
+    code = guide_cmds.run_notify(args)
+    assert code == 0
+    assert fake.notified and secret not in fake.notified[0]
+
+
+def test_detach_and_guide_same_protocol(tmp_path, capsys):
+    """`go --detach` (stub owner) and `guide` print the same protocol text."""
+    import json
+
+    from src.commands.guide_cmds import run_guide
+    from src.loop import detach as detach_mod
+
+    repo = tmp_path / "repo"
+    run_dir = repo / ".tero" / "runs" / "20200101-000000-demo"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps({"status": "running", "pid": 12345})
+    )
+
+    class _Proc:
+        pid = 12345
+
+        def poll(self):
+            return None
+
+    args = SimpleNamespace(
+        plan=None,
+        working_dir=str(repo),
+        no_hud=False,
+        verbose=False,
+        player_spec=None,
+        judge_spec=None,
+        tester_spec=None,
+        escalation_spec=None,
+        test_command=None,
+        test_command_scoped=None,
+        max_rounds=None,
+        no_escalation=False,
+        no_tester=False,
+        decisions=False,
+        detach=True,
+    )
+    code = detach_mod.detach_go(
+        args, popen=lambda *a, **k: _Proc(), poll_s=0.01, ready_s=10
+    )
+    out_detach = capsys.readouterr().out
+    assert code == 0
+    assert detach_mod.AGENT_PROTOCOL in out_detach
+
+    assert run_guide(SimpleNamespace()) == 0
+    out_guide = capsys.readouterr().out
+    assert detach_mod.AGENT_PROTOCOL in out_guide
