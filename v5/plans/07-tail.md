@@ -218,10 +218,10 @@
   можно достать из вывода) и последние ≤40 строк стека, а не только хвост точек.
 - На таймауте гейт убивает группу процессов pytest (с xdist-воркерами), а не только родителя.
 
-- [ ] `test_gate_adds_faulthandler_for_pytest`: команда `python -m pytest -q` → в argv есть `-o faulthandler_timeout=`; команда `make test` — без изменений; своё значение в команде не перебивается
-- [ ] `test_gate_reports_hung_test_name`: `GATE_TEST_HANG_S=1`, `timeout_s=2`, stub-тест спит 4 с → таймаут гейта, красный, в конце `output` имя теста и строка стека
-- [ ] `test_gate_timeout_kills_process_group`: stub-команда порождает дочерний `sleep`, таймаут гейта подменён → после гейта дочерний процесс мёртв
-- [ ] реализовать
+- [x] `test_gate_adds_faulthandler_for_pytest`: команда `python -m pytest -q` → в argv есть `-o faulthandler_timeout=`; команда `make test` — без изменений; своё значение в команде не перебивается
+- [x] `test_gate_reports_hung_test_name`: `GATE_TEST_HANG_S=1`, `timeout_s=2`, stub-тест спит 4 с → таймаут гейта, красный, в конце `output` имя теста и строка стека
+- [x] `test_gate_timeout_kills_process_group`: stub-команда порождает дочерний `sleep`, таймаут гейта подменён → после гейта дочерний процесс мёртв
+- [x] реализовать
 
 ## Квота codex распознаётся по потоку
 

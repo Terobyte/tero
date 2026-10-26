@@ -115,3 +115,238 @@ def test_run_files_scopes_pytest(tmp_path: Path):
     bad = run_files(cmd, ["tests/test_bad.py"], repo=tmp_path, timeout_s=30)
     assert good.ok is True
     assert bad.ok is False
+
+
+def test_gate_adds_faulthandler_for_pytest(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    from src.loop import gates
+
+    argv = ["python", "-m", "pytest", "-q"]
+    out = gates.pytest_argv(argv)
+    assert any(a.startswith("faulthandler_timeout=") for a in out)
+    assert out != argv
+
+    make_argv = ["make", "test"]
+    assert gates.pytest_argv(make_argv) == make_argv
+
+    own = ["python", "-m", "pytest", "-q", "-o", "faulthandler_timeout=10"]
+    out_own = gates.pytest_argv(own)
+    assert out_own == own
+
+    _write(tmp_path / "tests" / "test_ok.py", "def test_ok():\n    assert 1 == 1\n")
+    captured: dict = {}
+
+    class _FakeProc:
+        def __init__(self, *args, **kwargs):
+            captured["argv"] = list(args[0])
+
+        @property
+        def pid(self):
+            return 123456789
+
+        def communicate(self, timeout=None):
+            return ("", "")
+
+        @property
+        def returncode(self):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+    gates.run_all(detect(tmp_path), repo=tmp_path, timeout_s=30)
+    assert any("faulthandler_timeout=" in a for a in captured["argv"])
+
+
+def test_gate_reports_hung_test_name(tmp_path: Path, monkeypatch):
+    from src.loop import gates
+
+    monkeypatch.setattr(gates, "GATE_TEST_HANG_S", 1)
+    _write(tmp_path / "tests" / "test_hang.py", "import time\ndef test_hang():\n    time.sleep(4)\n")
+    result = run_all(detect(tmp_path), repo=tmp_path, timeout_s=2)
+    assert result.ok is False
+    assert result.timed_out is True
+    tail = "\n".join(result.output.splitlines()[-41:])
+    assert "test_hang" in tail
+    assert " in test_hang" in result.output
+
+
+def test_gate_timeout_kills_process_group(tmp_path: Path):
+    import os
+    import subprocess
+
+    from src.loop import gates
+
+    script = tmp_path / "spawn_sleep.py"
+    script.write_text(
+        "import subprocess, time\n"
+        "p = subprocess.Popen(['sleep', '30'])\n"
+        "print(f'CHILD {p.pid}', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    cmd = type("C", (), {"run_all": ["python", str(script)], "name": "probe"})()
+    result = gates._run(cmd.run_all, cmd.name, tmp_path, 2)
+    assert result.ok is False
+    assert result.timed_out is True
+    child_pid = None
+    for line in result.output.splitlines():
+        if "CHILD" in line:
+            child_pid = int(line.split()[-1])
+    assert child_pid is not None
+    try:
+        os.kill(child_pid, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        # cleanup before failing
+        try:
+            os.kill(child_pid, 9)
+        except OSError:
+            pass
+        raise AssertionError("child sleep still alive after gate timeout")
+    assert subprocess.run(["true"]).returncode == 0
+
+
+def test_pytest_argv_detects_pytest_binary_path():
+    from src.loop import gates
+
+    out = gates.pytest_argv(["./.venv/bin/pytest", "-q"])
+    assert any(a.startswith("faulthandler_timeout=") for a in out)
+
+
+def test_pytest_argv_keeps_override_ini():
+    from src.loop import gates
+
+    own_eq = ["python", "-m", "pytest", "-q", "--override-ini=faulthandler_timeout=10"]
+    assert gates.pytest_argv(own_eq) == own_eq
+    own_sp = ["python", "-m", "pytest", "-q", "--override-ini", "faulthandler_timeout=10"]
+    assert gates.pytest_argv(own_sp) == own_sp
+
+
+def test_pytest_argv_keeps_o_equals_form():
+    from src.loop import gates
+
+    own = ["python", "-m", "pytest", "-q", "-o=faulthandler_timeout=10"]
+    assert gates.pytest_argv(own) == own
+
+
+def test_pytest_argv_keeps_glued_o_form():
+    from src.loop import gates
+
+    own = ["python", "-m", "pytest", "-q", "-ofaulthandler_timeout=10"]
+    assert gates.pytest_argv(own) == own
+
+
+def test_gate_timeout_without_dump_still_names_test(tmp_path):
+    from src.loop import gates
+
+    script = tmp_path / "slow_no_dump.py"
+    script.write_text(
+        "import time\n"
+        "print('tests/test_slow.py::test_slow ...', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    result = gates._run(["python", str(script)], "probe", tmp_path, 2)
+    assert result.ok is False
+    assert result.timed_out is True
+    tail = "\n".join(result.output.splitlines()[-41:])
+    assert "tests/test_slow.py::test_slow" in tail
+
+
+def test_run_resets_watchdog_on_start_error(tmp_path, monkeypatch):
+    import subprocess
+
+    from src.loop import gates
+    from src.loop import watchdog as _wd
+
+    def _boom(*args, **kwargs):
+        raise OSError("nope")
+
+    monkeypatch.setattr(subprocess, "Popen", _boom)
+    _wd.note_step_before({123456})
+    try:
+        gates._run(["python", "-m", "pytest", "-q"], "pytest", tmp_path, 30)
+    finally:
+        assert _wd.step_before() is None
+
+
+def test_sigint_kills_group_and_reraises(tmp_path, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    from src.loop import gates
+
+    killed = {}
+
+    class _FakeProc:
+        pid = 424242
+
+        def communicate(self, timeout=None):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(gates, "_kill_group", lambda pid, kill=False: killed.setdefault("pid", pid))
+    with pytest.raises(KeyboardInterrupt):
+        gates._run(["sleep", "30"], "probe", tmp_path, 30)
+    assert killed.get("pid") == 424242
+
+
+def test_pytest_argv_ignores_pytest_prefixed_script():
+    from src.loop import gates
+
+    argv = ["python", "pytest_helper.py", "-q"]
+    assert gates.pytest_argv(argv) == argv
+    argv_m = ["python", "-m", "pytest_helper"]
+    assert gates.pytest_argv(argv_m) == argv_m
+
+
+def test_hung_report_picks_last_test():
+    from src.loop import gates
+
+    output = "\n".join(
+        [
+            "tests/test_a.py::test_a PASSED",
+            "Timeout (0:00:05)!",
+            '  File "/w/tests/test_a.py", line 10 in test_a',
+            "    time.sleep(60)",
+            "Timeout (0:00:05)!",
+            '  File "/w/tests/test_b.py", line 20 in test_b',
+            "    time.sleep(60)",
+        ]
+    )
+    head = gates.hung_test_report(output).splitlines()[0]
+    assert "test_b" in head
+    assert "test_a" not in head
+
+
+def test_hung_report_normalizes_absolute_path():
+    from src.loop import gates
+
+    output = "\n".join(
+        [
+            "Timeout (0:00:05)!",
+            '  File "/tmp/xyz/tests/test_hang.py", line 5 in test_hang',
+            "    time.sleep(60)",
+        ]
+    )
+    assert gates.hung_test_report(output).splitlines()[0] == "tests/test_hang.py::test_hang"
+
+
+def test_gate_timeout_cleanup_stays_fast(tmp_path):
+    import time
+
+    from src.loop import gates
+
+    start = time.monotonic()
+    result = gates._run(["sleep", "30"], "probe", tmp_path, 1)
+    elapsed = time.monotonic() - start
+    assert result.ok is False
+    assert result.timed_out is True
+    assert elapsed < 5
+
+
+def test_timeout_with_only_passed_output_omits_name():
+    from src.loop import gates
+
+    output = "tests/test_done.py::test_done PASSED\n"
+    assert gates.hung_test_report(output, on_timeout=True) == ""

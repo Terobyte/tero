@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
+
+
+GATE_TEST_HANG_S = 120
+
+KILL_GROUP_GRACE_S = 1.0
+
+_STACK_LINE_RE = re.compile(r'File "([^"]+)", line \d+ in (test_\w+)')
+
+_COMPLETED_RE = re.compile(r"\b(PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)\b")
 
 
 _PYTEST_FAILED = re.compile(
@@ -145,28 +157,46 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
 
     from src.process_guard import ProcessGuard
 
-    resolved = [_resolve_python(part) for part in argv]
+    resolved = pytest_argv([_resolve_python(part) for part in argv])
     before = ProcessGuard().snapshot_pids()
     _wd.note_step_before(before)
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             resolved,
             cwd=repo,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout_s,
             start_new_session=True,
         )
     except OSError as exc:
+        _wd.note_step_before(None)
         return GateResult(
             ok=False,
             exit_code=127,
             output=f"{resolved[0]}: {exc}",
             command_name=name,
         )
-    except subprocess.TimeoutExpired as exc:
-        output = _text(exc.stdout) + _text(exc.stderr)
+    try:
+        out, _ = proc.communicate(timeout=timeout_s)
+    except KeyboardInterrupt:
+        _kill_group(proc.pid)
         _wd._kill_new_processes(before)
+        raise
+    except subprocess.TimeoutExpired:
+        _kill_group(proc.pid)
+        try:
+            out, _ = proc.communicate(timeout=10)
+        except Exception:
+            try:
+                _kill_group(proc.pid, kill=True)
+            except Exception:
+                pass
+            out = ""
+            proc.wait()
+        output = f"{out or ''}\n{hung_test_report(out or '', on_timeout=True)}".rstrip() if out else ""
+        _wd._kill_new_processes(before)
+        _wd.note_step_before(None)
         return GateResult(
             ok=False,
             exit_code=124,
@@ -176,20 +206,144 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
         )
     finally:
         _wd.note_step_before(None)
-    output = (proc.stdout or "") + (proc.stderr or "")
+    output = (out or "") + hung_suffix(out or "")
     return GateResult(
         ok=proc.returncode == 0,
         exit_code=proc.returncode,
         output=output,
         command_name=name,
+        timed_out=False,
     )
 
 
-def _text(stream: bytes | str | None) -> str:
-    # TimeoutExpired carries raw bytes even when run() was called with text=True
-    if isinstance(stream, bytes):
-        return stream.decode(errors="replace")
-    return stream or ""
+def _is_pytest_argv(argv: list[str]) -> bool:
+    for token in argv:
+        prog = Path(token).name
+        if prog in ("pytest", "pytest.exe") or (
+            prog.endswith(".py") and Path(token).stem == "pytest"
+        ):
+            return True
+    if "-m" in argv:
+        try:
+            nxt = argv[argv.index("-m") + 1]
+        except IndexError:
+            return False
+        return nxt == "pytest" or Path(nxt).name in ("pytest", "pytest.exe")
+    return False
+
+
+def _has_own_faulthandler_timeout(argv: list[str]) -> bool:
+    for i, token in enumerate(argv):
+        if token == "faulthandler_timeout" or token.startswith("faulthandler_timeout="):
+            return True
+        if token == "-o" and i + 1 < len(argv):
+            if argv[i + 1].split("=", 1)[0] == "faulthandler_timeout":
+                return True
+        elif token == "-o=" and i + 1 < len(argv):
+            if argv[i + 1].split("=", 1)[0] == "faulthandler_timeout":
+                return True
+        elif token.startswith("-o") and len(token) > 2:
+            rest = token[2:].lstrip("=")
+            if rest.split("=", 1)[0] == "faulthandler_timeout":
+                return True
+        if token == "--override-ini" and i + 1 < len(argv):
+            if argv[i + 1].split("=", 1)[0] == "faulthandler_timeout":
+                return True
+        if token.startswith("--override-ini="):
+            rest = token[len("--override-ini="):]
+            if rest.split("=", 1)[0] == "faulthandler_timeout":
+                return True
+    return False
+
+
+def pytest_argv(argv: list[str]) -> list[str]:
+    """Add `-o faulthandler_timeout=` to a pytest argv (never overrides existing)."""
+    if not _is_pytest_argv(argv):
+        return list(argv)
+    if _has_own_faulthandler_timeout(argv):
+        return list(argv)
+    return [*argv, "-o", f"faulthandler_timeout={GATE_TEST_HANG_S}"]
+
+
+def _hung_name_for_frame(path: str, fn: str) -> str:
+    norm = path.replace("\\", "/")
+    idx = norm.find("tests/")
+    if idx >= 0:
+        return f"{norm[idx:]}::{fn}"
+    return f"tests/...::{fn}"
+
+
+def _hung_test_names(lines: list[str]) -> list[str]:
+    names: list[str] = []
+    node_re = re.compile(r"(test_[\w/.-]*\.py::test_\w+|tests/\S+?::test_\w+)")
+    for line in lines:
+        m = _STACK_LINE_RE.search(line)
+        if m:
+            fn = m.group(2)
+            name = _hung_name_for_frame(m.group(1), fn)
+            if names and names[-1] == name:
+                continue
+            names.append(name)
+        m2 = node_re.search(line)
+        # Timeout without a faulthandler dump: a parsed node id is only a
+        # currently-running test when the line carries no completion verdict.
+        if (
+            m2
+            and not _COMPLETED_RE.search(line)
+            and (not names or names[-1] != m2.group(1))
+        ):
+            names.append(m2.group(1))
+    return names
+
+
+def hung_test_report(output: str, on_timeout: bool = False) -> str:
+    """`tests/...::test_x` + last ≤40 stack lines, or '' when no faulthandler dump."""
+    has_dump = "Timeout (0:" in output or "Thread 0x" in output
+    if not has_dump and not on_timeout:
+        return ""
+    lines = output.splitlines()
+    if has_dump:
+        dump_idx = next(
+            (i for i, line in reversed(list(enumerate(lines))) if "Timeout (0:" in line or "Thread 0x" in line),
+            None,
+        )
+        tail = lines[dump_idx:] if dump_idx is not None else lines[-40:]
+        names = _hung_test_names(tail)
+        head = names[-1] if names else "тест неизвестен"
+        return "\n".join([head, *tail[-40:]])
+    names = _hung_test_names(lines)
+    return names[-1] if names else ""
+
+
+def hung_suffix(output: str) -> str:
+    report = hung_test_report(output)
+    return f"\n{report}" if report else ""
+
+
+def _kill_group(pid: int, kill: bool = False) -> None:
+    sig = signal.SIGKILL if kill else signal.SIGTERM
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    if kill:
+        return
+    deadline = time.time() + KILL_GROUP_GRACE_S
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except (PermissionError, OSError):
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 def _resolve_python(token: str) -> str:
