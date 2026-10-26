@@ -29,7 +29,8 @@ def test_judge_prompt_is_g3_coach_and_blind():
     )
     assert "Your ONLY job is to FIND PROBLEMS" in text
     assert "RUN the code" in text
-    assert "There is no advisory" in text
+    assert "NO_SHIP" in text
+    assert "level" in text
     assert "parse empty" in text
     assert "JudgeVerdict" in text
     assert "discard_test" in text
@@ -66,3 +67,10 @@ def test_tester_prompt_one_new_file_per_finding():
     assert "один" in text.lower() or "one new" in text.lower()
     assert "TesterReport" in text
     assert "F1" in text
+
+
+def test_coach_prompt_asks_level():
+    text = role_prompts.judge_prompt(preamble="common", contract="## Phase\n- [ ] x")
+    assert "even cosmetic" not in text
+    for level in ("blocker", "major", "minor", "nit"):
+        assert level in text

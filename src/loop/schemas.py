@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
+
+if TYPE_CHECKING:
+    from src.loop.ledger import Ledger
 
 
 PLAYER = {
@@ -57,10 +61,13 @@ JUDGE = {
                 # OpenAI strict mode: every property must be required; optional
                 # ones are nullable. id is null for new findings and names an
                 # open finding only for route=discard_test.
-                "required": ["id", "severity", "route", "file", "line", "problem", "expected"],
+                # level is nullable and may be absent: a missing/unknown level
+                # never fails validation, it is normalized to null below.
+                "required": ["id", "severity", "route", "level", "file", "line", "problem", "expected"],
                 "properties": {
                     "id": {"type": ["string", "null"]},
                     "severity": {"type": "string", "enum": ["blocking"]},
+                    "level": {"type": ["string", "null"]},
                     "route": {
                         "type": "string",
                         "enum": ["tester", "player", "discard_test"],
@@ -121,6 +128,12 @@ class ValidateCtx:
 
     open_ids: list[str] = field(default_factory=list)
     protected_ids: set[str] = field(default_factory=set)
+    ledger: Any = None
+    round: int = 0
+    phase: str = ""
+
+
+_LEVELS = ("blocker", "major", "minor", "nit")
 
 
 def validate(role: str, data: dict, ctx: ValidateCtx | None = None) -> list[str]:
@@ -128,6 +141,13 @@ def validate(role: str, data: dict, ctx: ValidateCtx | None = None) -> list[str]
     schema = SCHEMAS.get(role)
     if schema is None:
         return [f"unknown role: {role}"]
+
+    if role == "judge" and isinstance(data, dict):
+        # absent level is allowed even though the strict schema requires the
+        # key: normalize it to null before validation, never a retry.
+        for finding in data.get("findings") or []:
+            if isinstance(finding, dict) and "level" not in finding:
+                finding["level"] = None
 
     errors = [
         f"{'/'.join(str(p) for p in err.path) or '<root>'}: {err.message}"
@@ -153,6 +173,22 @@ def _semantic_judge(data: dict, ctx: ValidateCtx) -> list[str]:
     findings = data["findings"]
     previous = data["previous"]
     question = data["user_question"].strip()
+
+    for finding in findings:
+        level = finding.get("level")
+        if level not in _LEVELS:
+            finding["level"] = None
+            if ctx.ledger is not None:
+                try:
+                    ctx.ledger.event(
+                        "judge_level_missing",
+                        phase=ctx.phase,
+                        round=ctx.round,
+                        role="judge",
+                        finding_id=finding.get("id"),
+                    )
+                except Exception:
+                    pass
 
     blocking = [f for f in findings if f["severity"] == "blocking"]
     still_open = [p for p in previous if p["state"] == "still_open"]

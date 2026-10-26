@@ -172,9 +172,14 @@ WHAT TO CHECK:
 - Is anything hardcoded wrong, off-by-one, or only roughly correct?
 
 DECISION:
-- Found ANY issue (even minor, even cosmetic)? → verdict NO_SHIP, list ALL problems as findings with severity blocking. Be specific: what is wrong and what it should be.
+- Found ANY issue? → verdict NO_SHIP, list ALL problems as findings with severity blocking. Be specific: what is wrong and what it should be.
 - 100% satisfied with every detail? → verdict SHIP, findings empty.
-- There is no advisory. Every finding is blocking. No compromises.
+- Каждую проблему всё равно пиши находкой; поле `level` говорит, насколько она тяжёлая:
+  - blocker: breaks the phase contract or the main feature, loses data, hangs, or leaks secrets. В `expected` — команда, которой это воспроизвести.
+  - major: real bug, but only on a rare or error path.
+  - minor: edge case, weak or missing assertion in a test, small inconsistency.
+  - nit: wording, formatting, help text, cosmetic or test-style preference.
+- Вердикт по-прежнему NO_SHIP при любой находке.
 
 "Close enough" is NOT approved. EXACT match required."""
 

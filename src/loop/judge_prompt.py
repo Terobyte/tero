@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.loop.ledger import Ledger
 from src.loop.phase_ctx import _JUDGE_MAX_FAILURES, PhaseContext, PhaseState
 from src.loop.prompts import judge_prompt
 from src.loop.schemas import ValidateCtx
@@ -39,10 +40,15 @@ def gate_fact_of(st: PhaseState) -> str:
     )
 
 
-def validate_ctx(st: PhaseState) -> ValidateCtx:
+def validate_ctx(
+    st: PhaseState, ledger: Ledger | None = None, phase: str = ""
+) -> ValidateCtx:
     return ValidateCtx(
         open_ids=[item.id for item in st.open_findings],
         protected_ids=set(st.protected_by_id),
+        ledger=ledger,
+        round=st.round,
+        phase=phase,
     )
 
 

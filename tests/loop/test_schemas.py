@@ -1,5 +1,10 @@
 """Schema + semantic validation for the three v4 roles."""
 
+import json
+
+import pytest
+
+from src.loop.ledger import Ledger
 from src.loop.schemas import ValidateCtx, validate
 
 
@@ -20,6 +25,7 @@ def _finding(**overrides):
     data = {
         "id": None,
         "severity": "blocking",
+        "level": "major",
         "route": "player",
         "file": "src/parse.py",
         "line": 42,
@@ -298,3 +304,76 @@ def test_schemas_are_openai_strict():
 
 def test_judge_new_finding_with_null_id_valid():
     assert validate("judge", _judge(findings=[_finding(id=None)])) == []
+
+
+def test_level_optional_never_retries(tmp_path):
+    ledger = Ledger(tmp_path / "run")
+    missing = _finding()
+    del missing["level"]
+    data = _judge(findings=[missing, _finding(level=None), _finding(level="huge")])
+    assert validate("judge", data, ValidateCtx(ledger=ledger, round=2, phase="P")) == []
+    assert [item["level"] for item in data["findings"]] == [None, None, None]
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run" / "ledger.jsonl").read_text().splitlines()
+    ]
+    assert len(events) == 3
+    assert all(
+        item["kind"] == "judge_level_missing"
+        and item["round"] == 2
+        and item["phase"] == "P"
+        and item["role"] == "judge"
+        for item in events
+    )
+
+
+def test_judge_level_missing_event_failure_nonfatal():
+    class _BoomLedger:
+        def event(self, *args, **kwargs):
+            raise OSError("disk full")
+
+    missing = _finding()
+    del missing["level"]
+    data = _judge(findings=[missing, _finding(level=None), _finding(level="huge")])
+    assert validate("judge", data, ValidateCtx(ledger=_BoomLedger(), round=1, phase="P")) == []
+    assert [item["level"] for item in data["findings"]] == [None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_level_missing_null_unknown_single_judge_call(tmp_path):
+    import json as _json
+
+    from src.loop.agents import LiveAgents
+
+    missing = _finding()
+    del missing["level"]
+    payload = _judge(findings=[missing, _finding(level=None), _finding(level="huge")])
+
+    class _OnceProvider:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, prompt, system_prompt, working_dir, model="", **kwargs):
+            self.calls += 1
+            yield _json.dumps(payload)
+
+    provider = _OnceProvider()
+    agents = LiveAgents(str(tmp_path), factory=lambda _name: provider, retry_wait_s=0)
+    ledger = Ledger(tmp_path / "run")
+    data = await agents.run_role(
+        "judge",
+        provider="codex",
+        model="m",
+        prompt="P",
+        timeout=5,
+        ctx=ValidateCtx(ledger=ledger, round=2, phase="P"),
+    )
+    assert provider.calls == 1
+    assert "__invalid__" not in data
+    assert [item["level"] for item in data["findings"]] == [None, None, None]
+
+
+def test_level_does_not_change_verdict_rules():
+    assert validate("judge", _judge(findings=[_finding(level="nit")])) == []
+    errors = validate("judge", _judge(verdict="SHIP", findings=[_finding(level="nit")]))
+    assert errors

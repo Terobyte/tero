@@ -104,7 +104,7 @@ class JudgeStep:
             self.ctx.repo, ref
         ):
             snapshot_mod.restore_snapshot(self.ctx.repo, ref)
-        ctx = validate_ctx(self.ctx.st)
+        ctx = validate_ctx(self.ctx.st, self.ctx.ledger, self.ctx.phase.title)
         reask_question = ""
         shippable = ("SHIP", "NO_SHIP")
         while True:

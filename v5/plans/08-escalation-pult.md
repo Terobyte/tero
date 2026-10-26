@@ -84,10 +84,10 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
 **Меняются старые тесты:** фикстуры находок (добавить `level`), тесты текста `G3_COACH`, если сверяют
 строку «Every finding is blocking».
 
-- [ ] `test_level_optional_never_retries`: находка без `level`, с `null` и с `"huge"` → проходит, `level` = `null`, событие `judge_level_missing`, повтора судьи нет
-- [ ] `test_level_does_not_change_verdict_rules`: NO_SHIP с одной находкой `level: nit` проходит как раньше; SHIP с находками — по-прежнему ошибка
-- [ ] `test_coach_prompt_asks_level`: промпт судьи содержит четыре уровня и не содержит «even cosmetic»
-- [ ] реализовать
+- [x] `test_level_optional_never_retries`: находка без `level`, с `null` и с `"huge"` → проходит, `level` = `null`, событие `judge_level_missing`, повтора судьи нет
+- [x] `test_level_does_not_change_verdict_rules`: NO_SHIP с одной находкой `level: nit` проходит как раньше; SHIP с находками — по-прежнему ошибка
+- [x] `test_coach_prompt_asks_level`: промпт судьи содержит четыре уровня и не содержит «even cosmetic»
+- [x] реализовать
 
 **Вне этой фазы:** jev, тень, любое изменение поведения по `level`.
 

@@ -47,6 +47,7 @@ def no_ship(findings: list[dict[str, Any]], previous: list[dict[str, Any]] | Non
 def finding(
     *,
     severity: str = "blocking",
+    level: str | None = "blocker",
     route: str = "player",
     file: str = "src/greet.py",
     line: int | None = 1,
@@ -57,6 +58,7 @@ def finding(
     return {
         "id": id,
         "severity": severity,
+        "level": level,
         "route": route,
         "file": file,
         "line": line,
