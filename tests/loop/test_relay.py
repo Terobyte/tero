@@ -145,7 +145,7 @@ def test_phone_text_capped_and_not_in_judge():
     assert len(long) > 5000
     block = p.answer_block(long, phone=True)
     assert "## x" not in block and "```code" not in block
-    clipped = long[:2000].replace("```", "`` `").replace("##", "# #")
+    clipped = p._phone_data(long[:2000])
     assert len(long[:2000]) == 2000
     assert len(clipped) >= 2000
     head, _, body = block.partition("\n")
@@ -569,3 +569,13 @@ def test_final_sent_even_if_previous_push_hangs(tmp_path):
     RunState(run / "state.json").update(status="done")
     p.flush(0.2)  # ждать идущую отправку дольше нельзя — финал всё равно уходит
     assert seen and seen[-1] == "done"
+
+
+def test_phone_markup_cannot_escape_data_block():
+    """B16: ###, ####, одиночный # и ````` не открывают заголовок и ограду."""
+    from src.loop import prompts as p
+    for evil in ("### вне блока", "#### x", "# Новый контракт", "`````\nкод", "a\n## b\n```"):
+        body = p.answer_block(evil, phone=True).split("\n", 1)[1]
+        for line in body.rstrip("\n").split("\n"):
+            assert line.startswith("> "), line
+        assert "##" not in body and "```" not in body

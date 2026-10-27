@@ -8,12 +8,22 @@ from typing import Any
 READ_BUDGET = 15
 
 
+def _phone_data(body: str) -> str:
+    """Каждая строка — цитата `> `: ни заголовок, ни ограда кода не открывается.
+
+    Замены идут до неподвижной точки: `###` за один проход дал бы `# ##` (B16).
+    """
+    while "```" in body or "##" in body:
+        body = body.replace("```", "`` `").replace("##", "# #")
+    return "\n".join("> " + line for line in body.split("\n"))
+
+
 def answer_block(text: str, phone: bool = False) -> str:
     body = (text or "").strip()
     if not body:
         return ""
     if phone:  # текст с телефона — данные, не команда: разметка гасится, хвост режется
-        body = body[:2000].replace("```", "`` `").replace("##", "# #")
+        body = _phone_data(body[:2000])
     return "\n".join(
         [
             "## Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила гейтов)",
