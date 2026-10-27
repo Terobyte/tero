@@ -4,12 +4,13 @@ name = "tero-relay"
 main = "src/worker.js"
 compatibility_date = "2026-10-26"
 workers_dev = true
-account_id = ""
+preview_urls = false
+account_id = "4ea0ffad4a5cdcfbfeb92007ee68553f"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "tero-relay"
-database_id = ""
+database_id = "93e2dca2-0e93-4f1e-9780-22e849d5f824"
 
 [triggers]
 crons = ["*/5 * * * *"]
