@@ -174,8 +174,32 @@ def status_short(repo: str | Path) -> str:
 
 
 def secret_paths(repo: str | Path) -> list[str]:
+    names = _porcelain_names(repo)
+    names += [n for n in _names(repo, "diff", "--cached", "--name-only") if n not in names]
+    return [name for name in names if is_secret_path(name)]
+
+
+def staged_secret_paths(repo: str | Path) -> list[str]:
+    """Secrets already staged: what a commit would record (F12 `_ship` order)."""
     names = _names(repo, "diff", "--cached", "--name-only")
     return [name for name in names if is_secret_path(name)]
+
+
+def _porcelain_names(repo: str | Path) -> list[str]:
+    """Worktree changes incl. untracked: parse `git status --porcelain=v1 -z`."""
+    try:
+        raw = _git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    except GitError:
+        return []
+    out: list[str] = []
+    for chunk in raw.split("\0"):
+        if not chunk:
+            continue
+        # porcelain v1 -z: XY<space>path[\0orig\0new for renames]
+        path = chunk[3:] if len(chunk) > 3 else chunk.strip()
+        if path:
+            out.append(path)
+    return out
 
 
 def is_secret_path(path: str) -> bool:

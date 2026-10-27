@@ -205,6 +205,8 @@ async def run_phases(
                     pending_extra.update(more)
                     continue
                 elif resolved.status == "skip":
+                    if getattr(resolved, "commit_sha", ""):
+                        shipped += 1
                     index += 1
                     continue
                 else:

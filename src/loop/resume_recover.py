@@ -151,6 +151,8 @@ async def _after_wait_decision(outcome: Any, repo_path: Path, run_path: Path,
         first = {"start_checkpoint": base, **more}
         start_index = pos
     elif status == "skip":
+        if getattr(outcome, "commit_sha", ""):
+            shipped += 1
         first, start_cfg, start_index = None, cfg, pos + 1
     elif status == "ship":
         try:

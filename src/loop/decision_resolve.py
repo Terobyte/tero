@@ -21,6 +21,138 @@ from src.loop.watchdog import stop_requested
 
 def _skip_to_debt(step: Any, reason: str, qid: str, who: str) -> PhaseOutcome:
     try:
+        situational = str(getattr(step.ctx.cfg, "escalation", "round") or "round") == "situational"
+    except Exception:
+        situational = False
+    if situational:
+        try:
+            got = _skip_ship(step, reason, qid, who)
+        except Exception:
+            got = None
+        if got is not None:
+            return got
+    return _skip_rollback(step, reason, qid, who)
+
+
+def _skip_ship(step: Any, reason: str, qid: str, who: str) -> PhaseOutcome | None:
+    """Situational skip: долг (why=skip), затем путь шипа фазы 11.
+
+    None — шипать нельзя/не вышло: вызывающий идёт старым путём с откатом.
+    Красный полный гейт — тоже старый путь, но с пометкой в долге.
+    """
+    ctx = step.ctx
+    try:
+        if step.blocked_secrets():
+            return None
+    except Exception:
+        return None
+    if ctx.test_command is None:
+        gate = None
+    else:
+        from src.loop import gate_scope as _gates
+
+        try:
+            gate = _gates.full_gate(
+                ctx.test_command, ctx.repo, ctx, ctx.ledger, ctx.st,
+                timeout_s=int(ctx.cfg.test_timeout_s),
+                enabled=ctx.cfg.gate_scope == "changed",
+            )
+        except Exception:
+            return None
+    if gate == "red":
+        try:
+            ctx.st.debt_pending = []
+        except Exception:
+            pass
+        return _skip_rollback(step, reason, qid, who, note="гейт красный, откат")
+    if gate not in (None, "green"):
+        return None
+    from types import SimpleNamespace as _NS
+
+    from src.loop import debt as _debt
+    from src.loop import ship_debt as _ship_debt
+
+    try:
+        entries = _debt.pending_debt_entries(ctx, None, "skip")
+    except Exception:
+        return None
+    try:
+        ctx.st.debt_pending = (
+            [{"why": "skip", "entries": [dict(e) for e in entries]}] if entries else []
+        )
+    except Exception:
+        return None
+    try:
+        ok = _ship_debt.commit_before_ship(_NS(ctx=ctx, state=ctx.st))
+    except Exception:
+        ok = False
+    if not ok:
+        return None
+    try:
+        if step.blocked_secrets():
+            try:
+                ctx.st.debt_pending = []
+            except Exception:
+                pass
+            return None
+    except Exception:
+        return None
+    try:
+        sha = _ship_tree(step)
+    except Exception:
+        return None
+    try:
+        ctx.st.answer = ""
+    except Exception:
+        pass
+    phase_transition(
+        ctx, status=Status.RUNNING.value, reason=reason,
+        text=f"фаза {ctx.phase.index + 1} в долг, работа сохранена",
+        role="judge", event="skip", kind="skip", doing="фаза в долг",
+        question=None, answer="", question_id=qid,
+    )
+    return PhaseOutcome(status="skip", reason=reason, rounds=ctx.st.round,
+                        escalated=ctx.st.escalated, stop_text="", commit_sha=sha)
+
+
+def _ship_tree(step: Any) -> str:
+    """Коммит работы фазы как в `_PhaseRunner._ship` (без гейта: он уже зелёный)."""
+    from src.loop.git import commit as _commit, stage_and_diff
+    from src.loop.plan import mark_phase_done as _done
+
+    ctx = step.ctx
+    plan_bytes = ctx.plan_path.read_bytes()
+    _done(ctx.plan_path, ctx.phase)
+    stage_and_diff(ctx.repo, ctx.checkpoint)
+    msg = ctx.phase.title.lower()[:60]
+    trl = f"Tero-Phase: {ctx.run_dir.name}/{ctx.phase.index + 1}"
+    try:
+        sha = _commit(ctx.repo, msg, trailer=trl, allow_empty=True)
+    except Exception:
+        try:
+            ctx.plan_path.write_bytes(plan_bytes)
+        except Exception:
+            pass
+        raise
+    try:
+        ctx.ledger.event("ship", commit=sha, round=ctx.st.round,
+                         phase=ctx.phase.title, role="judge")
+    except Exception:
+        pass
+    try:
+        ctx.emit("ship", commit=sha, round=ctx.st.round, role="judge")
+    except Exception:
+        pass
+    try:
+        ctx.update_state(commit=sha, phase_done=True)
+    except Exception:
+        pass
+    return sha
+
+
+def _skip_rollback(step: Any, reason: str, qid: str, who: str,
+                   note: str | None = None) -> PhaseOutcome:
+    try:
         step._snap = RunState.read(step.ctx.run_dir / "state.json") or {}
     except Exception:
         step._snap = {}
@@ -42,6 +174,8 @@ def _skip_to_debt(step: Any, reason: str, qid: str, who: str) -> PhaseOutcome:
         findings = []
     entry = {"phase": step.ctx.phase.index + 1, "reason": reason,
              "findings": findings, "who": who, "ref": ref or ""}
+    if note:
+        entry["note"] = note
     try:
         cur = RunState.read(step.ctx.run_dir / "state.json") or {}
         debt = list(cur.get("debt") or [])
