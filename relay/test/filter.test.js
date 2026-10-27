@@ -191,3 +191,9 @@ test('X_SECRET=-----BEGIN… — материал ключа не утекает
   redactSecrets('A' + '_'.repeat(20000) + 'x');
   assert.ok(Date.now() - t < 1000);
 });
+
+test('B14: длинное имя и вложенное присваивание маскируются', () => {
+  assert.equal(redactSecrets('ab_'.repeat(40) + 'TOKEN=v1'), 'ab_'.repeat(40) + 'TOKEN=[redacted]');
+  assert.equal(redactSecrets('note: password=abc'), 'note: password=[redacted]');
+  assert.equal(redactSecrets('status: ok'), 'status: ok');
+});

@@ -465,3 +465,9 @@ def test_redact_assign_no_backtracking_blowup():
     t = time.monotonic()
     redact("A" + "_" * 20000 + "x", [])
     assert time.monotonic() - t < 1.0
+
+
+def test_redact_assign_long_name_and_nested():
+    assert redact("ab_" * 40 + "TOKEN=v1", []) == "ab_" * 40 + "TOKEN=[redacted]"
+    assert redact("note: password=abc", []) == "note: password=[redacted]"
+    assert redact("status: ok", []) == "status: ok"

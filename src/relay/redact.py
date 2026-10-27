@@ -14,8 +14,10 @@ _PREFIXED = re.compile(
     r"|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})"
 )
 # NAME_KEY=value / password: value — имя остаётся, значение маскируется.
+# Имя любой длины (B14): lookahead от начала слова проверяет ключевое слово
+# внутри этого же слова, без вложенных * — линейно; чужое имя значение не съедает.
 _ASSIGN = re.compile(
-    r"(?i)\b([A-Z0-9_]{0,64}(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]{0,64}\s*[=:]\s*)"
+    r"(?i)\b(?=[A-Z0-9_]*?(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD))([A-Z0-9_]+\s*[=:]\s*)"
     r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;]+)"
 )
 _BEGIN = re.compile(r"-----BEGIN ([A-Z0-9 ]+)-----")
