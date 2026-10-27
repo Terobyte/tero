@@ -249,7 +249,19 @@ def status_payload(
     if not isinstance(debt, list):
         debt = []
     status = state.get("status") or ""
+    from src.providers.limits import normalize_limits
     from src.relay.pusher import relay_status
+
+    saved_limits = state.get("limits")
+    seen: list[str] = []
+    extra: tuple[str, ...] = ()
+    try:
+        extra = tuple(saved_limits.keys()) if isinstance(saved_limits, dict) else ()
+    except Exception:
+        extra = ()
+    for name in (state.get("provider") or "", "codex", *extra):
+        if name and name not in seen:
+            seen.append(name)
 
     relay_hint = relay_status(run_path)
 
@@ -266,6 +278,7 @@ def status_payload(
         "question": question,
         "decisions": decisions,
         "debt": debt,
+        "limits": normalize_limits(state.get("limits"), tuple(seen) or ("codex",)),
         "pulse_age_s": pulse_age,
         "lease": None,
         "push_ok": False,

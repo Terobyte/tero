@@ -75,6 +75,7 @@ const STATE_FIELDS = new Set([
   'status',
   'phase',
   'phase_index',
+  'total_phases',
   'round',
   'role',
   'model',

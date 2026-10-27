@@ -86,6 +86,17 @@ function renderList(items, render) {
   return `<ul>${items.map((item) => `<li>${render(item)}</li>`).join('')}</ul>`;
 }
 
+function renderLimits(limits) {
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+    return '<p>лимиты: неизвестно</p>';
+  }
+  const rows = Object.entries(limits)
+    .filter(([, v]) => typeof v === 'string' && v)
+    .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`);
+  if (!rows.length) return '<p>лимиты: неизвестно</p>';
+  return `<ul>${rows.map((r) => `<li>${r}</li>`).join('')}</ul>`;
+}
+
 export function renderPage(state = {}, opts = {}) {
   const token = opts.token || '';
   const runs = Array.isArray(opts.runs) ? opts.runs : [];
@@ -131,7 +142,8 @@ export function renderPage(state = {}, opts = {}) {
     + questionHtml
     + `<section id="status"><h2>статус</h2>`
     + `<p>${escapeHtml(st.status)} · фаза ${escapeHtml(st.phase)} · раунд ${escapeHtml(st.round)} · `
-    + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p></section>`
+    + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>`
+    + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
     + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
     + `<section id="events"><h2>журнал</h2>${eventsHtml}</section>`
     + `<section id="decisions"><h2>решения</h2>${decisionsHtml}</section>`

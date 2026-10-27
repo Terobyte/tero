@@ -13,6 +13,15 @@ import { captureDraft, renderPage, restoreDraft } from './render.js';
 
 const app = document.getElementById('app');
 let token = localStorage.getItem('tero_token') || '';
+// F2 (план 08-9): тап по виджету открывает пульт с ?token= — его и используем,
+// иначе без токена в localStorage виден только экран привязки.
+try {
+  const fromQuery = new URLSearchParams(location.search).get('token');
+  if (fromQuery) {
+    token = fromQuery;
+    localStorage.setItem('tero_token', token);
+  }
+} catch { token = token || ''; }
 
 function currentCode() {
   const fromQuery = new URLSearchParams(location.search).get('code');

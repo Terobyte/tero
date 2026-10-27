@@ -95,6 +95,9 @@ class LiveAgents:
         guard = player_guard(role, self.working_dir, kwargs.get("emit"))
         emit = guard.emit if guard else kwargs.get("emit")
         session = guard.session if guard else None
+        from src.loop.limits_track import track
+
+        stop_track, note = track(self)
 
         async def call(text_prompt: str) -> str | dict[str, Any]:
             try:
@@ -104,29 +107,32 @@ class LiveAgents:
                     emit=emit, compact_check=compact_check,
                     compact_at_tokens=compact_at_tokens, session=session,
                 ))
+                note(self, provider_name, text is None)
             except Compacted as exc:
                 return {"__compacted__": True, "tokens": exc.tokens}
             if text is None:
                 return {"__unavailable__": True, "error": self.last_error, "kind": self._last_kind}
             return text
 
-        text = await call(prompt)
-        if isinstance(text, dict):
-            return text
-        data = extract_json(text)
-        errors = validate_role(role, data, ctx)
-        if errors:
-            text, data, errors = await repair_once(
-                call, role, prompt, text, data, ctx, emit=emit
-            )
+        try:
+            text = await call(prompt)
             if isinstance(text, dict):
                 return text
-        if errors and guard is not None and guard.never_wrote():
-            return guard.report()
-        if errors:
-            # The phase logs errors + raw text; without them a stop is unexplainable.
-            return {"__invalid__": True, "errors": errors, "raw": text}
-        return data
+            data = extract_json(text)
+            errors = validate_role(role, data, ctx)
+            if errors:
+                text, data, errors = await repair_once(
+                    call, role, prompt, text, data, ctx, emit=emit
+                )
+                if isinstance(text, dict):
+                    return text
+            if errors and guard is not None and guard.never_wrote():
+                return guard.report()
+            if errors:
+                return {"__invalid__": True, "errors": errors, "raw": text}
+            return data
+        finally:
+            stop_track()
 
     async def _call(
         self,

@@ -144,7 +144,7 @@ class RelayClient:
         paths = _secret_list()
         out: dict[str, Any] = {}
         for key in ("run_id", "machine_id", "status", "phase", "phase_index",
-                    "round", "role", "model", "question", "actions", "models",
+                    "total_phases", "round", "role", "model", "question", "actions", "models",
                     "decisions", "debts", "limits", "findings", "events",
                     "answered", "history",
                     "phone_text_answers", "updated_at"):

@@ -82,6 +82,7 @@ def run_status(args) -> int:
         print(f"действия: {','.join(question.get('actions') or [])}")
     else:
         print("вопрос: null")
+    print(f"лимиты: {_json.dumps(payload['limits'], ensure_ascii=False)}")
     print(f"решения: {_json.dumps(payload['decisions'], ensure_ascii=False)}")
     print(f"долг: {_json.dumps(payload['debt'], ensure_ascii=False)}")
     print(f"пульс: {payload['pulse_age_s']}")
