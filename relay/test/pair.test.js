@@ -123,6 +123,26 @@ test('параллельные неверные коды: не больше 5 о
   assert.ok(limited >= 1, `expected at least one 429, got ${statuses}`);
 });
 
+test('B15: параллельная пачка — проверено не больше 5 кодов, верный сверх лимита → 429', async () => {
+  const env = await envWithWriteKey();
+  const code = await makeCode(env, 'iphone');
+  const burst = [...Array.from({ length: 19 }, () => 'ZZZZZZZZ'), code];
+  const results = await Promise.all(burst.map((c) => exchange(env, c, '6.6.6.6')));
+  const statuses = results.map((r) => r.status);
+  const checked = statuses.filter((s) => s !== 429).length;
+  assert.ok(checked <= 5, `expected at most 5 codes checked, got ${statuses}`);
+});
+
+test('B15: верный код освобождает свою попытку', async () => {
+  const env = await envWithWriteKey();
+  for (let i = 0; i < 4; i++) {
+    assert.equal((await exchange(env, 'ZZZZZZZZ', '5.5.5.5')).status, 404);
+  }
+  assert.equal((await exchange(env, await makeCode(env, 'iphone'), '5.5.5.5')).status, 200);
+  assert.equal((await exchange(env, 'ZZZZZZZZ', '5.5.5.5')).status, 404);
+  assert.equal((await exchange(env, 'ZZZZZZZZ', '5.5.5.5')).status, 429);
+});
+
 test('--revoke одного устройства не трогает другое; отозванный → 401 unpaired', async () => {
   const env = await envWithWriteKey();
   const first = await (await exchange(env, await makeCode(env, 'iphone'))).json();

@@ -83,6 +83,8 @@ export async function badAttempts(db, ip) {
   return row ? Number(row.n) : 0;
 }
 
+// Резерв попытки ДО проверки кода (B15): параллельная пачка не проверит больше
+// MAX_BAD_PER_IP кодов. Возвращает id резерва (0 — лимит исчерпан).
 export async function consumeBadAttempt(db, ip) {
   const now = Date.now();
   await db.prepare('DELETE FROM pair_attempts WHERE at <= ?').bind(now - PAIR_TTL_MS).run();
@@ -95,7 +97,14 @@ export async function consumeBadAttempt(db, ip) {
     + '(SELECT COUNT(*) FROM pair_attempts WHERE ip = ? AND at > ?) < ?',
   ).bind(ip, now, ip, now - PAIR_TTL_MS, MAX_BAD_PER_IP).run();
   const n = res && res.meta ? Number(res.meta.changes || 0) : 0;
-  return n === 1;
+  if (n !== 1) return 0;
+  return Number(res.meta.last_row_id || 0) || -1;
+}
+
+// Удачный обмен возвращает зарезервированную попытку: лимит считает только неверные коды.
+export async function releaseAttempt(db, attemptId) {
+  if (!(attemptId > 0)) return;
+  await db.prepare('DELETE FROM pair_attempts WHERE rowid = ?').bind(attemptId).run();
 }
 
 export async function revokeDevice(db, deviceId) {

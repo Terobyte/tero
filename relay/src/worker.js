@@ -4,10 +4,9 @@
 import { checkStale } from './cron.js';
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
 import {
-  MAX_BAD_PER_IP,
-  badAttempts,
   clientIp,
   consumeBadAttempt,
+  releaseAttempt,
   createPairCode,
   exchangePairCode,
   resetDevices,
@@ -256,23 +255,21 @@ async function postPairExchange(request, env) {
   const code = body && typeof body.code === 'string' ? body.code.trim() : '';
   if (!code) return jsonResponse({ error: 'code required' }, 400);
   const ip = clientIp(request);
-  if (await badAttempts(env.DB, ip) >= MAX_BAD_PER_IP) {
-    return jsonResponse({ error: 'too many attempts' }, 429);
-  }
+  // B15: сначала атомарный резерв попытки, потом проверка кода — не наоборот.
+  const attempt = await consumeBadAttempt(env.DB, ip);
+  if (!attempt) return jsonResponse({ error: 'too many attempts' }, 429);
   const label = body && typeof body.label === 'string' ? body.label.slice(0, 64) : '';
   let result;
   try {
     result = await exchangePairCode(env.DB, code, label);
   } catch {
+    await releaseAttempt(env.DB, attempt);
     return jsonResponse({ error: 'exchange failed' }, 500);
   }
   if (result.status !== 200) {
-    if (result.status === 404) {
-      const admitted = await consumeBadAttempt(env.DB, ip);
-      if (!admitted) return jsonResponse({ error: 'too many attempts' }, 429);
-    }
     return jsonResponse({ error: result.error }, result.status);
   }
+  await releaseAttempt(env.DB, attempt);
   return jsonResponse({
     device_token: result.device_token,
     read_token: result.read_token,
