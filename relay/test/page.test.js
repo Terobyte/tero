@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleFetch, sha256Hex } from '../src/worker.js';
-import { captureDraft, restoreDraft, renderPage } from '../public/render.js';
+import { captureDraft, restoreDraft, renderPage, tokenFromLink } from '../public/render.js';
 import { openFakeDb } from './fake_d1.js';
 
 const WRITE_KEY = 'write-key-1';
@@ -117,7 +117,7 @@ function request(method, path, { token = '', body = undefined } = {}) {
 
 test('подписка на пуши: device пишет, read нет, мусор → 400', async () => {
   const env = await setupEnv();
-  const sub = { endpoint: 'https://push.example/sub/9', p256dh: 'abc', auth: 'def' };
+  const sub = { endpoint: 'https://web.push.apple.com/sub/9', p256dh: 'abc', auth: 'def' };
   const ok = await handleFetch(
     request('POST', '/push/subscribe', { token: DEVICE_TOKEN, body: sub }), env,
   );
@@ -350,4 +350,49 @@ test('пустой или отсутствующий actions — никаких 
     assert.ok(!html.includes('data-action='), `кнопок быть не должно: ${html}`);
     assert.ok(!html.includes('<textarea'), 'без действий текст отправить некуда');
   }
+});
+
+test('B17: подписка на чужой хост → 400; чужую живую не перезаписать; revoke удаляет', async () => {
+  const env = await setupEnv();
+  const other = 'device-token-2';
+  await env.DB.prepare(
+    'INSERT INTO devices (token_hash, kind, label, device_id, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+  ).bind(await sha256Hex(other), 'device', 'ipad', 'ipad-id', '').run();
+  const sub = (endpoint) => ({ endpoint, p256dh: 'abc', auth: 'def' });
+  const post = (token, body) => handleFetch(request('POST', '/push/subscribe', { token, body }), env);
+  assert.equal((await post(DEVICE_TOKEN, sub('https://attacker.example/x'))).status, 400);
+  const ep = 'https://fcm.googleapis.com/fcm/send/abc';
+  assert.equal((await post(DEVICE_TOKEN, sub(ep))).status, 200);
+  assert.equal((await post(other, sub(ep))).status, 409);
+  const owner = await env.DB.prepare('SELECT device_id FROM push_subs WHERE endpoint = ?').bind(ep).first();
+  assert.equal(owner.device_id, 'device-id');
+  const revoked = await handleFetch(
+    request('POST', '/pair/revoke', { token: WRITE_KEY, body: { device_id: 'device-id' } }), env,
+  );
+  assert.equal(revoked.status, 200);
+  const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM push_subs').first();
+  assert.equal(Number(left.n), 0);
+  assert.equal((await post(other, sub(ep))).status, 200);
+});
+
+function memStorage(init = {}) {
+  const data = { ...init };
+  return { data, getItem: (k) => (k in data ? data[k] : null), setItem: (k, v) => { data[k] = String(v); } };
+}
+
+test('B18: токен из ссылки — только из фрагмента, стирается, не подменяет tero_token', () => {
+  const replaced = [];
+  const hist = { replaceState: (_s, _t, url) => replaced.push(url) };
+  const own = memStorage({ tero_token: 'DEVICE' });
+  assert.equal(tokenFromLink(own, { hash: '#token=EVIL', pathname: '/', search: '' }, hist), 'DEVICE');
+  assert.equal(own.data.tero_token, 'DEVICE');
+  assert.equal(replaced[0], '/');
+  const fresh = memStorage();
+  assert.equal(tokenFromLink(fresh, { hash: '#token=READ', pathname: '/', search: '?run_id=r1' }, hist), 'READ');
+  assert.equal(fresh.data.tero_read_token, 'READ');
+  assert.ok(!('tero_token' in fresh.data));
+  assert.equal(replaced[1], '/?run_id=r1');
+  assert.equal(tokenFromLink(memStorage(), { hash: '', pathname: '/', search: '?token=Q' }, hist), '');
+  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(shell.includes('tokenFromLink(localStorage, location, history)'));
 });

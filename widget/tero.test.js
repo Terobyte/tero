@@ -212,7 +212,8 @@ test('Scriptable: без адреса в параметре — развёрну
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(seen.urls[0], 'https://tero-relay.highskilltero.workers.dev/runs');
   assert.ok(seen.urls[1].startsWith('https://tero-relay.highskilltero.workers.dev/state?run_id=r1'));
-  assert.ok(seen.set.url.startsWith('https://tero-relay.highskilltero.workers.dev/?token=READ'));
+  assert.equal(seen.set.url, 'https://tero-relay.highskilltero.workers.dev/#token=READ');
+  assert.ok(!seen.set.url.includes('?token='), 'токен не в query: он ушёл бы на сервер');
   const custom = runAsScriptable('READ|https://my.example/');
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(custom.urls[0], 'https://my.example/runs');

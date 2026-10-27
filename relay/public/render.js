@@ -10,6 +10,19 @@ export function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+// Токен для запросов: свой (tero_token) важнее ссылки. Read-токен виджета
+// приходит во фрагменте #token= (не уходит на сервер), сразу стирается из
+// адреса и хранится отдельно — ссылка не подменяет привязанное устройство (B18).
+export function tokenFromLink(storage, loc, hist) {
+  const own = storage.getItem('tero_token') || '';
+  const fromHash = new URLSearchParams(String(loc.hash || '').replace(/^#/, '')).get('token') || '';
+  if (fromHash) {
+    hist.replaceState(null, '', loc.pathname + loc.search);
+    if (!own) storage.setItem('tero_read_token', fromHash);
+  }
+  return own || fromHash || storage.getItem('tero_read_token') || '';
+}
+
 // Черновик ответа переживает 15-секундную перерисовку #question (F17).
 // doc — document или его тестовая подделка с getElementById/activeElement.
 export function captureDraft(doc) {

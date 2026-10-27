@@ -12,7 +12,7 @@ import {
   resetDevices,
   revokeDevice,
 } from './pair.js';
-import { ensurePushTables, notify as sendPush, pushOk } from './push.js';
+import { ensurePushTables, isPushEndpoint, notify as sendPush, pushOk } from './push.js';
 
 // F17: run_id/machine_id сохраняются как ключи D1 без фильтра (нужны для
 // точного совпадения при GET /state), но наружу (GET /runs) уходят только
@@ -53,13 +53,17 @@ function hasWriteKey(request, env) {
   return key !== '' && sameSecret(bearerToken(request), key);
 }
 
-async function deviceRole(request, env) {
+async function deviceRow(request, env) {
   const token = bearerToken(request);
   if (!token) return null;
   const hash = await sha256Hex(token);
-  const row = await env.DB.prepare(
-    'SELECT kind, revoked FROM devices WHERE token_hash = ?',
+  return env.DB.prepare(
+    'SELECT kind, revoked, device_id FROM devices WHERE token_hash = ?',
   ).bind(hash).first();
+}
+
+async function deviceRole(request, env) {
+  const row = await deviceRow(request, env);
   if (!row) return null;
   if (row.revoked) return 'revoked';
   return row.kind;
@@ -310,22 +314,31 @@ async function postPairReset(request, env) {
 }
 
 async function postPushSubscribe(request, env) {
-  const role = await deviceRole(request, env);
+  const row = await deviceRow(request, env);
+  const role = !row ? null : (row.revoked ? 'revoked' : row.kind);
   const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
   if (denied) return denied;
   if (role !== 'device') return jsonResponse({ error: 'read-only token' }, 403);
+  if (!row.device_id) return jsonResponse({ error: 'device without id' }, 403);
   const body = await readJson(request);
   const endpoint = body && typeof body.endpoint === 'string' ? body.endpoint : '';
   const p256dh = body && typeof body.p256dh === 'string' ? body.p256dh : '';
   const auth = body && typeof body.auth === 'string' ? body.auth : '';
-  if (!endpoint.startsWith('https://') || !p256dh || !auth) {
-    return jsonResponse({ error: 'endpoint, p256dh and auth required' }, 400);
+  if (!isPushEndpoint(endpoint) || endpoint.length > 500 || !p256dh || !auth) {
+    return jsonResponse({ error: 'push endpoint, p256dh and auth required' }, 400);
   }
-  await env.DB.prepare(
-    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0) '
+  // B17: подписка принадлежит устройству; чужую живую не перезаписать,
+  // подписку отозванного устройства новое забирает себе.
+  const res = await env.DB.prepare(
+    'INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, ?) '
     + 'ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, '
-    + 'auth = excluded.auth, dead = 0',
-  ).bind(endpoint.slice(0, 500), p256dh.slice(0, 200), auth.slice(0, 100)).run();
+    + 'auth = excluded.auth, dead = 0, device_id = excluded.device_id '
+    + 'WHERE push_subs.device_id = excluded.device_id OR NOT EXISTS ('
+    + 'SELECT 1 FROM devices d WHERE d.device_id = push_subs.device_id AND d.revoked = 0)',
+  ).bind(endpoint, p256dh.slice(0, 200), auth.slice(0, 100), row.device_id).run();
+  if (!res || !res.meta || res.meta.changes !== 1) {
+    return jsonResponse({ error: 'subscription owned by another device' }, 409);
+  }
   return jsonResponse({ ok: true });
 }
 

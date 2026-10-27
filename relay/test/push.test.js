@@ -2,7 +2,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encryptPayload, createVapidJwt, notify, textFor, pushOk } from '../src/push.js';
-import { openFakeDb } from './fake_d1.js';
+import { openFakeDb as openRawDb } from './fake_d1.js';
+
+// B17: подписки принадлежат неотозванному устройству dev1.
+function openFakeDb() {
+  const DB = openRawDb();
+  DB._raw.prepare(
+    "INSERT INTO devices (token_hash, kind, label, device_id, revoked, created_at) VALUES ('h', 'device', 'd', 'dev1', 0, '')",
+  ).run();
+  return DB;
+}
 
 // RFC 8291 §5 + Appendix A: фиксированный вектор.
 const RFC8291_A = {
@@ -55,7 +64,7 @@ test('410 → подписка мёртвая, запись в push_log; вто�
     __fetch: async () => { calls += 1; return { status: 410 }; },
   };
   await DB.prepare(
-    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0)',
+    "INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, 'dev1')",
   ).bind('https://push.example/sub/1', RFC8291_A.receiverPublic, RFC8291_A.authSecret).run();
   const payload = { status: 'waiting_human', question: { id: 'q1', text: 'идём?' } };
   await notify(env, 'r1', 'm1', payload, 1_700_000_000_000);
@@ -78,7 +87,7 @@ async function vapidEnv(DB, extra = {}) {
 
 async function liveSub(DB, endpoint = 'https://push.example/sub/1') {
   await DB.prepare(
-    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0)',
+    "INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, 'dev1')",
   ).bind(endpoint, RFC8291_A.receiverPublic, RFC8291_A.authSecret).run();
 }
 
@@ -206,4 +215,14 @@ test('F4: падение первой подписки не отменяет п�
   assert.ok(log.results.some((r) => r.code === 201));
   const dead = await DB.prepare('SELECT dead FROM push_subs ORDER BY endpoint').all();
   assert.deepEqual(dead.results.map((r) => r.dead), [0, 0]);
+});
+
+test('B17: подписка отозванного устройства пуш не получает', async () => {
+  const DB = openFakeDb();
+  let calls = 0;
+  const env = await vapidEnv(DB, { __fetch: async () => { calls += 1; return { status: 201 }; } });
+  await liveSub(DB);
+  DB._raw.prepare("UPDATE devices SET revoked = 1 WHERE device_id = 'dev1'").run();
+  await notify(env, 'r1', 'm1', { status: 'waiting_human', question: { id: 'q', text: 't' } }, 1_700_000_000_000);
+  assert.equal(calls, 0);
 });

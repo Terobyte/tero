@@ -112,11 +112,14 @@ export async function revokeDevice(db, deviceId) {
     'UPDATE devices SET revoked = 1 WHERE device_id = ? AND device_id != \'\' AND revoked = 0',
   ).bind(deviceId).run();
   const n = res && res.meta ? Number(res.meta.changes || 0) : 0;
+  // B17: подписки отозванного устройства удаляются — пуши ему больше не идут.
+  if (deviceId) await db.prepare('DELETE FROM push_subs WHERE device_id = ?').bind(deviceId).run();
   return { revoked: n };
 }
 
 export async function resetDevices(db) {
   const res = await db.prepare('UPDATE devices SET revoked = 1 WHERE revoked = 0').run();
   const n = res && res.meta ? Number(res.meta.changes || 0) : 0;
+  await db.prepare('DELETE FROM push_subs').run();
   return { revoked: n };
 }

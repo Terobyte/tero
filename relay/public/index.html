@@ -9,18 +9,16 @@
 <body>
 <div id="app">загрузка…</div>
 <script type="module">
-import { captureDraft, renderPage, restoreDraft } from './render.js';
+import { captureDraft, renderPage, restoreDraft, tokenFromLink } from './render.js';
 
 const app = document.getElementById('app');
 let token = localStorage.getItem('tero_token') || '';
-// F2 (план 08-9): тап по виджету открывает пульт с ?token= — его и используем,
-// иначе без токена в localStorage виден только экран привязки.
+// Тап по виджету открывает пульт с read-токеном во фрагменте #token= (B18):
+// фрагмент не уходит на сервер и в логи; токен сразу стирается из адреса.
+// Привязанный токен устройства он не подменяет — только если своего нет,
+// и хранится отдельно (tero_read_token), а не как tero_token.
 try {
-  const fromQuery = new URLSearchParams(location.search).get('token');
-  if (fromQuery) {
-    token = fromQuery;
-    localStorage.setItem('tero_token', token);
-  }
+  token = tokenFromLink(localStorage, location, history);
 } catch { token = token || ''; }
 
 function currentCode() {

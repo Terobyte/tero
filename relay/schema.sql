@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS push_subs (
   p256dh TEXT NOT NULL,
   auth TEXT NOT NULL,
   dead INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT ''
+  created_at TEXT NOT NULL DEFAULT '',
+  -- B17: владелец подписки; пуш уходит только неотозванному устройству.
+  device_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS push_log (

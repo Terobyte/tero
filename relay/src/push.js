@@ -152,10 +152,33 @@ export function textFor(payload) {
   return `tero: ${core}${SUFFIX}`;
 }
 
+// B17: подписка живая, только если её устройство не отозвано.
+const OWNED_SUB = "s.device_id != '' AND EXISTS (SELECT 1 FROM devices d "
+  + 'WHERE d.device_id = s.device_id AND d.revoked = 0)';
+const LIVE_SUB = `COALESCE(s.dead,0)=0 AND ${OWNED_SUB}`;
+
+// Хосты push-сервисов браузеров: Worker не шлёт запросы на произвольный URL.
+const PUSH_HOSTS = [
+  /^web\.push\.apple\.com$/,
+  /^fcm\.googleapis\.com$/,
+  /^updates\.push\.services\.mozilla\.com$/,
+  /^[a-z0-9-]+\.notify\.windows\.com$/,
+];
+
+export function isPushEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === 'https:' && PUSH_HOSTS.some((re) => re.test(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
 export async function ensurePushTables(db) {
   await db.prepare(
     'CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, '
-    + "auth TEXT NOT NULL, dead INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '')",
+    + "auth TEXT NOT NULL, dead INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', "
+    + "device_id TEXT NOT NULL DEFAULT '')",
   ).run();
   await db.prepare(
     'CREATE TABLE IF NOT EXISTS push_log (id INTEGER PRIMARY KEY AUTOINCREMENT, '
@@ -213,7 +236,7 @@ export async function pushOk(db, env = null) {
       // Конфиг битый, но проверять подписки нечем — смотрим только таблицу:
       // при живых подписках false всё равно правильнее true-настроенного.
       try {
-        const c = await db.prepare('SELECT COUNT(*) AS n FROM push_subs').first();
+        const c = await db.prepare('SELECT COUNT(*) AS n FROM push_subs s WHERE ' + OWNED_SUB).first();
         if (!c || Number(c.n) === 0) return true;
       } catch {
         return true;
@@ -222,9 +245,9 @@ export async function pushOk(db, env = null) {
     }
   }
   try {
-    const t = await db.prepare('SELECT COUNT(*) AS n FROM push_subs').first();
+    const t = await db.prepare('SELECT COUNT(*) AS n FROM push_subs s WHERE ' + OWNED_SUB).first();
     if (!t || Number(t.n) === 0) return true;
-    const live = await db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE COALESCE(dead,0)=0').first();
+    const live = await db.prepare('SELECT COUNT(*) AS n FROM push_subs s WHERE ' + LIVE_SUB).first();
     return Number(live && live.n) > 0;
   } catch {
     return true;
@@ -257,7 +280,7 @@ export async function notify(env, runId, machineId, payload, nowMs = Date.now())
   let subs = [];
   try {
     const res = await db.prepare(
-      'SELECT endpoint, p256dh, auth FROM push_subs WHERE COALESCE(dead,0)=0',
+      'SELECT endpoint, p256dh, auth FROM push_subs s WHERE ' + LIVE_SUB,
     ).all();
     subs = (res && res.results) || [];
   } catch {

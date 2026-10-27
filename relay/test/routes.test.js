@@ -302,7 +302,7 @@ test('запоздавший старый push (state_at раньше) не за
 test('F1: запоздавший вопрос после done пуш не шлёт', async () => {
   const env = await setupEnv();
   await env.DB.prepare(
-    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0)',
+    "INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, 'device-id')",
   ).bind(
     'https://push.example/sub/1',
     'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',

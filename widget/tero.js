@@ -73,7 +73,7 @@ function layout(state = {}, family) {
 // run_id/machine_id опциональны: без них виджет сначала читает GET /runs
 // (как страница-пульт) и берёт первый незавершённый прогон.
 // Без адреса Worker — DEFAULT_WORKER_BASE (развёрнутый ретранслятор).
-// Тап ведёт на пульт с ?token= (и run_id/machine_id, если заданы).
+// Тап ведёт на пульт с #token= (и run_id/machine_id, если заданы).
 async function runWidget() {
   if (typeof ListWidget === 'undefined') return layout({}, 'lock');
   const raw = String((typeof args !== 'undefined' && args.widgetParameter) || '');
@@ -119,9 +119,11 @@ async function runWidget() {
     const family = (typeof config !== 'undefined' && config.widgetFamily) || fam || 'lock';
     for (const row of layout(state, family)) w.addText(row);
     if (cleanBase && typeof Safari !== 'undefined') {
-      w.url = `${cleanBase}/?token=${encodeURIComponent(token)}`
-        + (runId ? `&run_id=${encodeURIComponent(runId)}` : '')
-        + (machineId ? `&machine_id=${encodeURIComponent(machineId)}` : '');
+      // Токен — во фрагменте (#), не в query: фрагмент не уходит на сервер (B18).
+      w.url = `${cleanBase}/`
+        + (runId ? `?run_id=${encodeURIComponent(runId)}` : '')
+        + (runId && machineId ? `&machine_id=${encodeURIComponent(machineId)}` : '')
+        + `#token=${encodeURIComponent(token)}`;
     }
   }
   if (typeof Script !== 'undefined') Script.setWidget(w);
