@@ -349,11 +349,11 @@ PWA, «Включить пуши», пуш пришёл, ответ дошёл, 
     `owner_round` в историю.
 - Сбой Opus-вызова (таймаут, не-JSON, нет CLI) → `ask_owner`.
 
-- [ ] `test_polish_ships_through_gate`: мелочи на r3 → фаза закоммичена через `_ship` (есть трейлер), в `debt.md` и `state.debt` находки; при красном гейте — не шип
-- [ ] `test_opus_ship_with_debt`: фейковый Opus `ship_with_debt` → тот же путь, `why: opus`
-- [ ] `test_opus_more_then_owner`: Opus `more` → ещё раунд; второй `mole` → точка решения `stuck`; ответ хозяина `more` → `owner_round`
-- [ ] `test_opus_failure_asks_owner` и `test_stop_during_opus`
-- [ ] реализовать
+- [x] `test_polish_ships_through_gate`: мелочи на r3 → фаза закоммичена через `_ship` (есть трейлер), в `debt.md` и `state.debt` находки; при красном гейте — не шип
+- [x] `test_opus_ship_with_debt`: фейковый Opus `ship_with_debt` → тот же путь, `why: opus`
+- [x] `test_opus_more_then_owner`: Opus `more` → ещё раунд; второй `mole` → точка решения `stuck`; ответ хозяина `more` → `owner_round`
+- [x] `test_opus_failure_asks_owner` и `test_stop_during_opus`
+- [x] реализовать
 
 **Вне этой фазы:** пороги (`fix_budget`, `min_conf`, `mole_rounds`) не трогать — правятся по сверке тени.
 
