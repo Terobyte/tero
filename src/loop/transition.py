@@ -7,12 +7,13 @@ handling) and stay separate here; unifying them is not this plan.
 from __future__ import annotations
 
 import os
-from typing import Callable
+from typing import Any, Callable
 
 from src.loop.ledger import Ledger
 from src.loop.phase_ctx import PhaseContext
 from src.loop.state import RunState, Status
 from src.loop.stream import Stream
+from src.relay.pusher import poke, push_final
 
 
 _UNSET: Any = object()
@@ -47,14 +48,13 @@ def phase_transition(
         if value is not _UNSET:
             state_fields[name] = value
     state_fields.update(extra or {})
-    ctx.ledger.event(
-        kind,
-        status=status,
-        reason=reason,
-        ref=ref,
-        text=text,
-        round=ctx.st.round,
-    )
+    try:  # запись события не роняет прогон и не отменяет переход
+        ctx.ledger.event(
+            kind, status=status, reason=reason, ref=ref, text=text,
+            phase=ctx.phase.title, round=ctx.st.round, role=role,
+        )
+    except Exception:
+        pass
     ctx.update_state(**state_fields)
     emit_fields: dict[str, Any] = {
         "status": status,
@@ -74,6 +74,7 @@ def phase_transition(
     elif question_id is not _UNSET and question_id is not None:
         emit_fields["question_id"] = question_id
     ctx.emit(event, **emit_fields)
+    poke(ctx.run_dir)
 
 
 def resume_transition(
@@ -103,6 +104,8 @@ def resume_transition(
         pid_started=pid_started,
         **fields,
     )
+    if status in (Status.DONE.value, Status.STOPPED.value):
+        push_final(done_io.path.parent)
     try:
         stream.emit(
             "resume" if status == Status.RUNNING.value else "stop",

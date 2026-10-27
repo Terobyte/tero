@@ -99,11 +99,39 @@ def scrub_data(value: Any) -> Any:
     return value
 
 
+def _secrets_env_values() -> list[str]:
+    try:
+        from pathlib import Path
+
+        vals: list[str] = []
+        for raw in (Path.home() / ".tero" / "secrets.env").read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            _, _, value = line.partition("=")
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("\"", "'"):
+                value = value[1:-1]
+            if len(value) >= 8:
+                vals.append(value)
+        return vals
+    except Exception:
+        return []
+
+
 def scrub_secrets(text: str) -> str:
     """Mask key/token values so they never reach console, state, or ledger."""
     if not text:
         return text
     redacted = text
+    for _secret_value in _secrets_env_values():
+        try:
+            if _secret_value:
+                redacted = redacted.replace(_secret_value, "[redacted]")
+        except Exception:
+            pass
     for name, value in os.environ.items():
         folded = name.upper()
         # short values are flags ("1", "true"), not keys: replacing them

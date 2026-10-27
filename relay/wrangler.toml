@@ -10,3 +10,6 @@ account_id = ""
 binding = "DB"
 database_name = "tero-relay"
 database_id = ""
+
+[triggers]
+crons = ["*/5 * * * *"]

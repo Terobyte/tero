@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass
@@ -16,12 +16,40 @@ class Answer:
     uuid: str = ""
     woken: bool = False
     agent_pid: int | None = None
+    # "relay" — ответ пришёл с телефона; локальный inbox оставляет "".
+    via: str = ""
 
 
 class RelayClient(Protocol):
     def push_state(self, state: dict) -> bool: ...
     def fetch_answers(self, question_id: str) -> list[Answer]: ...
+    def ack(self, uuid: str, reason: str = "") -> bool: ...
     def notify(self, text: str) -> bool: ...
+
+
+_RELAYS: dict[str, Any] = {}
+
+
+def make_relay(cfg: Any = None, fetch: Any = None, run_id: str = "",
+               machine_id: str = "") -> RelayClient:
+    """Точка подмены: реальный клиент, без настройки — NoopRelay.
+
+    Один клиент на прогон: повторный вызов с тем же run_id отдаёт тот же объект.
+    """
+    key = str(run_id or "")
+    if key and key in _RELAYS:
+        return _RELAYS[key]
+    try:
+        from src.relay.client import RelayClient as _Real
+
+        real = _Real(cfg, fetch=fetch, run_id=run_id, machine_id=machine_id)
+        if getattr(real, "_base", "") or fetch is not None:
+            if key:
+                _RELAYS[key] = real
+            return real  # type: ignore[return-value]
+    except Exception:
+        pass
+    return NoopRelay()
 
 
 class NoopRelay:
@@ -32,6 +60,9 @@ class NoopRelay:
 
     def fetch_answers(self, question_id: str) -> list[Answer]:
         return []
+
+    def ack(self, uuid: str, reason: str = "") -> bool:
+        return False
 
     def notify(self, text: str) -> bool:
         return False
@@ -44,6 +75,7 @@ class FakeRelay:
         self.answers: list[Answer] = list(answers or [])
         self.pushed: list = []
         self.notified: list[str] = []
+        self.acked: list[str] = []
 
     def push_state(self, state: dict) -> bool:
         self.pushed.append(state)
@@ -51,6 +83,11 @@ class FakeRelay:
 
     def fetch_answers(self, question_id: str) -> list[Answer]:
         return [a for a in self.answers if a.question_id == question_id]
+
+    def ack(self, uuid: str, reason: str = "") -> bool:
+        self.acked.append(uuid)
+        self.answers = [a for a in self.answers if a.uuid != uuid]
+        return True
 
     def notify(self, text: str) -> bool:
         self.notified.append(text)

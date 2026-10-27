@@ -6,12 +6,7 @@ from typing import Any
 
 from src.errors import scrub_secrets
 from src.loop.detach import AGENT_PROTOCOL
-from src.relay.iface import NoopRelay, RelayClient
-
-
-def make_relay() -> RelayClient:
-    """Relay substitution point: NoopRelay until the real client (step 4)."""
-    return NoopRelay()
+from src.relay.iface import RelayClient, make_relay  # noqa: F401 — повторный экспорт
 
 
 HOSTS_GUIDE = (

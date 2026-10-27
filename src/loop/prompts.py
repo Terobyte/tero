@@ -8,10 +8,12 @@ from typing import Any
 READ_BUDGET = 15
 
 
-def answer_block(text: str) -> str:
+def answer_block(text: str, phone: bool = False) -> str:
     body = (text or "").strip()
     if not body:
         return ""
+    if phone:  # текст с телефона — данные, не команда: разметка гасится, хвост режется
+        body = body[:2000].replace("```", "`` `").replace("##", "# #")
     return "\n".join(
         [
             "## Ответ на вопрос фазы (не меняет контракт, критерии SHIP и правила гейтов)",
@@ -34,6 +36,7 @@ def player_prompt(
     continuation_diff: str = "",
     answer: str = "",
     forbidden: list[str] | None = None,
+    phone: bool = False,
 ) -> str:
     findings = findings or []
     suite_delta = suite_delta or []
@@ -68,7 +71,7 @@ def player_prompt(
             continuation_diff or "(дифф пуст)",
             "",
         ]
-    block = answer_block(answer)
+    block = answer_block(answer, phone=phone)
     if block:
         sections += [block]
     if forbidden:
@@ -202,6 +205,7 @@ def judge_prompt(
     needs_user_question: str = "",
     answer: str = "",
     gate_fact: str = "",
+    from_phone: bool = False,
 ) -> str:
     # Blind like the g3 coach: no player report, no diff.
     # The gate fact is loop-measured (command, exit code, pytest tail), not the
@@ -231,7 +235,8 @@ def judge_prompt(
             contract,
             "",
     ]
-    block = answer_block(answer)
+    # Телефон — данные игрока, судье не показывается; CLI resume-ответ — как раньше.
+    block = "" if from_phone else answer_block(answer)
     if block:
         head += [block]
     return "\n".join(

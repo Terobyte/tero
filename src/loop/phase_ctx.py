@@ -16,6 +16,7 @@ from src.loop.plan import Phase
 from src.loop.state import RunState
 from src.loop.stream import Stream
 from src.loop.suite_guard import Entry
+from src.relay.iface import NoopRelay
 
 
 class _Next(Enum):
@@ -104,6 +105,7 @@ class PhaseState:
     resume_base: str = ""
     resume_active: bool = False
     answer: str = ""
+    answer_from_phone: bool = False
     had_crash: bool = False
     kmax_flat: int = 0
     kmax_prev: tuple[int, frozenset] | None = None
@@ -149,8 +151,32 @@ class PhaseContext:
     guarded: dict[str, Entry]
     link_targets: set[str]
     st: PhaseState
+    # Ретранслятор прогона (план 08-6): один на прогон, создаётся в phase.py.
+    relay: Any = None
     # the role of the last step: emit() fills it into events without one
     role: str = ""
+
+    def __post_init__(self) -> None:
+        # start_answer несёт только текст: источник (телефон) — из state.json,
+        # чтобы телефонный текст не попал к судье и после перезапуска раунда.
+        if self.st.answer and not self.st.answer_from_phone:
+            saved = RunState.read(Path(self.run_dir) / "state.json") or {}
+            self.st.answer_from_phone = bool(
+                saved.get("answer_from_phone") and saved.get("answer") == self.st.answer)
+        if self.relay is None:
+            try:
+                from src.relay.iface import make_relay
+
+                made = make_relay(self.cfg, run_id=Path(self.run_dir).name)
+            except Exception:
+                made = None
+            self.relay = made if made is not None else NoopRelay()
+        try:
+            from src.relay.pusher import ensure_pusher
+
+            ensure_pusher(self.run_dir, self.relay)
+        except Exception:
+            pass
 
     def emit(self, type: str, **fields: Any) -> None:
         fields.setdefault("phase", self.phase.title)

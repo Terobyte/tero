@@ -249,6 +249,9 @@ def status_payload(
     if not isinstance(debt, list):
         debt = []
     status = state.get("status") or ""
+    from src.relay.pusher import relay_status
+
+    relay_hint = relay_status(run_path)
 
     payload = {
         "phase": f"{index + 1}/{total if total else '?'}",
@@ -266,5 +269,6 @@ def status_payload(
         "pulse_age_s": pulse_age,
         "lease": None,
         "push_ok": False,
+        "relay_error": relay_hint,
     }
     return scrub_data(payload)

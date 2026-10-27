@@ -32,7 +32,7 @@ def stop_judge_pending(step: JudgeStep, reason: str = "judge_failed") -> PhaseOu
     if decisions:
         from src.loop.decision_step import DecisionStep
 
-        return DecisionStep(step.ctx, step.rollback_with_snapshot).jp_open(reason, text, ref)
+        return DecisionStep(step.ctx, step.rollback_with_snapshot, relay=step.ctx.relay).jp_open(reason, text, ref)
     phase_transition(
         step.ctx,
         status=Status.JUDGE_PENDING.value,

@@ -333,6 +333,9 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
 
             checkpoint = run_branch_head(repo_path, slug) or base
             first = {"start_checkpoint": checkpoint, "start_round": round_no}
+            # Ответ, применённый до краша, не теряется: тот же текст снова игроку.
+            if state.get("answer") and state.get("answer_phase") == cur:
+                first["start_answer"] = str(state["answer"])
         phase = next((p for p in phases if p.index == start),
                      next((p for p in phases if not p.done), None))
         if phase is None:

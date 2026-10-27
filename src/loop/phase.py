@@ -446,7 +446,7 @@ class _PhaseRunner:
             discarded=self.state.discarded,
             continuation=self.state.resume_active,
             continuation_diff=continuation,
-            answer=self.state.answer,
+            answer=self.state.answer, phone=self.state.answer_from_phone,
             forbidden=getattr(self.resume_from, "forbidden", None),
         )
 
@@ -674,7 +674,7 @@ class _PhaseRunner:
         )
 
     def _decider(self) -> DecisionStep:
-        return DecisionStep(self.ctx, self._rollback_with_snapshot, round_limit=self.round_limit)
+        return DecisionStep(self.ctx, self._rollback_with_snapshot, relay=self.ctx.relay, round_limit=self.round_limit)
 
     def _write_stopped(self, reason: str, text: str) -> None:
         self._decider().write_stopped(reason, text)

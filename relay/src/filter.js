@@ -87,6 +87,7 @@ const STATE_FIELDS = new Set([
   'findings',
   'phone_text_answers',
   'updated_at',
+  'state_at',
 ]);
 
 function maskPem(text) {

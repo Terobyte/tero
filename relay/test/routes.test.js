@@ -279,3 +279,22 @@ test('секретоподобный run_id/machine_id не хранится к�
   const runs = await handleFetch(request('GET', '/runs', { token: DEVICE_TOKEN }), env);
   assert.deepEqual((await runs.json()).runs, []);
 });
+
+test('запоздавший старый push (state_at раньше) не затирает done', async () => {
+  const env = await setupEnv();
+  const post = (status, stateAt) => handleFetch(request('POST', '/state', {
+    token: WRITE_KEY,
+    body: { run_id: 'r1', machine_id: 'm1', status, state_at: stateAt },
+  }), env);
+  assert.equal((await post('done', '2026-10-27T01:00:02+00:00')).status, 200);
+  assert.equal((await post('running', '2026-10-27T01:00:01+00:00')).status, 200);
+  const { state } = await (await handleFetch(
+    request('GET', '/state?run_id=r1&machine_id=m1', { token: DEVICE_TOKEN }), env,
+  )).json();
+  assert.equal(state.status, 'done');
+  assert.equal((await post('running', '2026-10-27T01:00:03+00:00')).status, 200);
+  const again = await (await handleFetch(
+    request('GET', '/state?run_id=r1&machine_id=m1', { token: DEVICE_TOKEN }), env,
+  )).json();
+  assert.equal(again.state.status, 'running');
+});

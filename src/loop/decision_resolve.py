@@ -110,14 +110,18 @@ def resolve_step(step: Any) -> PhaseOutcome:
         return _skip_to_debt(step, reason, qid, who)
     if action == "answer":
         txt = (ans.text or "").strip()
+        from_phone = (getattr(ans, "via", "") or "") == "relay"
         try:
             step.ctx.st.answer = txt
+            step.ctx.st.answer_from_phone = bool(from_phone)
         except Exception:
             pass
         phase_transition(
             step.ctx, status=Status.RUNNING.value, reason=reason, text=txt,
             role="judge", event="answer", kind="answer", doing="новый раунд",
             question=None, answer=txt, question_id=qid,
+            extra={"answer_from_phone": bool(from_phone),
+                   "answer_phase": step.ctx.phase.index},
         )
         return PhaseOutcome(
             status="answer", reason=reason, rounds=step.ctx.st.round,

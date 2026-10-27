@@ -11,6 +11,9 @@ from src.loop.schemas import ValidateCtx
 
 
 def build_prompt(ctx: PhaseContext, reask_question: str) -> str:
+    # Текст с телефона — данные для игрока, не команда судье: сюда не попадает.
+    # CLI resume-ответ — прежнее поведение (судья видит ответ владельца).
+    phone = bool(getattr(ctx.st, "answer_from_phone", False))
     return judge_prompt(
         preamble=ctx.preamble,
         contract=ctx.contract,
@@ -18,8 +21,9 @@ def build_prompt(ctx: PhaseContext, reask_question: str) -> str:
         protected_ids=list(ctx.st.protected_by_id),
         suite_delta=ctx.st.suite_delta,
         needs_user_question=reask_question,
-        answer=ctx.st.answer,
+        answer="" if phone else ctx.st.answer,
         gate_fact=gate_fact_of(ctx.st),
+        from_phone=phone,
     )
 
 

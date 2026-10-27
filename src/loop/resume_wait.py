@@ -14,7 +14,7 @@ def resume_waiting_outcome(runner: Any) -> Any:
     status = str(saved.get("status") or "waiting_human")
     reason = str(saved.get("reason") or "")
     step = DecisionStep(runner.ctx, runner._rollback_with_snapshot,
-                        round_limit=runner.round_limit)
+                        relay=runner.ctx.relay, round_limit=runner.round_limit)
     step._reason = reason
     step._qid = str(saved.get("qid") or "")
     step._opened_at = None

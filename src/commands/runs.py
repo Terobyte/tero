@@ -87,6 +87,8 @@ def run_status(args) -> int:
     print(f"пульс: {payload['pulse_age_s']}")
     print("аренда: null")
     print(f"push_ok: {str(payload['push_ok']).lower()}")
+    if payload.get("relay_error"):
+        print(payload["relay_error"])
     return 0
 
 

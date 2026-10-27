@@ -37,6 +37,10 @@ class ResumeStep:
         ctx.st.judge_failures = 0
         if resume_from.answer:
             ctx.st.answer = resume_from.answer
+            try:
+                ctx.st.answer_from_phone = False
+            except Exception:
+                pass
         if not self._gate_entry(resume_from):
             return None
         if self.stop_check is not None:

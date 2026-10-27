@@ -1,6 +1,7 @@
 // relay/src/worker.js — ретранслятор tero: состояние, вопросы/ответы, read-токен.
 // Только встроенное API Worker'а (crypto.subtle, fetch, Response).
 
+import { checkStale } from './cron.js';
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
 import {
   MAX_BAD_PER_IP,
@@ -113,10 +114,16 @@ async function postState(request, env) {
   const filtered = filterState({ ...body, run_id: runId, machine_id: machineId });
   const updatedAt = nowIso();
   filtered.updated_at = updatedAt;
+  // state_at — время записи state.json у tero: запоздавший старый push
+  // (повис, пока уходил финал done) не затирает более новое состояние.
+  if (typeof filtered.state_at !== 'string') delete filtered.state_at;
   await env.DB.prepare(
     'INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?) '
     + 'ON CONFLICT (run_id, machine_id) DO UPDATE SET '
-    + 'payload = excluded.payload, updated_at = excluded.updated_at',
+    + 'payload = excluded.payload, updated_at = excluded.updated_at '
+    + "WHERE json_extract(excluded.payload, '$.state_at') IS NULL "
+    + "OR json_extract(states.payload, '$.state_at') IS NULL "
+    + "OR json_extract(excluded.payload, '$.state_at') >= json_extract(states.payload, '$.state_at')",
   ).bind(runId, machineId, JSON.stringify(filtered), updatedAt).run();
   return jsonResponse({ ok: true });
 }
@@ -308,4 +315,14 @@ export async function handleFetch(request, env) {
 
 export default {
   fetch: (request, env) => handleFetch(request, env),
+  async scheduled(event, env, ctx) {
+    const nowMs = event && typeof event.scheduledTime === 'number'
+      ? event.scheduledTime
+      : Date.now();
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(checkStale(env, nowMs));
+    } else {
+      await checkStale(env, nowMs);
+    }
+  },
 };

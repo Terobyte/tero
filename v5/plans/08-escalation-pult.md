@@ -243,13 +243,13 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
   (отправку пуша фаза 7 подставит; здесь — запись `stale_notified` и вызов заглушки `notify()`), отметка
   `stale_notified` до возврата пульса. `done`/`stopped` tero отправляет всегда.
 
-- [ ] `test_relay_reaches_all_decision_steps`: во всех трёх местах `DecisionStep.relay is ctx.relay`
-- [ ] `test_phone_answer_applied_in_memory`: фейковый relay отдаёт ответ `who: human` → применён, файла в `inbox/` нет, `ack` вызван
-- [ ] `test_inbox_file_human_is_agent`: файл в `inbox/` с `"who": "human"` без подписи → считается агентом; ответ relay `who: human` → человек (защита B7 не сломана)
-- [ ] `test_phone_text_capped_and_not_in_judge`: текст 5000 символов → обрезан; в промпте судьи текста нет; `##` экранирован в промпте игрока
-- [ ] `test_relay_client_pushes_on_status_change` и `test_relay_down_does_not_stop_run` (фейковый `fetch=`, отправка не под `owner_lock`)
-- [ ] `cron.test.js`: пульс 16 мин назад → один `notify`; второй cron без нового пульса → нет
-- [ ] реализовать
+- [x] `test_relay_reaches_all_decision_steps`: во всех трёх местах `DecisionStep.relay is ctx.relay`
+- [x] `test_phone_answer_applied_in_memory`: фейковый relay отдаёт ответ `who: human` → применён, файла в `inbox/` нет, `ack` вызван
+- [x] `test_inbox_file_human_is_agent`: файл в `inbox/` с `"who": "human"` без подписи → считается агентом; ответ relay `who: human` → человек (защита B7 не сломана)
+- [x] `test_phone_text_capped_and_not_in_judge`: текст 5000 символов → обрезан; в промпте судьи текста нет; `##` экранирован в промпте игрока
+- [x] `test_relay_client_pushes_on_status_change` и `test_relay_down_does_not_stop_run` (фейковый `fetch=`, отправка не под `owner_lock`)
+- [x] `cron.test.js`: пульс 16 мин назад → один `notify`; второй cron без нового пульса → нет
+- [x] реализовать
 
 ## Web push
 

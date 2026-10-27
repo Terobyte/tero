@@ -17,6 +17,7 @@ _ENV_MAP = {
     "TERO_TEST_COMMAND_SCOPED": "test_command_scoped",
     "TERO_GATE_SCOPE": "gate_scope",
     "TERO_JEV_ENABLED": "jev_enabled",
+    "TERO_PHONE_TEXT_ANSWERS": "phone_text_answers",
 }
 
 

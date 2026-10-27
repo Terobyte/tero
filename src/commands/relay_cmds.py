@@ -89,7 +89,7 @@ def _http_fetch(base_url: str) -> Callable:
                 return self._payload
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=5) as res:
                 raw = res.read().decode("utf-8")
                 return _Resp(res.status, json.loads(raw) if raw else {})
         except urllib.error.HTTPError as exc:  # 4xx/5xx — ответ со статусом, решает вызывающий
