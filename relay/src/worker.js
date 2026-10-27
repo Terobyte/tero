@@ -309,6 +309,47 @@ async function postPairReset(request, env) {
   return jsonResponse({ ok: true, revoked });
 }
 
+async function postPushSubscribe(request, env) {
+  const role = await deviceRole(request, env);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
+  if (role !== 'device') return jsonResponse({ error: 'read-only token' }, 403);
+  const body = await readJson(request);
+  const endpoint = body && typeof body.endpoint === 'string' ? body.endpoint : '';
+  const p256dh = body && typeof body.p256dh === 'string' ? body.p256dh : '';
+  const auth = body && typeof body.auth === 'string' ? body.auth : '';
+  if (!endpoint.startsWith('https://') || !p256dh || !auth) {
+    return jsonResponse({ error: 'endpoint, p256dh and auth required' }, 400);
+  }
+  await env.DB.prepare(
+    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0) '
+    + 'ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, '
+    + 'auth = excluded.auth, dead = 0',
+  ).bind(endpoint.slice(0, 500), p256dh.slice(0, 200), auth.slice(0, 100)).run();
+  return jsonResponse({ ok: true });
+}
+
+async function getPushVapid(request, env) {
+  const role = await deviceRole(request, env);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
+  const key = env.VAPID_PUBLIC_KEY || '';
+  return jsonResponse({ vapid_public_key: key });
+}
+
+async function getManifest(url) {
+  const code = url.searchParams.get('code') || '';
+  const manifest = {
+    name: 'теро-пульт',
+    short_name: 'теро',
+    display: 'standalone',
+    start_url: `/?code=${code}`,
+    scope: '/',
+    icons: [{ src: '/icon.png', sizes: '512x512', type: 'image/png' }],
+  };
+  return jsonResponse(manifest, 200);
+}
+
 export async function handleFetch(request, env) {
   const url = new URL(request.url);
   const { pathname } = url;
@@ -324,6 +365,15 @@ export async function handleFetch(request, env) {
   if (method === 'POST' && pathname === '/pair/exchange') return postPairExchange(request, env);
   if (method === 'POST' && pathname === '/pair/revoke') return postPairRevoke(request, env);
   if (method === 'POST' && pathname === '/pair/reset') return postPairReset(request, env);
+  if (method === 'POST' && pathname === '/push/subscribe') return postPushSubscribe(request, env);
+  if (method === 'GET' && pathname === '/push/vapid') return getPushVapid(request, env);
+  if (method === 'GET' && pathname === '/manifest.webmanifest') return getManifest(url);
+  if (method === 'GET' && pathname.startsWith('/pair/')) {
+    const code = pathname.slice('/pair/'.length).split('/')[0] || '';
+    return Response.redirect(new URL(`/?code=${encodeURIComponent(code)}`, url), 302);
+  }
+  // Статику relay/public (index.html, sw.js, render.js) отдаёт [assets] wrangler —
+  // см. wrangler.toml; Worker держит только API и манифест с кодом в start_url.
   return jsonResponse({ error: 'not found' }, 404);
 }
 

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>теро-пульт</title>
+<link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+<div id="app">загрузка…</div>
+<script type="module">
+import { captureDraft, renderPage, restoreDraft } from './render.js';
+
+const app = document.getElementById('app');
+let token = localStorage.getItem('tero_token') || '';
+
+function currentCode() {
+  const fromQuery = new URLSearchParams(location.search).get('code');
+  if (fromQuery) return fromQuery;
+  // Старые ссылки `tero pair` вида /pair/<code>: wrangler не отдаёт их сам.
+  const m = /^\/pair\/([A-Za-z0-9]+)\/?$/.exec(location.pathname || '');
+  return (m && m[1]) || '';
+}
+
+(function linkManifestToCode() {
+  const code = currentCode();
+  if (!code) return;
+  const link = document.querySelector('link[rel="manifest"]');
+  if (link) link.href = `/manifest.webmanifest?code=${encodeURIComponent(code)}`;
+})();
+
+function unpaired(res) {
+  return res.status === 401 && res.body && res.body.error === 'unpaired';
+}
+
+async function get(path) {
+  const headers = token ? { authorization: `Bearer ${token}` } : {};
+  const res = await fetch(path, { headers });
+  let body = null;
+  try { body = await res.json(); } catch { body = null; }
+  return { status: res.status, body };
+}
+
+function isPwaLaunch() {
+  if (window.matchMedia
+    && (window.matchMedia('(display-mode: standalone)').matches
+      || window.matchMedia('(display-mode: fullscreen)').matches)) return true;
+  return window.navigator.standalone === true;
+}
+
+async function load() {
+  if (!token) {
+    // PWA после «добавить на экран Домой» стартует с чистым хранилищем —
+    // код из start_url меняем только здесь. Safari держит код в адресной
+    // строке: по таппу на PWA-иконку он не теряется (F14).
+    const code = currentCode();
+    if (code && isPwaLaunch()) {
+      await pair(code, true);
+      return;
+    }
+    app.innerHTML = renderPage({}, { token: '' });
+    document.getElementById('pair-btn').onclick = () => pair();
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  const runId = params.get('run_id');
+  const machineId = params.get('machine_id');
+  const runsRes = await get('/runs');
+  if (unpaired(runsRes)) {
+    app.innerHTML = renderPage({}, { token, unpaired: true });
+    document.getElementById('pair-btn').onclick = pair;
+    return;
+  }
+  const runs = (runsRes.body && runsRes.body.runs) || [];
+  const target = (runId && machineId)
+    ? { run_id: runId, machine_id: machineId }
+    : { run_id: runs[0] && runs[0].run_id, machine_id: runs[0] && runs[0].machine_id };
+  let state = {};
+  if (target.run_id && target.machine_id) {
+    const st = await get(`/state?run_id=${encodeURIComponent(target.run_id)}`
+      + `&machine_id=${encodeURIComponent(target.machine_id)}`);
+    if (unpaired(st)) {
+      app.innerHTML = renderPage({}, { token, unpaired: true });
+      document.getElementById('pair-btn').onclick = pair;
+      return;
+    }
+    state = (st.body && st.body.state) || {};
+  }
+  const draft = captureDraft(document);
+  app.innerHTML = renderPage(state, { token, runs });
+  wire(state);
+  restoreDraft(document, draft);
+}
+
+async function pair(presetCode = '', auto = false) {
+  const code = String(presetCode
+    || (document.getElementById('pair-code') || {}).value || '').trim();
+  if (!code) return;
+  const res = await fetch('/pair/exchange', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: code.trim() }),
+  });
+  const body = await res.json().catch(() => null);
+  if (res.ok && body && body.device_token) {
+    localStorage.setItem('tero_token', body.device_token);
+    token = body.device_token;
+    if (body.read_token) localStorage.setItem('tero_read_token', body.read_token);
+    await load();
+    return;
+  }
+  if (auto) {
+    app.innerHTML = renderPage({}, { token: '' });
+    document.getElementById('pair-btn').onclick = () => pair();
+  }
+}
+
+async function answer(action, text, target) {
+  const payload = { question_id: target.id, action, text: text || '' };
+  if (target.run_id) payload.run_id = target.run_id;
+  if (target.machine_id) payload.machine_id = target.machine_id;
+  const res = await fetch('/answer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 401) {
+    const body = await res.json().catch(() => ({}));
+    if (body.error === 'unpaired') {
+      app.innerHTML = renderPage({}, { token, unpaired: true });
+      document.getElementById('pair-btn').onclick = () => pair();
+      return;
+    }
+  }
+  await load();
+}
+
+function wire(state) {
+  const q = (state && state.question) || {};
+  const section = document.getElementById('question');
+  if (section) {
+    const target = { id: q.id, run_id: state.run_id, machine_id: state.machine_id };
+    section.querySelectorAll('button[data-action]').forEach((btn) => {
+      if (btn.dataset.action === 'stop') {
+        btn.onclick = (event) => {
+          if (typeof confirm === 'function' && !confirm('Остановить прогон?')) return;
+          answer('stop', '', target);
+        };
+  } else if (btn.dataset.action === 'model') {
+          btn.onclick = () => {
+            const modelEl = section.querySelector('select[name="model"]');
+            const model = modelEl ? String(modelEl.value || '').trim() : '';
+            const textEl = section.querySelector('textarea[name="text"]');
+            const text = textEl ? textEl.value : '';
+            // Без текстового поля нет честного model: селект скрыт, пустой
+            // текст дал бы 422 — не шлём ничего, только перечитываем.
+            if (!textEl && !model) { load(); return; }
+            answer('model', model ? `player ${model}` : text, target);
+          };
+      } else {
+        btn.onclick = () => {
+          const textEl = section.querySelector('textarea[name="text"]');
+          answer(btn.dataset.action, textEl ? textEl.value : '', target);
+        };
+      }
+    });
+  }
+  const pushBtn = document.getElementById('push-btn');
+  if (pushBtn) pushBtn.onclick = enablePush;
+}
+
+async function enablePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  // iOS молча отказывает без явного запроса из жеста: только по кнопке.
+  if (window.Notification && Notification.requestPermission) {
+    if (Notification.permission === 'denied') return;
+    if (Notification.permission !== 'granted' && await Notification.requestPermission() !== 'granted') return;
+  }
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  const vapidRes = await get('/push/vapid');
+  const key = vapidRes.body && vapidRes.body.vapid_public_key;
+  if (!key) return;
+  // Сервер отдаёт публичный ключ JWK-JSON; subscribe нужен несжатый P-256.
+  const appKey = jwkToU8(key) || urlToU8(key);
+  if (!appKey) return;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey.buffer });
+  const p256dh = u8ToB64(new Uint8Array(sub.getKey('p256dh')));
+  const auth = u8ToB64(new Uint8Array(sub.getKey('auth')));
+  if (!p256dh || !auth) return;
+  await fetch('/push/subscribe', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ endpoint: sub.endpoint, p256dh, auth }),
+  });
+}
+
+function jwkToU8(key) {
+  if (typeof key !== 'string') return null;
+  let jwk = null;
+  try {
+    jwk = JSON.parse(key);
+  } catch {
+    return null;
+  }
+  if (!jwk || typeof jwk !== 'object' || !jwk.x || !jwk.y) return null;
+  const xy = urlToU8(jwk.x);
+  const yy = urlToU8(jwk.y);
+  if (!xy || !yy || xy.length !== 32 || yy.length !== 32) return null;
+  const out = new Uint8Array(65);
+  out[0] = 4;
+  out.set(xy, 1);
+  out.set(yy, 33);
+  return out;
+}
+
+function u8ToB64(bytes) {
+  if (!bytes || !bytes.length) return '';
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+function urlToU8(urlKey) {
+  try {
+    const norm = String(urlKey).replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(norm);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+setInterval(() => { if (document.visibilityState === 'visible') load(); }, 15000);
+load();
+</script>
+</body>
+</html>

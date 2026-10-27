@@ -167,7 +167,8 @@ class PhaseContext:
             try:
                 from src.relay.iface import make_relay
 
-                made = make_relay(self.cfg, run_id=Path(self.run_dir).name)
+                made = make_relay(self.cfg, run_id=Path(self.run_dir).name,
+                                  run_dir=self.run_dir)
             except Exception:
                 made = None
             self.relay = made if made is not None else NoopRelay()

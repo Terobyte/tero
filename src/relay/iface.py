@@ -31,18 +31,25 @@ _RELAYS: dict[str, Any] = {}
 
 
 def make_relay(cfg: Any = None, fetch: Any = None, run_id: str = "",
-               machine_id: str = "") -> RelayClient:
+               machine_id: str = "", run_dir: Any = None) -> RelayClient:
     """Точка подмены: реальный клиент, без настройки — NoopRelay.
 
     Один клиент на прогон: повторный вызов с тем же run_id отдаёт тот же объект.
     """
     key = str(run_id or "")
     if key and key in _RELAYS:
-        return _RELAYS[key]
+        got = _RELAYS[key]
+        try:
+            if run_dir is not None:
+                got.run_dir = run_dir
+        except Exception:
+            pass
+        return got
     try:
         from src.relay.client import RelayClient as _Real
 
-        real = _Real(cfg, fetch=fetch, run_id=run_id, machine_id=machine_id)
+        real = _Real(cfg, fetch=fetch, run_id=run_id, machine_id=machine_id,
+                     run_dir=run_dir)
         if getattr(real, "_base", "") or fetch is not None:
             if key:
                 _RELAYS[key] = real

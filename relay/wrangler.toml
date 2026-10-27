@@ -13,3 +13,7 @@ database_id = ""
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+[assets]
+directory = "./public"
+not_found_handling = "none"

@@ -87,7 +87,16 @@ class Pusher:
             self._last = time.monotonic()
             return False
         try:
-            ok = bool(self.relay.push_state(state))
+            relay = self.relay
+            try:
+                relay.run_id = self.run_dir.name
+            except Exception:
+                pass
+            try:
+                relay.run_dir = self.run_dir
+            except Exception:
+                pass
+            ok = bool(relay.push_state(state))
         except Exception:  # сеть не роняет прогон
             ok = False
         try:
@@ -153,7 +162,8 @@ def push_final(run_dir: str | Path) -> None:
 
         path = Path(run_dir)
         state = read_json_dict(path / "state.json") or {}
-        relay = make_relay(state.get("config") or None, run_id=path.name)
+        relay = make_relay(state.get("config") or None, run_id=path.name,
+                           run_dir=path)
         got = ensure_pusher(path, relay)
         if got is not None:
             got.poke()
