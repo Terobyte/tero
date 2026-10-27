@@ -5,6 +5,9 @@
 const MASK = '[redacted]';
 const SK_RE = /sk-[A-Za-z0-9_-]+/g;
 const AKIA_RE = /AKIA[0-9A-Z]{16}/g;
+// Как _PREFIXED / _ASSIGN в redact.py (B13).
+const PREFIXED_RE = /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|[sr]k_(?:live|test)_[A-Za-z0-9]{10,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g;
+const ASSIGN_RE = /\b([A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]*\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi;
 const BEGIN_RE = /-----BEGIN ([A-Z0-9 ]+)-----/g;
 // Как _B64 в redact.py: без / в токене (иначе длинные пути маскируются), без / в границах
 // (токен между слешами ловится).
@@ -107,7 +110,8 @@ function maskPem(text) {
 
 export function redactSecrets(text) {
   if (text == null) return text;
-  const out = String(text).replace(SK_RE, MASK).replace(AKIA_RE, MASK);
+  const out = String(text).replace(SK_RE, MASK).replace(AKIA_RE, MASK).replace(PREFIXED_RE, MASK)
+    .replace(ASSIGN_RE, (_m, name) => name + MASK);
   // B64 раньше HEX: иначе HEX съедает A-F-префикс base64-токена.
   return maskPem(out).replace(B64_RE, MASK).replace(HEX_RE, MASK);
 }
@@ -168,7 +172,8 @@ function deepRedact(value) {
 }
 
 function sanitizeQuestion(question) {
-  if (!question || typeof question !== 'object' || Array.isArray(question)) return question;
+  // не объект (строка, массив) — тоже недоверенный: фильтр, а не как есть
+  if (!question || typeof question !== 'object' || Array.isArray(question)) return deepRedact(question);
   const out = {};
   if ('id' in question) out.id = questionSafeText(String(question.id ?? ''));
   // F15: вопрос сохраняется целиком — лимит 500 из контракта относится

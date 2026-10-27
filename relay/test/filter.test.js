@@ -169,3 +169,17 @@ test('rooted Windows-путь и GIT binary patch не утекают', () => {
   assert.ok(!f.text.includes('mDP+&a') && !f.text.includes('literal'));
   assert.ok(f.text.includes('после'));
 });
+
+test('B13: токены с префиксом и NAME_KEY=value маскируются как в redact.py', () => {
+  for (const tok of ['ghp_' + 'a1B2'.repeat(9), 'xoxb-' + '123-abc-'.repeat(3), 'AIza' + 'Sy'.repeat(18), 'sk_live_' + 'Zq'.repeat(10), 'eyJhbGciOiJI.eyJzdWIiOiIx.SflKxwRJSMeK']) {
+    assert.equal(redactSecrets(`leak ${tok} here`), 'leak [redacted] here', tok);
+  }
+  assert.equal(redactSecrets('TYPESAFE_API_KEY=abc123 password: "hunter 2" db_token=x;'),
+    'TYPESAFE_API_KEY=[redacted] password: [redacted] db_token=[redacted];');
+});
+
+test('question не объектом тоже проходит фильтр', () => {
+  const tok = 'sk-' + 'Ab3dEf7h'.repeat(4);
+  assert.ok(!JSON.stringify(filterState({ question: `leak ${tok}` })).includes(tok));
+  assert.ok(!JSON.stringify(filterState({ question: [`leak ${tok}`] })).includes(tok));
+});

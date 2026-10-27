@@ -7,6 +7,17 @@ from pathlib import Path
 
 _SK = re.compile(r"sk-[A-Za-z0-9_\-]+")
 _AKIA = re.compile(r"AKIA[0-9A-Z]{16}")
+# Токены с известным префиксом (B13): GitHub, Slack, Google, Stripe, JWT.
+_PREFIXED = re.compile(
+    r"(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|AIza[0-9A-Za-z_\-]{30,}|[sr]k_(?:live|test)_[A-Za-z0-9]{10,}"
+    r"|eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,})"
+)
+# NAME_KEY=value / password: value — имя остаётся, значение маскируется.
+_ASSIGN = re.compile(
+    r"(?i)\b([A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]*\s*[=:]\s*)"
+    r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;]+)"
+)
 _BEGIN = re.compile(r"-----BEGIN ([A-Z0-9 ]+)-----")
 # Границы — по алфавиту, а не \b: \b считает _ частью слова и секреты
 # между подчёркиваниями не маскируются. Слеша в границах нет, но и внутри
@@ -62,6 +73,8 @@ def redact(text: str, secret_paths: list[str] | tuple[str, ...]) -> str:
         return text
     out = _SK.sub(_MASK, text)
     out = _AKIA.sub(_MASK, out)
+    out = _PREFIXED.sub(_MASK, out)
+    out = _ASSIGN.sub(lambda m: m.group(1) + _MASK, out)
     out = _mask_pem(out)
     # B64 раньше HEX: иначе HEX съедает A-F-префикс base64-токена и padding остаётся.
     out = _B64.sub(_MASK, out)

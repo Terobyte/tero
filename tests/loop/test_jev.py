@@ -438,3 +438,17 @@ def test_redact_nested_pem_and_root_secret_path():
     assert redact("bad /work/repo/.env here", [".env"]) == "bad .env here"
     assert redact("in /workspace/config/secrets.yaml", ["config/secrets.yaml"]) == "in secrets.yaml"
     assert redact("my.env stays", [".env"]) == "my.env stays"
+
+
+def test_redact_prefixed_tokens_and_assignments():
+    toks = [
+        "ghp_" + "a1B2" * 9, "github_pat_" + "x9_" * 10, "xoxb-" + "123-abc-" * 3,
+        "AIza" + "Sy" * 18, "sk_live_" + "Zq" * 10, "rk_test_" + "9" * 16,
+        "eyJhbGciOiJI.eyJzdWIiOiIx.SflKxwRJSMeK",
+    ]
+    for tok in toks:
+        out = redact(f"leak {tok} here", [])
+        assert tok not in out and out == "leak [redacted] here", tok
+    out = redact('TYPESAFE_API_KEY=abc123 password: "hunter 2" db_token=x;', [])
+    assert out == 'TYPESAFE_API_KEY=[redacted] password: [redacted] db_token=[redacted];'
+    assert redact("see src/loop/phase.py ok", []) == "see src/loop/phase.py ok"
