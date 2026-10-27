@@ -134,3 +134,32 @@ def test_pair_error_status_is_not_success(tmp_path, monkeypatch, capsys):
         assert relay_cmds.run_pair(args, fetch=fetch) == 1
     out = capsys.readouterr().out
     assert "/pair/" not in out and "HTTP 401" in out
+
+
+def test_http_fetch_sends_own_user_agent(monkeypatch):
+    # Cloudflare отвечает 1010 на UA Python-urllib: клиент обязан представиться сам.
+    import urllib.request
+
+    from src.commands import relay_cmds
+
+    seen = {}
+
+    class _Res:
+        status = 200
+
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _open(req, timeout=0):
+        seen["ua"] = req.get_header("User-agent")
+        return _Res()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _open)
+    relay_cmds._http_fetch("https://relay.example")("POST", "/pair/code", {}, "k")
+    assert seen["ua"] and "urllib" not in seen["ua"].lower()

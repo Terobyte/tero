@@ -77,6 +77,8 @@ def _http_fetch(base_url: str) -> Callable:
             base_url + path, data=data if method != "GET" else None, method=method
         )
         req.add_header("content-type", "application/json")
+        # Cloudflare режет UA Python-urllib (error 1010) ещё до воркера.
+        req.add_header("user-agent", "tero-relay-client/1")
         if token:
             req.add_header("authorization", f"Bearer {token}")
 
