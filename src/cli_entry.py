@@ -10,10 +10,12 @@ from pathlib import Path
 from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
 from src.commands import resolve_run_dir
 from src.commands.inbox_cmds import run_answer, run_compact
+from src.commands.parsers import add_all_parsers
 from src.commands.runs import run_history, run_review, run_status, run_wait
 from src.commands.stop_cmd import run_stop
 
 __all__ = [
+    "add_all_parsers",
     "build_parser",
     "main",
     "prepare_go_config",
@@ -67,87 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Plan-driven player → judge loop over coding-agent CLIs",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    go_parser = subparsers.add_parser("go", help="Run the player → judge loop over a plan")
-    go_parser.add_argument("--plan", "-p", type=str, default=None)
-    go_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    go_parser.add_argument("--no-menu", action="store_true", default=False)
-    go_parser.add_argument("--no-hud", action="store_true", default=False)
-    go_parser.add_argument("--verbose", "-v", action="store_true", default=None)
-    go_parser.add_argument("--player", dest="player_spec", default=None)
-    go_parser.add_argument("--judge", dest="judge_spec", default=None)
-    go_parser.add_argument("--tester", dest="tester_spec", default=None)
-    go_parser.add_argument("--escalation", dest="escalation_spec", default=None)
-    go_parser.add_argument("--no-escalation", action="store_true", default=False)
-    go_parser.add_argument("--no-tester", action="store_true", default=False)
-    go_parser.add_argument("--decisions", action="store_true", default=False)
-    go_parser.add_argument("--detach", action="store_true", default=False)
-    go_parser.add_argument("--owner", action="store_true", default=False, help=argparse.SUPPRESS)
-    go_parser.add_argument("--test-command", default=None)
-    go_parser.add_argument("--test-command-scoped", default=None)
-    go_parser.add_argument("--max-rounds", type=int, default=None)
-    go_parser.add_argument("--escalate-at", type=int, default=None)
-
-    history_parser = subparsers.add_parser("history", help="Show run history")
-    history_parser.add_argument("--limit", "-l", type=int, default=10)
-    history_parser.add_argument("--working-dir", "-w", type=str, default=".")
-
-    review_parser = subparsers.add_parser("review", help="Show snapshot ref and diff for a run")
-    review_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    review_parser.add_argument("--run", type=str, default=None)
-
-    resume_parser = subparsers.add_parser("resume", help="Continue a stopped run from state.json")
-    resume_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    resume_parser.add_argument("--run", type=str, default=None)
-    resume_parser.add_argument("--answer", type=str, default="")
-    resume_parser.add_argument("--force", action="store_true", default=False)
-
-    hud_parser = subparsers.add_parser("hud", help="Open the HUD window for a run")
-    hud_parser.add_argument("--run", type=str, default=None)
-
-    compact_parser = subparsers.add_parser(
-        "compact", help="Request a context compact for a running run"
-    )
-    compact_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    compact_parser.add_argument("--run", type=str, default=None)
-    compact_parser.add_argument(
-        "--role", type=str, default="player", choices=("player", "judge")
-    )
-
-    wait_parser = subparsers.add_parser(
-        "wait", help="Sleep until the run needs the agent, ends, or looks dead"
-    )
-    wait_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    wait_parser.add_argument("--run", type=str, default=None)
-    wait_parser.add_argument("--timeout", type=float, default=None)
-    wait_parser.add_argument("--agent-pid", type=int, default=None)
-
-    status_parser = subparsers.add_parser("status", help="Show run status")
-    status_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    status_parser.add_argument("--run", type=str, default=None)
-    status_parser.add_argument("--json", action="store_true", default=False)
-
-    answer_parser = subparsers.add_parser("answer", help="Answer the open decision question")
-    answer_parser.add_argument("question_id", type=str)
-    answer_parser.add_argument("action", type=str)
-    answer_parser.add_argument("text", type=str, nargs="?", default="")
-    answer_parser.add_argument("--why", type=str, required=True)
-    answer_parser.add_argument("--human", action="store_true", default=False)
-    answer_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    answer_parser.add_argument("--run", type=str, default=None)
-    answer_parser.add_argument("--agent-pid", type=int, default=None,
-                               help="pid отвечающей сессии агента")
-
-    stop_parser = subparsers.add_parser("stop", help="Request the running run to stop")
-    stop_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    stop_parser.add_argument("--run", type=str, default=None)
-
-    subparsers.add_parser("guide", help="Print the agent protocol and sleep guide")
-    notify_parser = subparsers.add_parser("notify", help="Send a notification via relay")
-    notify_parser.add_argument("text", type=str)
-    notify_parser.add_argument("--working-dir", "-w", type=str, default=".")
-    notify_parser.add_argument("--run", type=str, default=None)
-
+    add_all_parsers(subparsers)
     return parser
 
 
@@ -288,6 +210,15 @@ def main():
         from src.commands.guide_cmds import run_notify
 
         sys.exit(run_notify(args))
+    elif args.command == "relay":
+        from src.commands.relay_cmds import run_relay_setup
+
+        if args.relay_command == "setup":
+            sys.exit(run_relay_setup(args))
+    elif args.command == "pair":
+        from src.commands.relay_cmds import run_pair
+
+        sys.exit(run_pair(args))
     elif args.command == "hud":
         from src.hud.app import main as hud_main
 

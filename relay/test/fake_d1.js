@@ -48,7 +48,19 @@ export function openFakeDb() {
   const db = {
     _raw: raw,
     prepare: (sql) => new FakeStatement(db, sql),
-    batch: (statements) => statements.map((stmt) => (stmt._isSelect ? stmt.all() : stmt.run())),
+    batch: (statements) => {
+      // Как в D1: весь batch — одна транзакция, сбой любого стейтмента
+      // откатывает все предыдущие в этом же вызове.
+      raw.exec('BEGIN');
+      try {
+        const results = statements.map((stmt) => (stmt._isSelect ? stmt.all() : stmt.run()));
+        raw.exec('COMMIT');
+        return results;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    },
   };
   return db;
 }

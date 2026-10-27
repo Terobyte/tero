@@ -2,6 +2,16 @@
 // Только встроенное API Worker'а (crypto.subtle, fetch, Response).
 
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
+import {
+  MAX_BAD_PER_IP,
+  badAttempts,
+  clientIp,
+  consumeBadAttempt,
+  createPairCode,
+  exchangePairCode,
+  resetDevices,
+  revokeDevice,
+} from './pair.js';
 
 // F17: run_id/machine_id сохраняются как ключи D1 без фильтра (нужны для
 // точного совпадения при GET /state), но наружу (GET /runs) уходят только
@@ -47,9 +57,16 @@ async function deviceRole(request, env) {
   if (!token) return null;
   const hash = await sha256Hex(token);
   const row = await env.DB.prepare(
-    'SELECT kind FROM devices WHERE token_hash = ? AND revoked = 0',
+    'SELECT kind, revoked FROM devices WHERE token_hash = ?',
   ).bind(hash).first();
-  return row ? row.kind : null;
+  if (!row) return null;
+  if (row.revoked) return 'revoked';
+  return row.kind;
+}
+
+function revokedResponse(role) {
+  if (role === 'revoked') return jsonResponse({ error: 'unpaired' }, 401);
+  return null;
 }
 
 function nowIso() {
@@ -106,7 +123,8 @@ async function postState(request, env) {
 
 async function getState(request, env, url) {
   const role = await deviceRole(request, env);
-  if (!role) return jsonResponse({ error: 'unauthorized' }, 401);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
   const state = await loadState(env, url.searchParams.get('run_id'), url.searchParams.get('machine_id'));
   if (!state) return jsonResponse({ error: 'not found' }, 404);
   return jsonResponse({ state });
@@ -114,7 +132,8 @@ async function getState(request, env, url) {
 
 async function getRuns(request, env) {
   const role = await deviceRole(request, env);
-  if (!role) return jsonResponse({ error: 'unauthorized' }, 401);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
   const rows = await env.DB.prepare(
     'SELECT run_id, machine_id, payload, updated_at FROM states ORDER BY updated_at DESC',
   ).all();
@@ -141,7 +160,8 @@ async function getRuns(request, env) {
 
 async function postAnswer(request, env) {
   const role = await deviceRole(request, env);
-  if (!role) return jsonResponse({ error: 'unauthorized' }, 401);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
   if (role !== 'device') return jsonResponse({ error: 'read-only token' }, 403);
   const body = await readJson(request);
   if (!body) return jsonResponse({ error: 'bad json' }, 400);
@@ -216,6 +236,58 @@ async function ackAnswer(request, env) {
   return jsonResponse({ ok: true, deleted });
 }
 
+async function postPairCode(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  const label = typeof (body && body.label) === 'string' ? body.label.slice(0, 64) : '';
+  const { code, expires_at } = await createPairCode(env.DB, label);
+  return jsonResponse({ code, expires_at });
+}
+
+async function postPairExchange(request, env) {
+  const body = await readJson(request);
+  const code = body && typeof body.code === 'string' ? body.code.trim() : '';
+  if (!code) return jsonResponse({ error: 'code required' }, 400);
+  const ip = clientIp(request);
+  if (await badAttempts(env.DB, ip) >= MAX_BAD_PER_IP) {
+    return jsonResponse({ error: 'too many attempts' }, 429);
+  }
+  const label = body && typeof body.label === 'string' ? body.label.slice(0, 64) : '';
+  let result;
+  try {
+    result = await exchangePairCode(env.DB, code, label);
+  } catch {
+    return jsonResponse({ error: 'exchange failed' }, 500);
+  }
+  if (result.status !== 200) {
+    if (result.status === 404) {
+      const admitted = await consumeBadAttempt(env.DB, ip);
+      if (!admitted) return jsonResponse({ error: 'too many attempts' }, 429);
+    }
+    return jsonResponse({ error: result.error }, result.status);
+  }
+  return jsonResponse({
+    device_token: result.device_token,
+    read_token: result.read_token,
+    device_id: result.device_id,
+  });
+}
+
+async function postPairRevoke(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  const deviceId = body && typeof body.device_id === 'string' ? body.device_id : '';
+  if (!deviceId) return jsonResponse({ error: 'device_id required' }, 400);
+  const { revoked } = await revokeDevice(env.DB, deviceId);
+  return jsonResponse({ ok: true, revoked });
+}
+
+async function postPairReset(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const { revoked } = await resetDevices(env.DB);
+  return jsonResponse({ ok: true, revoked });
+}
+
 export async function handleFetch(request, env) {
   const url = new URL(request.url);
   const { pathname } = url;
@@ -227,6 +299,10 @@ export async function handleFetch(request, env) {
   if (method === 'POST' && pathname === '/answer') return postAnswer(request, env);
   if (method === 'GET' && pathname === '/answers') return getAnswers(request, env, url);
   if (method === 'POST' && pathname === '/answers/ack') return ackAnswer(request, env);
+  if (method === 'POST' && pathname === '/pair/code') return postPairCode(request, env);
+  if (method === 'POST' && pathname === '/pair/exchange') return postPairExchange(request, env);
+  if (method === 'POST' && pathname === '/pair/revoke') return postPairRevoke(request, env);
+  if (method === 'POST' && pathname === '/pair/reset') return postPairReset(request, env);
   return jsonResponse({ error: 'not found' }, 404);
 }
 

@@ -28,9 +28,9 @@ test('states/devices/answers читаются и пишутся', async () => {
 
   await db
     .prepare(
-      'INSERT INTO devices (token_hash, kind, label, revoked, created_at) VALUES (?, ?, ?, 0, ?)',
+      'INSERT INTO devices (token_hash, kind, label, device_id, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)',
     )
-    .bind('abc123', 'device', 'iphone', now)
+    .bind('abc123', 'device', 'iphone', 'dev-1', now)
     .run();
   const dev = await db
     .prepare('SELECT kind FROM devices WHERE token_hash = ? AND revoked = 0')

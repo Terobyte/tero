@@ -12,8 +12,8 @@ async function setupEnv() {
   const now = new Date().toISOString();
   for (const [token, kind] of [[DEVICE_TOKEN, 'device'], [READ_TOKEN, 'read']]) {
     await DB.prepare(
-      'INSERT INTO devices (token_hash, kind, label, revoked, created_at) VALUES (?, ?, ?, 0, ?)',
-    ).bind(await sha256Hex(token), kind, kind, now).run();
+      'INSERT INTO devices (token_hash, kind, label, device_id, revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)',
+    ).bind(await sha256Hex(token), kind, kind, `${kind}-id`, now).run();
   }
   return { DB, RELAY_WRITE_KEY: WRITE_KEY };
 }
