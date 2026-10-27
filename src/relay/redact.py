@@ -15,7 +15,7 @@ _PREFIXED = re.compile(
 )
 # NAME_KEY=value / password: value — имя остаётся, значение маскируется.
 _ASSIGN = re.compile(
-    r"(?i)\b([A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]*\s*[=:]\s*)"
+    r"(?i)\b([A-Z0-9_]{0,64}(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]{0,64}\s*[=:]\s*)"
     r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;]+)"
 )
 _BEGIN = re.compile(r"-----BEGIN ([A-Z0-9 ]+)-----")
@@ -74,8 +74,8 @@ def redact(text: str, secret_paths: list[str] | tuple[str, ...]) -> str:
     out = _SK.sub(_MASK, text)
     out = _AKIA.sub(_MASK, out)
     out = _PREFIXED.sub(_MASK, out)
+    out = _mask_pem(out)  # раньше _ASSIGN: X_SECRET=-----BEGIN… иначе теряет маркер
     out = _ASSIGN.sub(lambda m: m.group(1) + _MASK, out)
-    out = _mask_pem(out)
     # B64 раньше HEX: иначе HEX съедает A-F-префикс base64-токена и padding остаётся.
     out = _B64.sub(_MASK, out)
     out = _HEX.sub(_MASK, out)

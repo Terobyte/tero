@@ -183,3 +183,11 @@ test('question не объектом тоже проходит фильтр', ()
   assert.ok(!JSON.stringify(filterState({ question: `leak ${tok}` })).includes(tok));
   assert.ok(!JSON.stringify(filterState({ question: [`leak ${tok}`] })).includes(tok));
 });
+
+test('X_SECRET=-----BEGIN… — материал ключа не утекает; длинное слово без взрыва', () => {
+  const out = redactSecrets('X_SECRET=-----BEGIN PRIVATE KEY-----\nMATERIAL\n-----END PRIVATE KEY----- end');
+  assert.ok(!out.includes('MATERIAL') && !out.includes('BEGIN'));
+  const t = Date.now();
+  redactSecrets('A' + '_'.repeat(20000) + 'x');
+  assert.ok(Date.now() - t < 1000);
+});

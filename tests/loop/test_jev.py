@@ -452,3 +452,16 @@ def test_redact_prefixed_tokens_and_assignments():
     out = redact('TYPESAFE_API_KEY=abc123 password: "hunter 2" db_token=x;', [])
     assert out == 'TYPESAFE_API_KEY=[redacted] password: [redacted] db_token=[redacted];'
     assert redact("see src/loop/phase.py ok", []) == "see src/loop/phase.py ok"
+
+
+def test_redact_assignment_with_pem_value():
+    text = "X_SECRET=-----BEGIN PRIVATE KEY-----\nMATERIAL\n-----END PRIVATE KEY----- end"
+    out = redact(text, [])
+    assert "MATERIAL" not in out and "BEGIN" not in out
+
+
+def test_redact_assign_no_backtracking_blowup():
+    import time
+    t = time.monotonic()
+    redact("A" + "_" * 20000 + "x", [])
+    assert time.monotonic() - t < 1.0
