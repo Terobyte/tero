@@ -359,6 +359,97 @@ def test_full_gate_skips_second_run_on_same_tree(tmp_path: Path, monkeypatch):
     assert outcome is None
 
 
+def test_relay_change_selects_js_wrapper(tmp_path: Path):
+    """План 08-4: изменён только relay/src/worker.js → select_tests включает обёртку."""
+    root = tmp_path / "proj"
+    (root / "relay" / "src").mkdir(parents=True)
+    (root / "relay" / "test").mkdir(parents=True)
+    (root / "relay" / "widget").mkdir(parents=True)
+    (root / "tests" / "relay").mkdir(parents=True)
+    (root / "tests" / "test_structure.py").write_text("def test_structure():\n    assert True\n")
+    (root / "tests" / "relay" / "test_worker_js.py").write_text("def test_worker_js():\n    assert True\n")
+    scripted.git(root, "init")
+    scripted.git(root, "add", "-A")
+    scripted.git(root, "commit", "-m", "init")
+    checkpoint = scripted.git(root, "rev-parse", "HEAD").strip()
+    (root / "relay" / "src" / "worker.js").write_text("export default {};\n")
+    assert gate_scope.select_tests(root, checkpoint) == [
+        "tests/relay/test_worker_js.py",
+        "tests/test_structure.py",
+    ]
+
+
+def test_relay_schema_change_selects_js_wrapper(tmp_path: Path):
+    """relay/schema.sql тоже выбирает обёртку (не только .js в relay/src)."""
+    root = tmp_path / "proj2"
+    (root / "relay" / "src").mkdir(parents=True)
+    (root / "relay" / "test").mkdir(parents=True)
+    (root / "tests" / "relay").mkdir(parents=True)
+    (root / "tests" / "test_structure.py").write_text("def test_structure():\n    assert True\n")
+    (root / "tests" / "relay" / "test_worker_js.py").write_text("def test_worker_js():\n    assert True\n")
+    scripted.git(root, "init")
+    scripted.git(root, "add", "-A")
+    scripted.git(root, "commit", "-m", "init")
+    checkpoint = scripted.git(root, "rev-parse", "HEAD").strip()
+    (root / "relay" / "schema.sql").write_text("CREATE TABLE t (id TEXT);\n")
+    assert gate_scope.select_tests(root, checkpoint) == [
+        "tests/relay/test_worker_js.py",
+        "tests/test_structure.py",
+    ]
+
+
+def test_relay_any_file_selects_js_wrapper(tmp_path: Path):
+    """Контракт 08-4: любой файл relay/** или widget/** → обёртка, не только .js."""
+    root = tmp_path / "proj3"
+    (root / "relay" / "src").mkdir(parents=True)
+    (root / "relay" / "test").mkdir(parents=True)
+    (root / "widget").mkdir(parents=True)
+    (root / "tests" / "relay").mkdir(parents=True)
+    (root / "tests" / "test_structure.py").write_text("def test_structure():\n    assert True\n")
+    (root / "tests" / "relay" / "test_worker_js.py").write_text("def test_worker_js():\n    assert True\n")
+    scripted.git(root, "init")
+    scripted.git(root, "add", "-A")
+    scripted.git(root, "commit", "-m", "init")
+    checkpoint = scripted.git(root, "rev-parse", "HEAD").strip()
+    (root / "widget" / "app.css").write_text("body { margin: 0; }\n")
+    assert gate_scope.select_tests(root, checkpoint) == [
+        "tests/relay/test_worker_js.py",
+        "tests/test_structure.py",
+    ]
+
+
+def test_relay_wrapper_without_test_dir(tmp_path: Path):
+    """F16: каталога relay/test нет, а обёртка на месте — она выбирается."""
+    root = tmp_path / "proj4"
+    (root / "relay" / "src").mkdir(parents=True)
+    (root / "tests" / "relay").mkdir(parents=True)
+    (root / "tests" / "test_structure.py").write_text("def test_structure():\n    assert True\n")
+    (root / "tests" / "relay" / "test_worker_js.py").write_text("def test_worker_js():\n    assert True\n")
+    scripted.git(root, "init")
+    scripted.git(root, "add", "-A")
+    scripted.git(root, "commit", "-m", "init")
+    checkpoint = scripted.git(root, "rev-parse", "HEAD").strip()
+    (root / "relay" / "src" / "worker.js").write_text("export default {};\n")
+    assert gate_scope.select_tests(root, checkpoint) == [
+        "tests/relay/test_worker_js.py",
+        "tests/test_structure.py",
+    ]
+
+
+def test_relay_change_without_wrapper_means_full_suite(tmp_path: Path):
+    """F16: relay меняли, а обёртки нет — полный набор, не частичный."""
+    root = tmp_path / "proj5"
+    (root / "relay" / "src").mkdir(parents=True)
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "test_structure.py").write_text("def test_structure():\n    assert True\n")
+    scripted.git(root, "init")
+    scripted.git(root, "add", "-A")
+    scripted.git(root, "commit", "-m", "init")
+    checkpoint = scripted.git(root, "rev-parse", "HEAD").strip()
+    (root / "relay" / "src" / "worker.js").write_text("export default {};\n")
+    assert gate_scope.select_tests(root, checkpoint) is None
+
+
 def test_judge_prompt_has_gate_fact_block():
     from src.loop.prompts import judge_prompt
 

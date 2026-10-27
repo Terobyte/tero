@@ -25,6 +25,30 @@ _FULL_SUITE_FILES = frozenset(
     {"conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.cfg", "tox.ini"}
 )
 _STRUCTURE_TEST = "tests/test_structure.py"
+_RELAY_WRAPPER = "tests/relay/test_worker_js.py"
+
+
+def _relay_wrapper_for(repo: str | Path, changed: set[str]) -> set[str]:
+    """relay/** и widget/** отображаются на JS-обёртку (план 08-4).
+
+    F16: каталог relay/test может отсутствовать (удалён целиком) — обёртка
+    выбирается по факту изменения relay/** или widget/**; без самой обёртки
+    подменяем выбор: вызывающий решает по наличию hits (см. select_tests).
+    """
+    root = Path(repo)
+    # F2: любой файл relay/** или widget/** (не только .js) — иначе
+    # правка schema.sql/wrangler.toml/package.json проскакивает мимо обёртки.
+    hits = {p for p in changed if p.startswith(("relay/", "widget/"))}
+    if not hits:
+        return set()
+    if (root / _RELAY_WRAPPER).is_file():
+        return {_RELAY_WRAPPER}
+    # F16: обёртки нет, а relay меняли — помечаем недостачу, чтобы select_tests
+    # не вернул частичный список, а ушёл в полный набор.
+    return {"<missing-relay-wrapper>"}
+
+
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def select_tests(repo: str | Path, checkpoint: str) -> list[str] | None:
@@ -39,6 +63,11 @@ def select_tests(repo: str | Path, checkpoint: str) -> list[str] | None:
     if _needs_full(changed):
         return None
     tests = _test_files(repo, changed)
+    relay = _relay_wrapper_for(repo, changed)
+    if "<missing-relay-wrapper>" in relay:
+        # F16: relay/widget меняли, а обёртки нет — частичный список
+        # уронил бы JS-тесты мимо гейта; уходим в полный набор.
+        return None
     checked = _checked_src(changed)
     per_src = _match_tests(repo, checked) if checked else {}
     for src, matched in per_src.items():
@@ -46,7 +75,7 @@ def select_tests(repo: str | Path, checkpoint: str) -> list[str] | None:
             # Изменённый src-модуль не нашёл ни одного теста сам по себе.
             return None
     found = set().union(*per_src.values()) if per_src else set()
-    picked = sorted(tests | found)
+    picked = sorted(tests | found | relay)
     if not picked and (tests or checked):
         # .py меняли, а тестов не нашлось — безопаснее полный набор.
         return None

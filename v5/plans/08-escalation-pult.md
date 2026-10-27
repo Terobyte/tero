@@ -184,12 +184,12 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
   отбрасываются.
 - `relay/bench.js`: 1000 `POST /state` на фейке, печатает среднее CPU; критерий — < 10 мс на запрос.
 
-- [ ] `filter.test.js`: токен посреди 500-символьной находки вырезан; относительный путь цел; блок ```` ``` ```` и `diff --git` отброшены
-- [ ] `routes.test.js`: без токена → 401; read-токен не может `POST /answer`; ответ длиннее 2000 → 413; текст при `phone_text_answers: false` → 422; лишнее поле состояния отброшено; `GET /answers` дважды отдаёт тот же ответ, после `ack` — нет
-- [ ] `schema.test.js`: `fake_d1` поднимает `schema.sql` без ошибок
-- [ ] `test_worker_js.py`: падает, если JS-тест красный; с `TERO_REQUIRE_NODE=1` и пустым `PATH` — падает, без него — skip
-- [ ] `test_gate_scope_relay`: изменён только `relay/src/worker.js` → `select_tests` включает обёртку
-- [ ] реализовать
+- [x] `filter.test.js`: токен посреди 500-символьной находки вырезан; относительный путь цел; блок ```` ``` ```` и `diff --git` отброшены
+- [x] `routes.test.js`: без токена → 401; read-токен не может `POST /answer`; ответ длиннее 2000 → 413; текст при `phone_text_answers: false` → 422; лишнее поле состояния отброшено; `GET /answers` дважды отдаёт тот же ответ, после `ack` — нет
+- [x] `schema.test.js`: `fake_d1` поднимает `schema.sql` без ошибок
+- [x] `test_worker_js.py`: падает, если JS-тест красный; с `TERO_REQUIRE_NODE=1` и пустым `PATH` — падает, без него — skip
+- [x] `test_gate_scope_relay`: изменён только `relay/src/worker.js` → `select_tests` включает обёртку
+- [x] реализовать
 
 **Вне этой фазы:** привязка, пуши, cron, клиент на стороне tero.
 

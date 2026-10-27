@@ -1,0 +1,12 @@
+# relay/wrangler.toml — ретранслятор tero (фаза 08-4). Без секретов:
+# ключ записи и токены — только через `wrangler secret` / окружение.
+name = "tero-relay"
+main = "src/worker.js"
+compatibility_date = "2026-10-26"
+workers_dev = true
+account_id = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tero-relay"
+database_id = ""
