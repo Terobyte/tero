@@ -220,6 +220,50 @@ def _emit_situation(ctx: Any, round_no: int, res: dict[str, Any]) -> None:
         pass
 
 
+def next_player(ctx: Any) -> tuple[str, str, str]:
+    """Игрок следующего раунда после NO_SHIP при situational.
+
+    diagnose читает историю state.json (sonnet_n — лимит по всей фазе,
+    переживает more/model). polish/stuck_strong/mole/ask_owner ведут себя
+    как converging (действие — фаза 11): играет игрок плана.
+    """
+    cfg = getattr(ctx, "cfg", None)
+    plan = ("", "", "")
+    try:
+        plan = (cfg.player_model, cfg.player_provider, cfg.player_effort)
+    except Exception:
+        pass
+    try:
+        hist = situation_state(ctx)
+    except Exception:
+        return plan
+    rounds = hist.get("rounds") or []
+    if not rounds:
+        return plan
+    try:
+        raw_max = getattr(cfg, "sonnet_max", 2)
+        try:
+            limit = max(0, int(raw_max))
+        except (TypeError, ValueError):
+            limit = 2
+        res = situation_mod.diagnose(
+            rounds,
+            situation_mod.Cfg(sonnet_max=limit),
+            opus_round=hist.get("opus_round"),
+            owner_round=hist.get("owner_round"),
+        )
+    except Exception:
+        return plan
+    if res.get("situation") == "stuck":
+        try:
+            esc = (cfg.escalation_model, cfg.escalation_provider, cfg.escalation_effort)
+        except Exception:
+            return plan
+        if esc[0] and esc[1]:
+            return (str(esc[0]), str(esc[1]), str(esc[2] or ""))
+    return plan
+
+
 def maybe_query_jev(
     ctx: Any,
     findings: list[dict[str, Any]],

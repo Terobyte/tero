@@ -322,12 +322,12 @@ PWA, «Включить пуши», пуш пришёл, ответ дошёл, 
 - `escalation_model` по умолчанию в конфиге — `"opus"`: для этого режима в шаблоне `.tero/config.yaml`
   явно `escalation: claude:sonnet`; в тесте — явно.
 
-- [ ] `test_round_mode_unchanged`: `escalation: round` — фейковый прогон NO_SHIP×5 даёт те же раунды, игроков и статус, что при `situation_step` = no-op (одно сравнение в тесте)
-- [ ] `test_situational_requires_decisions`: `situational` без `decisions` → ошибка конфига
-- [ ] `test_stuck_then_sonnet_then_back`: фейковый судья держит `still_open` → раунд Sonnet; после `sonnet_max` — игрок плана
-- [ ] `test_sonnet_max_survives_more`: 2 раунда Sonnet → `more` → новый раннер Sonnet не зовёт
-- [ ] вынос `_no_progress`, `phase.py` не вырос
-- [ ] реализовать
+- [x] `test_round_mode_unchanged`: `escalation: round` — фейковый прогон NO_SHIP×5 даёт те же раунды, игроков и статус, что при `situation_step` = no-op (одно сравнение в тесте)
+- [x] `test_situational_requires_decisions`: `situational` без `decisions` → ошибка конфига
+- [x] `test_stuck_then_sonnet_then_back`: фейковый судья держит `still_open` → раунд Sonnet; после `sonnet_max` — игрок плана
+- [x] `test_sonnet_max_survives_more`: 2 раунда Sonnet → `more` → новый раннер Sonnet не зовёт
+- [x] вынос `_no_progress`, `phase.py` не вырос
+- [x] реализовать
 
 ## Шип с долгом и Opus-решение
 

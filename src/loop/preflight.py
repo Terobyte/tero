@@ -62,6 +62,12 @@ def start_checks(
     except ConfigError as exc:
         return str(exc), "error"
 
+    mode = str(getattr(cfg, "escalation", "round") or "round")
+    if mode not in ("round", "situational"):
+        return f"escalation: want round|situational, got {mode!r}", "error"
+    if mode == "situational" and not cfg.decisions:
+        return "situational escalation requires decisions: true", "error"
+
     same_family = _same_family_as_judge(cfg)
     if same_family:
         return same_family, "error"

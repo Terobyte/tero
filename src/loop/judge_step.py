@@ -277,7 +277,12 @@ class JudgeStep:
         record_situation(self.ctx, findings, previous, data, raw_level)
         if in_continuation(self.ctx.st):
             return self._apply_verdict_continuation(findings, previous)
-        if stalled(self.ctx.st, previous) and self.no_progress():
+        try:
+            situational = str(getattr(self.ctx.cfg, "escalation", "round")) == "situational"
+        except Exception:
+            situational = False
+        # situational: stalled() не зовётся, после судьи действий нет (фаза 11).
+        if not situational and stalled(self.ctx.st, previous) and self.no_progress():
             return _Next.STOP
 
         still_open = [

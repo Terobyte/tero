@@ -25,7 +25,7 @@ class UnknownProviderError(ValueError):
 
 
 class ConfigError(ValueError):
-    """A config file or setting is invalid."""
+    """Invalid config file or setting."""
 
 
 def normalize_provider(name: str) -> str:
@@ -60,7 +60,6 @@ _FAMILY_BY_PROVIDER = {
 _CLAUDE_BARE = re.compile(r"(?<![a-z])(opus|sonnet|haiku|fable)(?![a-z])")
 _OPENAI_O_SERIES = re.compile(r"(?<![a-z0-9])o\d+(?![a-z0-9])")
 _FREE_SUFFIX = re.compile(r"[-:]free$")
-
 
 def family_of(spec: str) -> str:
     """Model family for a ``provider`` or ``provider:model`` spec.
@@ -121,6 +120,8 @@ class Config:
     escalation_model: str = "opus"
     escalation_effort: str = ""
     escalate_at_round: int = 0
+    escalation: str = "round"  # round | situational
+    sonnet_max: int = 2  # лимит Sonnet при situational
     test_command: str = ""
     test_command_scoped: str = ""
     gate_scope: str = ""
@@ -145,7 +146,6 @@ class Config:
 
 
 from src.config_env import _ENV_MAP, apply_env  # noqa: E402,F401
-
 from src.config_names import short_model_name  # noqa: E402,F401
 
 __all__ = ["_ENV_MAP", "apply_env", "short_model_name"]

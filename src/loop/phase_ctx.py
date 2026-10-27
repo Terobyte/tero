@@ -19,6 +19,10 @@ from src.loop.suite_guard import Entry
 from src.relay.iface import NoopRelay
 
 
+class _Continuation(Exception):
+    """Путь продолжения: ситуационная эскалация не применяется."""
+
+
 class _Next(Enum):
     SHIP = auto()
     USER = auto()
@@ -259,6 +263,31 @@ class PhaseContext:
             print(f"  {role}: {error}", flush=True)
 
     def player_identity(self) -> tuple[str, str, str]:
+        # situational: игрок — по diagnose прошлого раунда (situation_step.next_player).
+        try:
+            mode = str(getattr(self.cfg, "escalation", "round") or "round")
+        except Exception:
+            mode = "round"
+        if mode == "situational":
+            try:
+                from src.loop.findings import in_continuation as _in_cont
+
+                if _in_cont(self.st):
+                    raise _Continuation()
+            except _Continuation:
+                return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
+            except Exception:
+                pass
+            else:
+                try:
+                    from src.loop.situation_step import next_player as _next_player
+
+                    got = _next_player(self)
+                    if got[0] and got[1]:
+                        return got
+                except Exception:
+                    pass
+            return self.cfg.player_model, self.cfg.player_provider, self.cfg.player_effort
         # escalate_at_round: эскалация ровно на этом раунде, до и после — игрок.
         at = self.cfg.escalate_at_round
         if self.cfg.escalation_provider and (self.st.round == at if at else self.st.escalated):

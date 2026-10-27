@@ -592,26 +592,9 @@ class _PhaseRunner:
         return same
 
     def _no_progress(self) -> bool:
-        if self.cfg.escalate_at_round:
-            return self.state.round >= self.cfg.escalate_at_round
-        if not self.state.escalated and self.cfg.escalation_provider:
-            self.state.escalated = True
-            self.ledger.event(
-                "escalate",
-                round=self.state.round,
-                provider=self.cfg.escalation_provider,
-                model=self.cfg.escalation_model,
-            )
-            print(
-                "  нет прогресса → эскалация: "
-                f"{self.cfg.escalation_provider}({self.cfg.escalation_model})",
-                flush=True,
-            )
-            return False
-        if self.state.round <= getattr(self.resume_from, "grace_until", 0):
-            return False  # действие more: эти раунды без stuck
-        print("  нет прогресса → откат фазы", flush=True)
-        return True
+        from src.loop import progress_step as _pg
+
+        return _pg.check_no_progress(self.state, self.cfg, self.ledger, self.resume_from)
 
     def _snapshot_after_player(self, *a: Any, **k: Any) -> str | None:
         from src.loop import snapshot_step as _snap
