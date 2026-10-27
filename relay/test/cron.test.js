@@ -98,3 +98,13 @@ test('свежий пульс и done/stopped — без пуша', async () => 
   assert.equal(calls, 0);
   assert.equal(fired.length, 0);
 });
+
+test('stale-уведомление помечено stale: true (текст — про потерю связи, а не вопрос)', async () => {
+  const env = await setupEnv([stateRow('r1', iso(16 * 60 * 1000), {
+    status: 'waiting_human', question: { id: 'q1', text: 'идём?' },
+  })]);
+  let got = null;
+  await checkStale(env, NOW, async (e, r, m, payload) => { got = payload; });
+  assert.equal(got && got.stale, true);
+  assert.equal(got.question.id, 'q1');
+});

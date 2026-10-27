@@ -1,10 +1,12 @@
-// relay/src/cron.js — cron раз в 5 мин: пульс старше 15 мин → один пуш.
-// Отправка пуша — заглушка notify() (фазе 7 подставить настоящий push.js).
+// relay/src/cron.js — cron раз в 5 мин: пульс старше 15 мин → один пуш
+// через настоящий web push (relay/src/push.js).
+
+import { notify as sendPush } from './push.js';
 
 export const STALE_AFTER_MS = 15 * 60 * 1000;
 const TERMINAL = new Set(['done', 'stopped']);
 
-export async function checkStale(env, nowMs = Date.now(), notify = defaultNotify) {
+export async function checkStale(env, nowMs = Date.now(), notifyFn = defaultNotify) {
   const rows = await env.DB.prepare(
     'SELECT run_id, machine_id, payload, updated_at FROM states',
   ).all();
@@ -30,7 +32,8 @@ export async function checkStale(env, nowMs = Date.now(), notify = defaultNotify
     ).bind(claimed, row.run_id, row.machine_id, row.payload, row.updated_at).run();
     if (!claim || !claim.meta || claim.meta.changes !== 1) continue;
     try {
-      await notify(env, row.run_id, row.machine_id, payload);
+      // F2: stale-метка в payload — текст пуша скажет про потерю связи.
+      await notifyFn(env, row.run_id, row.machine_id, { ...payload, stale: true });
     } catch {
       // Пуш не ушёл — снимаем отметку, следующий cron попробует снова.
       await env.DB.prepare(
@@ -44,7 +47,8 @@ export async function checkStale(env, nowMs = Date.now(), notify = defaultNotify
 }
 
 export async function defaultNotify(env, runId, machineId, payload) {
-  // Фаза 7: настоящий web push. Здесь — отметка и возврат пульса.
+  // Web push по умолчанию: cron без подменённого notify шлёт настоящий пуш.
+  await sendPush(env, runId, machineId, payload, Date.now());
   if (env && typeof env.__notified === 'function') {
     await env.__notified(runId, machineId, payload);
   }

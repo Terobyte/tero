@@ -298,3 +298,34 @@ test('запоздавший старый push (state_at раньше) не за
   )).json();
   assert.equal(again.state.status, 'running');
 });
+
+test('F1: запоздавший вопрос после done пуш не шлёт', async () => {
+  const env = await setupEnv();
+  await env.DB.prepare(
+    'INSERT INTO push_subs (endpoint, p256dh, auth, dead) VALUES (?, ?, ?, 0)',
+  ).bind(
+    'https://push.example/sub/1',
+    'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
+    'BTBZMqHH6r4Tts7J_aSIgg',
+  ).run();
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  env.VAPID_PRIVATE_KEY = JSON.stringify(await crypto.subtle.exportKey('jwk', kp.privateKey));
+  env.VAPID_SUBJECT = 'mailto:test@localhost';
+  let pushes = 0;
+  env.__fetch = async () => { pushes += 1; return { status: 201 }; };
+  const post = (body) => handleFetch(request('POST', '/state', { token: WRITE_KEY, body }), env);
+  assert.equal((await post({
+    run_id: 'r9', machine_id: 'm9', status: 'done', state_at: '2026-10-27T01:00:02+00:00',
+  })).status, 200);
+  assert.equal(pushes, 1);
+  assert.equal((await post({
+    run_id: 'r9', machine_id: 'm9', status: 'waiting_human',
+    question: { id: 'q-old', text: 'старый вопрос?', actions: ['more'] },
+    state_at: '2026-10-27T01:00:01+00:00',
+  })).status, 200);
+  assert.equal(pushes, 1);
+  const { state } = await (await handleFetch(
+    request('GET', '/state?run_id=r9&machine_id=m9', { token: DEVICE_TOKEN }), env,
+  )).json();
+  assert.equal(state.status, 'done');
+});

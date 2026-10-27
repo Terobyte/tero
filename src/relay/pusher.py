@@ -22,6 +22,7 @@ PULSE_EVERY_S = 300.0
 POLL_S = 1.0
 RELAY_FILE = "relay.json"
 NO_LINK = "нет связи с ретранслятором"
+PUSH_BROKEN = "пуш-канал сломан — перепривяжи"
 
 _GUARD = threading.Lock()
 _PUSHERS: dict[str, "Pusher"] = {}
@@ -89,11 +90,16 @@ class Pusher:
             ok = bool(self.relay.push_state(state))
         except Exception:  # сеть не роняет прогон
             ok = False
+        try:
+            push_broken = not bool(self.relay.push_ok)
+        except Exception:
+            push_broken = False
         self._sent = sig
         self._last = time.monotonic()
         try:
             atomic_write_json(self.run_dir / RELAY_FILE,
-                              {"ok": ok, "error": "" if ok else NO_LINK, "at": time.time()},
+                              {"ok": ok, "push_ok": not push_broken,
+                               "error": "" if ok else NO_LINK, "at": time.time()},
                               ensure_ascii=False, mode=0o600)
         except Exception:
             pass
@@ -158,7 +164,11 @@ def push_final(run_dir: str | Path) -> None:
 def relay_status(run_dir: str | Path) -> str:
     """Для `tero status`: подсказка, если последняя отправка не удалась."""
     data = read_json_dict(Path(run_dir) / RELAY_FILE) or {}
-    return NO_LINK if data.get("ok") is False else ""
+    if data.get("ok") is False:
+        return NO_LINK
+    if data.get("push_ok") is False:
+        return PUSH_BROKEN
+    return ""
 
 
 def _flush_all() -> None:

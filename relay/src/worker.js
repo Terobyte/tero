@@ -12,6 +12,7 @@ import {
   resetDevices,
   revokeDevice,
 } from './pair.js';
+import { ensurePushTables, notify as sendPush, pushOk } from './push.js';
 
 // F17: run_id/machine_id сохраняются как ключи D1 без фильтра (нужны для
 // точного совпадения при GET /state), но наружу (GET /runs) уходят только
@@ -116,7 +117,9 @@ async function postState(request, env) {
   // state_at — время записи state.json у tero: запоздавший старый push
   // (повис, пока уходил финал done) не затирает более новое состояние.
   if (typeof filtered.state_at !== 'string') delete filtered.state_at;
-  await env.DB.prepare(
+  // F1: запоздавший старый state (state_at раньше) upsert не меняет — пуш
+  // тогда тоже не шлём, иначе просроченный вопрос придёт поверх done.
+  const upsert = await env.DB.prepare(
     'INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?) '
     + 'ON CONFLICT (run_id, machine_id) DO UPDATE SET '
     + 'payload = excluded.payload, updated_at = excluded.updated_at '
@@ -124,7 +127,21 @@ async function postState(request, env) {
     + "OR json_extract(states.payload, '$.state_at') IS NULL "
     + "OR json_extract(excluded.payload, '$.state_at') >= json_extract(states.payload, '$.state_at')",
   ).bind(runId, machineId, JSON.stringify(filtered), updatedAt).run();
-  return jsonResponse({ ok: true });
+  const changed = !upsert || !upsert.meta || Number(upsert.meta.changes) !== 0;
+  // События «новый вопрос / done / stopped» — пуш сразу: cron добьёт только
+  // просроченный пульс, а вопрос/финал хозяин должен увидеть без 5-минутной задержки.
+  const isTerminal = TERMINAL.has(filtered.status);
+  const hasQuestion = filtered.question && typeof filtered.question === 'object' && filtered.question.id;
+  if (changed && (hasQuestion || isTerminal)) {
+    try {
+      await sendPush(env, runId, machineId, filtered);
+    } catch {
+      // Пуш не роняет запись состояния: cron повторит через push_log-кулдаун.
+    }
+  }
+  await ensurePushTables(env.DB);
+  const ok = await pushOk(env.DB, env);
+  return jsonResponse({ ok: true, push_ok: ok });
 }
 
 async function getState(request, env, url) {

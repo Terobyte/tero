@@ -263,11 +263,11 @@ JS-тесты `relay/` гейт гоняет через pytest-обёртку (�
   возвращает в ответе на `POST /state`; tero сохраняет его, `tero status` при `false` пишет
   «пуш-канал сломан — перепривяжи».
 
-- [ ] `push.test.js`: шифрование с ключами и salt из RFC 8291 Appendix A даёт **байт в байт** тело из RFC
-- [ ] `push.test.js`: JWT — 64-байтная подпись, проверяется публичным ключом через `subtle.verify`
-- [ ] `push.test.js`: 410 → подписка мёртвая, запись в `push_log`; вторая та же причина за 30 мин → пуша нет
-- [ ] `test_status_push_broken`: `push_ok: false` в ответе relay → строка в `tero status`
-- [ ] реализовать
+- [x] `push.test.js`: шифрование с ключами и salt из RFC 8291 Appendix A даёт **байт в байт** тело из RFC
+- [x] `push.test.js`: JWT — 64-байтная подпись, проверяется публичным ключом через `subtle.verify`
+- [x] `push.test.js`: 410 → подписка мёртвая, запись в `push_log`; вторая та же причина за 30 мин → пуша нет
+- [x] `test_status_push_broken`: `push_ok: false` в ответе relay → строка в `tero status`
+- [x] реализовать
 
 ## Страница-пульт
 

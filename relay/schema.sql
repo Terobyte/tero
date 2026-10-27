@@ -53,3 +53,32 @@ CREATE TABLE IF NOT EXISTS pair_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pair_attempts_ip ON pair_attempts (ip, at);
+
+-- Web push (фаза 08-7): подписки устройств и журнал ответов push-сервиса.
+-- 404/410 → push_subs.dead = 1; push_ok = false, пока нет ни одной живой.
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  dead INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS push_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  code INTEGER NOT NULL,
+  at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_log_run_reason ON push_log (run_id, reason, at);
+
+-- Атомарный слот кулдауна (фаза 08-7, находка F3): одна строка на
+-- (run_id, reason); конкурентный notify вставляет вторым — и пропускает пуш.
+CREATE TABLE IF NOT EXISTS push_claims (
+  run_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (run_id, reason)
+);
