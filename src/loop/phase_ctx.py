@@ -49,6 +49,7 @@ class OpenFinding:
     line: int | None
     problem: str
     expected: str
+    level: str = ""
     test_paths: list[str] = field(default_factory=list)
     note: str = ""
 
@@ -62,6 +63,7 @@ class OpenFinding:
             "id": self.id,
             "severity": self.severity,
             "route": self.route,
+            "level": self.level,
             "file": self.file,
             "line": self.line,
             "problem": self.problem,
@@ -114,6 +116,7 @@ class PhaseState:
     kmax_flat: int = 0
     kmax_prev: tuple[int, frozenset] | None = None
     open_findings: list[OpenFinding] = field(default_factory=list)
+    debt_pending: list[dict[str, Any]] = field(default_factory=list)
     next_id: int = 1
     suite_delta: list[str] = field(default_factory=list)
     discarded: list[str] = field(default_factory=list)

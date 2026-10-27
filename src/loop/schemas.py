@@ -1,4 +1,4 @@
-"""JSON schemas and semantic validation for the three roles."""
+"""JSON schemas and semantic validation for the four roles."""
 
 from __future__ import annotations
 
@@ -116,7 +116,17 @@ TESTER = {
     },
 }
 
-SCHEMAS = {"player": PLAYER, "judge": JUDGE, "tester": TESTER}
+DECIDER = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision", "why"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["ship_with_debt", "more", "ask_owner"]},
+        "why": {"type": "string"},
+    },
+}
+
+SCHEMAS = {"player": PLAYER, "judge": JUDGE, "tester": TESTER, "decider": DECIDER}
 _VALIDATORS = {
     role: Draft202012Validator(schema) for role, schema in SCHEMAS.items()
 }

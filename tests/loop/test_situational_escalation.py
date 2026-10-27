@@ -154,7 +154,15 @@ async def test_situational_requires_decisions(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_stuck_then_sonnet_then_back(tmp_path: Path):
     repo = _repo(tmp_path)
-    agents = FakeAgents(repo, _stuck_steps(repo, rounds=6))
+    steps = _stuck_steps(repo, rounds=6)
+    # фаза 08-11: stuck_strong после лимита Sonnet идёт в Opus; more → ещё раунд.
+    def _decider_more(role: str, kw: dict) -> dict:
+        assert role == "decider", role
+        assert kw.get("provider") == "claude" and kw.get("model") == "opus", kw
+        return {"decision": "more", "why": "try again"}
+
+    steps.insert(10, _decider_more)
+    agents = FakeAgents(repo, steps)
     outcome, _ = await _run(
         repo, agents,
         _cfg(escalation="situational", decisions=True, max_rounds=6, sonnet_max=2),

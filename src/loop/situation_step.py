@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import scrub_secrets
@@ -35,6 +36,46 @@ def _history_path(ctx: Any) -> Any:
         return ctx.run_dir / "state.json"
     except Exception:
         return None
+
+
+def _history_run_dir(run_dir: Any) -> Any:
+    try:
+        return Path(run_dir) / "state.json"
+    except Exception:
+        return None
+
+
+def _note_round(run_dir: Any, phase_index: int, round_no: int, key: str) -> dict[str, Any]:
+    """Записать opus_round/owner_round в history situation[N]; не роняет прогон."""
+    from src.loop.state import RunState
+
+    sk = f"situation[{int(phase_index)}]"
+    hist = {"rounds": [], "opus_round": None, "owner_round": None, "sonnet_n": 0}
+    try:
+        saved = RunState.read(_history_run_dir(run_dir)) or {}
+    except Exception:
+        saved = {}
+    prev = saved.get(sk)
+    if isinstance(prev, dict):
+        hist.update({k: prev.get(k, v) for k, v in hist.items()})
+        rounds = prev.get("rounds")
+        hist["rounds"] = list(rounds) if isinstance(rounds, list) else []
+    hist[key] = int(round_no)
+    try:
+        RunState(_history_run_dir(run_dir)).update(**{sk: hist})
+    except Exception:
+        pass
+    return hist
+
+
+def note_opus_round(run_dir: Any, phase_index: int, round_no: int) -> dict[str, Any]:
+    """Opus сказал more: окно stuck/mole считается после этого раунда."""
+    return _note_round(run_dir, phase_index, round_no, "opus_round")
+
+
+def note_owner_round(run_dir: Any, phase_index: int, round_no: int) -> dict[str, Any]:
+    """Хозяин сказал more: окно stuck/mole считается после этого раунда."""
+    return _note_round(run_dir, phase_index, round_no, "owner_round")
 
 
 def situation_state(ctx: Any, phase_index: int | None = None) -> dict[str, Any]:
@@ -182,7 +223,9 @@ def record_situation(
     if hist.get("owner_round") is not None:
         res["owner_round"] = hist["owner_round"]
     try:
-        res = {**res, **situation_mod.diagnose(hist["rounds"], situation_mod.Cfg())}
+        res = {**res, **situation_mod.diagnose(
+            hist["rounds"], situation_mod.Cfg(),
+            opus_round=hist.get("opus_round"), owner_round=hist.get("owner_round"))}
     except Exception as exc:
         err = "diagnose failed"
         try:

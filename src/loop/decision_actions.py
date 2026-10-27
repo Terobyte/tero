@@ -186,6 +186,15 @@ def _more(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     rounds = step.ctx.st.round
     until = rounds + MORE_ROUNDS
     rf = _resume_from(step, until, grace_until=until)
+    if reason == "stuck":
+        # Ответ more хозяина на точку stuck: окно stuck/mole считается
+        # после этого раунда (план 08-11).
+        try:
+            from src.loop import situation_step as _sit
+
+            _sit.note_owner_round(step.ctx.run_dir, step.ctx.phase.index, rounds)
+        except Exception:
+            pass
     return _go_on(step, reason, qid, "more", f"ещё {MORE_ROUNDS} раундов",
                   {"start_round": rounds, "resume_from": rf})
 

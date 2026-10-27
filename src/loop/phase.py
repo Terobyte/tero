@@ -318,11 +318,14 @@ class _PhaseRunner:
                     hit = self._stop_checks()[5]()
                     if hit is not None:
                         return hit
-                    # Полный гейт красный: не шипать, следующий раунд — игрок.
+                    # Полный гейт красный: долг не пишем, следующий раунд — игрок.
+                    self.state.debt_pending = []
                     return None
                 hit = self._stop_checks()[5]()
                 if hit is not None:
                     return hit
+                if not self._commit_pending_debt():
+                    return None
                 return self._ship()
             case _Next.TESTER:
                 print(
@@ -605,6 +608,12 @@ class _PhaseRunner:
         from src.loop import snapshot_step as _snap
 
         return _snap.rollback_with_snapshot(self, *a, **k)
+
+    def _commit_pending_debt(self) -> bool:
+        """Долг пишется только после зелёного гейта, перед `_ship` (F4/F6/F10)."""
+        from src.loop import ship_debt as ship_debt_mod
+
+        return ship_debt_mod.commit_before_ship(self)
 
     def _full_gate_before_ship(self) -> bool:
         """Полный прогон перед SHIP в scoped-режиме. True — можно шипать."""

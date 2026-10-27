@@ -125,6 +125,8 @@ def example_report(role: str, schema: dict | None = None) -> dict[str, Any]:
         return {"verdict": "SHIP", "previous": [], "findings": [], "user_question": ""}
     if role == "tester":
         return {"tests": [], "skipped": []}
+    if role == "decider":
+        return {"decision": "ask_owner", "why": "нужен вердикт decider"}
     if schema is not None:
         required = list(schema.get("required") or [])
         return {name: [] for name in required}

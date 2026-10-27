@@ -6,28 +6,23 @@ from typing import Any, Callable
 
 from src.loop import snapshot as snapshot_mod
 from src.loop.compact_step import CompactStep
-from src.loop.findings import findings_key, in_continuation, not_shrunk, stalled
 from src.loop.phase_ctx import (
     _JUDGE_MAX_FAILURES,
     _NEEDS_USER_MAX_ATTEMPTS,
-    K_MAX,
-    OpenFinding,
     PhaseContext,
     PhaseOutcome,
-    _dump,
     _Next,
 )
 from src.loop.judge_prompt import (
     _judge_failed,
-    _print_verdict,
     build_prompt,
     validate_ctx,
-    verdict_state,
 )
+from src.loop import verdict_step as _verdict
 from src.loop.prompts import needs_user_reask_block
 from src.loop.schemas import ValidateCtx
 from src.loop.pending import stop_judge_pending  # noqa: F401
-from src.loop.situation_step import record_situation  # noqa: F401
+from src.loop.situation_step import record_situation  # noqa: F401 — точка подмены тестов
 
 
 class JudgeStep:
@@ -128,7 +123,7 @@ class JudgeStep:
             if self._judge_failure(data):
                 return _Next.JUDGE_PENDING
         self.ctx.st.judge_failures = 0
-        return self._accept_verdict(data)
+        return await self._accept_verdict(data)
 
     async def _call_judge(
         self, ref: str, ctx: ValidateCtx, reask_question: str
@@ -234,145 +229,18 @@ class JudgeStep:
             return True
         return False
 
-    def _accept_verdict(self, data: dict[str, Any]) -> _Next:
-        summary = verdict_state(data)
-        self.ctx.emit("verdict", verdict=data.get("verdict"), blocking=summary["blocking"],
-                      first=summary["first"], round=self.ctx.st.round, role="judge")
-        self.ctx.update_state(
-            role="judge",
-            provider=self.ctx.cfg.judge_provider,
-            model=self.ctx.cfg.judge_model,
-            verdict=summary,
-        )
-        self.ctx.ledger.event(
-            "judge",
-            verdict=data.get("verdict"),
-            round=self.ctx.st.round,
-        )
-        self.ctx.ledger.artifact(self.ctx.round_file("judge.json"), _dump(data))
-        _print_verdict(data)
-        return self._apply_verdict(data)
+    async def _accept_verdict(self, data: dict[str, Any]) -> _Next:
+        return await _verdict.accept_verdict(self, data)
+
+    # Совместимость: старые точки подмены (`JudgeStep._apply_verdict` и т.д.)
+    # делегируют в verdict_step.
+    _apply_verdict = _verdict.apply_verdict
+    _apply_verdict_continuation = _verdict.apply_verdict_continuation
+    _new_blocking = _verdict.new_blocking_findings
+    _clean_retry = _verdict.clean_retry
+    _discard_tests = _verdict.discard_tests
 
     def _stop_judge_pending(self, reason: str = "judge_failed") -> PhaseOutcome:
         from src.loop.pending import stop_judge_pending
 
         return stop_judge_pending(self, reason)
-
-    def _apply_verdict(self, data: dict[str, Any]) -> _Next:
-        verdict = data.get("verdict")
-        if verdict == "SHIP":
-            return _Next.SHIP
-        if verdict == "NEEDS_USER":
-            self.ctx.st.user_question = data.get("user_question", "")
-            return _Next.USER
-
-        raw_level = {
-            item.get("file", "") + "\x00" + item.get("problem", ""): item.get("level")
-            for item in data.get("findings") or [] if isinstance(item, dict)
-        }
-        findings = data.get("findings") or []
-        self._discard_tests(findings)
-        previous = {row["id"]: row["state"] for row in data.get("previous") or []}
-        n_closed = sum(1 for v in previous.values() if v == "resolved")
-        record_situation(self.ctx, findings, previous, data, raw_level)
-        if in_continuation(self.ctx.st):
-            return self._apply_verdict_continuation(findings, previous)
-        try:
-            situational = str(getattr(self.ctx.cfg, "escalation", "round")) == "situational"
-        except Exception:
-            situational = False
-        # situational: stalled() не зовётся, после судьи действий нет (фаза 11).
-        if not situational and stalled(self.ctx.st, previous) and self.no_progress():
-            return _Next.STOP
-
-        still_open = [
-            item
-            for item in self.ctx.st.open_findings
-            if previous.get(item.id) != "resolved"
-        ]
-        new_blocking = self._new_blocking(findings)
-        self.ctx.st.open_findings = still_open + new_blocking
-        if any(item.route == "tester" for item in new_blocking) and self.ctx.tester_enabled:
-            return _Next.TESTER
-        return _Next.NEXT
-
-    def _apply_verdict_continuation(
-        self, findings: list[dict[str, Any]], previous: dict[str, str]
-    ) -> _Next:
-        # В раунде-продолжении _stalled/_no_progress не проверяются:
-        # решает счётчик K_max.
-        key = findings_key(findings)
-        if not_shrunk(self.ctx.st, key):
-            self.ctx.st.kmax_flat += 1
-        else:
-            self.ctx.st.kmax_flat = 0
-        self.ctx.st.kmax_prev = key
-        if self.ctx.st.kmax_flat >= K_MAX:
-            self._clean_retry()
-        still_open = [
-            item
-            for item in self.ctx.st.open_findings
-            if previous.get(item.id) != "resolved"
-        ]
-        new_blocking = self._new_blocking(findings)
-        self.ctx.st.open_findings = still_open + new_blocking
-        if any(item.route == "tester" for item in new_blocking) and self.ctx.tester_enabled:
-            return _Next.TESTER
-        return _Next.NEXT
-
-    def _new_blocking(self, findings: list[dict[str, Any]]) -> list[OpenFinding]:
-        new_blocking: list[OpenFinding] = []
-        for item in findings:
-            if item.get("severity") != "blocking":
-                continue
-            if item.get("route") == "discard_test":
-                continue
-            route = item.get("route") or "player"
-            if route == "tester" and not self.ctx.tester_enabled:
-                route = "player"
-            found = OpenFinding(
-                id=f"F{self.ctx.st.next_id}",
-                severity="blocking",
-                route=route,
-                file=item.get("file", ""),
-                line=item.get("line"),
-                problem=item.get("problem", ""),
-                expected=item.get("expected", ""),
-            )
-            self.ctx.st.next_id += 1
-            new_blocking.append(found)
-        return new_blocking
-
-    def _clean_retry(self) -> None:
-        ref = self.rollback_with_snapshot("clean_retry")
-        self.ctx.ledger.event(
-            "clean_retry",
-            reason="clean_retry",
-            ref=ref,
-            round=self.ctx.st.round,
-        )
-        # Чистая попытка: блок продолжения убирается, старый ref остаётся.
-        self.ctx.st.resume_active = False
-        self.ctx.st.had_crash = False
-        self.ctx.st.kmax_flat = 0
-        self.ctx.st.kmax_prev = None
-
-    def _discard_tests(self, findings: list[dict[str, Any]]) -> None:
-        self.ctx.st.discarded = []
-        for item in findings:
-            if item.get("route") != "discard_test":
-                continue
-            fid = item.get("id") or ""
-            paths = self.ctx.st.protected_by_id.pop(fid, None)
-            if not paths:
-                continue
-            note = "тест снят, чини код"
-            for path in paths:
-                target = self.ctx.repo / path
-                target.unlink(missing_ok=True)
-                self.ctx.st.protected.pop(path, None)
-                self.ctx.st.discarded.append(f"{fid}: {note}")
-            for found in self.ctx.st.open_findings:
-                if found.id == fid:
-                    found.test_paths = []
-                    found.note = note
