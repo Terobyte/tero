@@ -248,3 +248,17 @@ def test_verdict_age_from_newest_verdict_event():
     st = _state(verdict={"verdict": "SHIP", "blocking": 0, "first": {}})
     assert build_view(st, [], NOW, ALIVE)["verdict_age_s"] is None
     assert build_view(None, [], NOW, ALIVE)["verdict_age_s"] is None
+
+
+def test_fresh_judge_does_not_show_last_rounds_text():
+    events = [
+        _ev("text", role="judge", text='{"verdict":"NO_SHIP"}', delta_s=300),
+        _ev("verdict", role="judge", delta_s=299, verdict="NO_SHIP", blocking=1),
+        _ev("start_step", role="player", text="раунд 5 начат", delta_s=200),
+        _ev("text", role="player", text="пишу код", delta_s=100),
+        _ev("gate", role="gate", text="тесты: зелёные", delta_s=10),
+    ]
+    view = build_view(_state(role="judge"), events, NOW, ALIVE)
+    assert view["doing"] == "судья читает…"
+    events.append(_ev("text", role="judge", text="сверяю спеку", delta_s=2))
+    assert build_view(_state(role="judge"), events, NOW, ALIVE)["doing"] == "сверяю спеку"

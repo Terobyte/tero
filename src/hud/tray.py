@@ -1,4 +1,7 @@
-"""Menu bar item for the HUD window: a status dot that breathes like the HUD light, show/hide.
+"""Menu bar item for the hidden HUD: a status dot that breathes like the HUD light.
+
+The dot is there only while the window is hidden; a click on it brings the
+window back, a right click opens the menu (health, newest line, quit).
 
 The HUD runs as an accessory app (no Dock icon), so once the window is
 hidden the menu bar item is the only way back. AppKit is imported inside
@@ -85,6 +88,9 @@ def _target_cls():
             def tick_(self, timer):
                 self.on_tick()
 
+            def click_(self, sender):
+                self.on_click()
+
         _TARGET_CLS = TeroTrayTarget
     return _TARGET_CLS
 
@@ -114,6 +120,7 @@ class Tray:
         target.on_toggle = self._on_toggle
         target.on_quit = self._on_quit
         target.on_tick = self._paint
+        target.on_click = self._click
         self._target = target
         _prefer_position()
         bar = AppKit.NSStatusBar.systemStatusBar()
@@ -127,9 +134,14 @@ class Tray:
             menu.addItem_(line)
             self._lines.append(line)
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
-        self._toggle_item = self._action(menu, "Спрятать HUD", "toggle:")
+        self._toggle_item = self._action(menu, "Показать HUD", "toggle:")
         self._action(menu, "Закрыть HUD", "quit:")
-        self._item.setMenu_(menu)
+        # no setMenu_: a set menu swallows the left click; it pops up on a right click only
+        self._menu = menu
+        button = self._item.button()
+        button.setTarget_(target)
+        button.setAction_("click:")
+        button.sendActionOn_(AppKit.NSEventMaskLeftMouseUp | AppKit.NSEventMaskRightMouseUp)
         self.update({"light": "grey"}, True)
         # common modes: the dot keeps breathing while the menu is open
         self._timer = AppKit.NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
@@ -153,7 +165,29 @@ class Tray:
         for line, value in zip(self._lines, menu_lines(data)):
             line.setTitle_(value)
             line.setHidden_(not value)
+        self.set_visible(visible)
+
+    def set_visible(self, visible: bool) -> None:
+        """The open window is its own light: the dot shows up only while it is hidden."""
+        if self._item is None:
+            return
         self._toggle_item.setTitle_("Спрятать HUD" if visible else "Показать HUD")
+        if self._item.isVisible() == (not visible):
+            return
+        if not visible:
+            # hiding an item drops its saved position; without one it comes back
+            # leftmost, which on a notched MacBook is under the notch
+            _prefer_position()
+        self._item.setVisible_(not visible)
+
+    def _click(self) -> None:
+        import AppKit
+
+        event = AppKit.NSApp.currentEvent()
+        if event is not None and event.type() == AppKit.NSEventTypeRightMouseUp:
+            self._item.popUpStatusItemMenu_(self._menu)
+        else:
+            self._on_toggle()
 
     def _paint(self) -> None:
         """Just the dot, no text: color from health, opacity from `dot_alpha`."""

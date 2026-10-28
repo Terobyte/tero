@@ -258,13 +258,30 @@ def _doing(state: dict, status: str, events: list[dict], now: float, broken: boo
         gate = _gate_doing(events, now)
         if gate is not None:
             return gate
-    for ev in reversed(events):
+    turn = _current_turn(events)
+    for ev in reversed(turn):
         if ev.get("role") == role and ev.get("type") == "text" and ev.get("text"):
             return str(ev["text"])
-    for ev in reversed(events):
+    for ev in reversed(turn):
         if ev.get("type") == "tool" and ev.get("text"):
             return str(ev["text"])
+    if not turn and role in ROLE_WAIT:
+        return ROLE_WAIT[role]
     return str(state.get("doing") or "")
+
+
+# a step boundary: what came before belongs to an earlier step (a judge that
+# has not spoken yet must not show the last round's verdict json)
+TURN_BOUNDARY = {"start_step", "gate_start", "gate", "verdict"}
+ROLE_WAIT = {"judge": "судья читает…", "player": "игрок начинает…", "tester": "тестер начинает…"}
+
+
+def _current_turn(events: list[dict]) -> list[dict]:
+    """Events after the newest step boundary (all of them when there is none)."""
+    for i in range(len(events) - 1, -1, -1):
+        if events[i].get("type") in TURN_BOUNDARY:
+            return events[i + 1:]
+    return events
 
 
 def _gate_doing(events: list[dict], now: float) -> str | None:

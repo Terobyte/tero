@@ -31,7 +31,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
   padding: 8px 12px;
-  overflow: hidden;
+  overflow: hidden; position: relative;
 }
 /* everything about the run in one line: health, phases, model, round, time */
 #top { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; white-space: nowrap; }
@@ -51,7 +51,28 @@ body {
 #status:empty { display: none; }
 #status.green { color: var(--green); } #status.yellow { color: var(--yellow); }
 #status.red { color: var(--red); } #status.grey { color: var(--grey); }
-#phases { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; color: var(--dim); }
+#phases { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; color: var(--dim); cursor: pointer; }
+#phases:hover { color: var(--text); }
+/* the plan slides down over the log on a click on the phases */
+#plan {
+  position: absolute; left: 8px; right: 8px; top: 34px; z-index: 5;
+  background: rgba(28, 33, 44, 0.98); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  padding: 4px 6px; overflow-y: auto; max-height: calc(100vh - 44px);
+  opacity: 0; transform: translateY(-8px) scaleY(0.92); transform-origin: top;
+  pointer-events: none; transition: opacity 0.2s ease, transform 0.25s cubic-bezier(.2,.9,.3,1.2);
+}
+#plan.open { opacity: 1; transform: none; pointer-events: auto; }
+.step { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 6px; }
+.step + .step { border-top: 1px solid var(--faint); }
+.step .n { color: var(--dim); width: 14px; text-align: right; flex-shrink: 0; }
+.step .t { flex: 1; min-width: 0; font-size: var(--big); }
+.step .s { color: var(--dim); flex-shrink: 0; }
+.step.green .t { color: var(--dim); } .step.green .s { color: var(--green); }
+.step.yellow { background: rgba(245, 197, 66, 0.10); }
+.step.yellow .t { font-weight: 600; } .step.yellow .s { color: var(--yellow); }
+.step.orange .s { color: var(--orange); } .step.red .s { color: var(--red); }
+.step.grey .t { color: var(--dim); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
 .dot.red { background: var(--red); } .dot.orange { background: var(--orange); }
@@ -100,12 +121,12 @@ body {
 #foot.r-judge { border-color: var(--judge); box-shadow: 0 0 10px rgba(195,139,255,0.3); }
 #foot.r-tester { border-color: var(--tester); box-shadow: 0 0 10px rgba(255,143,200,0.3); }
 #foot.r-gate { border-color: var(--gate); box-shadow: 0 0 10px rgba(255,179,92,0.3); }
-/* the ticker grows from 1 to --lines lines; a longer text shows its newest tail */
+/* the ticker grows to fit the whole text, the log gives way; only when the window
+   itself is too short the newest tail stays and the top fades */
 #doing {
-  --lines: 4;
   flex: 1; min-width: 0; font-size: var(--big);
   white-space: pre-wrap; word-break: break-word;
-  max-height: calc(var(--lines) * 1.4em); overflow: hidden;
+  max-height: calc(100vh - 58px); overflow: hidden;
 }
 #doing.cut { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.2em); }
 #foot.bad, #foot.bad #who {
@@ -123,11 +144,8 @@ body {
 @media (max-width: 440px) { #age { display: none; } }
 @media (max-width: 380px) { .phase-name { display: none; } #model { max-width: none; } }
 @media (max-width: 320px) { #meta { display: none; } }
-/* short window: the log goes first, then ticker lines one by one, down to one */
+/* short window: the log goes first, then the ticker keeps its newest tail */
 @media (max-height: 179px) { #detail { display: none; } }
-@media (max-height: 126px) { #doing { --lines: 3; } }
-@media (max-height: 108px) { #doing { --lines: 2; } }
-@media (max-height: 90px) { #doing { --lines: 1; } }
 </style>
 </head>
 <body>
@@ -141,6 +159,7 @@ body {
     <span id="age"></span>
     <span id="plus" class="btn" title="другой прогон"></span>
   </div>
+  <div id="plan"></div>
   <div id="detail">
     <div id="log"></div>
   </div>
@@ -191,6 +210,32 @@ function typeDoing(text) {
     if (typing.shown >= text.length) { clearInterval(typing.timer); typing.timer = null; }
   }, 20);
 }
+var STEP_STATE = {green: "готово", orange: "с долгом", red: "стоп", grey: "впереди"};
+var planKey = "";
+function renderPlan(secs, d) {
+  var round = String(d.header || "").match(/раунд\s*(\d+)/);
+  var key = JSON.stringify(secs) + (round ? round[1] : "");
+  if (key === planKey) return;
+  planKey = key;
+  var plan = document.getElementById("plan");
+  plan.innerHTML = "";
+  for (var i = 0; i < secs.length; i++) {
+    var c = secs[i].color || "grey";
+    var row = document.createElement("div");
+    row.className = "step " + c;
+    var dot = document.createElement("span");
+    dot.className = "dot " + c;
+    var n = document.createElement("span");
+    n.className = "n"; n.textContent = i + 1;
+    var t = document.createElement("span");
+    t.className = "t"; t.textContent = secs[i].title || "";
+    var st = document.createElement("span");
+    st.className = "s";
+    st.textContent = c === "yellow" ? "идёт" + (round ? " · раунд " + round[1] : "") : (STEP_STATE[c] || "");
+    row.appendChild(n); row.appendChild(dot); row.appendChild(t); row.appendChild(st);
+    plan.appendChild(row);
+  }
+}
 function ago(s) {
   return s < 60 ? s + " с" : Math.floor(s / 60) + " мин";
 }
@@ -215,6 +260,7 @@ function render(d) {
     ph.appendChild(dot);
     if (secs[j].color === "yellow") curTitle = secs[j].title || "";
   }
+  renderPlan(secs, d);
   if (curTitle !== null) {
     var label = document.createElement("span");
     label.className = "phase-name";
@@ -287,6 +333,13 @@ document.getElementById("plus").onclick = function () {
   try { after(a.switch(""), poll); } catch (e) {}
 };
 document.getElementById("light").onclick = function () { call("toggle_visible"); };
+// a click on the phases opens the plan, any other click closes it
+document.addEventListener("click", function (e) {
+  var plan = document.getElementById("plan");
+  var onPhases = document.getElementById("phases").contains(e.target);
+  if (onPhases) plan.classList.toggle("open");
+  else if (!plan.contains(e.target)) plan.classList.remove("open");
+});
 setInterval(poll, 1000);
 poll();
 </script>

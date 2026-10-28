@@ -218,6 +218,9 @@ class Bridge:
             if window is not None:
                 window.show() if visible else window.hide()
             self._visible = visible
+            tray = getattr(self, "_tray", None)
+            if tray is not None:
+                tray.call(tray.set_visible, visible)
         except Exception:
             pass
         return self._visible
