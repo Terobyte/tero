@@ -495,15 +495,19 @@ async def test_stop_json_answers_decision_point(tmp_path: Path, monkeypatch):
     ledger = Ledger(new_run_dir(repo, "demo"))
     (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
 
+    run_over = threading.Event()
+    stop_written = threading.Event()
+
     def _ask_stop() -> None:
-        # cold start (fresh .pyc, loaded machine) can take >4 s to reach waiting_human;
-        # a missed stop leaves the phase waiting 600 s and shipping with debt
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
+        # no own deadline: under a loaded suite waiting_human can come after 60 s,
+        # and a helper that gives up silently leaves the phase to ship with debt
+        # after NO_RELAY_GRACE_S (B20); the conftest test timeout bounds the wait
+        while not run_over.is_set():
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}
                 if state.get("status") == "waiting_human":
                     _write_stop(ledger.run_dir)
+                    stop_written.set()
                     return
             except Exception:
                 pass
@@ -516,19 +520,23 @@ async def test_stop_json_answers_decision_point(tmp_path: Path, monkeypatch):
 
     t = threading.Thread(target=_ask_stop, daemon=True)
     t.start()
-    outcome = await run_phases(
-        run_phase, load_phases(repo / "plan.md"),
-        ledger=lambda: ledger,
-        phase_kwargs=dict(
-            repo=repo, plan_path=repo / "plan.md",
-            preamble=load_preamble(repo / "plan.md"), cfg=_cfg(),
-            agents=agents, test_command=detect(repo),
-        ),
-        run_dir=ledger.run_dir, on_pending=lambda: None,
-        on_stop=lambda o: None, on_done=lambda s: None,
-    )
+    try:
+        outcome = await run_phases(
+            run_phase, load_phases(repo / "plan.md"),
+            ledger=lambda: ledger,
+            phase_kwargs=dict(
+                repo=repo, plan_path=repo / "plan.md",
+                preamble=load_preamble(repo / "plan.md"), cfg=_cfg(),
+                agents=agents, test_command=detect(repo),
+            ),
+            run_dir=ledger.run_dir, on_pending=lambda: None,
+            on_stop=lambda o: None, on_done=lambda s: None,
+        )
+    finally:
+        run_over.set()
     t.join(timeout=4)
     assert not t.is_alive()
+    assert stop_written.is_set(), f"run ended before waiting_human: {outcome}"
     assert outcome.status == "stop", outcome
     assert outcome.reason == "user_stop", outcome
 
