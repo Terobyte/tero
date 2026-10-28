@@ -30,10 +30,11 @@ body {
   background: rgba(20, 24, 32, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
-  padding: 10px 12px 10px;
+  padding: 8px 12px;
   overflow: hidden;
 }
-#top { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* everything about the run in one line: health, phases, model, round, time */
+#top { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; white-space: nowrap; }
 #light {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
   background: var(--grey);
@@ -42,12 +43,21 @@ body {
 #light.yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
 #light.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
 @keyframes breathe { 50% { opacity: 0.45; } }
-#status { font-size: var(--big); font-weight: 600; white-space: nowrap; }
+#status { font-size: var(--big); font-weight: 600; flex-shrink: 0; }
+#status:empty { display: none; }
 #status.green { color: var(--green); } #status.yellow { color: var(--yellow); }
 #status.red { color: var(--red); } #status.grey { color: var(--grey); }
-#age { color: var(--dim); white-space: nowrap; }
+#phases { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; color: var(--dim); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.dot.red { background: var(--red); } .dot.orange { background: var(--orange); }
+.dot.grey { background: rgba(255,255,255,0.22); }
+.phase-name { margin-left: 5px; overflow: hidden; text-overflow: ellipsis; }
+#model { font-size: var(--big); font-weight: 600; flex-shrink: 1; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+#model.r-player { color: var(--player); } #model.r-judge { color: var(--judge); }
+#model.r-tester { color: var(--tester); } #model.r-gate { color: var(--gate); }
+#meta, #age { color: var(--dim); flex-shrink: 0; }
 #age.age-yellow { color: var(--yellow); } #age.age-red { color: var(--red); }
-#spacer { margin-left: auto; }
 .btn {
   width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -56,29 +66,7 @@ body {
 }
 .btn:hover { background: rgba(255,255,255,0.22); color: var(--text); }
 #plus { display: none; width: auto; padding: 0 6px; font-size: var(--small); }
-#doing {
-  font-size: var(--big); flex-shrink: 0;
-  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-#card.expanded #doing { -webkit-line-clamp: 4; }
-#doing[class^="r-"] { border-left: 2px solid; padding-left: 8px; }
-#doing.r-player { border-color: var(--player); } #doing.r-judge { border-color: var(--judge); }
-#doing.r-tester { border-color: var(--tester); } #doing.r-gate { border-color: var(--gate); }
-#card.has-foot:not(.expanded) #doing { -webkit-line-clamp: 1; }
-/* phases in one line: a dot per phase, the name of the current one only */
-#phases { display: flex; align-items: center; gap: 4px; flex-shrink: 0; color: var(--dim); min-width: 0; }
-.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
-.dot.red { background: var(--red); } .dot.orange { background: var(--orange); }
-.dot.grey { background: rgba(255,255,255,0.22); }
-.phase-name { margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#line2 { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; }
-#line2 #phases { flex: 1; }
-#model { font-size: var(--big); font-weight: 600; white-space: nowrap; flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
-#model.r-player { color: var(--player); } #model.r-judge { color: var(--judge); }
-#model.r-tester { color: var(--tester); } #model.r-gate { color: var(--gate); }
-#meta { display: none; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
-#card.expanded #meta { display: block; }
+/* the log of the fight takes all the room there is */
 #detail {
   display: none; flex: 1; min-height: 0; flex-direction: column;
   border-top: 1px solid var(--faint); padding-top: 6px;
@@ -94,32 +82,33 @@ body {
   color: #aeb7c6;
   -webkit-user-select: text; user-select: text;
 }
-/* the judge's verdict closes the card: green glow for SHIP, red for anything else */
+/* bottom: who acts and the newest line running beside it; a fresh verdict glows green/red */
 #foot {
-  display: none; flex-shrink: 0; font-weight: 600; padding: 4px 8px; border-radius: 7px;
-  border: 1px solid currentColor;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 4px 8px; border-radius: 7px; border: 1px solid var(--faint);
 }
-/* between verdicts the plate shows where the round is, in the acting role's color */
-#foot.stage { color: var(--dim); border-color: var(--faint); font-weight: 400; }
-#foot .sep { opacity: 0.5; margin: 0 4px; }
-#foot .step.on { font-weight: 600; }
-#foot.r-player { border-color: var(--player); box-shadow: 0 0 10px rgba(90,200,250,0.35); }
-#foot.r-gate { border-color: var(--gate); box-shadow: 0 0 10px rgba(255,179,92,0.35); }
-#foot.r-tester { border-color: var(--tester); box-shadow: 0 0 10px rgba(255,143,200,0.35); }
-#foot.r-judge { border-color: var(--judge); box-shadow: 0 0 10px rgba(195,139,255,0.35); }
-#foot .step.on.r-player { color: var(--player); text-shadow: 0 0 6px rgba(90,200,250,0.6); }
-#foot .step.on.r-gate { color: var(--gate); text-shadow: 0 0 6px rgba(255,179,92,0.6); }
-#foot .step.on.r-tester { color: var(--tester); text-shadow: 0 0 6px rgba(255,143,200,0.6); }
-#foot .step.on.r-judge { color: var(--judge); text-shadow: 0 0 6px rgba(195,139,255,0.6); }
-#foot.bad {
-  color: var(--red); background: rgba(255, 107, 107, 0.14);
+#who { display: none; font-weight: 600; flex-shrink: 0; }
+#who.r-player { color: var(--player); text-shadow: 0 0 6px rgba(90,200,250,0.6); }
+#who.r-judge { color: var(--judge); text-shadow: 0 0 6px rgba(195,139,255,0.6); }
+#who.r-tester { color: var(--tester); text-shadow: 0 0 6px rgba(255,143,200,0.6); }
+#who.r-gate { color: var(--gate); text-shadow: 0 0 6px rgba(255,179,92,0.6); }
+#foot.r-player { border-color: var(--player); box-shadow: 0 0 10px rgba(90,200,250,0.3); }
+#foot.r-judge { border-color: var(--judge); box-shadow: 0 0 10px rgba(195,139,255,0.3); }
+#foot.r-tester { border-color: var(--tester); box-shadow: 0 0 10px rgba(255,143,200,0.3); }
+#foot.r-gate { border-color: var(--gate); box-shadow: 0 0 10px rgba(255,179,92,0.3); }
+#doing {
+  flex: 1; min-width: 0; font-size: var(--big);
+  white-space: nowrap; overflow: hidden;
+}
+#foot.bad, #foot.bad #who {
+  color: var(--red); border-color: var(--red); background: rgba(255, 107, 107, 0.14);
   box-shadow: 0 0 12px rgba(255, 107, 107, 0.45); text-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
 }
-#foot.good {
-  color: var(--green); background: rgba(61, 220, 132, 0.12);
+#foot.good, #foot.good #who {
+  color: var(--green); border-color: var(--green); background: rgba(61, 220, 132, 0.12);
   box-shadow: 0 0 12px rgba(61, 220, 132, 0.45); text-shadow: 0 0 6px rgba(61, 220, 132, 0.6);
 }
+#foot.bad #who, #foot.good #who { background: none; box-shadow: none; }
 </style>
 </head>
 <body>
@@ -127,19 +116,18 @@ body {
   <div id="top">
     <span id="light"></span>
     <span id="status"></span>
+    <div id="phases"></div>
+    <span id="model"></span>
+    <span id="meta"></span>
     <span id="age"></span>
-    <span id="spacer"></span>
     <span id="plus" class="btn" title="другой прогон"></span>
     <span id="expand" class="btn" title="подробнее">▾</span>
     <span id="hide" class="btn" title="свернуть в меню-бар">–</span>
   </div>
-  <div id="doing"></div>
-  <div id="line2"><div id="phases"></div><span id="model"></span></div>
-  <div id="meta"></div>
   <div id="detail">
     <div id="log"></div>
   </div>
-  <div id="foot"></div>
+  <div id="foot"><span id="who"></span><div id="doing"></div></div>
 </div>
 <script>
 var expanded = false;
@@ -151,31 +139,21 @@ function getApi() {
 }
 window.addEventListener("pywebviewready", function () { getApi(); poll(); });
 
-function esc(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
 var ROLE_NAMES = {player: "игрок", judge: "судья", tester: "тестер", gate: "тесты"};
 var VERDICT_SHOW_S = 60;
-// [html, class]: a stop or a fresh verdict, else the round so far
+// [who, text, class]: a stop, a fresh verdict or "done" win over the acting role's newest line
 function footOf(d, acting) {
-  if (d.stop_text) return [esc(d.stop_text), "bad"];
+  if (d.stop_text) return ["", d.stop_text, "bad"];
   var v = d.verdict || {};
   var fresh = d.verdict_age_s != null && d.verdict_age_s < VERDICT_SHOW_S;
   if (v.verdict && (fresh || !acting)) {
     var cls = v.verdict === "SHIP" ? "good" : "bad";
-    return [esc("судья: " + v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : "")), cls];
+    return ["судья", v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : ""), cls];
   }
-  if (d.done_text) return [esc(d.done_text), "good"];
-  if (!acting) return ["", ""];
-  var steps = ["player", "gate", "judge"];
-  if (acting === "tester") steps.splice(2, 0, "tester");
-  var html = steps.map(function (r) {
-    return '<span class="step' + (r === acting ? " on r-" + r : "") + '">' + ROLE_NAMES[r] + "</span>";
-  }).join('<span class="sep">›</span>');
-  return [html, "stage r-" + acting];
+  if (d.done_text) return ["", d.done_text, "good"];
+  return [acting ? ROLE_NAMES[acting] : "", d.doing || "", acting ? "r-" + acting : ""];
 }
-// the newest message types itself out; a longer message never takes more than ~1 s
+// the newest line types itself out and runs left like a ticker; never longer than ~1 s
 var typing = {target: "", shown: 0, timer: null};
 function typeDoing(text) {
   var el = document.getElementById("doing");
@@ -188,11 +166,12 @@ function typeDoing(text) {
   typing.timer = setInterval(function () {
     typing.shown = Math.min(text.length, typing.shown + step);
     el.textContent = text.slice(0, typing.shown) + (typing.shown < text.length ? "▍" : "");
+    el.scrollLeft = el.scrollWidth;
     if (typing.shown >= text.length) { clearInterval(typing.timer); typing.timer = null; }
   }, 20);
 }
 function ago(s) {
-  return s < 60 ? s + " с назад" : Math.floor(s / 60) + " мин назад";
+  return s < 60 ? s + " с" : Math.floor(s / 60) + " мин";
 }
 function render(d) {
   if (!d) return;
@@ -204,9 +183,7 @@ function render(d) {
   var st = document.getElementById("status");
   st.className = light;
   st.textContent = light === "green" ? "" : (d.light_text || "");
-  typeDoing(d.doing || "");
   var acting = ROLE_NAMES[d.role] && (d.light === "green" || d.light === "yellow") ? d.role : "";
-  document.getElementById("doing").className = acting ? "r-" + acting : "";
 
   var secs = d.sectors || [];
   var ph = document.getElementById("phases");
@@ -223,25 +200,30 @@ function render(d) {
     var label = document.createElement("span");
     label.className = "phase-name";
     label.textContent = curTitle;
+    label.title = curTitle;
     ph.appendChild(label);
   }
 
-  // "player · opus": the role is already in the pill, the model gets its own place
+  // "player · opus": the role is on the bottom chip, the model gets its own place
   var model = document.getElementById("model");
   model.textContent = String(d.role_line || "").split(" · ").slice(1).join(" · ");
   model.className = acting ? "r-" + acting : "";
-  // "Фаза 4/5 · раунд 1 · 22:07": the phase is already on top
-  document.getElementById("meta").textContent = String(d.header || "").replace(/^Фаза [^·]*·\s*/, "");
+  // "Фаза 4/5 · раунд 1 · 22:07" -> "р1 · 22:07": the phase is in the dots
+  var rest = String(d.header || "").replace(/^Фаза [^·]*·\s*/, "").replace(/раунд\s*/, "р");
+  document.getElementById("meta").textContent = rest;
   var age = document.getElementById("age");
   age.textContent = (d.last_event_age_s == null) ? "" : ago(d.last_event_age_s);
+  age.title = "с последнего события";
   age.className = "age-" + (d.age_color || "normal");
 
   var f = footOf(d, acting);
-  var foot = document.getElementById("foot");
-  foot.innerHTML = f[0];
-  foot.className = f[1];
-  foot.style.display = f[0] ? "block" : "none";
-  card.className = (expanded ? "expanded " : "") + (f[0] ? "has-foot" : "");
+  var who = document.getElementById("who");
+  who.textContent = f[0];
+  who.className = acting ? "r-" + acting : "";
+  who.style.display = f[0] ? "inline" : "none";
+  document.getElementById("foot").className = f[2];
+  typeDoing(f[1]);
+  card.className = expanded ? "expanded" : "";
 
   var plus = document.getElementById("plus");
   plus.textContent = d.plus || "";
@@ -253,7 +235,7 @@ function render(d) {
   var log = document.getElementById("log");
   var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   var frag = document.createDocumentFragment();
-  for (var m = Math.max(0, items.length - 60); m < items.length; m++) {
+  for (var m = Math.max(0, items.length - 80); m < items.length; m++) {
     var line = document.createElement("div");
     var r = items[m].role;
     // agent speech glows in its role color, tool calls stay dim

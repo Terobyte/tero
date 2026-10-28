@@ -47,7 +47,7 @@ def run_log_path(run_dir: str | Path) -> Path:
     return Path(run_dir).parent.parent / "hud.log"
 
 
-COLLAPSED_H = 120
+COLLAPSED_H = 76
 EXPANDED_H = 340
 WINDOW_W = 340
 MIN_W = 280
