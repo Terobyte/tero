@@ -165,10 +165,18 @@ async def run_resume(args) -> int:
     return outcome.exit_code
 
 
+# commands that outlive edits to the checkout they run from
+PRELOAD_COMMANDS = frozenset({"go", "resume", "wait", "hud"})
+
+
 def main():
     """Package-safe entrypoint used by the installed `tero` script."""
     parser = build_parser()
     args = parser.parse_args()
+    if args.command in PRELOAD_COMMANDS:
+        from src.preload import preload_all
+
+        preload_all()
 
     if args.command == "go":
         if getattr(args, "detach", False):
