@@ -16,6 +16,7 @@ from typing import AsyncIterator
 
 from src.constants import STDOUT_READ_CHUNK_SIZE
 from src.errors import ProviderError, strip_mcp_noise as strip_noise
+from src.proc_tag import swept_env
 
 
 @dataclass
@@ -69,6 +70,7 @@ async def _iter_stdout(stdout, on_chunk=None) -> AsyncIterator[bytes]:
         yield line
 
 
+@swept_env  # B21: agent shells run commands in their own session, out of the group kill
 async def run_subprocess_jsonl(
     cmd: list[str],
     working_dir: str,

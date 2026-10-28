@@ -156,14 +156,29 @@ def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
     from src.loop import watchdog as _wd
 
     from src.process_guard import ProcessGuard
+    from src import proc_tag
 
     resolved = pytest_argv([_resolve_python(part) for part in argv])
     before = ProcessGuard().snapshot_pids()
     _wd.note_step_before(before)
+    env, tag = proc_tag.tagged_env()
+    started = proc_tag.spawn_time()
+    try:
+        return _run_tagged(resolved, name, repo, timeout_s, env, before)
+    finally:
+        # B21: workers that left the group (own session, parent gone) die with the gate
+        proc_tag.sweep(tag, since=started)
+
+
+def _run_tagged(resolved: list[str], name: str, repo: Path, timeout_s: int,
+                env: dict[str, str], before: set[int]) -> GateResult:
+    from src.loop import watchdog as _wd
+
     try:
         proc = subprocess.Popen(
             resolved,
             cwd=repo,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
