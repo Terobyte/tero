@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -192,6 +191,11 @@ def record_situation(
     for key, level in (raw_level or {}).items():
         level_by_key.setdefault(key, level)
     judge_level = [level_by_key.get(_key(item)) for item in eligible_findings(findings)]
+    # уровни находок, переживших правку: без них polish не пустит их в долг
+    open_level = []
+    for item in list(getattr(getattr(ctx, "st", None), "open_findings", None) or []):
+        if previous.get(getattr(item, "id", None)) == "still_open":
+            open_level.append([None, (getattr(item, "level", "") or None)])
     player = _actual_player(ctx)
     hist = _append_history(
         ctx,
@@ -202,10 +206,18 @@ def record_situation(
             "still_open": still_open,
             "sev": [],
             "judge_level": judge_level,
+            "open_level": open_level,
             "player": player,
         },
     )
     sev = maybe_query_jev(ctx, findings, n_closed=resolved, post=post, timeout_s=timeout_s)
+    # уверенный jev поднимает level находки: в следующие раунды идёт объединённая тяжесть
+    cfg_sit = _sit_cfg(ctx)
+    for item, jev in zip(eligible_findings(findings), (sev or {}).get("sev") or []):
+        if isinstance(item, dict):
+            merged_level = situation_mod._level(jev, item.get("level"), cfg_sit)
+            if merged_level and merged_level != item.get("level"):
+                item["level"] = merged_level
     for row in hist["rounds"]:
         if isinstance(row, dict) and row.get("round") == round_no and not row.get("sev"):
             row["sev"] = (sev or {}).get("sev") or []
@@ -224,7 +236,7 @@ def record_situation(
         res["owner_round"] = hist["owner_round"]
     try:
         res = {**res, **situation_mod.diagnose(
-            hist["rounds"], situation_mod.Cfg(),
+            hist["rounds"], _sit_cfg(ctx),
             opus_round=hist.get("opus_round"), owner_round=hist.get("owner_round"))}
     except Exception as exc:
         err = "diagnose failed"
@@ -236,6 +248,12 @@ def record_situation(
         return {"error": err}
     _emit_situation(ctx, round_no, res)
     return res
+
+
+def _sit_cfg(ctx: Any, **kw: Any) -> Any:
+    """Cfg диагноза: jev включён — его ответ обязателен для долга."""
+    jev_on = bool(getattr(getattr(ctx, "cfg", None), "jev_enabled", False))
+    return situation_mod.Cfg(jev_required=jev_on, **kw)
 
 
 def _emit_situation(ctx: Any, round_no: int, res: dict[str, Any]) -> None:
@@ -291,7 +309,7 @@ def next_player(ctx: Any) -> tuple[str, str, str]:
             limit = 2
         res = situation_mod.diagnose(
             rounds,
-            situation_mod.Cfg(sonnet_max=limit),
+            _sit_cfg(ctx, sonnet_max=limit),
             opus_round=hist.get("opus_round"),
             owner_round=hist.get("owner_round"),
         )
@@ -322,7 +340,7 @@ def maybe_query_jev(
     """
     if not getattr(getattr(ctx, "cfg", None), "jev_enabled", False):
         return None
-    api_key = os.environ.get("TYPESAFE_API_KEY", "")
+    api_key = jev_mod.load_api_key(jev_mod.SECRETS_FILE)
     phase = str(getattr(getattr(ctx, "phase", None), "title", "") or "")
     round_no = int(getattr(getattr(ctx, "st", None), "round", 0) or 0)
     try:

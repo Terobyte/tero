@@ -12,6 +12,7 @@ TERMINAL = ("ship_with_debt", "opus_decides", "ask_owner")
 OPUS_LIKE = ("opus_decides", "ask_owner")
 LABEL_OF_ACTION = {"continue": "continue_muse"}
 LEVELS = ("blocker", "major", "minor", "nit")
+DEBT_LEVELS = ("minor", "nit")
 
 
 @dataclass
@@ -22,6 +23,7 @@ class Cfg:
     mole_rounds: int = 3
     polish_first: bool = False
     polish_min_round: int = 2
+    jev_required: bool = False  # jev включён: без его ответа долга нет
 
 
 def _sources(rnd):
@@ -38,15 +40,39 @@ def _known_blocker(jev, judge, cfg):
     return bool(jev) and (jev[0] == "blocker" or jev[1] < cfg.min_conf)
 
 
-def _blockers(rnd, cfg):
-    """Для шипа: находка без тяжести ни у кого тоже блокер."""
-    return sum(1 for jev, judge in _sources(rnd)
-               if _known_blocker(jev, judge, cfg) or (jev is None and judge is None))
-
-
 def _rated_blockers(rnd, cfg):
     """Для крота: только блокеры, которые кто-то так оценил, — не жечь Opus вслепую."""
     return sum(1 for jev, judge in _sources(rnd) if _known_blocker(jev, judge, cfg))
+
+
+def _level(jev, judge, cfg):
+    """Тяжесть находки: уровень судьи, поднятый уверенным jev; неизвестный — None."""
+    found = [judge] if judge in LEVELS else []
+    try:
+        if jev and jev[0] in LEVELS and float(jev[1]) >= cfg.min_conf:
+            found.append(jev[0])
+    except (TypeError, ValueError, IndexError):
+        pass
+    return min(found, key=LEVELS.index) if found else None
+
+
+def _debt_ok(cur, cfg):
+    """В долг: новые находки — только nit; пережившие правку — minor/nit.
+
+    major/blocker/без уровня в долг не идут никогда; jev включён, но молчит — тоже нет.
+    """
+    if cfg.jev_required and cur["n_findings"] and len(cur.get("sev") or []) < cur["n_findings"]:
+        return False
+    if any(_level(jev, judge, cfg) != "nit" for jev, judge in _sources(cur)):
+        return False
+    carried = cur.get("open_level") or []
+    if cur["still_open"] > len(carried):
+        return False
+    for row in carried:
+        jev, judge = (list(row) + [None, None])[:2] if isinstance(row, (list, tuple)) else (None, None)
+        if _level(jev, judge, cfg) not in DEBT_LEVELS:
+            return False
+    return True
 
 
 def _res(situation, action, reason):
@@ -73,10 +99,9 @@ def _diagnose(rounds, cfg, sonnet_n):
     def polish():
         if cur["round"] < cfg.polish_min_round:
             return None
-        if (_blockers(cur, cfg) == 0 and cur["n_findings"] >= 1 and (cur["still_open"] == 0 or cfg.polish_first)
-                and sum(r["n_findings"] for r in rounds) > cfg.fix_budget):
+        if cur["n_findings"] + cur["still_open"] >= 1 and _debt_ok(cur, cfg):
             return _res("polish", "ship_with_debt",
-                        "блокеров нет, остались мелочи, бюджет правок исчерпан")
+                        "остались только мелочи: новые nit или minor, переживший правку")
         return None
 
     def stuck():

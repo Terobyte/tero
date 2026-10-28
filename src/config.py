@@ -143,6 +143,8 @@ class Config:
     wake_command: str = ""
     jev_enabled: bool = False
     phone_text_answers: bool = True
+    preset: str = "golden"  # src/presets/<name>.yaml, none — без пресета
+    max_debt: int = 3  # записей долга на прогон, больше — вопрос хозяину
 
 
 from src.config_env import _ENV_MAP, apply_env  # noqa: E402,F401
@@ -337,6 +339,10 @@ def resolve_config(cli_args: dict) -> Config:
 
     # Env overrides
     apply_env(merged, normalize_provider)
+
+    from src.config_preset import apply_preset  # пресет ложится под yaml/env/CLI
+    merged = apply_preset(merged, cli.get("preset"), (bundled_config, global_config, project_config),
+                          valid_fields, ConfigError)
 
     # CLI overrides (highest priority, skip None)
     for key, value in cli.items():

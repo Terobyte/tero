@@ -147,8 +147,15 @@ async def resolve(ctx: Any, sit_res: dict[str, Any], raw_level: Any = None) -> s
         except Exception:
             return False
 
+    cfg = getattr(ctx, "cfg", None)
+    who = (str(getattr(cfg, "escalation_provider", "") or ""),
+           str(getattr(cfg, "escalation_model", "") or ""),
+           str(getattr(cfg, "escalation_effort", "") or ""))
+    if not who[0]:
+        # эскалация выключена — решать некому, решает хозяин
+        return "stop"
     res = await decide(run_dir=ctx.run_dir, agents=ctx.agents, prompt=prompt,
-                       stop_checker=_stopped)
+                       stop_checker=_stopped, who=who)
     try:
         if _stopped():
             _kill(ctx.agents)
@@ -168,8 +175,14 @@ async def resolve(ctx: Any, sit_res: dict[str, Any], raw_level: Any = None) -> s
     if decision == "ship_with_debt":
         from src.loop import debt as debt_mod
 
+        if debt_mod.has_hard(list(getattr(st, "open_findings", None) or [])):
+            # major/blocker решатель в долг не кладёт: ещё раунд
+            decision = "more"
+    if decision == "ship_with_debt":
         entries = debt_mod.pending_debt_entries(ctx, raw_level, why="opus")
         if len(entries or []) != len(list(getattr(st, "open_findings", None) or [])):
+            return "stop"
+        if debt_mod.over_cap(ctx, len(entries)):
             return "stop"
         try:
             getattr(st, "debt_pending", []).append(
@@ -197,6 +210,7 @@ async def decide(
     prompt: str,
     stop_checker: Callable[[], bool] | None = None,
     timeout: float = DECISION_TIMEOUT_S,
+    who: tuple[str, str, str] = ("claude", "opus", ""),
 ) -> dict[str, str] | None:
     """Один вызов Opus. `None` — `stop` во время вызова; сбой — `ask_owner`."""
     import asyncio as _asyncio
@@ -235,9 +249,9 @@ async def decide(
             return None
         task = _asyncio.ensure_future(agents.run_role(
             role="decider",
-            provider="claude",
-            model="opus",
-            effort="",
+            provider=who[0],
+            model=who[1],
+            effort=who[2],
             prompt=prompt,
             timeout=timeout,
         ))

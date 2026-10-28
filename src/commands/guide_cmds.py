@@ -39,9 +39,27 @@ HOSTS_GUIDE = (
 )
 
 
+def _preset_text(working_dir: str) -> str:
+    """Активный пресет и итоговые роли: агент видит их первым делом."""
+    try:
+        from src.config import resolve_config
+        from src.config_preset import load_preset
+
+        cfg = resolve_config({"working_dir": working_dir})
+        keys = list(load_preset(cfg.preset)) or ["judge_provider", "judge_model", "player_provider",
+                                                 "player_model", "escalation", "escalation_provider",
+                                                 "escalation_model", "jev_enabled", "max_debt"]
+    except Exception as exc:
+        return f"пресет: не прочитан ({type(exc).__name__})\n"
+    lines = [f"пресет: {cfg.preset} (итог с yaml/env этого каталога)"]
+    lines += [f"  {k}: {getattr(cfg, k)}" for k in keys if hasattr(cfg, k)]
+    return "\n".join(lines) + "\n"
+
+
 def run_guide(args: Any) -> int:
     """Print AGENT_PROTOCOL and the per-host sleep guide. Always code 0."""
     _ = args
+    print(_preset_text(getattr(args, "working_dir", None) or "."))
     print(AGENT_PROTOCOL)
     print(HOSTS_GUIDE)
     return 0

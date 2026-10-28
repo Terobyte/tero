@@ -12,6 +12,8 @@ from typing import Any, Callable
 from src.relay.redact import redact
 
 URL = "https://api.typesafe.ai/v1/systemone"
+KEY_ENV = "TYPESAFE_API_KEY"
+SECRETS_FILE = "~/.tero/secrets.env"
 MODEL = "jev-latest"
 BATCH = 8
 LEVELS = ("blocker", "major", "minor", "nit")
@@ -25,6 +27,30 @@ def _criteria() -> dict[str, str]:
         "minor": "Edge case, weak or missing assertion in a test, small inconsistency",
         "nit": "Wording, formatting, help text, cosmetic or test-style preference",
     }
+
+
+def load_api_key(secrets_file: str = SECRETS_FILE) -> str:
+    """TYPESAFE_API_KEY из окружения, иначе строкой из secrets.env; нет — пусто."""
+    import os
+    from pathlib import Path
+
+    key = os.environ.get(KEY_ENV, "").strip()
+    if key:
+        return key
+    try:
+        lines = Path(secrets_file).expanduser().read_text().splitlines()
+    except OSError:
+        return ""
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if line.startswith(KEY_ENV + "="):
+            value = line[len(KEY_ENV) + 1:].strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return value
+    return ""
 
 
 def _eligible(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

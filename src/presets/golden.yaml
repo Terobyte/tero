@@ -1,0 +1,22 @@
+# Золотой пресет tero: решения хозяина (2026-10-27). Любой агент видит его в `tero guide`.
+# yaml проекта, env и флаги CLI перекрывают эти значения.
+defaults:
+  # судья всегда codex luna
+  judge_provider: codex
+  judge_model: gpt-6-luna
+  # игрок — Spark contributor через opencode
+  player_provider: opencode
+  player_model: meta-model-api/muse-spark-1.3-contributor
+  # тестера нет: NO_SHIP сразу к игроку
+  no_tester: true
+  # эскалация по ситуации; застрявший игрок и решатель — sonnet
+  escalation: situational
+  escalation_provider: claude
+  escalation_model: sonnet
+  decisions: true
+  # второе мнение о тяжести находок
+  jev_enabled: true
+  # долг: только minor/nit, не больше 3 записей на прогон
+  max_debt: 3
+  # тихий провайдер дольше 10 мин — завис
+  stall_timeout_s: 600

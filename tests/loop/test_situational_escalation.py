@@ -158,7 +158,7 @@ async def test_stuck_then_sonnet_then_back(tmp_path: Path):
     # фаза 08-11: stuck_strong после лимита Sonnet идёт в Opus; more → ещё раунд.
     def _decider_more(role: str, kw: dict) -> dict:
         assert role == "decider", role
-        assert kw.get("provider") == "claude" and kw.get("model") == "opus", kw
+        assert (kw.get("provider"), kw.get("model")) == ("claude", "sonnet"), kw  # решатель = cfg.escalation_*
         return {"decision": "more", "why": "try again"}
 
     steps.insert(10, _decider_more)

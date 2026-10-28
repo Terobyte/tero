@@ -321,7 +321,8 @@ async def test_polish_ships_through_gate(tmp_path: Path):
     debt = state.get("debt") or []
     assert len(debt) >= 1 and all(e.get("why") == "polish" for e in debt)
     md = (ledger.run_dir / "debt.md").read_text(encoding="utf-8")
-    assert "nit c" in md
+    # строгий долг: свежий minor (r1) — ещё раунд, свежий nit (r2) — в долг
+    assert "nit b" in md and "nit a" not in md
     # при красном гейте — не шип: та же польская ситуация, но гейт красный
     (tmp_path / "red").mkdir(exist_ok=True)
     repo2 = _repo(tmp_path / "red")
@@ -386,13 +387,11 @@ async def test_opus_ship_with_debt(tmp_path: Path):
 
     agents.run_role = routed
     outcome, ledger = await _run(repo, agents)
-    assert outcome.status == "ship", outcome
-    trailer = subprocess.run(["git", "log", "-1", "--format=%(trailers)"],
-                             cwd=repo, capture_output=True, text=True).stdout
-    assert "Tero-Phase" in trailer
+    # строгий долг: находка без уровня в долг не идёт даже по слову решателя → more
+    assert outcome.status != "ship", outcome
+    _ = subprocess
     state = RunState.read(ledger.run_dir / "state.json") or {}
-    debt = state.get("debt") or []
-    assert debt and all(e.get("why") == "opus" for e in debt)
+    assert (state.get("debt") or []) == []
     kinds = [__import__("json").loads(l)["kind"]
              for l in ledger.path.read_text().splitlines()]
     assert "decider" in kinds

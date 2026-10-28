@@ -28,6 +28,8 @@ def _isolated_home(tmp_path_factory, monkeypatch):
     """Keep every test away from the real ~/.tero (the menu saves there on start)."""
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
+    # golden по умолчанию включает jev и claude-эскалацию; тесты живут без пресета
+    monkeypatch.setenv("TERO_PRESET", "none")
     return home
 
 

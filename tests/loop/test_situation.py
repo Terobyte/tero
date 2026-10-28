@@ -71,26 +71,29 @@ def test_mole_needs_blocker_every_round():
 
 
 def test_polish():
-    rs = [R(1, 2), R(2, 1, sev=[["minor", 0.9]])]
+    rs = [R(1, 2), R(2, 1, sev=[["nit", 0.9]])]
     d = situation_mod.diagnose(rs, situation_mod.Cfg())
     assert (d["situation"], d["action"]) == ("polish", "ship_with_debt")
-    assert situation_mod.diagnose(rs, situation_mod.Cfg(fix_budget=5))["situation"] == "converging"
+    # строгий долг: свежий minor ещё раунд, а не в долг
+    rs = [R(1, 2), R(2, 1, sev=[["minor", 0.9]])]
+    assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "converging"
 
 
 def test_low_conf_is_blocker():
-    rs = [R(1, 2), R(2, 1, sev=[["minor", 0.3]])]
+    rs = [R(1, 2), R(2, 1, sev=[["nit", 0.3]])]
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "converging"
     assert situation_mod.diagnose(rs, situation_mod.Cfg(min_conf=0.2))["situation"] == "polish"
 
 
 def test_polish_first_changes_outcome():
     rs = [R(1, 2), R(2, 1, so=1, sev=[["nit", 0.9]]), R(3, 1, so=1, sev=[["nit", 0.9]])]
+    rs[-1]["open_level"] = [[None, "nit"]]  # переживший правку: уровень известен
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "stuck"
     assert situation_mod.diagnose(rs, situation_mod.Cfg(polish_first=True))["situation"] == "polish"
 
 
 def test_polish_min_round():
-    rs = [R(1, 3, sev=[["minor", 0.9]] * 3)]
+    rs = [R(1, 3, sev=[["nit", 0.9]] * 3)]
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "converging"
     assert situation_mod.diagnose(rs, situation_mod.Cfg(polish_min_round=1))["situation"] == "polish"
 
@@ -136,13 +139,15 @@ def test_mole_tolerates_one_still_open():
 
 
 def test_judge_level_merges_with_jev():
-    rs = [R(1, 2), R(2, 1, sev=[["minor", 0.9]])]
+    rs = [R(1, 2), R(2, 1, sev=[["nit", 0.9]])]
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "polish"
     rs[-1]["judge_level"] = ["blocker"]
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "converging"
     rs = [R(1, 2), R(2, 1, sev=[])]
-    rs[-1]["judge_level"] = ["minor"]
+    rs[-1]["judge_level"] = ["nit"]
     assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "polish"
+    rs[-1]["judge_level"] = ["major"]  # major судьи в долг не идёт
+    assert situation_mod.diagnose(rs, situation_mod.Cfg())["situation"] == "converging"
 
 
 def test_no_severity_at_all_no_ship_no_mole():

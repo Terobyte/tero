@@ -99,6 +99,14 @@ async def situational_action(step: Any, sit_res: dict[str, Any], raw_level: dict
         entries = debt_mod.pending_debt_entries(step.ctx, raw_level, why="polish")
         if len(entries or []) != len(list(step.ctx.st.open_findings or [])):
             return _Next.NEXT
+        if debt_mod.over_cap(step.ctx, len(entries)):
+            # кэп долга на прогон: дальше решает хозяин
+            try:
+                step.ctx.ledger.event("debt_cap", count=len(entries), round=step.ctx.st.round,
+                                      role="judge")
+            except Exception:
+                pass
+            return _Next.STOP
         step.ctx.st.debt_pending = [
             {"why": "polish", "entries": [dict(e) for e in entries],
              "raw_level": dict(raw_level or {})}

@@ -51,6 +51,31 @@ def build_entries(
     return entries
 
 
+HARD_LEVELS = ("blocker", "major")
+
+
+def over_cap(ctx: Any, new_n: int) -> bool:
+    """Долг прогона + новые записи больше max_debt — шип с долгом не пускаем."""
+    try:
+        cap = int(getattr(getattr(ctx, "cfg", None), "max_debt", 3))
+    except (TypeError, ValueError):
+        cap = 3
+    try:
+        have = len((RunState.read(Path(ctx.run_dir) / "state.json") or {}).get("debt") or [])
+    except Exception:
+        have = 0
+    return have + int(new_n) > cap
+
+
+def has_hard(findings: list[Any]) -> bool:
+    """Открыта major/blocker или находка без уровня: в долг нельзя."""
+    for item in findings or []:
+        level = item.get("level") if isinstance(item, dict) else getattr(item, "level", "")
+        if level in HARD_LEVELS or level not in ("minor", "nit"):
+            return True
+    return False
+
+
 def append_debt(run_dir: str | Path, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Дописать долг в `state.json` и `debt.md`.
 

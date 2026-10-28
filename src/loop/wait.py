@@ -272,6 +272,7 @@ def status_payload(
         "role": state.get("role") or "",
         "provider": state.get("provider") or "",
         "model": state.get("model") or "",
+        "preset": (config.get("preset") or "") if isinstance(config, dict) else "",
         "status": status,
         "doing": state.get("doing") or "",
         "done_text": done_line(status, debt),

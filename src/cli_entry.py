@@ -38,6 +38,7 @@ def _config_from_args(args) -> Config:
             "working_dir": args.working_dir,
             "plan_file": args.plan,
             "verbose": args.verbose,
+            "preset": getattr(args, "preset", None),
         }
     )
     return apply_cli_args(config, args)

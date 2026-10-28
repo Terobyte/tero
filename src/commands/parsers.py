@@ -26,6 +26,7 @@ def add_go_parsers(sub: Any) -> None:
     go_parser.add_argument("--test-command-scoped", default=None)
     go_parser.add_argument("--max-rounds", type=int, default=None)
     go_parser.add_argument("--escalate-at", type=int, default=None)
+    go_parser.add_argument("--preset", default=None, help="пресет конфига (golden, none)")
 
 
 def add_run_parsers(sub: Any) -> None:
