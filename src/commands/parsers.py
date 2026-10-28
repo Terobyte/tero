@@ -34,6 +34,11 @@ def add_run_parsers(sub: Any) -> None:
     history_parser.add_argument("--limit", "-l", type=int, default=10)
     history_parser.add_argument("--working-dir", "-w", type=str, default=".")
 
+    stats_parser = sub.add_parser("stats", help="Verdicts, time per role, findings over runs")
+    stats_parser.add_argument("--plan", type=str, default=None, help="slug плана, напр. 08-escalation-pult")
+    stats_parser.add_argument("--limit", "-l", type=int, default=None)
+    stats_parser.add_argument("--working-dir", "-w", type=str, default=".")
+
     review_parser = sub.add_parser("review", help="Show snapshot ref and diff for a run")
     review_parser.add_argument("--working-dir", "-w", type=str, default=".")
     review_parser.add_argument("--run", type=str, default=None)

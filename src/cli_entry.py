@@ -11,7 +11,7 @@ from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args
 from src.commands import resolve_run_dir
 from src.commands.inbox_cmds import run_answer, run_compact
 from src.commands.parsers import add_all_parsers
-from src.commands.runs import run_history, run_review, run_status, run_wait
+from src.commands.runs import run_history, run_review, run_stats, run_status, run_wait
 from src.commands.stop_cmd import run_stop
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "run_history",
     "run_resume",
     "run_review",
+    "run_stats",
     "run_status",
     "run_wait",
 ]
@@ -189,6 +190,8 @@ def main():
             sys.exit(130)
     elif args.command == "history":
         run_history(args)
+    elif args.command == "stats":
+        run_stats(args)
     elif args.command == "review":
         sys.exit(run_review(args))
     elif args.command == "compact":

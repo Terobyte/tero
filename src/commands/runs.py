@@ -1,4 +1,4 @@
-"""Read-only run commands: history, wait, status, review."""
+"""Read-only run commands: history, stats, wait, status, review."""
 
 from __future__ import annotations
 
@@ -21,6 +21,15 @@ def run_history(args):
             f"  {row['slug']}: {row['reason'] or '?'}  "
             f"{row['phases_shipped']}/{row['phases_total']}  {row['plan']}"
         )
+
+
+def run_stats(args):
+    """Aggregate stats over .tero/runs (one plan or all)."""
+    from src.loop.stats import collect, render
+
+    repo = Path(args.working_dir).resolve()
+    acc = collect(repo, plan=args.plan, limit=args.limit)
+    print(render(acc, args.plan or "все планы"))
 
 
 def run_wait(args) -> int:
