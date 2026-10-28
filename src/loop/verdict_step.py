@@ -117,7 +117,7 @@ async def situational_action(step: Any, sit_res: dict[str, Any], raw_level: dict
         # хозяин через точку решения stuck; more пишет owner_round (F16/F17).
         return _Next.STOP
     if action == "opus_decides":
-        from src.loop import opus_decision as opus_mod
+        from src.loop.decision import opus as opus_mod
 
         res = await opus_mod.resolve(step.ctx, sit_res, raw_level)
         if res == "ship":

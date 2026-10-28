@@ -63,7 +63,7 @@ def test_blocked_secrets_ignores_edited_list(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from src.loop import git as _git
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
 
     run = tmp_path / "run"
     run.mkdir()
@@ -80,7 +80,7 @@ def test_blocked_secrets_ignores_edited_list(tmp_path, monkeypatch):
 def test_accept_refuses_ref_outside_run_namespace(tmp_path):
     from types import SimpleNamespace
 
-    from src.loop.decision_actions import _accept_manual
+    from src.loop.decision.actions import _accept_manual
 
     run = tmp_path / ".tero" / "runs" / "run-a"
     run.mkdir(parents=True)

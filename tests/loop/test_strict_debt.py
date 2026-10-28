@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.loop import jev as jev_mod
-from src.loop import opus_decision as opus_mod
+from src.loop.decision import opus as opus_mod
 from src.loop import situation as situation_mod
 from src.loop import situation_step
 from src.loop import verdict_step

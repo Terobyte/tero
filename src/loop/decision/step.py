@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.loop import snapshot as snapshot_mod
-from src.loop.decision_actions import (
+from src.loop.decision.actions import (
     LIMIT_REASONS, LIMIT_WAITS_S, full_actions, limit_chain, question_actions,
 )
-from src.loop.decision_resolve import _skip_to_debt, resolve_step
+from src.loop.decision.resolve import _skip_to_debt, resolve_step
 from src.loop.halt_text import _halt_text_fallback, _legacy_halt_text  # noqa: F401
 from src.loop.phase_ctx import PhaseContext, PhaseOutcome
 from src.loop.state import RunState, Status, owner_lock

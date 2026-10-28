@@ -83,7 +83,7 @@ def test_opus_decide_ship_unit(tmp_path: Path):
     import asyncio
 
     from src.loop import debt as debt_mod
-    from src.loop import opus_decision as opus_mod
+    from src.loop.decision import opus as opus_mod
 
     async def fake_run_role(role: str, **kw):
         assert role == "decider"
@@ -105,7 +105,7 @@ def test_opus_decide_ship_unit(tmp_path: Path):
 def test_opus_more_note_unit(tmp_path: Path):
     import asyncio
 
-    from src.loop import opus_decision as opus_mod
+    from src.loop.decision import opus as opus_mod
     from src.loop import situation_step as step_mod
 
     async def fake_more(role: str, **kw):
@@ -138,7 +138,7 @@ def test_opus_more_note_unit(tmp_path: Path):
 def test_opus_failure_unit(tmp_path: Path):
     import asyncio
 
-    from src.loop import opus_decision as opus_mod
+    from src.loop.decision import opus as opus_mod
 
     class Boom:
         async def run_role(self, role: str, **kw):
@@ -159,7 +159,7 @@ def test_opus_failure_unit(tmp_path: Path):
 def test_stop_during_opus(tmp_path: Path):
     import asyncio
 
-    from src.loop import opus_decision as opus_mod
+    from src.loop.decision import opus as opus_mod
 
     async def _main():
         started = asyncio.Event()
@@ -453,7 +453,7 @@ async def test_opus_more_then_owner(tmp_path: Path):
     # точка решения stuck + ответ more хозяина -> owner_round в истории
     from unittest.mock import MagicMock as _MM
 
-    from src.loop import decision_actions as _da
+    from src.loop.decision import actions as _da
     run_dir = ledger.run_dir
     step = _MM()
     step.ctx.run_dir = run_dir
@@ -471,7 +471,7 @@ async def test_opus_more_then_owner_second_mole(tmp_path: Path):
     # решения stuck без второго decider; more хозяина пишет owner_round.
     from unittest.mock import MagicMock as _MM
 
-    from src.loop import decision_actions as _da
+    from src.loop.decision import actions as _da
     from src.loop import situation_step as step_mod
     from tests.loop import fakes as scripted
 

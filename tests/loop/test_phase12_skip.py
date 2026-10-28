@@ -41,7 +41,7 @@ def _cfg(**overrides):
 async def _run_with_skip(tmp_path: Path, monkeypatch, cfg, gate_result=None, mole: bool = False, secret: bool = False):
     import json
     import threading
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble

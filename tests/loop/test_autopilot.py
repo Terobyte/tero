@@ -49,7 +49,7 @@ def _cfg(**overrides) -> Config:
 
 
 def _ctx(tmp_path: Path, repo: Path, cfg: Config, relay=None):
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.git import head
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir

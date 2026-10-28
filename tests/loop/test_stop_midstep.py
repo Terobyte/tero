@@ -478,7 +478,7 @@ async def test_stop_removes_stale_index_lock(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_stop_json_answers_decision_point(tmp_path: Path, monkeypatch):
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
 
     monkeypatch.setattr(ds_mod, "DECISION_POLL_S", 0.01)
     repo = _repo(tmp_path)

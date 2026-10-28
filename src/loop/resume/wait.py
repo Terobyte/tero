@@ -7,7 +7,7 @@ from typing import Any
 
 def resume_waiting_outcome(runner: Any) -> Any:
     """Waiting outcome with a live decider; timeout restarts in resolve()."""
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.phase_ctx import PhaseOutcome
 
     saved = getattr(runner, "start_question", None) or {}

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from src.fsio import atomic_write_text
-from src.loop.decision_actions import refuse_budget, refuse_model, spend_budget
+from src.loop.decision.actions import refuse_budget, refuse_model, spend_budget
 from src.loop.human_key import who_of
 from src.loop.state import RunState
 from src.relay.iface import Answer, RelayClient

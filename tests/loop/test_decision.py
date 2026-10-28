@@ -162,7 +162,7 @@ async def test_snapshot_failed_no_question(tmp_path: Path, monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(snapshot_module, "take_snapshot", _boom)
-    from src.loop.decision_step import DecisionStep as _DS
+    from src.loop.decision.step import DecisionStep as _DS
 
     assert _DS.implemented_actions("snapshot_failed") == []
     from src.loop.ledger import Ledger as _Ledger
@@ -214,7 +214,7 @@ async def test_answer_goes_to_prompts_marked(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_answer_continues_next_round_with_block(tmp_path: Path, monkeypatch):
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble
@@ -314,7 +314,7 @@ Preamble.
 async def test_skip_is_debt_and_exit_4(tmp_path: Path, monkeypatch):
     import json
     import threading
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble
@@ -398,7 +398,7 @@ async def test_skip_is_debt_and_exit_4(tmp_path: Path, monkeypatch):
 async def test_stop_rolls_back_exit_2(tmp_path: Path, monkeypatch):
     import json
     import threading
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble
@@ -586,7 +586,7 @@ async def test_phase_shipped_rejects_inline_mention(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_f18_secrets_opens_question_keeps_tree(tmp_path: Path, monkeypatch):
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.phase import run_phase
     from src.loop.plan import load_phases, load_preamble
@@ -615,7 +615,7 @@ async def test_f18_secrets_opens_question_keeps_tree(tmp_path: Path, monkeypatch
 @pytest.mark.asyncio
 async def test_f19_answer_on_last_round_runs_new_round(tmp_path: Path, monkeypatch):
     import threading
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble
@@ -730,7 +730,7 @@ def _decision_ctx(repo: Path, ledger, phases, cfg, agents, checkpoint: str):
 
 @pytest.mark.asyncio
 async def test_skip_snapshot_fail_stops_no_debt(tmp_path: Path):
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.git import head as _head
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
@@ -757,7 +757,7 @@ async def test_skip_snapshot_fail_stops_no_debt(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_skip_rollback_raise_stops_no_debt(tmp_path: Path):
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.git import head as _head
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
@@ -787,7 +787,7 @@ async def test_skip_rollback_raise_stops_no_debt(tmp_path: Path):
 async def test_skip_debt_reason_consistent_state_stream_ledger(tmp_path: Path):
     import threading
 
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.ledger import Ledger, new_run_dir
     from src.loop.plan import load_phases, load_preamble
@@ -894,7 +894,7 @@ async def test_run_phase_accepts_str_plan_path(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_stop_texts_without_decisions_are_legacy(tmp_path: Path):
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.git import head as _head
     from src.loop.plan import load_phases
 
@@ -911,7 +911,7 @@ async def test_stop_texts_without_decisions_are_legacy(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_decision_git_ops_hold_owner_lock(tmp_path: Path):
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.git import head as _head
     from src.loop.plan import load_phases
     from src.loop.state import owner_lock
@@ -980,7 +980,7 @@ def _answerer(run_dir: Path, plan: list[list[dict]]):
 
 
 async def _drive(repo: Path, agents, cfg: Config, plan: list[list[dict]], monkeypatch):
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
     from src.loop.inbox import inbox_dir
     from src.loop.phase import run_phase
     from src.loop.plan import load_phases, load_preamble
@@ -1117,7 +1117,7 @@ async def test_secrets_allow_and_retry(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_wait_backoff_then_question(tmp_path: Path, monkeypatch):
-    import src.loop.decision_actions as da
+    import src.loop.decision.actions as da
 
     monkeypatch.setattr(da, "LIMIT_WAITS_S", (0.01, 0.02, 0.03))
     pauses: list[float] = []
@@ -1141,7 +1141,7 @@ async def test_wait_backoff_then_question(tmp_path: Path, monkeypatch):
 
 
 def test_budget_three_per_phase(tmp_path: Path):
-    from src.loop.decision_actions import question_actions
+    from src.loop.decision.actions import question_actions
     from src.loop.inbox import Inbox
     from src.loop.state import RunState
     from src.relay.iface import FakeRelay

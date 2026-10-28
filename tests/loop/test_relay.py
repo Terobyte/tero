@@ -39,7 +39,7 @@ def _ctx(tmp_path, relay=None):
 
 def test_relay_reaches_all_decision_steps(tmp_path):
     """Во всех трёх местах DecisionStep.relay is ctx.relay."""
-    from src.loop.decision_step import DecisionStep
+    from src.loop.decision.step import DecisionStep
     from src.loop.phase import _PhaseRunner
     from src.loop import pending as pending_mod
     from src.loop.resume import wait as resume_wait_mod
@@ -58,7 +58,7 @@ def test_relay_reaches_all_decision_steps(tmp_path):
     assert resumed.decider.relay is relay
 
     import subprocess
-    import src.loop.decision_step as ds_mod
+    import src.loop.decision.step as ds_mod
 
     class _Step:
         def __init__(self, ctx):

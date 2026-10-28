@@ -214,7 +214,7 @@ def test_resume_preserves_git_index_lock(tmp_path, monkeypatch, worktree):
 
 
 def test_judge_pending_budget_matches_advertised_actions():
-    from src.loop.decision_actions import question_actions, full_actions
+    from src.loop.decision.actions import question_actions, full_actions
     from src.loop.inbox import Inbox
 
     state = {"budget": {"1": 3}}

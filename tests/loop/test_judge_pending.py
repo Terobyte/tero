@@ -232,7 +232,7 @@ async def test_judge_pending_waits_holding_lock(tmp_path: Path, monkeypatch):
     import threading as _t
 
     from src.loop import autopilot as _auto
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -312,7 +312,7 @@ async def test_judge_pending_waits_holding_lock(tmp_path: Path, monkeypatch):
 async def test_judge_pending_retry_calls_judge_only(tmp_path: Path, monkeypatch):
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -381,7 +381,7 @@ async def test_judge_pending_retry_calls_judge_only(tmp_path: Path, monkeypatch)
 async def test_accept_reject_human_only(tmp_path: Path, monkeypatch):
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.git import phase_shipped
     from src.loop.inbox import Inbox
@@ -458,7 +458,7 @@ async def test_judge_pending_records_agree_and_holds_repo_lock(tmp_path: Path, m
     import threading as _t
 
     from src.loop import autopilot as _auto
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -557,7 +557,7 @@ async def test_autopilot_judge_pending_retry_then_skip_debt(tmp_path: Path, monk
     import threading as _t
 
     from src.loop import autopilot as _auto
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -623,7 +623,7 @@ async def test_judge_pending_retry_reviews_recorded_ref(tmp_path: Path, monkeypa
     """F6: грязь в дереве во время ожидания — retry судит записанный ref."""
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -694,7 +694,7 @@ async def test_accept_ships_recorded_ref_and_marks_plan(tmp_path: Path, monkeypa
     """F3: accept сдаёт код из snapshot_ref; план отмечен сданным."""
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.git import phase_shipped
     from src.loop.ledger import Ledger as _Ledger
@@ -764,7 +764,7 @@ async def test_judge_retry_restore_failure_fails_closed(tmp_path, monkeypatch):
     """F7: записанный ref бит — retry не снимает свежий снимок и не зовёт игрока/судью заново."""
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir
@@ -832,7 +832,7 @@ async def test_accept_without_ref_stops(tmp_path, monkeypatch):
     """F8: snapshot_ref пуст — accept останавливает, а не шипает живое дерево."""
     import threading as _t
 
-    from src.loop import decision_step as _ds
+    from src.loop.decision import step as _ds
     from src.loop.gates import detect as _detect
     from src.loop.ledger import Ledger as _Ledger
     from src.loop.ledger import new_run_dir as _new_run_dir

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.fsio import atomic_write_json, read_json_dict
-from src.loop.decision_actions import BUDGET_PER_PHASE, budget_used
+from src.loop.decision.actions import BUDGET_PER_PHASE, budget_used
 from src.loop.inbox import Inbox
 from src.loop.state import RunState, Status, owner_lock
 from src.loop.transition import phase_transition

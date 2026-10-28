@@ -29,7 +29,7 @@ from src.loop.state import RunState
 from src.loop.stream import Stream
 from src.loop.guards import suite as suite_guard
 from src.loop.compact_step import CompactStep
-from src.loop.decision_step import DecisionStep
+from src.loop.decision.step import DecisionStep
 from src.loop.phase_ctx import (
     K_MAX,
     OpenFinding,
