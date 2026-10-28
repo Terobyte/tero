@@ -440,7 +440,7 @@ async def test_resume_user_needs_answer(tmp_path: Path):
     secret_answer = "используй sqlite api_key=supersecretvalue123 " + "x" * 5000 + raw_tail
     out2 = await resume(repo, run_dir, agents=FakeAgents(repo, [judge_captures, player_captures, judge_ship]), answer=secret_answer)
     assert out2.exit_code == 0, out2.reason
-    from src.loop import resume_step as rs_mod
+    from src.loop.resume import step as rs_mod
     cleaned = rs_mod.clean_answer(secret_answer)
     assert len(cleaned) == 2000
     assert raw_tail not in cleaned
@@ -616,7 +616,7 @@ async def test_resume_branch_head_checked_not_checkout(tmp_path: Path):
 
 def test_parse_plan_bytes_no_headings_matches_load_phases(tmp_path: Path):
     from src.loop import plan as pm
-    from src.loop import resume_step as rs_mod
+    from src.loop.resume import step as rs_mod
 
     raw = b"# Demo\n\nPreamble.\n\n- [ ] greet() returns hello\n- [x] done item\n"
     preamble, phases = rs_mod._parse_plan_bytes(raw)

@@ -34,7 +34,7 @@ PLAN = "# Demo\n\n## One\n\n- [ ] a\n\n## Two\n\n- [ ] b\n"
 def test_crash_between_tick_and_commit(tmp_path: Path):
     """Checkboxes marked, no trailer commit -> rollback, phase anew, boxes [ ]."""
     from src.loop import git as g
-    from src.loop import resume_step as rs
+    from src.loop.resume import step as rs
 
     repo = _init_repo(tmp_path / "r1", PLAN)
     base = _git(repo, "rev-parse", "HEAD").strip()
@@ -52,7 +52,7 @@ def test_crash_between_tick_and_commit(tmp_path: Path):
 
 def test_crash_after_commit_before_state(tmp_path: Path):
     """Trailer commit exists, state.json on old phase -> phase counted."""
-    from src.loop import resume_step as rs
+    from src.loop.resume import step as rs
 
     repo = _init_repo(tmp_path / "r2", PLAN)
     base = _git(repo, "rev-parse", "HEAD").strip()
@@ -68,7 +68,7 @@ def test_crash_after_commit_before_state(tmp_path: Path):
 
 def test_crash_in_decision_point_restores_question(tmp_path: Path):
     """Tree matches tree_sha -> waiting_human, same id and text."""
-    from src.loop import resume_step as rs
+    from src.loop.resume import step as rs
     from src.loop import snapshot as sm
 
     repo = _init_repo(tmp_path / "r3", PLAN)
@@ -87,7 +87,7 @@ def test_crash_in_decision_point_restores_question(tmp_path: Path):
 
 def test_resume_kills_hung_owner(tmp_path: Path, monkeypatch):
     """Stub owner alive, progress stale past threshold -> killed; fresh -> alive."""
-    from src.loop import resume_step as rs
+    from src.loop.resume import step as rs
     from src.loop import wait as w
 
     proc = subprocess.Popen(
@@ -117,8 +117,8 @@ def test_resume_kills_hung_owner(tmp_path: Path, monkeypatch):
 
 def test_third_crash_resume_refused():
     """Third resume in a row -> stopped crash_loop; --force passes."""
-    from src.loop import resume_rules as rr
-    from src.loop import resume_step as rs
+    from src.loop.resume import rules as rr
+    from src.loop.resume import step as rs
 
     assert hasattr(rs, "dispatch"), "dispatch entry missing"
     state = {"status": "running", "phase_index": 0, "crash_resumes": 2}
@@ -176,7 +176,7 @@ def test_crash_checkout_failure_keeps_current_branch(tmp_path: Path, monkeypatch
     import pytest
 
     from src.loop import git as g
-    from src.loop import resume_recover as rc
+    from src.loop.resume import recover as rc
 
     repo = _init_repo(tmp_path / "r4", PLAN)
     cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
@@ -196,7 +196,7 @@ def test_crash_checkout_failure_keeps_current_branch(tmp_path: Path, monkeypatch
 
 def test_crash_counter_resets_on_phase_change():
     """Crashes from the previous phase do not count toward this one."""
-    from src.loop import resume_step as rs
+    from src.loop.resume import step as rs
 
     state = {"status": "running", "phase_index": 1,
              "crash_resumes": 2, "crash_phase_index": 0}
@@ -205,8 +205,8 @@ def test_crash_counter_resets_on_phase_change():
 
 def test_waiting_resume_keeps_question_and_round(tmp_path: Path):
     """Waiting restore: same round/qid, owner alive to apply the answer."""
-    from src.loop.resume_recover import _wait_runner
-    from src.loop.resume_wait import resume_waiting_outcome
+    from src.loop.resume.recover import _wait_runner
+    from src.loop.resume.wait import resume_waiting_outcome
 
     repo = _init_repo(tmp_path / "r5", PLAN)
     run_dir = repo / ".tero" / "run-w"
@@ -250,7 +250,7 @@ def test_restored_question_skip_on_last_phase_ends_run(tmp_path: Path):
 
     from src.config import Config
     from src.loop.plan import load_phases
-    from src.loop.resume_recover import _after_wait_decision
+    from src.loop.resume.recover import _after_wait_decision
 
     repo = _init_repo(tmp_path / "r6", PLAN.replace("- [ ] a", "- [x] a"))
     run_dir = repo / ".tero" / "runs" / "run-s"

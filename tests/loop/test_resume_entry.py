@@ -32,7 +32,7 @@ class _Judge:
 
 
 def _step(stop_hit):
-    from src.loop.resume_entry import ResumeStep
+    from src.loop.resume.entry import ResumeStep
 
     ctx, events = _ctx()
     judge = _Judge()

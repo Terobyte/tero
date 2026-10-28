@@ -1,4 +1,4 @@
-"""ResumeStep: judge-first entry on the ref tree (moved from resume_step)."""
+"""ResumeStep: judge-first entry on the ref tree (moved from resume/step)."""
 
 from __future__ import annotations
 

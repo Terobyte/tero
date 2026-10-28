@@ -344,7 +344,7 @@ def _public_config(cfg: Config) -> dict:
     }
 
 
-from src.loop.resume_rules import (  # noqa: F401
+from src.loop.resume.rules import (  # noqa: F401
     _STOPPED_RESUME_REASONS,
     _cfg_from_state_fields,
     _resume_config,

@@ -14,7 +14,8 @@ PLAN = "# Demo\n\n## One\n\n- [ ] done\n"
 
 @pytest.mark.parametrize("shipped", [False, True])
 def test_failed_crash_backup_preserves_dirty_tree(tmp_path, monkeypatch, shipped):
-    from src.loop import resume_crash, snapshot
+    from src.loop import snapshot
+    from src.loop.resume import crash as resume_crash
 
     repo = fakes.init_repo(tmp_path, PLAN)
     base = fakes.git(repo, "rev-parse", "HEAD").strip()
@@ -187,8 +188,8 @@ def test_judge_rejects_duplicate_previous(states):
 
 @pytest.mark.parametrize("worktree", [False, True])
 def test_resume_preserves_git_index_lock(tmp_path, monkeypatch, worktree):
-    from src.loop import resume_lock
-    from src.loop.resume_lock import check_index_lock
+    from src.loop.resume import lock as resume_lock
+    from src.loop.resume.lock import check_index_lock
     from src.loop.git import GitError
 
     monkeypatch.setattr(resume_lock, "_git_running", lambda: True)
@@ -267,7 +268,7 @@ async def test_resume_setup_failure_is_retryable_and_releases_run_lock(tmp_path,
             raise OSError("disk full")
         monkeypatch.setattr(snapshot, "take_snapshot", fail)
     else:
-        from src.loop import resume_lock
+        from src.loop.resume import lock as resume_lock
 
         monkeypatch.setattr(resume_lock, "_git_running", lambda: True)
         (repo / ".git" / "index.lock").write_text("other git process")
@@ -310,7 +311,7 @@ def test_plan_restore_replaces_symlink_loop(tmp_path):
 
 def test_stale_index_lock_without_git_process_is_removed(tmp_path, monkeypatch):
     """tero crashed mid-commit: no git alive, so the lock is ours and resume goes on."""
-    from src.loop import resume_lock
+    from src.loop.resume import lock as resume_lock
 
     repo = fakes.init_repo(tmp_path, PLAN)
     lock = repo / ".git" / "index.lock"

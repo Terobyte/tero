@@ -42,7 +42,7 @@ def test_relay_reaches_all_decision_steps(tmp_path):
     from src.loop.decision_step import DecisionStep
     from src.loop.phase import _PhaseRunner
     from src.loop import pending as pending_mod
-    from src.loop import resume_wait as resume_wait_mod
+    from src.loop.resume import wait as resume_wait_mod
     from src.relay.iface import FakeRelay
     relay = FakeRelay()
     ctx = _ctx(tmp_path, relay=relay)
@@ -376,7 +376,7 @@ def _ctx_with_state(tmp_path, st):
 def test_answer_restored_after_crash_rerun():
     """Краш после применённого ответа: rerun получает start_answer той же фазы."""
     import inspect
-    from src.loop import resume_recover
+    from src.loop.resume import recover as resume_recover
     src = inspect.getsource(resume_recover._continue_after_crash)
     assert 'state.get("answer_phase") == cur' in src
     assert 'first["start_answer"]' in src

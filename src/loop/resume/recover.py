@@ -8,8 +8,8 @@ from typing import Any
 
 def _checkout_run_head(repo_path: Path, slug: str) -> None:
     from src.loop import git as g
-    from src.loop.resume_lock import check_index_lock
-    from src.loop.resume_step import run_branch_head
+    from src.loop.resume.lock import check_index_lock
+    from src.loop.resume.step import run_branch_head
 
     check_index_lock(repo_path)
     name = slug if str(slug).startswith("tero/") else f"tero/{slug}"
@@ -88,7 +88,7 @@ async def _wait_question_after_crash(repo_path: Path, run_path: Path, cfg: Any,
                    phase.index)
         runner = _wait_runner(phase, repo_path, plan_path, preamble, cfg,
                               agents, session, ledger, base, round_no, state)
-        from src.loop.resume_wait import resume_waiting_outcome
+        from src.loop.resume.wait import resume_waiting_outcome
         from src.loop.session import _resolve as _decide
 
         outcome = resume_waiting_outcome(runner)
@@ -193,8 +193,8 @@ def write_status(write: Any, status: str, reason: str, text: str,
 def _wait_runner(phase: Any, repo_path: Path, plan_path: Path,
                  preamble: str, cfg: Any, agents: Any, session: Any,
                  ledger: Any, base: str, round_no: int, state: dict):
-    """Делегирует построение _PhaseRunner в resume_step (там уже лежит phase)."""
-    from src.loop.resume_step import make_wait_runner
+    """Делегирует построение _PhaseRunner в resume/step (там уже лежит phase)."""
+    from src.loop.resume.step import make_wait_runner
 
     return make_wait_runner(phase, repo_path, plan_path, preamble, cfg,
                             agents, session, ledger, base, round_no, state)
@@ -207,8 +207,8 @@ async def crash_resume(repo_path: Path, run_path: Path, cfg: Any, state: dict,
                        round_no: int, status: str, phase_runner: Any,
                        judge_resume: Any):
     """Full crash recovery: refuse/shipped/waiting/rerun, else judge path."""
-    from src.loop.resume_crash import dispatch
-    from src.loop.resume_lock import check_index_lock
+    from src.loop.resume.crash import dispatch
+    from src.loop.resume.lock import check_index_lock
     from src.loop.state import RunState as _RS
     from src.loop.state import Status as _St
 
@@ -337,7 +337,7 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
             except Exception:
                 pass
             start = cur
-            from src.loop.resume_step import run_branch_head
+            from src.loop.resume.step import run_branch_head
 
             checkpoint = run_branch_head(repo_path, slug) or base
             first = {"start_checkpoint": checkpoint, "start_round": round_no}

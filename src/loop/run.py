@@ -33,7 +33,7 @@ from src.loop.session import (
     _update,
     run_phases,
 )
-from src.loop.resume_step import _restore_resume_tree, _stopped_phases
+from src.loop.resume.step import _restore_resume_tree, _stopped_phases
 from src.loop.state import RunState, Status
 from src.loop.transition import resume_transition
 
@@ -190,8 +190,8 @@ async def resume(
     phase_index = state.get("phase_index", 0) or 0
     round_no = state.get("round", 1) or 1
 
-    from src.loop.resume_lock import acquire_for_resume as _acq
-    from src.loop.resume_step import pre_lock_refusal as _e
+    from src.loop.resume.lock import acquire_for_resume as _acq
+    from src.loop.resume.step import pre_lock_refusal as _e
 
     if (_o := _e(repo_path, run_path, cfg, state)) is not None:
         return _o
@@ -251,7 +251,7 @@ async def resume(
                 saved=state, slug=slug, answer=answer, phase_runner=run_phase,
                 restore_stopped=_restore_stopped,
             )
-        from src.loop.resume_recover import crash_resume as _cr
+        from src.loop.resume.recover import crash_resume as _cr
 
         return await _cr(
             repo_path, run_path, cfg, state, force,
@@ -285,7 +285,7 @@ async def _resume_phases(
     # любая ошибка checkout/восстановления оставляет judge_pending
     # и resume можно повторить.
     try:
-        from src.loop.resume_step import _restore_resume_tree as _restore
+        from src.loop.resume.step import _restore_resume_tree as _restore
 
         _restore(repo_path, run_path, slug, base, ref)
         plan_path = repo_path / cfg.plan_file

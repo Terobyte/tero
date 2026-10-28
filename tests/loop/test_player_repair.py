@@ -10,7 +10,7 @@ from src.loop.schemas import ValidateCtx, validate
 
 NARRATION = "Test plan is set — drafting the red tests now."
 GOOD = (
-    '{"status": "done", "changes": [{"file": "src/loop/resume_step.py", '
+    '{"status": "done", "changes": [{"file": "src/loop/resume/step.py", '
     '"what": "resume", "why": "контракт"}], "start_here": [], "blocked_reason": ""}'
 )
 EMPTY_DONE = '{"status":"done","changes":[],"start_here":[],"blocked_reason":""}'
@@ -56,7 +56,7 @@ async def test_empty_done_is_repaired_not_accepted(tmp_path):
     provider = _Scripted([EMPTY_DONE, GOOD])
     data = await _player(tmp_path, provider)
     assert len(provider.prompts) == 2
-    assert data["changes"][0]["file"] == "src/loop/resume_step.py"
+    assert data["changes"][0]["file"] == "src/loop/resume/step.py"
 
 
 def test_done_without_changes_is_invalid():

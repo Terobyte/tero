@@ -19,7 +19,7 @@ def remember_plan(runner: Any) -> bytes | None:
     if not resolved.is_relative_to(repo_root):
         return None
     if runner.start_with_judge and runner.checkpoint:
-        from src.loop.resume_step import _git_show_bytes
+        from src.loop.resume.step import _git_show_bytes
 
         return _git_show_bytes(runner.repo, runner.checkpoint, resolved)
     try:

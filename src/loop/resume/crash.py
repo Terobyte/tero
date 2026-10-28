@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from src.loop.resume_lock import check_index_lock  # noqa: F401
+from src.loop.resume.lock import check_index_lock  # noqa: F401
 
 
 def crash_tree_of(repo: str | Path, base: str) -> str:

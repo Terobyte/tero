@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
-from src.loop.resume_kill import kill_hung_owner  # noqa: F401  (re-export)
+from src.loop.resume.kill import kill_hung_owner  # noqa: F401  (re-export)
 
 
-from src.loop.resume_crash import dispatch  # noqa: F401  (re-export)
+from src.loop.resume.crash import dispatch  # noqa: F401  (re-export)
 
 
 @dataclass
@@ -340,16 +340,16 @@ def base_suite_state(repo, base):
         return hashes, guarded, targets
 
 
-from src.loop.resume_crash import (  # noqa: F401  (re-export)
+from src.loop.resume.crash import (  # noqa: F401  (re-export)
     crash_decision,
     crash_phase_shipped,
     crash_rollback_to_head,
     crash_tree_of,
     dispatch,
 )
-from src.loop.resume_lock import (  # noqa: F401  (re-export)
+from src.loop.resume.lock import (  # noqa: F401  (re-export)
     check_index_lock,
     acquire_for_crash,
 )
-from src.loop.resume_recover import crash_resume  # noqa: F401  (re-export)
-from src.loop.resume_entry import ResumeStep  # noqa: F401  (re-export)
+from src.loop.resume.recover import crash_resume  # noqa: F401  (re-export)
+from src.loop.resume.entry import ResumeStep  # noqa: F401  (re-export)

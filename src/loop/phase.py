@@ -41,7 +41,7 @@ from src.loop.phase_ctx import (
     _Next,
     _tail,
 )
-from src.loop.resume_step import ResumeFrom, baseline_suite
+from src.loop.resume.step import ResumeFrom, baseline_suite
 from src.loop.tester_step import TesterStep
 from src.loop.findings import in_continuation
 from src.loop.judge_step import JudgeStep
@@ -214,7 +214,7 @@ class _PhaseRunner:
         from datetime import datetime, timezone
 
         if self.start_with_judge:
-            from src.loop.resume_step import ResumeStep
+            from src.loop.resume.step import ResumeStep
 
             announcer = ResumeStep(
                 self.ctx, self.judge, self._gate, self._protect_tests, self._after_judge, self._stop_checks()[0],
@@ -423,18 +423,18 @@ class _PhaseRunner:
         return True
 
     def round_limit(self) -> int:
-        from src.loop.resume_step import resume_limit as _rl
+        from src.loop.resume.step import resume_limit as _rl
 
         limit = _rl(self.resume_from, self.cfg.max_rounds)
         return max(limit, self.start_round + 1) if self.start_answer else limit
 
     def resume_from_entry(self) -> Any:
-        from src.loop.resume_step import resume_entry as _re
+        from src.loop.resume.step import resume_entry as _re
 
         return _re(self.resume_from)
 
     def _player_prompt(self) -> str:
-        from src.loop.resume_step import _continuation_block
+        from src.loop.resume.step import _continuation_block
 
         continuation = _continuation_block(
             self.repo, self.state.resume_base, self.state.resume_ref

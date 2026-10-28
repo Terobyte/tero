@@ -82,7 +82,7 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
         pulse = None
     if not is_hung(state, pulse if isinstance(pulse, dict) else None, time.time()):
         return None, _refuse_outcome(run_path, "прогон жив")
-    from src.loop.resume_kill import kill_hung_owner
+    from src.loop.resume.kill import kill_hung_owner
 
     try:
         kill_hung_owner(pid)

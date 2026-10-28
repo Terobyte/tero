@@ -15,7 +15,7 @@ from src.config import KNOWN_PROVIDERS, split_role_spec
 from src.loop.decision import actions_for
 from src.loop.human_key import sign_list, trusted_list
 from src.loop.phase_ctx import PhaseOutcome
-from src.loop.resume_step import ResumeFrom
+from src.loop.resume.step import ResumeFrom
 from src.loop.state import RunState, Status
 
 MORE_ROUNDS = 5
