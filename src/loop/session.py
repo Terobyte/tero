@@ -194,7 +194,7 @@ async def run_phases(
                     # F19: счётчик продолжается (nxt), grace-лимит — в round_limit.
                     pending_extra["start_round"] = nxt
                     continue
-                elif resolved.status == "ship" and outcome.reason == "judge_pending":
+                elif resolved.status == "ship" and outcome.reason in ("judge_pending", "fuse"):
                     shipped += 1
                     index += 1
                     continue

@@ -266,6 +266,14 @@ class PhaseContext:
             print(f"  {role}: {error}", flush=True)
 
     def player_identity(self) -> tuple[str, str, str]:
+        # player_schedule: игрок раунда — по расписанию, без эскалаций.
+        schedule = str(getattr(self.cfg, "player_schedule", "") or "")
+        if schedule:
+            from src.schedule import schedule_player as _sched
+
+            got = _sched(schedule, self.st.round)
+            if got is not None:
+                return got[1], got[0], ""
         # situational: игрок — по diagnose прошлого раунда (situation_step.next_player).
         try:
             mode = str(getattr(self.cfg, "escalation", "round") or "round")

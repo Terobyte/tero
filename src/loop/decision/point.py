@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 ACTIONS_BY_REASON: dict[str, list[str]] = {
     "user": ["answer", "skip", "stop"],
     "stuck": ["more", "model", "skip", "stop"],
-    "fuse": ["more", "model", "skip", "stop"],
+    "fuse": ["more", "model", "skip", "stop", "ship"],
     "provider_unavailable": ["retry", "wait", "model", "stop"],
     "provider_auth": ["retry", "wait", "model", "stop"],
     "provider_quota": ["retry", "wait", "model", "stop"],

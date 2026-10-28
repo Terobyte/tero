@@ -88,6 +88,34 @@ def _accept_manual(step: Any, reason: str, qid: str) -> PhaseOutcome:
                         escalated=ctx.st.escalated, commit_sha=sha)
 
 
+def host_ship(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
+    """ship на fuse: хозяин доделал фазу в дереве, коммит дерева как есть.
+
+    Дерево при открытом вопросе не откатывается (halt без отката), поэтому
+    в коммит идёт работа игроков плюс правки хозяина. Тесты хозяин гоняет сам.
+    """
+    from src.loop.git import commit as _commit, stage_and_diff as _stage
+    from src.loop.plan import mark_phase_done as _done
+    from src.loop.transition import phase_transition as _pt
+
+    ctx = step.ctx
+    _done(ctx.plan_path, ctx.phase)
+    _stage(ctx.repo, ctx.checkpoint)
+    msg = ctx.phase.title.lower()[:60]
+    trl = f"Tero-Phase: {ctx.run_dir.name}/{ctx.phase.index + 1}"
+    sha = _commit(ctx.repo, msg, trailer=trl, allow_empty=True)
+    why = str(getattr(ans, "why", "") or "")
+    ctx.ledger.event("ship", commit=sha, rounds=ctx.st.round, by="host", why=why)
+    ctx.emit("ship", commit=sha, round=ctx.st.round, role="judge")
+    ctx.update_state(commit=sha, phase_done=True)
+    _pt(ctx, status=Status.RUNNING.value, reason=reason,
+        text=f"фаза {ctx.phase.index + 1} доделана хозяином и сдана",
+        role="judge", event="ship", kind="ship", doing="фаза сдана",
+        question=None, question_id=qid)
+    return PhaseOutcome(status="ship", reason="ship", rounds=ctx.st.round,
+                        escalated=ctx.st.escalated, commit_sha=sha)
+
+
 def _reject(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
     """reject от человека: новый раунд исполнителя в пределах лимита."""
     rounds = step.ctx.st.round
@@ -110,7 +138,7 @@ def question_actions(reason: str, state: dict, phase_n: int) -> list[str]:
     if reason == "judge_pending":
         full = ["retry", "skip", "stop"]
     if budget_used(state, phase_n) >= BUDGET_PER_PHASE:
-        return [a for a in full if a in ("skip", "stop")]
+        return [a for a in full if a in ("skip", "stop", "ship")]
     return full
 
 
@@ -286,6 +314,13 @@ def _wait(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome:
 
 
 APPLY = {"more": _more, "model": _model, "retry": _retry, "allow": _allow, "wait": _wait}
+
+
+def _ship(step: Any, reason: str, qid: str, ans: Any) -> PhaseOutcome | None:
+    return host_ship(step, reason, qid, ans) if reason == "fuse" else None
+
+
+APPLY["ship"] = _ship
 
 
 def apply_action(step: Any, action: str, reason: str, qid: str, ans: Any) -> PhaseOutcome | None:

@@ -122,6 +122,7 @@ class Config:
     escalate_at_round: int = 0
     escalation: str = "round"  # round | situational
     sonnet_max: int = 2  # лимит Sonnet при situational
+    player_schedule: str = ""  # см. src/schedule.py
     test_command: str = ""
     test_command_scoped: str = ""
     gate_scope: str = ""
@@ -399,6 +400,10 @@ def apply_cli_args(config: Config, args: Any) -> Config:
     if max_rounds is not None:
         cfg = dataclasses.replace(cfg, max_rounds=_coerce_value("max_rounds", max_rounds, 0))
 
+    if getattr(args, "player_schedule", None) or cfg.player_schedule:
+        from src.schedule import apply_schedule
+
+        cfg = apply_schedule(cfg, getattr(args, "player_schedule", None))
     if getattr(args, "escalate_at", None) is not None:
         cfg = dataclasses.replace(cfg, escalate_at_round=int(args.escalate_at))
     if getattr(args, "no_tester", False):

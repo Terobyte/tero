@@ -11,7 +11,7 @@ FILE_CEILINGS = {
     "src/loop/run.py": 421,
     "src/menu.py": 548,
     "src/providers/codex.py": 345,
-    "src/config.py": 430,  # +preset, max_debt (2026-10-27)
+    "src/config.py": 435,  # +preset, max_debt (2026-10-27), +player_schedule (2026-10-28)
     "src/loop/agents.py": 409,
     "src/providers/subprocess_runner.py": 404,
 }

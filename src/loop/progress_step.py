@@ -14,6 +14,8 @@ def is_situational(cfg: Any) -> bool:
 
 def check_no_progress(state: Any, cfg: Any, ledger: Any, resume_from: Any = None) -> bool:
     """Старый механизм stuck: escalate_once → stop. При situational без ветки escalate_at_round."""
+    if str(getattr(cfg, "player_schedule", "") or ""):
+        return False  # расписание: только предохранитель по лимиту раундов
     situational = is_situational(cfg)
     if not situational and cfg.escalate_at_round:
         return state.round >= cfg.escalate_at_round

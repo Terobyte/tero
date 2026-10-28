@@ -26,6 +26,8 @@ def add_go_parsers(sub: Any) -> None:
     go_parser.add_argument("--test-command-scoped", default=None)
     go_parser.add_argument("--max-rounds", type=int, default=None)
     go_parser.add_argument("--escalate-at", type=int, default=None)
+    go_parser.add_argument("--player-schedule", dest="player_schedule", default=None,
+                           help="игроки по раундам: opencode:muse×3,claude:sonnet×2,claude:opus×2")
     go_parser.add_argument("--preset", default=None, help="пресет конфига (golden, none)")
 
 
