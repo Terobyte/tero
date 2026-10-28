@@ -47,8 +47,9 @@ def run_log_path(run_dir: str | Path) -> Path:
     return Path(run_dir).parent.parent / "hud.log"
 
 
-COLLAPSED_H = 76
-EXPANDED_H = 340
+# no collapsed mode: the window is as tall as it is dragged, down to top line + ticker
+MIN_H = 72
+DEFAULT_H = 340
 WINDOW_W = 340
 MIN_W = 280
 TRAY_EVERY_S = 1.5
@@ -117,9 +118,8 @@ class Bridge:
     def __init__(self, run_dir: str | Path) -> None:
         self._open(run_dir)
         cfg = _load_cfg()
-        self._expanded = bool(cfg.get("expanded", False))
         self._w = _int_or(cfg.get("w"), WINDOW_W)
-        self._h = _int_or(cfg.get("h"), EXPANDED_H)
+        self._h = _int_or(cfg.get("h"), DEFAULT_H)
         self._visible = True
         # js poll and the tray thread both read the run files
         self._lock = threading.Lock()
@@ -185,7 +185,6 @@ class Bridge:
         now = time.time()
         data = build_view(self._state, self._events, now, lambda s: not is_dead(s))
         data["age_color"] = age_color(data.get("last_event_age_s"))
-        data["expanded"] = self._expanded
         try:
             others = len(self._others())
         except Exception:
@@ -197,26 +196,11 @@ class Bridge:
             data["stop_text"] = ""
         return data
 
-    def toggle(self) -> bool:
-        self._expanded = not self._expanded
-        _save_cfg({"expanded": self._expanded})
-        try:
-            window = getattr(self, "_window", None)
-            if window is not None:
-                window.resize(self._w, self._h if self._expanded else COLLAPSED_H)
-        except Exception:
-            pass
-        return self._expanded
-
     def save_size(self, w: int, h: int) -> bool:
-        """Width always; height only when expanded (collapsed height is fixed)."""
         try:
             self._w = max(MIN_W, int(w))
-            patch: dict = {"w": self._w}
-            if self._expanded:
-                self._h = max(COLLAPSED_H + 60, int(h))
-                patch["h"] = self._h
-            _save_cfg(patch)
+            self._h = max(MIN_H, int(h))
+            _save_cfg({"w": self._w, "h": self._h})
         except Exception:
             return False
         return True
@@ -289,8 +273,6 @@ def _open_window(run_dir: str | Path) -> None:
     html = _read_html()
     bridge = Bridge(run_dir)
     cfg = _load_cfg()
-    expanded = bool(cfg.get("expanded", False))
-    bridge._expanded = expanded
     kwargs: dict = {
         "html": html,
         "js_api": bridge,
@@ -301,9 +283,9 @@ def _open_window(run_dir: str | Path) -> None:
         # no vibrancy: its native slab is square and stretches with the
         # window while the html card does not; the card paints everything
         "resizable": True,
-        "min_size": (MIN_W, COLLAPSED_H - 20),
+        "min_size": (MIN_W, MIN_H),
         "width": bridge._w,
-        "height": bridge._h if expanded else COLLAPSED_H,
+        "height": bridge._h,
     }
     if _on_screen(cfg.get("x"), cfg.get("y"), getattr(webview, "screens", None)):
         kwargs["x"] = cfg["x"]

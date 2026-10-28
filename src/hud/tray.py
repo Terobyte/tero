@@ -1,4 +1,4 @@
-"""Menu bar item for the HUD window: status dot, phase, show/hide.
+"""Menu bar item for the HUD window: a status dot that breathes like the HUD light, show/hide.
 
 The HUD runs as an accessory app (no Dock icon), so once the window is
 hidden the menu bar item is the only way back. AppKit is imported inside
@@ -9,6 +9,8 @@ through `AppHelper.callAfter`.
 
 from __future__ import annotations
 
+import math
+import time
 from typing import Callable
 
 DOING_MAX = 60
@@ -22,17 +24,26 @@ DOT_RGB = {
 }
 
 
-def title(data: dict) -> str:
-    """Text after the dot in the menu bar: the phase, nothing else."""
-    return str(data.get("phase_label") or "tero")
+# same breathing as `#light.green` in view.html: 2.4 s, opacity down to 0.45
+BREATHE_S = 2.4
+BREATHE_MIN = 0.45
+TICK_S = 0.1
+
+
+def dot_alpha(light: str, t: float) -> float:
+    """Opacity of the menu bar dot at time t: green breathes, the rest stays lit."""
+    if light != "green":
+        return 1.0
+    phase = (t % BREATHE_S) / BREATHE_S
+    return BREATHE_MIN + (1.0 - BREATHE_MIN) * (0.5 + 0.5 * math.cos(2 * math.pi * phase))
 
 
 def menu_lines(data: dict) -> list[str]:
-    """Two read-only lines on top of the menu: health and what is going on."""
+    """Two read-only lines on top of the menu: health with the phase name, and what is going on."""
     head = str(data.get("light_text") or "")
-    label = data.get("phase_label")
-    if label:
-        head = f"{head} · фаза {label}" if head else f"фаза {label}"
+    phase = str(data.get("phase_title") or "")
+    if phase:
+        head = f"{head} · {phase}" if head else phase
     doing = " ".join(str(data.get("doing") or "").split())
     if len(doing) > DOING_MAX:
         doing = doing[: DOING_MAX - 1] + "…"
@@ -71,6 +82,9 @@ def _target_cls():
             def quit_(self, sender):
                 self.on_quit()
 
+            def tick_(self, timer):
+                self.on_tick()
+
         _TARGET_CLS = TeroTrayTarget
     return _TARGET_CLS
 
@@ -84,6 +98,8 @@ class Tray:
         self._item = None
         self._lines: list = []
         self._toggle_item = None
+        self._light = "grey"
+        self._timer = None
 
     @staticmethod
     def call(fn, *args) -> None:
@@ -97,6 +113,7 @@ class Tray:
         target = _target_cls().alloc().init()
         target.on_toggle = self._on_toggle
         target.on_quit = self._on_quit
+        target.on_tick = self._paint
         self._target = target
         _prefer_position()
         bar = AppKit.NSStatusBar.systemStatusBar()
@@ -113,7 +130,12 @@ class Tray:
         self._toggle_item = self._action(menu, "Спрятать HUD", "toggle:")
         self._action(menu, "Закрыть HUD", "quit:")
         self._item.setMenu_(menu)
-        self.update({"light": "grey", "phase_label": ""}, True)
+        self.update({"light": "grey"}, True)
+        # common modes: the dot keeps breathing while the menu is open
+        self._timer = AppKit.NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
+            TICK_S, target, "tick:", None, True
+        )
+        AppKit.NSRunLoop.mainRunLoop().addTimer_forMode_(self._timer, AppKit.NSRunLoopCommonModes)
 
     def _action(self, menu, text: str, selector: str):
         import AppKit
@@ -126,14 +148,22 @@ class Tray:
     def update(self, data: dict, visible: bool) -> None:
         if self._item is None:
             return
-        import AppKit
-
-        r, g, b = DOT_RGB.get(str(data.get("light")), DOT_RGB["grey"])
-        dot_color = AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, 1.0)
-        text = AppKit.NSMutableAttributedString.alloc().initWithString_("● " + title(data))
-        text.addAttribute_value_range_(AppKit.NSForegroundColorAttributeName, dot_color, (0, 1))
-        self._item.button().setAttributedTitle_(text)
+        self._light = str(data.get("light") or "grey")
+        self._paint()
         for line, value in zip(self._lines, menu_lines(data)):
             line.setTitle_(value)
             line.setHidden_(not value)
         self._toggle_item.setTitle_("Спрятать HUD" if visible else "Показать HUD")
+
+    def _paint(self) -> None:
+        """Just the dot, no text: color from health, opacity from `dot_alpha`."""
+        if self._item is None:
+            return
+        import AppKit
+
+        r, g, b = DOT_RGB.get(self._light, DOT_RGB["grey"])
+        alpha = dot_alpha(self._light, time.monotonic())
+        dot_color = AppKit.NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
+        text = AppKit.NSMutableAttributedString.alloc().initWithString_("●")
+        text.addAttribute_value_range_(AppKit.NSForegroundColorAttributeName, dot_color, (0, 1))
+        self._item.button().setAttributedTitle_(text)
