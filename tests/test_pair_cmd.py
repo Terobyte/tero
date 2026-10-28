@@ -106,6 +106,10 @@ def test_relay_setup_writes_secrets_600_without_echo(tmp_path, monkeypatch, caps
     assert "relay:" in cfg and "https://relay.example" in cfg
     assert "wrangler" in out
     assert "relay/schema.sql" in out
+    assert "PRAGMA table_info(push_subs)" in out
+    assert "relay/migrate-push-device.sql" in out
+    assert "ОДИН раз" in out
+    assert out.index("relay/migrate-push-device.sql") < out.index("--file=relay/schema.sql")
     for line in out.splitlines():
         assert '{"kty"' not in line
         assert "RELAY_WRITE_KEY=" not in line or "secret" in line.lower()
@@ -163,3 +167,25 @@ def test_http_fetch_sends_own_user_agent(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _open)
     relay_cmds._http_fetch("https://relay.example")("POST", "/pair/code", {}, "k")
     assert seen["ua"] and "urllib" not in seen["ua"].lower()
+
+
+def test_relay_upgrade_paths_support_legacy_and_fresh_schemas():
+    import sqlite3
+
+    relay = Path(__file__).resolve().parents[1] / "relay"
+    for legacy in (False, True):
+        db = sqlite3.connect(":memory:")
+        if legacy:
+            db.executescript("""
+                CREATE TABLE devices (token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                    label TEXT NOT NULL, revoked INTEGER DEFAULT 0, created_at TEXT NOT NULL);
+                CREATE TABLE push_subs (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL, dead INTEGER DEFAULT 0);
+            """)
+            db.executescript((relay / "migrate-04-05.sql").read_text())
+            db.executescript((relay / "migrate-push-device.sql").read_text())
+        db.executescript((relay / "schema.sql").read_text())
+        db.executescript((relay / "schema.sql").read_text())
+        for table in ("devices", "push_subs"):
+            assert "device_id" in {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+        db.close()

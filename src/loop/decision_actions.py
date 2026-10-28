@@ -108,7 +108,7 @@ def question_actions(reason: str, state: dict, phase_n: int) -> list[str]:
     """Действия в вопросе: бюджет фазы исчерпан → только skip|stop."""
     full = full_actions(reason)
     if reason == "judge_pending":
-        return ["retry", "skip", "stop"]
+        full = ["retry", "skip", "stop"]
     if budget_used(state, phase_n) >= BUDGET_PER_PHASE:
         return [a for a in full if a in ("skip", "stop")]
     return full

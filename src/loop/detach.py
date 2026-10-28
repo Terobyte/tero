@@ -39,6 +39,7 @@ _OWNER_FLAGS: tuple[tuple[str, str, bool], ...] = (
     ("test_command", "--test-command", True),
     ("test_command_scoped", "--test-command-scoped", True),
     ("max_rounds", "--max-rounds", True),
+    ("escalate_at", "--escalate-at", True),
     ("preset", "--preset", True),
     ("no_escalation", "--no-escalation", False),
     ("no_tester", "--no-tester", False),
@@ -174,8 +175,14 @@ def detach_go(
                 print(f"владелец вышел с кодом {code}")
             return 1
         if clock() >= deadline:
-            print("владелец не стартовал")
-            return 1
+            print(f"владелец продолжает запуск (PID {owner_pid}); готовность пока не подтверждена")
+            print(f"лог: {log_path}")
+            print("проверьте `tero status` и `tero wait` перед повторным запуском")
+            try:
+                _maybe_caffeinate(int(owner_pid), popen=popen)
+            except (TypeError, ValueError):
+                pass
+            return 0
         sleep(poll_s)
 
     try:

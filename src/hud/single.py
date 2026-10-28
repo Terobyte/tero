@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import fcntl
 import os
+import uuid
 from pathlib import Path
 
 from src.fsio import atomic_write_text
@@ -52,9 +53,15 @@ def write_target(run_dir: str | Path) -> None:
 def take_target() -> Path | None:
     """Read and consume `hud-target`, so a later `+N` switch is not undone. Never raises."""
     path = target_path()
+    claimed = path.with_name(f"{path.name}.{uuid.uuid4().hex}.claimed")
     try:
-        text = path.read_text(encoding="utf-8").strip()
-        path.unlink(missing_ok=True)
+        path.replace(claimed)
+        text = claimed.read_text(encoding="utf-8").strip()
     except Exception:
         return None
+    finally:
+        try:
+            claimed.unlink(missing_ok=True)
+        except OSError:
+            pass
     return Path(text) if text else None

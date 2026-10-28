@@ -226,3 +226,64 @@ test('B17: подписка отозванного устройства пуш �
   await notify(env, 'r1', 'm1', { status: 'waiting_human', question: { id: 'q', text: 't' } }, 1_700_000_000_000);
   assert.equal(calls, 0);
 });
+
+for (const status of [503, 408, 429]) {
+  test(`HTTP ${status} не считается доставкой и не блокирует повтор`, async () => {
+    const DB = openFakeDb();
+    await liveSub(DB);
+    let calls = 0;
+    const env = await vapidEnv(DB, {
+      __fetch: async () => ({ status: ++calls === 1 ? status : 201 }),
+    });
+    const at = 1_700_000_000_000;
+    await assert.rejects(notify(env, 'r1', 'm1', { status: 'done' }, at), new RegExp(`HTTP ${status}`));
+    const logged = await DB.prepare('SELECT code FROM push_log').all();
+    assert.ok(logged.results.some((row) => row.code === status));
+    const retry = await notify(env, 'r1', 'm1', { status: 'done' }, at + 1000);
+    assert.equal(retry.sent, true);
+    assert.equal(calls, 2);
+    assert.equal((await notify(env, 'r1', 'm1', { status: 'done' }, at + 2000)).skipped, 'cooldown');
+    assert.equal(calls, 2);
+  });
+}
+
+test('постоянный отказ одной подписки не блокирует повтор временно недоступной', async () => {
+  const DB = openFakeDb();
+  await liveSub(DB, 'https://push.example/gone');
+  await liveSub(DB, 'https://push.example/retry');
+  let retry = false;
+  const endpoints = [];
+  const env = await vapidEnv(DB, {
+    __fetch: async (url) => {
+      endpoints.push(url);
+      return { status: url.endsWith('/gone') ? 410 : retry ? 201 : 503 };
+    },
+  });
+  const at = 1_700_000_000_000;
+  await assert.rejects(notify(env, 'r1', 'm1', { status: 'done' }, at), /HTTP 503/);
+  retry = true;
+  assert.equal((await notify(env, 'r1', 'm1', { status: 'done' }, at + 1000)).sent, true);
+  assert.deepEqual(endpoints, ['https://push.example/gone', 'https://push.example/retry', 'https://push.example/retry']);
+});
+
+test('claim удерживается до конца обработки нескольких подписок', async () => {
+  const DB = openFakeDb();
+  await liveSub(DB, 'https://push.example/first');
+  await liveSub(DB, 'https://push.example/second');
+  const at = 1_700_000_000_000;
+  let concurrent;
+  let calls = 0;
+  const env = await vapidEnv(DB, {
+    __fetch: async (url) => {
+      calls += 1;
+      if (url.endsWith('/second')) {
+        concurrent = await notify(env, 'r1', 'm1', { status: 'done' }, at);
+        return { status: 201 };
+      }
+      return { status: 503 };
+    },
+  });
+  assert.equal((await notify(env, 'r1', 'm1', { status: 'done' }, at)).sent, true);
+  assert.equal(concurrent.skipped, 'cooldown');
+  assert.equal(calls, 2);
+});

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from src.loop.resume_lock import _remove_index_lock  # noqa: F401
+from src.loop.resume_lock import check_index_lock  # noqa: F401
 
 
 def crash_tree_of(repo: str | Path, base: str) -> str:
@@ -27,18 +27,17 @@ def _before_ref(run_name: str) -> str:
 def _snapshot_dirty(repo_path: str | Path, run_name: str) -> None:
     """Save the dirty worktree to a before-resume ref ahead of any rollback."""
     if not run_name:
-        return
-    try:
-        from src.loop import snapshot as sm
-        from src.loop.git import head as _head
+        raise ValueError("cannot back up worktree without a run id")
+    from src.loop import snapshot as sm
+    from src.loop.git import head as _head
 
-        base_ref, k = _before_ref(run_name), 1
-        while sm.verify(repo_path, base_ref if k == 1 else f"{base_ref}-{k}"):
-            k += 1
-        sm.take_snapshot(repo_path, _head(repo_path),
-                         base_ref if k == 1 else f"{base_ref}-{k}")
-    except Exception:
-        pass
+    base_ref, k = _before_ref(run_name), 1
+    while sm.verify(repo_path, base_ref if k == 1 else f"{base_ref}-{k}"):
+        k += 1
+    ref = base_ref if k == 1 else f"{base_ref}-{k}"
+    sm.take_snapshot(repo_path, _head(repo_path), ref)
+    if not sm.verify(repo_path, ref):
+        raise RuntimeError(f"backup snapshot not found: {ref}")
 
 
 def crash_decision(state: dict) -> dict:
@@ -104,23 +103,29 @@ def dispatch(state: dict, *, repo: str | Path | None = None,
                     "question_id": (state or {}).get("question_id") or q.get("id")}
     if base:
         try:
-            if crash_phase_shipped(repo or ".", base, run_id or "", n):
-                return {"action": "shipped"}
+            shipped = crash_phase_shipped(repo or ".", base, run_id or "", n)
         except Exception:
-            pass
+            shipped = False
         if repo is not None:
-            _snapshot_dirty(repo, run_id or "")
+            try:
+                _snapshot_dirty(repo, run_id or "")
+            except Exception as exc:
+                return {"action": "refuse", "reason": "snapshot_failed",
+                        "text": f"resume: снимок не сделан, дерево не тронуто: {exc}"}
+        if shipped:
+            return {"action": "shipped"}
+        if repo is not None:
             crash_rollback_to_head(repo, _slug_of(state or {}))
     return {"action": "rerun", "crashes": crashes,
             "at": time.time() if now is None else now}
 
 
 def crash_rollback_to_head(repo: str | Path, slug: str = "") -> None:
-    """Reset the run branch to its HEAD; stale index.lock removed first."""
+    """Reset the run branch to its HEAD only when Git is not locked."""
     from src.loop import git as g
 
     repo = Path(repo)
-    _remove_index_lock(repo)
+    check_index_lock(repo)
     if slug:
         name = slug if str(slug).startswith("tero/") else f"tero/{slug}"
         import subprocess as _sp

@@ -496,7 +496,9 @@ async def test_stop_json_answers_decision_point(tmp_path: Path, monkeypatch):
     (ledger.run_dir / "inbox").mkdir(parents=True, exist_ok=True)
 
     def _ask_stop() -> None:
-        deadline = time.monotonic() + 4.0
+        # cold start (fresh .pyc, loaded machine) can take >4 s to reach waiting_human;
+        # a missed stop leaves the phase waiting 600 s and shipping with debt
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             try:
                 state = RunState.read(ledger.run_dir / "state.json") or {}

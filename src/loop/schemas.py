@@ -203,6 +203,8 @@ def _semantic_judge(data: dict, ctx: ValidateCtx) -> list[str]:
     blocking = [f for f in findings if f["severity"] == "blocking"]
     still_open = [p for p in previous if p["state"] == "still_open"]
     prev_ids = {p["id"] for p in previous}
+    if len(prev_ids) != len(previous):
+        errors.append("previous must contain unique finding ids")
 
     missing = [fid for fid in ctx.open_ids if fid not in prev_ids]
     if missing:

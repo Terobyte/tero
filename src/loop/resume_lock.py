@@ -21,11 +21,34 @@ def _refuse_outcome(run_path: Path, reason: str):
                     run_dir=str(run_path))
 
 
-def _remove_index_lock(repo_path: Path) -> None:
+def _git_running() -> bool:
+    """True when any git process is alive; unknown counts as alive."""
     try:
-        (Path(repo_path) / ".git" / "index.lock").unlink(missing_ok=True)
+        import psutil
+
+        for proc in psutil.process_iter(["name"]):
+            name = proc.info.get("name") or ""
+            if name == "git" or name.startswith("git-"):
+                return True
+        return False
     except Exception:
-        pass
+        return True
+
+
+def check_index_lock(repo_path: Path) -> None:
+    """Drop a lock no git process can own (left by a crashed run); refuse a live one."""
+    from src.loop.git import GitError, _git
+
+    path = Path(_git(repo_path, "rev-parse", "--git-path", "index.lock").strip())
+    if not path.is_absolute():
+        path = Path(repo_path) / path
+    if not (path.exists() or path.is_symlink()):
+        return
+    if not _git_running():
+        path.unlink(missing_ok=True)
+        return
+    raise GitError(f"Git index locked: {path}; завершите операцию Git; "
+                   "удаляйте lock вручную только после проверки, что он устарел")
 
 
 def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
@@ -72,3 +95,16 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
             return lock, None
         time.sleep(0.05)
     return None, _refuse_outcome(run_path, "another run holds this repo")
+
+
+def acquire_for_resume(repo_path: Path, run_path: Path, state: dict):
+    """Acquire tero's lock and refuse Git's lock without leaking our own."""
+    lock, denied = acquire_for_crash(repo_path, run_path, state)
+    if denied is not None:
+        return lock, denied
+    try:
+        check_index_lock(repo_path)
+    except Exception as exc:
+        lock.release()
+        return None, _refuse_outcome(run_path, str(exc))
+    return lock, None

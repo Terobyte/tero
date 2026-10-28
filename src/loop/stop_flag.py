@@ -42,3 +42,23 @@ def _owner_live(run_dir: Any, *, require_pid: bool = False) -> bool:
         return not require_pid
     except Exception:
         return False
+
+
+def stop_requested_flag(run_dir: str | None) -> bool:
+    """True when a stop was requested for this run dir (else its `.tero/runs`).
+
+    Never raises.
+    """
+    try:
+        if not run_dir:
+            return False
+        direct = Path(run_dir)
+        if (direct / "inbox").is_dir() or (direct / "state.json").is_file():
+            return bool(live(direct, require_pid=True))
+        runs = direct / ".tero" / "runs"
+        if not runs.is_dir():
+            return False
+        return any(
+            live(c, require_pid=True) for c in runs.iterdir())
+    except Exception:
+        return False

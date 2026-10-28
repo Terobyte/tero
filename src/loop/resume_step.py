@@ -348,7 +348,7 @@ from src.loop.resume_crash import (  # noqa: F401  (re-export)
     dispatch,
 )
 from src.loop.resume_lock import (  # noqa: F401  (re-export)
-    _remove_index_lock,
+    check_index_lock,
     acquire_for_crash,
 )
 from src.loop.resume_recover import crash_resume  # noqa: F401  (re-export)

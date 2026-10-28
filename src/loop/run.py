@@ -190,7 +190,7 @@ async def resume(
     phase_index = state.get("phase_index", 0) or 0
     round_no = state.get("round", 1) or 1
 
-    from src.loop.resume_lock import _remove_index_lock, acquire_for_crash as _acq
+    from src.loop.resume_lock import acquire_for_resume as _acq
     from src.loop.resume_step import pre_lock_refusal as _e
 
     if (_o := _e(repo_path, run_path, cfg, state)) is not None:
@@ -198,7 +198,6 @@ async def resume(
     lock, denied = _acq(repo_path, run_path, state)
     if denied is not None:
         return denied
-    _remove_index_lock(repo_path)
 
     done_io = RunState(run_path / "state.json")
     stream = Stream(run_path / "stream.jsonl")

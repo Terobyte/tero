@@ -13,6 +13,7 @@ that record are deleted. Nothing is written through a symlinked parent dir.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from src.loop.git import list_ignored_files
@@ -67,6 +68,7 @@ def _same(target: Path, kind: str, value: bytes | str | None) -> bool:
 def restore_ignored(repo: Path, snap: dict[str, tuple[str, bytes | str | None]]) -> list[str]:
     """Put recorded paths back, drop ignored files created since. Returns changed paths."""
     changed: list[str] = []
+    failed: list[str] = []
     now = {rel for rel in list_ignored_files(repo) if not _pruned(rel)}
     for rel in sorted(now | set(snap)):
         target = repo / rel
@@ -85,12 +87,18 @@ def restore_ignored(repo: Path, snap: dict[str, tuple[str, bytes | str | None]])
                 continue
             if target.is_symlink() or target.is_file():
                 target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
             target.parent.mkdir(parents=True, exist_ok=True)
             if kind == "link":
                 os.symlink(str(value), target)
             else:
                 target.write_bytes(value)  # type: ignore[arg-type]
             changed.append(rel)
-        except OSError:
-            continue
+        except OSError as exc:
+            if kind != "new":
+                failed.append(f"{rel}: {exc}")
+    if failed:
+        # every other path is already back; report all failures at once
+        raise OSError("cannot restore ignored path " + "; ".join(failed))
     return changed

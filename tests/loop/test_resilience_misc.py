@@ -240,10 +240,10 @@ async def test_network_error_backoff_schedule(tmp_path, monkeypatch):
     monkeypatch.setattr(agents_mod, "RETRY_DELAYS_S", (60, 120, 300))
     sleeps: list[float] = []
 
-    async def _sleep(wait_s: float) -> None:
+    async def _sleep(self, wait_s: float) -> None:
         sleeps.append(wait_s)
 
-    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(LiveAgents, "_retry_sleep", _sleep)
     provider = _FailThenSucceed(lambda: RuntimeError("ECONNRESET"), 3)
     agents = LiveAgents(
         str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
@@ -268,10 +268,10 @@ async def test_network_retries_capped(tmp_path, monkeypatch):
     monkeypatch.setattr(agents_mod, "RETRY_DELAYS_S", (60, 120))
     monkeypatch.setattr(agents_mod, "RETRY_DEADLINE_S", 7200)
 
-    async def _sleep(_wait_s: float) -> None:
+    async def _sleep(self, _wait_s: float) -> None:
         pass
 
-    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(LiveAgents, "_retry_sleep", _sleep)
     provider = _FailThenSucceed(lambda: ConnectionError("reset by peer"), 99)
     agents = LiveAgents(
         str(tmp_path), factory=lambda _n: provider, retry_wait_s=0
@@ -298,10 +298,10 @@ async def test_network_retries_stop_at_deadline(tmp_path, monkeypatch):
     clock = {"now": 1000.0}
     monkeypatch.setattr(agents_mod, "_now", lambda: clock["now"])
 
-    async def _sleep(wait_s: float) -> None:
+    async def _sleep(self, wait_s: float) -> None:
         clock["now"] += wait_s
 
-    monkeypatch.setattr(agents_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(LiveAgents, "_retry_sleep", _sleep)
     provider = _FailThenSucceed(lambda: ConnectionError("reset by peer"), 99)
     agents = LiveAgents(
         str(tmp_path), factory=lambda _n: provider, retry_wait_s=0

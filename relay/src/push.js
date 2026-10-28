@@ -263,14 +263,14 @@ export async function notify(env, runId, machineId, payload, nowMs = Date.now())
   const db = env.DB;
   await ensurePushTables(db);
   const reason = reasonFor(payload);
-  // F8: кулдаун считает только доставленные ответы (2xx–4xx): запись code=0 —
-  // сетевой обрыв без ответа сервиса — не доставка, повтору не мешает.
+  // Only successful delivery starts cooldown. Network/HTTP failures remain
+  // diagnostic log entries and must not suppress a later retry.
   // F10: перед захватом вычищаем claims старше 30 мин — зависший слот
   // (Worker упал после INSERT) не блокирует пуш навсегда.
   let lastAt = 0;
   try {
     const row = await db.prepare(
-      'SELECT at FROM push_log WHERE run_id = ? AND reason = ? AND code != 0 ORDER BY at DESC LIMIT 1',
+      'SELECT at FROM push_log WHERE run_id = ? AND reason = ? AND code >= 200 AND code < 300 ORDER BY at DESC LIMIT 1',
     ).bind(String(runId), reason).first();
     if (row && Number.isFinite(Number(row.at))) lastAt = Number(row.at);
   } catch {
@@ -355,13 +355,8 @@ export async function notify(env, runId, machineId, payload, nowMs = Date.now())
       } catch {
         // лог диагностики не роняет пуш
       }
-      // Слот кулдауна отжил своё — push_log теперь сам держит 30-минутное окно.
-      try {
-        await db.prepare(
-          'DELETE FROM push_claims WHERE run_id = ? AND reason = ?',
-        ).bind(String(runId), reason).run();
-      } catch {
-        // очистка не роняет пуш
+      if (code >= 500 || code === 408 || code === 429) {
+        errors.push(new Error(`push HTTP ${code}: ${sub.endpoint}`));
       }
       if (code === 404 || code === 410) {
         try {
@@ -375,16 +370,15 @@ export async function notify(env, runId, machineId, payload, nowMs = Date.now())
       errors.push(err instanceof Error ? err : new Error(String(err)));
     }
   }
-  if (!sentAny && errors.length && !lastCode) {
-    // Все подписки упали по сети — снимаем резерв, чтобы cron повторил.
-    try {
-      await db.prepare(
-        'DELETE FROM push_claims WHERE run_id = ? AND reason = ?',
-      ).bind(String(runId), reason).run();
-    } catch {
-      // очистка не роняет пуш
-    }
-    throw errors[0];
+  // Hold the claim until every subscription has been attempted. Releasing it
+  // inside the loop could let a concurrent notify duplicate later deliveries.
+  try {
+    await db.prepare(
+      'DELETE FROM push_claims WHERE run_id = ? AND reason = ?',
+    ).bind(String(runId), reason).run();
+  } catch {
+    // Expired claims are also cleaned before the next attempt.
   }
-  return { sent: sentAny || lastCode !== 0, code: lastCode };
+  if (!sentAny && errors.length) throw errors[0];
+  return { sent: sentAny, code: lastCode };
 }

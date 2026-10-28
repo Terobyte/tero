@@ -21,6 +21,7 @@ from src.loop.role_report import (
     with_schema,
 )
 from src.loop.schemas import SCHEMAS, ValidateCtx
+from src.loop.stop_flag import stop_requested_flag
 from src.loop.write_guard import ReadOnlyLoop, player_guard, watched
 from src.process_guard import ProcessGuard
 
@@ -153,6 +154,8 @@ class LiveAgents:
         other_retried = False
         overall_start = _now()
         while True:
+            if (network_retry or other_retried) and stop_requested_flag(self.run_dir or self.working_dir):
+                break
             before = self.guard.snapshot_pids()
             from src.loop import watchdog as _w
 
@@ -215,14 +218,14 @@ class LiveAgents:
                     if emit is not None:
                         emit("retry", role=role, attempt=network_retry,
                              wait_s=wait_s, error=raw, text=line)
-                    await asyncio.sleep(wait_s)
+                    await self._retry_sleep(wait_s)
                     continue
                 if other_retried:
                     break
                 other_retried = True
                 if self.retry_wait_s:
                     print(f"  повтор через {self.retry_wait_s:.0f} с", flush=True)
-                    await asyncio.sleep(self.retry_wait_s)
+                    await self._retry_sleep(self.retry_wait_s)
                 continue
             finally:
                 heartbeat.cancel()
@@ -236,6 +239,16 @@ class LiveAgents:
                     self.guard.kill_new_processes(before)
                 _w.note_step_before(None)
         return None
+
+    async def _retry_sleep(self, seconds: float) -> None:
+        """Poll Stop during backoff instead of sleeping for up to an hour."""
+        remaining = seconds
+        while remaining > 0:
+            if stop_requested_flag(self.run_dir or self.working_dir):
+                return
+            interval = min(remaining, 0.25)
+            await asyncio.sleep(interval)
+            remaining -= interval
 
     def error_text(self, role: str, timeout: float) -> str:
         """Console + halt text for the last failed call."""
@@ -271,30 +284,6 @@ class LiveAgents:
 
 def _now() -> float:
     return time.monotonic()
-
-
-def stop_requested_flag(run_dir: str | None) -> bool:
-    """True when a stop was requested for this run dir (else its `.tero/runs`).
-
-    Never raises.
-    """
-    try:
-        from pathlib import Path
-
-        from src.loop import stop_flag as _flag
-
-        if not run_dir:
-            return False
-        direct = Path(run_dir)
-        if (direct / "inbox").is_dir() or (direct / "state.json").is_file():
-            return bool(_flag.live(direct, require_pid=True))
-        runs = direct / ".tero" / "runs"
-        if not runs.is_dir():
-            return False
-        return any(
-            _flag.live(c, require_pid=True) for c in runs.iterdir())
-    except Exception:
-        return False
 
 
 def _default_factory(working_dir: str) -> Callable[[str], Any]:

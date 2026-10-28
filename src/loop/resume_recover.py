@@ -8,10 +8,10 @@ from typing import Any
 
 def _checkout_run_head(repo_path: Path, slug: str) -> None:
     from src.loop import git as g
-    from src.loop.resume_lock import _remove_index_lock
+    from src.loop.resume_lock import check_index_lock
     from src.loop.resume_step import run_branch_head
 
-    _remove_index_lock(repo_path)
+    check_index_lock(repo_path)
     name = slug if str(slug).startswith("tero/") else f"tero/{slug}"
     head = run_branch_head(repo_path, slug)
     if not head:
@@ -208,11 +208,11 @@ async def crash_resume(repo_path: Path, run_path: Path, cfg: Any, state: dict,
                        judge_resume: Any):
     """Full crash recovery: refuse/shipped/waiting/rerun, else judge path."""
     from src.loop.resume_crash import dispatch
-    from src.loop.resume_lock import _remove_index_lock
+    from src.loop.resume_lock import check_index_lock
     from src.loop.state import RunState as _RS
     from src.loop.state import Status as _St
 
-    _remove_index_lock(repo_path)
+    check_index_lock(repo_path)
     if status == _St.JUDGE_PENDING.value:
         return await judge_resume(
             repo_path, run_path, cfg, agents=agents, session=session,
@@ -221,6 +221,12 @@ async def crash_resume(repo_path: Path, run_path: Path, cfg: Any, state: dict,
             phase_title=phase_title, round_no=round_no, status=status)
     plan = dispatch(state, repo=repo_path, run_id=run_path.name, force=force)
     action = plan.get("action") or ""
+    if action == "refuse" and plan.get("reason") == "snapshot_failed":
+        # Storage failures are retryable setup failures, not crashes of a phase.
+        # Keep the saved status/counter so resume can be retried after disk repair.
+        from src.loop.session import _refuse as _deny
+
+        return _deny(run_path, plan.get("text", "snapshot failed"))
     crashes, crash_idx = _bump_crashes(state)
     if action == "refuse":
         try:
