@@ -240,3 +240,11 @@ def test_html_colors_log_lines_by_role():
     for role in ("player", "judge", "tester", "gate"):
         assert f".r-{role}" in html
     assert "text-shadow" in html
+
+
+def test_verdict_age_from_newest_verdict_event():
+    events = [_ev("verdict", role="judge", delta_s=42, verdict="NO_SHIP", blocking=1)]
+    assert build_view(_state(), events, NOW, ALIVE)["verdict_age_s"] == 42
+    st = _state(verdict={"verdict": "SHIP", "blocking": 0, "first": {}})
+    assert build_view(st, [], NOW, ALIVE)["verdict_age_s"] is None
+    assert build_view(None, [], NOW, ALIVE)["verdict_age_s"] is None

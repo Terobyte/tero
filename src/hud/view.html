@@ -47,17 +47,7 @@ body {
 #status.red { color: var(--red); } #status.grey { color: var(--grey); }
 #age { color: var(--dim); white-space: nowrap; }
 #age.age-yellow { color: var(--yellow); } #age.age-red { color: var(--red); }
-/* who acts now: the same hue as that role's lines in the log */
-#who {
-  display: none; font-weight: 600; padding: 1px 8px; border-radius: 999px;
-  white-space: nowrap; border: 1px solid currentColor;
-}
-#who.r-player { color: var(--player); background: rgba(90,200,250,0.14); box-shadow: 0 0 10px rgba(90,200,250,0.35); }
-#who.r-judge { color: var(--judge); background: rgba(195,139,255,0.14); box-shadow: 0 0 10px rgba(195,139,255,0.35); }
-#who.r-tester { color: var(--tester); background: rgba(255,143,200,0.14); box-shadow: 0 0 10px rgba(255,143,200,0.35); }
-#who.r-gate { color: var(--gate); background: rgba(255,179,92,0.14); box-shadow: 0 0 10px rgba(255,179,92,0.35); }
-#phase { margin-left: auto; font-size: var(--big); font-weight: 600; white-space: nowrap; }
-#phase small { font-size: var(--small); font-weight: 400; color: var(--dim); }
+#spacer { margin-left: auto; }
 .btn {
   width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -110,6 +100,18 @@ body {
   border: 1px solid currentColor;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* between verdicts the plate shows where the round is, in the acting role's color */
+#foot.stage { color: var(--dim); border-color: var(--faint); font-weight: 400; }
+#foot .sep { opacity: 0.5; margin: 0 4px; }
+#foot .step.on { font-weight: 600; }
+#foot.r-player { border-color: var(--player); box-shadow: 0 0 10px rgba(90,200,250,0.35); }
+#foot.r-gate { border-color: var(--gate); box-shadow: 0 0 10px rgba(255,179,92,0.35); }
+#foot.r-tester { border-color: var(--tester); box-shadow: 0 0 10px rgba(255,143,200,0.35); }
+#foot.r-judge { border-color: var(--judge); box-shadow: 0 0 10px rgba(195,139,255,0.35); }
+#foot .step.on.r-player { color: var(--player); text-shadow: 0 0 6px rgba(90,200,250,0.6); }
+#foot .step.on.r-gate { color: var(--gate); text-shadow: 0 0 6px rgba(255,179,92,0.6); }
+#foot .step.on.r-tester { color: var(--tester); text-shadow: 0 0 6px rgba(255,143,200,0.6); }
+#foot .step.on.r-judge { color: var(--judge); text-shadow: 0 0 6px rgba(195,139,255,0.6); }
 #foot.bad {
   color: var(--red); background: rgba(255, 107, 107, 0.14);
   box-shadow: 0 0 12px rgba(255, 107, 107, 0.45); text-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
@@ -125,9 +127,8 @@ body {
   <div id="top">
     <span id="light"></span>
     <span id="status"></span>
-    <span id="who"></span>
     <span id="age"></span>
-    <span id="phase"></span>
+    <span id="spacer"></span>
     <span id="plus" class="btn" title="другой прогон"></span>
     <span id="expand" class="btn" title="подробнее">▾</span>
     <span id="hide" class="btn" title="свернуть в меню-бар">–</span>
@@ -154,17 +155,42 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
-function footOf(d) {
-  if (d.stop_text) return [d.stop_text, "bad"];
-  var v = d.verdict || {};
-  if (v.verdict) {
-    var cls = v.verdict === "SHIP" ? "good" : "bad";
-    return ["судья: " + v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : ""), cls];
-  }
-  if (d.done_text) return [d.done_text, "good"];
-  return ["", ""];
-}
 var ROLE_NAMES = {player: "игрок", judge: "судья", tester: "тестер", gate: "тесты"};
+var VERDICT_SHOW_S = 60;
+// [html, class]: a stop or a fresh verdict, else the round so far
+function footOf(d, acting) {
+  if (d.stop_text) return [esc(d.stop_text), "bad"];
+  var v = d.verdict || {};
+  var fresh = d.verdict_age_s != null && d.verdict_age_s < VERDICT_SHOW_S;
+  if (v.verdict && (fresh || !acting)) {
+    var cls = v.verdict === "SHIP" ? "good" : "bad";
+    return [esc("судья: " + v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : "")), cls];
+  }
+  if (d.done_text) return [esc(d.done_text), "good"];
+  if (!acting) return ["", ""];
+  var steps = ["player", "gate", "judge"];
+  if (acting === "tester") steps.splice(2, 0, "tester");
+  var html = steps.map(function (r) {
+    return '<span class="step' + (r === acting ? " on r-" + r : "") + '">' + ROLE_NAMES[r] + "</span>";
+  }).join('<span class="sep">›</span>');
+  return [html, "stage r-" + acting];
+}
+// the newest message types itself out; a longer message never takes more than ~1 s
+var typing = {target: "", shown: 0, timer: null};
+function typeDoing(text) {
+  var el = document.getElementById("doing");
+  if (text === typing.target) return;
+  var keep = text.indexOf(typing.target.slice(0, typing.shown)) === 0 ? typing.shown : 0;
+  typing.target = text;
+  typing.shown = keep;
+  if (typing.timer) clearInterval(typing.timer);
+  var step = Math.max(1, Math.ceil((text.length - keep) / 50));
+  typing.timer = setInterval(function () {
+    typing.shown = Math.min(text.length, typing.shown + step);
+    el.textContent = text.slice(0, typing.shown) + (typing.shown < text.length ? "▍" : "");
+    if (typing.shown >= text.length) { clearInterval(typing.timer); typing.timer = null; }
+  }, 20);
+}
 function ago(s) {
   return s < 60 ? s + " с назад" : Math.floor(s / 60) + " мин назад";
 }
@@ -174,17 +200,12 @@ function render(d) {
   var card = document.getElementById("card");
   var light = d.light || "grey";
   document.getElementById("light").className = light;
+  // a green dot says "working" by itself: words only when something needs a look
   var st = document.getElementById("status");
   st.className = light;
-  st.textContent = d.light_text || "";
-  document.getElementById("phase").innerHTML = d.phase_label
-    ? "<small>фаза </small>" + esc(d.phase_label) : "";
-  document.getElementById("doing").textContent = d.doing || "";
-  var who = document.getElementById("who");
+  st.textContent = light === "green" ? "" : (d.light_text || "");
+  typeDoing(d.doing || "");
   var acting = ROLE_NAMES[d.role] && (d.light === "green" || d.light === "yellow") ? d.role : "";
-  who.textContent = acting ? ROLE_NAMES[acting] : "";
-  who.className = acting ? "r-" + acting : "";
-  who.style.display = acting ? "inline-block" : "none";
   document.getElementById("doing").className = acting ? "r-" + acting : "";
 
   var secs = d.sectors || [];
@@ -215,9 +236,9 @@ function render(d) {
   age.textContent = (d.last_event_age_s == null) ? "" : ago(d.last_event_age_s);
   age.className = "age-" + (d.age_color || "normal");
 
-  var f = footOf(d);
+  var f = footOf(d, acting);
   var foot = document.getElementById("foot");
-  foot.textContent = f[0];
+  foot.innerHTML = f[0];
   foot.className = f[1];
   foot.style.display = f[0] ? "block" : "none";
   card.className = (expanded ? "expanded " : "") + (f[0] ? "has-foot" : "");

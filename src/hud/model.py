@@ -54,6 +54,7 @@ def build_view(
             "doing": "нет данных",
             "last_event_age_s": _age(items, now),
             "verdict": {"verdict": None, "blocking": 0, "first": ""},
+            "verdict_age_s": None,
             "debt_line": debt_line(0),
             "done_text": "",
             "tabs": tabs,
@@ -78,6 +79,7 @@ def build_view(
         "doing": _doing(state, status, items, now, broken),
         "last_event_age_s": age,
         "verdict": _verdict(state, items),
+        "verdict_age_s": _verdict_age(items, now),
         "debt_line": debt_line(debt_n),
         "done_text": hud_done_text(status, debt_n),
         "tabs": tabs,
@@ -293,6 +295,15 @@ def _verdict(state: dict, events: list[dict]) -> dict:
     if isinstance(saved, dict) and saved.get("verdict"):
         return _verdict_summary(saved)
     return {"verdict": None, "blocking": 0, "first": ""}
+
+
+def _verdict_age(events: list[dict], now: float) -> int | None:
+    """Seconds since the newest verdict event; None when it left the tail (or never came)."""
+    for ev in reversed(events):
+        if ev.get("type") == "verdict" and ev.get("verdict"):
+            ts = _parse_ts(ev.get("ts"))
+            return None if ts is None else max(0, int(now - ts))
+    return None
 
 
 def _verdict_summary(src: dict) -> dict:
