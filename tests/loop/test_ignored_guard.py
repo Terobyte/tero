@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from src.loop.ignored_guard import restore_ignored, snapshot_ignored
+from src.loop.guards.ignored import restore_ignored, snapshot_ignored
 from tests.loop import fakes as scripted
 
 

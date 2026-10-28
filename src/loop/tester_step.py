@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Callable
 
-from src.loop import suite_guard
+from src.loop.guards import suite as suite_guard
 from src.loop.gates import run_files
 from src.loop.git import file_hashes, list_worktree_files, stage_and_diff, write_tree
-from src.loop.ignored_guard import restore_ignored, snapshot_ignored
+from src.loop.guards.ignored import restore_ignored, snapshot_ignored
 from src.loop.phase_ctx import PhaseContext, ProtectedTest, _dump
 from src.loop.prompts import tester_prompt
 from src.loop.schemas import ValidateCtx
-from src.loop.suite_guard import is_test_path
+from src.loop.guards.suite import is_test_path
 
 
 class TesterStep:

@@ -49,7 +49,7 @@ def _plan_runner(repo, path):
 
 @pytest.mark.parametrize("contents", ["external", "original"])
 def test_plan_restore_replaces_leaf_symlink_without_touching_target(tmp_path, contents):
-    from src.loop.plan_guard import guard_plan
+    from src.loop.guards.plan import guard_plan
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -66,7 +66,7 @@ def test_plan_restore_replaces_leaf_symlink_without_touching_target(tmp_path, co
 
 
 def test_plan_restore_refuses_symlinked_parent(tmp_path):
-    from src.loop.plan_guard import guard_plan
+    from src.loop.guards.plan import guard_plan
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -82,7 +82,7 @@ def test_plan_restore_refuses_symlinked_parent(tmp_path):
 
 @pytest.mark.parametrize("kind", ["file", "link"])
 def test_restore_ignored_path_replaced_by_directory(tmp_path, kind):
-    from src.loop.ignored_guard import snapshot_ignored, restore_ignored
+    from src.loop.guards.ignored import snapshot_ignored, restore_ignored
 
     repo = fakes.init_repo(tmp_path, PLAN)
     (repo / ".gitignore").write_text("secret.env\n")
@@ -103,7 +103,7 @@ def test_restore_ignored_path_replaced_by_directory(tmp_path, kind):
 
 
 def test_ignored_restore_error_is_reported(tmp_path, monkeypatch):
-    from src.loop.ignored_guard import restore_ignored
+    from src.loop.guards.ignored import restore_ignored
 
     repo = fakes.init_repo(tmp_path, PLAN)
     target = repo / "secret.env"
@@ -286,7 +286,7 @@ async def test_resume_setup_failure_is_retryable_and_releases_run_lock(tmp_path,
 
 
 def test_unchanged_plan_link_inside_repo_is_preserved(tmp_path):
-    from src.loop.plan_guard import guard_plan
+    from src.loop.guards.plan import guard_plan
 
     (tmp_path / "source.md").write_bytes(b"original")
     path = tmp_path / "plan.md"
@@ -298,7 +298,7 @@ def test_unchanged_plan_link_inside_repo_is_preserved(tmp_path):
 
 
 def test_plan_restore_replaces_symlink_loop(tmp_path):
-    from src.loop.plan_guard import guard_plan
+    from src.loop.guards.plan import guard_plan
 
     path = tmp_path / "plan.md"
     path.symlink_to("plan.md")
@@ -322,7 +322,7 @@ def test_stale_index_lock_without_git_process_is_removed(tmp_path, monkeypatch):
 
 
 def test_ignored_restore_keeps_going_after_one_failure(tmp_path, monkeypatch):
-    from src.loop.ignored_guard import restore_ignored
+    from src.loop.guards.ignored import restore_ignored
 
     repo = fakes.init_repo(tmp_path, PLAN)
     bad, good = repo / "secret.env", repo / "other.env"

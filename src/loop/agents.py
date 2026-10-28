@@ -22,7 +22,7 @@ from src.loop.role_report import (
 )
 from src.loop.schemas import SCHEMAS, ValidateCtx
 from src.loop.stop_flag import stop_requested_flag
-from src.loop.write_guard import ReadOnlyLoop, player_guard, watched
+from src.loop.guards.write import ReadOnlyLoop, player_guard, watched
 from src.process_guard import ProcessGuard
 
 __all__ = ["LiveAgents", "example_report", "extract_json", "repair_once", "verbose_snippet", "with_schema", "validate_role"]

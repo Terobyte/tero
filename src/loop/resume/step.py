@@ -41,7 +41,7 @@ def resume_entry(entry: Any) -> ResumeFrom:
 def baseline_suite(repo, resume_from):
     """Suite baseline: base-commit hashes for a resumed first phase, else disk."""
     from src.loop.git import file_hashes as _hashes
-    from src.loop.suite_guard import _snapshot_guarded, _suite_paths
+    from src.loop.guards.suite import _snapshot_guarded, _suite_paths
 
     rf = (getattr(resume_from, "suite_hashes", None),
           getattr(resume_from, "guarded", None),
@@ -320,14 +320,14 @@ def _restore_resume_tree(repo_path, run_path, slug, base, ref):
 
 
 def _base_suite_paths(tmpp: Path):
-    from src.loop import suite_guard as sg
+    from src.loop.guards import suite as sg
     rels = [f.relative_to(tmpp).as_posix() for f in sorted(tmpp.rglob("*")) if f.is_file()]
     return [r for r in rels if sg.is_test_path(r) or Path(r).name in sg.SUITE_CONFIG_NAMES]
 
 
 def base_suite_state(repo, base):
     from src.loop.git import file_hashes
-    from src.loop.suite_guard import _snapshot_guarded
+    from src.loop.guards.suite import _snapshot_guarded
 
     with tempfile.TemporaryDirectory(prefix="tero-base-") as tmp:
         tmpp = Path(tmp)

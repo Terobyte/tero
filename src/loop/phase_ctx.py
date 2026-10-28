@@ -15,7 +15,7 @@ from src.loop.ledger import Ledger
 from src.loop.plan import Phase
 from src.loop.state import RunState
 from src.loop.stream import Stream
-from src.loop.suite_guard import Entry
+from src.loop.guards.suite import Entry
 from src.relay.iface import NoopRelay
 
 

@@ -27,7 +27,7 @@ from src.loop.prompts import player_prompt
 from src.loop.schemas import ValidateCtx
 from src.loop.state import RunState
 from src.loop.stream import Stream
-from src.loop import suite_guard
+from src.loop.guards import suite as suite_guard
 from src.loop.compact_step import CompactStep
 from src.loop.decision_step import DecisionStep
 from src.loop.phase_ctx import (
@@ -45,7 +45,7 @@ from src.loop.resume.step import ResumeFrom, baseline_suite
 from src.loop.tester_step import TesterStep
 from src.loop.findings import in_continuation
 from src.loop.judge_step import JudgeStep
-from src.loop.suite_guard import (
+from src.loop.guards.suite import (
     AGENT_CONFIG_DIRS,
     AGENT_INSTRUCTION_NAMES,
     SUITE_CONFIG_NAMES,
@@ -199,12 +199,12 @@ class _PhaseRunner:
         )
 
     def _remember_plan(self) -> bytes | None:
-        from src.loop import plan_guard as _pg
+        from src.loop.guards import plan as _pg
 
         return _pg.remember_plan(self)
 
     def _guard_plan(self, role: str) -> None:
-        from src.loop import plan_guard as _pg
+        from src.loop.guards import plan as _pg
 
         return _pg.guard_plan(self, role)
 

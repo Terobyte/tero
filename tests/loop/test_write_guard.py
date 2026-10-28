@@ -9,7 +9,7 @@ import pytest
 
 from src.loop.agents import LiveAgents
 from src.loop.schemas import ValidateCtx
-from src.loop.write_guard import KICK_LIMIT, READ_ONLY_LIMIT
+from src.loop.guards.write import KICK_LIMIT, READ_ONLY_LIMIT
 from src.providers.message_adapter import AdaptedMessage, ToolUseBlock
 
 GOOD = (

@@ -33,7 +33,7 @@ def guard_plan(runner: Any, role: str) -> None:
     if runner._plan_bytes is None:
         return
     try:
-        from src.loop.ignored_guard import _safe_parent
+        from src.loop.guards.ignored import _safe_parent
 
         path = Path(os.path.abspath(runner.plan_path))
         rel = str(_plan_rel(runner.repo, path))

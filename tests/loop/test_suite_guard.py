@@ -35,19 +35,19 @@ def _imports(path: Path) -> set[str]:
 
 
 def test_suite_guard_imports_no_phase():
-    names = _imports(ROOT / "src/loop/suite_guard.py")
+    names = _imports(ROOT / "src/loop/guards/suite.py")
     assert not {n for n in names if n.startswith(("src.loop.phase", "src.loop.run"))}
 
 
 def test_is_test_path_same_object():
     import src.loop.phase as phase
-    import src.loop.suite_guard as suite_guard
+    import src.loop.guards.suite as suite_guard
 
     assert phase.is_test_path is suite_guard.is_test_path
 
 
 def test_snapshot_guarded_direct(tmp_path: Path):
-    from src.loop import suite_guard
+    from src.loop.guards import suite as suite_guard
     from src.loop.phase import _PhaseRunner
 
     repo = init_repo(tmp_path, PLAN)
