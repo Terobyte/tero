@@ -23,6 +23,15 @@ _UNFINISHED = (
     "judge_pending",
 )
 
+QUIET_AFTER_S = 600
+
+_WAITING_TEXT = {
+    "waiting_human": "ждёт тебя",
+    "judge_pending": "ждёт тебя",
+    "waiting_agent": "ждёт агента",
+    "waiting_limit": "ждёт лимит",
+}
+
 _ROLE_ICONS = {"player": "🛠", "judge": "⚖️", "tester": "🧪", "gate": "⏱"}
 
 
@@ -48,11 +57,18 @@ def build_view(
             "debt_line": debt_line(0),
             "done_text": "",
             "tabs": tabs,
+            "light": "grey",
+            "light_text": "нет данных",
+            "phase_label": "",
+            "phase_title": "",
+            "role": "",
         }
     status = state.get("status") or ""
     broken = _is_broken(state, status, alive)
     sectors = _sectors(state)
     debt_n = _debt_count(state)
+    age = _age(items, now)
+    light, light_text = _light(state, status, broken, age, debt_n)
     return {
         "sectors": sectors,
         "circle": _circle(status, sectors, broken),
@@ -60,12 +76,57 @@ def build_view(
         "header": _header(state, now),
         "role_line": _role_line(state),
         "doing": _doing(state, status, items, now, broken),
-        "last_event_age_s": _age(items, now),
+        "last_event_age_s": age,
         "verdict": _verdict(state, items),
         "debt_line": debt_line(debt_n),
         "done_text": hud_done_text(status, debt_n),
         "tabs": tabs,
+        "light": light,
+        "light_text": light_text,
+        "phase_label": _phase_label(state),
+        "phase_title": str(state.get("phase") or _current_title(state)),
+        "role": str(state.get("role") or ""),
     }
+
+
+def _light(state: dict, status: str, broken: bool, age: int | None, debt_n: int) -> tuple[str, str]:
+    """Run health for the status light: green goes, yellow needs a look, red is dead."""
+    if broken:
+        return "red", "оборвался"
+    if status == "stopped":
+        return "red", "стоп"
+    if status == "done":
+        return ("yellow", f"сдано с долгом {debt_n}") if debt_n else ("green", "сдано")
+    question = state.get("question")
+    if status in _WAITING_TEXT:
+        return "yellow", _WAITING_TEXT[status]
+    if isinstance(question, dict) and question.get("text"):
+        return "yellow", "ждёт тебя"
+    if age is not None and age >= QUIET_AFTER_S:
+        return "yellow", f"тихо {age // 60} мин"
+    return "green", "работает"
+
+
+def _phase_label(state: dict) -> str:
+    try:
+        index = int(state.get("phase_index", 0) or 0)
+    except (TypeError, ValueError):
+        index = 0
+    phases = state.get("phases")
+    total: Any = state.get("total_phases")
+    if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
+        total = len(phases) if isinstance(phases, list) and phases else "?"
+    return f"{index + 1}/{total}"
+
+
+def _current_title(state: dict) -> str:
+    phases = state.get("phases")
+    try:
+        index = int(state.get("phase_index", 0) or 0)
+        info = phases[index]
+    except (TypeError, ValueError, IndexError, KeyError):
+        return ""
+    return str(info.get("title") or "") if isinstance(info, dict) else ""
 
 
 def _is_broken(state: dict, status: str, alive: Callable[[dict], bool]) -> bool:
@@ -78,7 +139,7 @@ def _is_broken(state: dict, status: str, alive: Callable[[dict], bool]) -> bool:
 
 
 def _sectors(state: dict) -> list[dict]:
-    """One sector per plan phase: done green, current yellow, rest red, debt orange."""
+    """One sector per plan phase: done green, current yellow, rest grey, debt orange."""
     phases = state.get("phases")
     if not isinstance(phases, list) or not phases:
         return []
@@ -96,7 +157,7 @@ def _sectors(state: dict) -> list[dict]:
         elif i == index:
             color = "yellow"
         else:
-            color = "red"
+            color = "grey"
         if (i + 1) in debt_nos:
             color = "orange"
         out.append({"title": info.get("title", ""), "color": color})
@@ -172,7 +233,7 @@ def _header(state: dict, now: float) -> str:
 
 def _role_line(state: dict) -> str:
     role = str(state.get("role") or "")
-    model = str(state.get("model") or "")
+    model = str(state.get("model") or "").rsplit("/", 1)[-1]
     if role and model:
         return f"{role} · {model}"
     return role or model
