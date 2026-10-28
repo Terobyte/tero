@@ -315,7 +315,8 @@ def resolve_config(cli_args: dict) -> Config:
         seen.add(resolved)
         data = _load_yaml(path)
         if isinstance(data, dict):
-            extra = [k for k in data.keys() if k not in ("defaults", "providers")]
+            owned = ("defaults", "providers") + (("relay",) if path == global_config else ())  # relay client reads ~/.tero only
+            extra = [k for k in data.keys() if k not in owned]
             if extra:
                 labeled = [
                     f"{k} → перенеси в defaults:" if k in valid_fields else str(k)
