@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
+import signal
+import threading
 from pathlib import Path
 
 import pytest
@@ -59,6 +62,45 @@ def _no_hud_window(monkeypatch, request):
     import src.loop.session as _session
 
     monkeypatch.setattr(_session, "maybe_launch_hud", lambda *a, **k: None)
+
+
+def pytest_xdist_auto_num_workers(config):
+    """`-n auto` = performance cores: each test forks hundreds of git calls,
+    and workers on efficiency cores made the suite 2-3x slower, not faster."""
+    import subprocess
+
+    try:
+        out = subprocess.run(["sysctl", "-n", "hw.perflevel0.physicalcpu"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return max(1, int(out.strip()))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+# a lost wakeup must fail fast with a traceback, not sit out a 600 s phase timeout
+TEST_TIMEOUT_S = float(os.environ.get("TERO_TEST_TIMEOUT", "120"))
+
+
+class TestTimeout(Exception):
+    pass
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    if TEST_TIMEOUT_S <= 0 or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _expired(signum, frame):
+        raise TestTimeout(f"test exceeded {TEST_TIMEOUT_S:g}s (TERO_TEST_TIMEOUT)")
+
+    previous = signal.signal(signal.SIGALRM, _expired)
+    signal.setitimer(signal.ITIMER_REAL, TEST_TIMEOUT_S)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def pytest_pyfunc_call(pyfuncitem):
