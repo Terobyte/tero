@@ -38,12 +38,12 @@ def _bump_crashes(state: dict) -> int:
     return crashes + 1, idx
 
 
-def _store_crashes(run_path: Path, crashes: int, phase_index: int) -> None:
+def _store_crashes(run_path: Path, crashes: int, phase_index: int, **extra: Any) -> None:
     from src.loop.state import RunState as _RS
 
     try:
         _RS(run_path / "state.json").update(
-            crash_resumes=crashes, crash_phase_index=phase_index)
+            crash_resumes=crashes, crash_phase_index=phase_index, **extra)
     except Exception:
         pass
 
@@ -312,7 +312,7 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
                   total_phases=len(field_entries))
             from src.loop.state import RunState as _RS
 
-            _store_crashes(run_path, 0, cur + 1)
+            _store_crashes(run_path, 0, cur + 1, question=None)  # не ждём: HUD
             try:
                 _RS(run_path / "state.json").update(
                     phase_index=cur + 1, phase=title)
@@ -330,7 +330,7 @@ async def _continue_after_crash(repo_path: Path, run_path: Path, cfg: Any,
                   text=f"resume: перезапускаю фазу после краша (раунд {round_no})",
                   round_no=round_no, phases=field_entries,
                   total_phases=len(field_entries))
-            _store_crashes(run_path, crashes, cur)
+            _store_crashes(run_path, crashes, cur, question=None)
             try:
                 ledger().event("crash_resume", status=status, round=round_no,
                                action="rerun", crashes=crashes)

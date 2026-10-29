@@ -275,3 +275,41 @@ def test_restored_question_skip_on_last_phase_ends_run(tmp_path: Path):
     assert out.status == "ok", out
     assert out.reason in ("ship", "debt")
     assert "фаза не найдена" not in (out.reason or "")
+
+
+def test_resume_past_question_clears_it(tmp_path: Path, monkeypatch):
+    """dream 1.2b→1.2c: хозяин сшипил фазу на fuse, resume пошёл дальше
+    («фаза сдана, догоняю git»), а state.question остался — HUD показывал
+    «6 раундов без SHIP» и ❓ при живом игроке."""
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    import src.loop.session as session_mod
+    from src.config import Config
+    from src.loop.resume.recover import _continue_after_crash
+
+    repo = _init_repo(tmp_path / "r7", PLAN.replace("- [ ] a", "- [x] a"))
+    run_dir = repo / ".tero" / "runs" / "run-q"
+    run_dir.mkdir(parents=True)
+    question = {"id": "1-6", "reason": "fuse", "text": "фаза 1: 6 раундов без SHIP",
+                "actions": ["more", "ship"]}
+    state = {"status": "waiting_human", "reason": "fuse", "phase_index": 0,
+             "round": 6, "question": question, "question_id": "1-6"}
+    (run_dir / "state.json").write_text(json.dumps(state))
+    seen: dict = {}
+
+    async def _fake_run_phases(*_a, **_k):
+        seen.update(json.loads((run_dir / "state.json").read_text()))
+        return SimpleNamespace(status="ok")
+
+    monkeypatch.setattr(session_mod, "run_phases", _fake_run_phases)
+    ledger = SimpleNamespace(event=lambda *a, **k: None)
+    asyncio.run(_continue_after_crash(
+        repo, run_dir, Config(plan_file="plan.md"), state, "waiting_human", 0,
+        agents=None, session=SimpleNamespace(pulse=None),
+        write=lambda **k: None, ledger=lambda: ledger,
+        restore_pending=lambda: None, slug="run-q", base="b", round_no=6,
+        phase_runner=None, advance=True))
+    assert seen.get("phase_index") == 1
+    assert not seen.get("question"), seen.get("question")
