@@ -350,3 +350,40 @@ def test_timeout_with_only_passed_output_omits_name():
 
     output = "tests/test_done.py::test_done PASSED\n"
     assert gates.hung_test_report(output, on_timeout=True) == ""
+
+
+def test_override_with_cd_and_runs_in_shell(tmp_path: Path):
+    # `cd sub && ...` split without a shell runs /usr/bin/cd, exits 0 and
+    # never reaches the tests: a fake green gate
+    _write(tmp_path / "sub" / "marker", "")
+    cmd = detect(tmp_path, test_command="cd sub && test -f marker && exit 3")
+    result = run_all(cmd, tmp_path, timeout_s=30)
+    assert result.exit_code == 3
+
+
+def test_override_with_cd_and_red_suite_is_red(tmp_path: Path):
+    _write(tmp_path / "engine" / "x", "")
+    cmd = detect(tmp_path, test_command="cd engine && false")
+    assert run_all(cmd, tmp_path, timeout_s=30).ok is False
+
+
+def test_override_plain_command_keeps_argv(tmp_path: Path):
+    cmd = detect(tmp_path, test_command="python -m pytest -q")
+    assert cmd.run_all == ["python", "-m", "pytest", "-q"]
+
+
+def test_scoped_files_inside_quoted_shell_string(tmp_path: Path):
+    _write(tmp_path / "d" / "seen", "")
+    scoped = "sh -c 'cd d && for f in {files}; do echo \"$f\" >> got; done'"
+    cmd = detect(tmp_path, test_command="true", test_command_scoped=scoped)
+    result = run_files(cmd, ["a b.py", "c.py"], tmp_path, timeout_s=30)
+    assert result.ok, result.output
+    assert (tmp_path / "d" / "got").read_text().split("\n")[:2] == ["a b.py", "c.py"]
+
+
+def test_scoped_shell_command_expands_files(tmp_path: Path):
+    cmd = detect(tmp_path, test_command="true",
+                 test_command_scoped="cd . && printf '%s\\n' {files} > got")
+    result = run_files(cmd, ["x y.py", "z.py"], tmp_path, timeout_s=30)
+    assert result.ok, result.output
+    assert (tmp_path / "got").read_text() == "x y.py\nz.py\n"

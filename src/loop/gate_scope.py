@@ -204,6 +204,15 @@ def format_gate_fact(
         "последняя строка итога:",
         (tail or "").strip().splitlines()[-1] if (tail or "").strip() else "(нет)",
         "",
+    ]
+    if exit_code == 0 and not (tail or "").strip():
+        # a suite that never started looks exactly like this (`cd x && ...` without a shell)
+        lines.append(
+            "ВНИМАНИЕ: код 0, но вывод пуст — тесты, похоже, не запускались. "
+            "Не считай их зелёными: прогони набор сам, если можешь, иначе это блокер."
+        )
+        return "\n".join(lines)
+    lines += [
         "Цикл уже прогнал тесты на этом дереве (факт выше). "
         "Полный набор сам не перезапускай. "
         "Точечные тесты под свои гипотезы — можно. "

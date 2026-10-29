@@ -53,11 +53,11 @@ def detect(
 ) -> TestCommand | None:
     if test_command.strip():
         scoped = (
-            shlex.split(test_command_scoped) if test_command_scoped.strip() else None
+            _override_argv(test_command_scoped) if test_command_scoped.strip() else None
         )
         return TestCommand(
             name="override",
-            run_all=shlex.split(test_command),
+            run_all=_override_argv(test_command),
             run_files=scoped,
         )
 
@@ -142,23 +142,50 @@ def _npm_has_test(package: Path) -> bool:
     return isinstance(scripts, dict) and "test" in scripts
 
 
+_SHELL_OPS = frozenset({"&&", "||", ";", "|", "&", ">", ">>", "<", "2>&1"})
+_SHELL_BUILTINS = frozenset({"cd", "export", "source", ".", "set", "unset"})
+
+
+def _override_argv(command: str) -> list[str]:
+    """Argv for a configured test command.
+
+    Split without a shell, `cd engine && npm test` runs /usr/bin/cd with the
+    rest as arguments: exit 0, no tests, a green gate. Shell syntax goes to
+    `sh -c` whole; a plain command keeps its argv (pytest flags, fingerprints).
+    """
+    argv = shlex.split(command)
+    if argv and (argv[0] in _SHELL_BUILTINS or any(t in _SHELL_OPS for t in argv)):
+        return ["sh", "-c", command]
+    return argv
+
+
 def _expand_files(argv: list[str], paths: list[str]) -> list[str]:
     out: list[str] = []
     for token in argv:
         if token == "{files}":
             out.extend(paths)
+        elif "{files}" in token:
+            # inside a shell string (`sh -c '... {files}'`): quoted words
+            out.append(token.replace("{files}", " ".join(shlex.quote(p) for p in paths)))
         else:
             out.append(token)
     return out
 
 
 def _run(argv: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
+    from src.loop.gate_lock import host_gate_lock
+
+    resolved = pytest_argv([_resolve_python(part) for part in argv])
+    with host_gate_lock():
+        return _run_locked(resolved, name, repo, timeout_s)
+
+
+def _run_locked(resolved: list[str], name: str, repo: Path, timeout_s: int) -> GateResult:
     from src.loop import watchdog as _wd
 
     from src.process_guard import ProcessGuard
     from src import proc_tag
 
-    resolved = pytest_argv([_resolve_python(part) for part in argv])
     before = ProcessGuard().snapshot_pids()
     _wd.note_step_before(before)
     env, tag = proc_tag.tagged_env()

@@ -464,3 +464,19 @@ def test_judge_prompt_has_gate_fact_block():
     assert "## Тесты цикла" in text
     assert "не перезапускай" in text
     assert "tests/test_a.py" in text
+
+
+def test_gate_fact_warns_on_empty_green_output():
+    # exit 0 with no output at all is how a suite that never ran looks
+    fact = gate_scope.format_gate_fact(
+        command="cd engine && npm test", scope="полный", files=None, exit_code=0, tail="",
+    )
+    assert "вывод пуст" in fact
+    assert "Полный набор сам не перезапускай" not in fact
+
+
+def test_gate_fact_no_warning_with_output():
+    fact = gate_scope.format_gate_fact(
+        command="npm test", scope="полный", files=None, exit_code=0, tail="Tests  249 passed (249)",
+    )
+    assert "вывод пуст" not in fact
