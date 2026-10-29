@@ -37,6 +37,14 @@ def _isolated_home(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_host_identity(monkeypatch):
+    """`tero wait` under Claude Code and in the gate must behave the same (спек пульта 2, п. 1)."""
+    for name in ("CLAUDE_PID", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "TERO_WOKEN", "TERO_HOST",
+                 "TERO_AGENT_PID"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_opencode_models(monkeypatch):
     """`opencode models` on the real CLI is a network call; tests pass their own command."""
     from src.providers import free_models

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import errno
-import os
 import shlex
 import subprocess
 import time
@@ -11,6 +9,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.fsio import atomic_write_json, read_json_dict
+from src.hud.registry import current_pid_started, pid_is_alive
+from src.loop import lease as lease_mod
 from src.loop.decision.actions import BUDGET_PER_PHASE, budget_used
 from src.loop.inbox import Inbox
 from src.loop.state import RunState, Status, owner_lock
@@ -70,88 +70,38 @@ def choose(decision: dict, state: dict) -> Answer:
                   uuid=f"autopilot-{qid}")
 
 
-def pid_alive(pid: Any) -> bool:
-    try:
-        target = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if target <= 0:
-        return False
-    try:
-        os.kill(target, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        pass
-    except OSError as exc:  # F26: аренду убивает только ESRCH; EINTR — жив.
-        if exc.errno is None or exc.errno == errno.ESRCH:
-            return False
-    except ValueError:
-        return False
-    try:
-        from psutil import (AccessDenied as _AD, NoSuchProcess as _NS,  # type: ignore
-                            Process as _P, STATUS_DEAD as _D, STATUS_ZOMBIE as _Z)
-    except Exception:
-        return True
-    try:
-        return _P(target).status() not in (_Z, _D)
-    except _NS:
-        return False
-    except _AD:
-        return True
-    except Exception:  # F23: вердикт kill(0) уже есть — psutil его не отменяет.
-        return True
-
-
 def read_lease(run_dir: str | Path) -> dict | None:
-    return read_json_dict(Path(run_dir) / "lease")
+    """The signed lease or None (`src/loop/lease.py`)."""
+    return lease_mod.read(run_dir)
 
 
 def lease_valid(run_dir: str | Path, now: float | None = None,
-                alive: Callable[[Any], bool] | None = None) -> bool:
-    data = read_lease(run_dir)
-    if not isinstance(data, dict):
-        return False
-    try:
-        until = float(data.get("until", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-    ts = time.time() if now is None else now
-    if until <= ts:
-        return False
-    try:
-        return bool((alive or pid_alive)(data.get("pid")))
-    except Exception:
-        return False
+                alive: Callable[[Any, Any], bool] | None = None) -> bool:
+    """`on_duty`: a signed, unexpired lease whose host process is alive."""
+    return lease_mod.on_duty(run_dir, now, alive or pid_is_alive)
 
 
-def write_lease(run_dir: str | Path, until: float, pid: int) -> bool:
-    try:
-        Path(run_dir).mkdir(parents=True, exist_ok=True)
-        atomic_write_json(Path(run_dir) / "lease",
-                          {"until": until, "pid": int(pid)}, mode=0o600)
-        return True
-    except (OSError, ValueError, TypeError):
-        return False
+def write_lease(run_dir: str | Path, until: float, pid: int,
+                pid_started: float | None = None, host: str = "") -> bool:
+    """Woken-agent lease: pid + its start time, signed. Dead without pid_started."""
+    if pid_started is None:
+        pid_started = current_pid_started(int(pid)) if int(pid or 0) > 0 else None
+    return lease_mod.write(run_dir, until=until, pid=pid, pid_started=pid_started, host=host)
 
 
 def extend_from_answer(run_dir: str | Path, agent_timeout_s: float,
-                       agent_pid: int | None = None,
-                       alive: Callable[[Any], bool] | None = None) -> None:
+                       agent_pid: int | None = None, pid_started: float | None = None,
+                       host: str = "", alive: Callable[[Any, Any], bool] | None = None) -> None:
+    """After an agent answer: a lease for the answering host, else extend the live one."""
     try:
         given = int(agent_pid or 0)
     except (TypeError, ValueError):
         given = 0
-    if given > 0:
-        write_lease(run_dir, time.time() + float(agent_timeout_s), given)
+    until = time.time() + float(agent_timeout_s)
+    if given > 0 and isinstance(pid_started, (int, float)):
+        lease_mod.write(run_dir, until=until, pid=given, pid_started=pid_started, host=host)
         return
-    check = alive or pid_alive
-    try:
-        keep = int((read_lease(run_dir) or {}).get("pid", 0) or 0)
-    except (TypeError, ValueError):
-        return
-    if keep > 0 and check(keep):
-        write_lease(run_dir, time.time() + float(agent_timeout_s), keep)
+    lease_mod.extend(run_dir, until, is_alive=alive or pid_is_alive)
 
 
 def should_notify(run_dir: str | Path, reason: str, now: float | None = None) -> bool:
@@ -231,7 +181,7 @@ def _remember_wake(run_dir: str | Path, question_id: str, pid: int) -> bool:
 def maybe_wake(run_dir: str | Path, question_id: str, wake_command: str,
                agent_timeout_s: float, popen: Any = subprocess.Popen,
                now: float | None = None,
-               alive: Callable[[Any], bool] | None = None) -> int | None:
+               alive: Callable[[Any, Any], bool] | None = None) -> int | None:
     if ((wake_command or "").strip() and _wake_marker(run_dir, question_id) is None
             and not lease_valid(run_dir, now=now, alive=alive)):
         if not _remember_wake(run_dir, question_id, 0):  # F24/F27: метка до Popen
@@ -293,7 +243,9 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
             if (ans.who or "") == "agent":
                 try:
                     extend_from_answer(ctx.run_dir, agent_t,
-                                       agent_pid=getattr(ans, "agent_pid", None))
+                                       agent_pid=getattr(ans, "agent_pid", None),
+                                       pid_started=getattr(ans, "agent_pid_started", None),
+                                       host=getattr(ans, "host", "") or "")
                 except Exception:
                     pass
             return ans

@@ -26,6 +26,7 @@ from src.hud import registry, single
 from src.hud.model import build_view
 from src.hud.registry import is_dead
 from src.hud.tail import Tail
+from src.loop.lease import agent_view
 
 EVENTS_CAP = 2000
 
@@ -183,7 +184,11 @@ class Bridge:
             pass
         self._events = self._events[-EVENTS_CAP:]
         now = time.time()
-        data = build_view(self._state, self._events, now, lambda s: not is_dead(s))
+        try:
+            agent = agent_view(self.run_dir, now)
+        except Exception:
+            agent = None
+        data = build_view(self._state, self._events, now, lambda s: not is_dead(s), agent=agent)
         data["age_color"] = age_color(data.get("last_event_age_s"))
         try:
             others = len(self._others())
@@ -208,6 +213,16 @@ class Bridge:
     def hide(self) -> bool:
         """Hide into the menu bar item. Returns the new visibility."""
         return self._set_visible(False)
+
+    def close(self) -> bool:
+        """The ✕ next to a `ready` light: end the HUD process, like «Закрыть HUD» in the tray."""
+        window = getattr(self, "_window", None)
+        try:
+            if window is not None:
+                window.destroy()
+        except Exception:
+            return False
+        return True
 
     def toggle_visible(self) -> bool:
         return self._set_visible(not self._visible)

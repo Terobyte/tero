@@ -141,14 +141,15 @@ class Config:
     human_timeout_s: int = 900
     agent_timeout_s: int = 1800
     autopilot_grace_s: int = 900
-    wake_command: str = ""
+    wake_command: str = ""  # только из ~/.tero/config.yaml (config_env.GLOBAL_ONLY)
+    host: str = ""  # claude | opencode | muse: кто хозяин; только глобальный
     jev_enabled: bool = False
-    phone_text_answers: bool = True
+    phone_text_answers: bool = True  # только глобальный
     preset: str = "golden"  # src/presets/<name>.yaml, none — без пресета
     max_debt: int = 3  # записей долга на прогон, больше — вопрос хозяину
 
 
-from src.config_env import _ENV_MAP, apply_env  # noqa: E402,F401
+from src.config_env import _ENV_MAP, apply_env, drop_global_only  # noqa: E402,F401
 from src.config_names import short_model_name  # noqa: E402,F401
 
 __all__ = ["_ENV_MAP", "apply_env", "short_model_name"]
@@ -157,12 +158,7 @@ __all__ = ["_ENV_MAP", "apply_env", "short_model_name"]
 # Escalation is excluded: "" there is a valid value (escalation off).
 _BLANK_MEANS_UNSET_PREFIXES = ("player_", "judge_", "tester_")
 
-_ROLE_PROVIDER_FIELDS = (
-    "player_provider",
-    "judge_provider",
-    "tester_provider",
-    "escalation_provider",
-)
+_ROLE_PROVIDER_FIELDS = ("player_provider", "judge_provider", "tester_provider", "escalation_provider")
 
 _CLI_SPEC_FIELDS = (
     ("player_spec", "player_provider", "player_model"),
@@ -331,6 +327,7 @@ def resolve_config(cli_args: dict) -> Config:
         defaults_section = data.get("defaults", {}) if isinstance(data, dict) else {}
         if not isinstance(defaults_section, dict):
             defaults_section = {}
+        defaults_section = drop_global_only(defaults_section, path == global_config)
         for key, value in defaults_section.items():
             if key not in valid_fields:
                 unknown.add(key)

@@ -25,6 +25,7 @@ class Pulse:
 
     def __init__(self, run_dir: str | Path, interval_s: float = 30) -> None:
         self.run_dir = Path(run_dir)
+        self.on_tick: Any = None  # владелец вешает сюда пересчёт alive/on_duty хозяина
         self.path = self.run_dir / "pulse"
         self.interval_s = interval_s
         # RLock: progress() snapshots the counter under the lock and _write
@@ -99,6 +100,11 @@ class Pulse:
             while not self._stop_event.wait(self.interval_s):
                 try:
                     self._write(time.time())
+                except Exception:
+                    pass
+                try:
+                    if self.on_tick is not None:
+                        self.on_tick()
                 except Exception:
                     pass
         except Exception:

@@ -69,7 +69,7 @@ export function basenameSecretPath(path) {
 export const FINDING_TEXT_LIMIT = 500;
 
 // Только список полей из спеки (раздел 3); лишнее отбрасывается.
-const STATE_FIELDS = new Set([
+export const STATE_FIELDS = new Set([
   'run_id',
   'machine_id',
   'status',
@@ -92,7 +92,22 @@ const STATE_FIELDS = new Set([
   'phone_text_answers',
   'updated_at',
   'state_at',
+  'agent',
 ]);
+
+// Вложенный белый список `agent` (спек пульта 2, п. 1): pid сюда не попадает.
+export const AGENT_FIELDS = new Set([
+  'host', 'alive', 'on_duty', 'pid_started_at', 'lease_until', 'lease_written_at',
+]);
+
+function pickFields(value, fields) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return deepRedact(value);
+  const out = {};
+  for (const key of fields) {
+    if (key in value) out[key] = deepRedact(value[key]);
+  }
+  return out;
+}
 
 function maskPem(text) {
   let out = '';
@@ -206,6 +221,7 @@ export function filterState(state) {
     if (!(key in state)) continue;
     const value = state[key];
     if (key === 'question') out[key] = sanitizeQuestion(value);
+    else if (key === 'agent') out[key] = pickFields(value, AGENT_FIELDS);
     else if (key === 'findings' && Array.isArray(value)) {
       out[key] = value.map(sanitizeFinding).filter((finding) => finding !== null);
     } else {

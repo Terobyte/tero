@@ -41,10 +41,7 @@ def run_wait(args) -> int:
     run_dir = resolve_run_dir(args)
     if run_dir is None:
         return 1
-    code = wait_run(
-        run_dir, repo, timeout_s=getattr(args, "timeout", None),
-        agent_pid=getattr(args, "agent_pid", None),
-    )
+    code = wait_run(run_dir, repo, timeout_s=getattr(args, "timeout", None))
     state = RunState.read(run_dir / "state.json") or {}
     why = {
         0: "готово",
@@ -53,6 +50,8 @@ def run_wait(args) -> int:
         3: "нужен агент",
         5: "мёртв или завис — нужен resume",
         6: "таймаут",
+        7: "сообщение хозяину",
+        8: "хозяина нет: ты сирота по мнению tero; если ты жив и это читаешь — `tero status`, затем снова `tero wait`",
     }.get(code, f"код {code}")
     print(f"{state.get('status', '?')}: {why}")
     return code
@@ -97,7 +96,10 @@ def run_status(args) -> int:
     print(f"решения: {_json.dumps(payload['decisions'], ensure_ascii=False)}")
     print(f"долг: {_json.dumps(payload['debt'], ensure_ascii=False)}")
     print(f"пульс: {payload['pulse_age_s']}")
-    print("аренда: null")
+    from src.loop.wait import agent_line
+
+    print(agent_line(payload.get("agent")))
+    print(f"аренда: {_json.dumps(payload['lease'], ensure_ascii=False)}")
     print(f"push_ok: {str(payload['push_ok']).lower()}")
     if payload.get("relay_error"):
         print(payload["relay_error"])

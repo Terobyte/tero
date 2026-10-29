@@ -13,11 +13,14 @@ _CRASH_STATUSES = frozenset({
 })
 
 
-def _refuse_outcome(run_path: Path, reason: str):
+BUSY = 9  # владелец занят: другой прогон держит репо или этот ещё жив
+
+
+def _refuse_outcome(run_path: Path, reason: str, code: int = 1):
     from src.loop.session import RunOutcome as _Outcome
 
-    print(f"стоп: {reason} (код 1)", flush=True)
-    return _Outcome(status="error", exit_code=1, reason=reason,
+    print(f"стоп: {reason} (код {code})", flush=True)
+    return _Outcome(status="error", exit_code=code, reason=reason,
                     run_dir=str(run_path))
 
 
@@ -60,7 +63,7 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
     if status not in _CRASH_STATUSES:
         lock = acquire(repo_path)
         if lock is None:
-            return None, _refuse_outcome(run_path, "another run holds this repo")
+            return None, _refuse_outcome(run_path, "another run holds this repo", BUSY)
         return lock, None
     lock = acquire(repo_path)
     if lock is not None:
@@ -72,7 +75,7 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
         lock = acquire(repo_path)
         if lock is not None:
             return lock, None
-        return None, _refuse_outcome(run_path, "another run holds this repo")
+        return None, _refuse_outcome(run_path, "another run holds this repo", BUSY)
     from src.fsio import read_json_dict
     from src.loop.wait import is_hung
 
@@ -81,7 +84,7 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
     except Exception:
         pulse = None
     if not is_hung(state, pulse if isinstance(pulse, dict) else None, time.time()):
-        return None, _refuse_outcome(run_path, "прогон жив")
+        return None, _refuse_outcome(run_path, "прогон жив", BUSY)
     from src.loop.resume.kill import kill_hung_owner
 
     try:
@@ -94,7 +97,7 @@ def acquire_for_crash(repo_path: Path, run_path: Path, state: dict,
         if lock is not None:
             return lock, None
         time.sleep(0.05)
-    return None, _refuse_outcome(run_path, "another run holds this repo")
+    return None, _refuse_outcome(run_path, "another run holds this repo", BUSY)
 
 
 def acquire_for_resume(repo_path: Path, run_path: Path, state: dict):

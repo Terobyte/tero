@@ -3,6 +3,7 @@
 
 import { checkStale } from './cron.js';
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
+import { PUSH_MAX } from './push.js';
 import {
   clientIp,
   consumeBadAttempt,
@@ -263,6 +264,25 @@ async function ackAnswer(request, env) {
   return jsonResponse({ ok: true, deleted });
 }
 
+// Текст от tero (`tero notify`, «агента нет, решу сам») — пуш на телефон с ключом
+// записи. Кулдаун — тот же push_log, по тексту; без подписок — не ошибка.
+async function postNotify(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  const raw = body && typeof body.text === 'string' ? body.text : '';
+  if (!raw.trim()) return jsonResponse({ error: 'text required' }, 400);
+  const text = redactSecrets(stripCodeAndDiffs(raw)).slice(0, PUSH_MAX);
+  const runId = typeof body.run_id === 'string' && body.run_id ? sanitizeId(body.run_id) : 'notify';
+  await ensurePushTables(env.DB);
+  let result;
+  try {
+    result = await sendPush(env, runId, '', { notify: text });
+  } catch {
+    return jsonResponse({ ok: false, error: 'push failed' }, 502);
+  }
+  return jsonResponse({ ok: true, sent: !!(result && result.sent), skipped: (result && result.skipped) || null });
+}
+
 async function postPairCode(request, env) {
   if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
   const body = await readJson(request);
@@ -374,6 +394,7 @@ export async function handleFetch(request, env) {
   if (method === 'POST' && pathname === '/answer') return postAnswer(request, env);
   if (method === 'GET' && pathname === '/answers') return getAnswers(request, env, url);
   if (method === 'POST' && pathname === '/answers/ack') return ackAnswer(request, env);
+  if (method === 'POST' && pathname === '/notify') return postNotify(request, env);
   if (method === 'POST' && pathname === '/pair/code') return postPairCode(request, env);
   if (method === 'POST' && pathname === '/pair/exchange') return postPairExchange(request, env);
   if (method === 'POST' && pathname === '/pair/revoke') return postPairRevoke(request, env);

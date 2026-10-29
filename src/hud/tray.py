@@ -24,6 +24,8 @@ DOT_RGB = {
     "yellow": (0.96, 0.77, 0.26),
     "red": (1.0, 0.42, 0.42),
     "grey": (0.55, 0.58, 0.63),
+    # a finished run: bluish white, steady, not from the role palette
+    "ready": (0.86, 0.93, 1.0),
 }
 
 
@@ -34,7 +36,7 @@ TICK_S = 0.1
 
 
 def dot_alpha(light: str, t: float) -> float:
-    """Opacity of the menu bar dot at time t: green breathes, the rest stays lit."""
+    """Opacity of the menu bar dot at time t: green breathes, the rest (ready too) stays lit."""
     if light != "green":
         return 1.0
     phase = (t % BREATHE_S) / BREATHE_S

@@ -99,22 +99,18 @@ def run_answer(args) -> int:
     else:
         who = "agent"
     uid = _uuid.uuid4().hex
-    try:
-        agent_pid = int(getattr(args, "agent_pid", None) or 0) or None
-    except (TypeError, ValueError):
-        agent_pid = None
-    import os as _os
+    # pid хозяина — по предкам (host_id), не по --agent-pid / TERO_AGENT_PID
+    # и не ppid (это временный bash). Из-под владельца прогона хозяина нет.
+    agent_pid: int | None = None
+    pid_started: float | None = None
+    host_kind = ""
+    if who == "agent":
+        from src.loop.host_id import detect, under_owner
+        from src.loop.state import RunState as _RS
 
-    if agent_pid is None:
-        try:
-            agent_pid = int(_os.environ.get("TERO_AGENT_PID", "") or 0) or None
-        except ValueError:
-            agent_pid = None
-    if agent_pid is None and who == "agent":
-        try:
-            agent_pid = int(_os.getppid())
-        except (AttributeError, OSError, ValueError):
-            agent_pid = None
+        host = detect()
+        if host.known and not under_owner(_RS.read(run_dir / "state.json") or {}):
+            agent_pid, pid_started, host_kind = host.pid, host.started, host.kind
     # F6+F17+F18: woken — только по доверенной идентичности сессии.
     # Заявленные --agent-pid / TERO_AGENT_PID игнорируются (их задаёт сам
     # отвечающий): доверенным считается только сам процесс answer — ppid
@@ -143,7 +139,8 @@ def run_answer(args) -> int:
             "why": args.why,
             "who": who,
             "ts": time.time(),
-            **({"agent_pid": agent_pid} if agent_pid else {}),
+            **({"agent_pid": agent_pid, "agent_pid_started": pid_started,
+                "host": host_kind} if agent_pid else {}),
             **({"woken": True} if woken else {}),
         }
     )

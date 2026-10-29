@@ -192,18 +192,28 @@ def test_relay_no_result_file_in_inbox(tmp_path):
     assert _acked(relay, "u1")
 
 
+def _global_phone_text(value: bool) -> None:
+    """phone_text_answers читается только из ~/.tero/config.yaml (спек пульта 2, п. 3)."""
+    from pathlib import Path
+
+    cfg = Path.home() / ".tero" / "config.yaml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(f"defaults:\n  phone_text_answers: {'true' if value else 'false'}\n")
+
+
 def test_phone_text_disabled_rejected(tmp_path):
-    """action == text при phone_text_answers: false отклоняется и в tero."""
+    """action == text при глобальном phone_text_answers: false отклоняется и в tero."""
     from src.loop.inbox import Inbox
     from src.loop.state import RunState
     from src.relay.iface import Answer, FakeRelay
     run = tmp_path / "run"
     (run / "inbox").mkdir(parents=True, exist_ok=True)
+    _global_phone_text(False)
     RunState(run / "state.json").update(
         status="waiting_human",
         question={"id": "1-1", "actions": ["answer", "skip"]},
         question_id="1-1",
-        config={"phone_text_answers": False})
+        config={"phone_text_answers": True})
     relay = FakeRelay([Answer(question_id="1-1", action="text",
                               text="подсказка", who="human", uuid="ut")])
     assert Inbox(run).take("1-1", relay) is None
@@ -212,17 +222,19 @@ def test_phone_text_disabled_rejected(tmp_path):
 
 
 def test_phone_answer_text_disabled_rejected(tmp_path):
-    """action == answer с текстом при phone_text_answers: false отклоняется."""
+    """action == answer с текстом при глобальном phone_text_answers: false отклоняется;
+    state.json с true (его пишет репо) не включает текст обратно."""
     from src.loop.inbox import Inbox
     from src.loop.state import RunState
     from src.relay.iface import Answer, FakeRelay
     run = tmp_path / "run"
     (run / "inbox").mkdir(parents=True, exist_ok=True)
+    _global_phone_text(False)
     RunState(run / "state.json").update(
         status="waiting_human",
         question={"id": "1-1", "actions": ["answer", "skip"]},
         question_id="1-1",
-        config={"phone_text_answers": False})
+        config={"phone_text_answers": True}, phone_text_answers=True)
     relay = FakeRelay([Answer(question_id="1-1", action="answer",
                               text="подсказка", who="human", uuid="ua")])
     assert Inbox(run).take("1-1", relay) is None
@@ -383,13 +395,28 @@ def test_answer_restored_after_crash_rerun():
 
 
 def test_phone_text_answers_in_config(tmp_path, monkeypatch):
-    """phone_text_answers — поле Config: yaml/env выключают, _public_config несёт."""
+    """phone_text_answers, wake_command, host — только из ~/.tero/config.yaml:
+    репо и окружение их не задают (спек пульта 2, п. 3)."""
     from src.config import Config, resolve_config
     from src.loop.session import _public_config
     assert Config().phone_text_answers is True
     monkeypatch.setenv("TERO_PHONE_TEXT_ANSWERS", "false")
-    cfg = resolve_config({"working_dir": str(tmp_path)})
+    repo = tmp_path / "repo"
+    (repo / ".tero").mkdir(parents=True)
+    (repo / ".tero" / "config.yaml").write_text(
+        "defaults:\n  phone_text_answers: false\n  wake_command: sh -c 'touch /tmp/pwned'\n"
+        "  host: evil\n  max_rounds: 3\n")
+    cfg = resolve_config({"working_dir": str(repo)})
+    assert cfg.phone_text_answers is True
+    assert cfg.wake_command == "" and cfg.host == ""
+    assert cfg.max_rounds == 3, "остальные поля репо по-прежнему читаются"
+    _global_phone_text(False)
+    from pathlib import Path
+    (Path.home() / ".tero" / "config.yaml").write_text(
+        "defaults:\n  phone_text_answers: false\n  wake_command: echo hi\n  host: claude\n")
+    cfg = resolve_config({"working_dir": str(repo)})
     assert cfg.phone_text_answers is False
+    assert (cfg.wake_command, cfg.host) == ("echo hi", "claude")
     assert _public_config(cfg)["phone_text_answers"] is False
 
 

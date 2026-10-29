@@ -98,3 +98,29 @@ def trusted_list(run_id: str, items: Any, sig: Any) -> list[str]:
     except Exception:
         pass
     return []
+
+
+def _file_message(kind: str, run_id: str, payload: Mapping[str, Any]) -> str:
+    # one message shape for every signed run file (lease, msg-*, wake.json,
+    # resume-answer.json): every key but `sig`, sorted, run id inside
+    body = {str(k): payload[k] for k in payload if k != "sig"}
+    return json.dumps([str(kind), str(run_id), body], ensure_ascii=False, sort_keys=True,
+                      default=str)
+
+
+def sign_file(kind: str, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Add `sig` to a run file the owner or host must trust (creates the key)."""
+    key = _key(create=True)
+    payload["sig"] = _mac(key, _file_message(kind, run_id, payload)) if key else ""
+    return payload
+
+
+def file_signed(kind: str, run_id: str, payload: Mapping[str, Any]) -> bool:
+    """True when `payload.sig` matches this run and kind. Never raises."""
+    try:
+        key = _key()
+        sig = str(payload.get("sig") or "")
+        return bool(key and sig and hmac.compare_digest(sig, _mac(key, _file_message(kind, run_id, payload))))
+    except Exception:
+        return False
+

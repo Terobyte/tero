@@ -11,6 +11,9 @@ from datetime import datetime, timezone  # noqa: F401 (реэкспорт для
 from typing import Any, Callable
 
 from src.hud.app import debt_line, hud_done_text  # noqa: F401 (единые строки HUD)
+from src.hud.model_parts import (  # noqa: F401 (реэкспорт)
+    _age, _first_finding, _fmt_mmss, _fmt_mss, _parse_ts, _verdict, _verdict_age, _verdict_summary,
+)
 
 TAB_LIMIT = 2000
 
@@ -24,6 +27,7 @@ _UNFINISHED = (
 )
 
 QUIET_AFTER_S = 600
+_AGENT_STATUSES = ("waiting_agent", "judge_pending")
 
 _WAITING_TEXT = {
     "waiting_human": "ждёт тебя",
@@ -35,15 +39,24 @@ _WAITING_TEXT = {
 _ROLE_ICONS = {"player": "🛠", "judge": "⚖️", "tester": "🧪", "gate": "⏱"}
 
 
+NO_AGENT = {"host": "", "alive": False, "on_duty": False, "pid_started_at": None,
+            "lease_until": None, "lease_written_at": None}
+
+
 def build_view(
     state: dict | None,
     events: list[dict],
     now: float,
     alive: Callable[[dict], bool],
+    agent: dict | None = None,
 ) -> dict:
-    """Snapshot + tail events -> screen fields. `None` state keeps the old frame."""
+    """Snapshot + tail events -> screen fields. `None` state keeps the old frame.
+
+    `agent` is `lease.agent_view(run_dir)`: whether the host is alive and on duty.
+    """
     items = [e for e in (events or []) if isinstance(e, dict)]
     tabs = _tabs(items)
+    agent = dict(NO_AGENT, **(agent or {}))
     if not isinstance(state, dict):
         return {
             "sectors": [],
@@ -63,20 +76,21 @@ def build_view(
             "phase_label": "",
             "phase_title": "",
             "role": "",
+            "agent": agent,
         }
     status = state.get("status") or ""
     broken = _is_broken(state, status, alive)
     sectors = _sectors(state)
     debt_n = _debt_count(state)
     age = _age(items, now)
-    light, light_text = _light(state, status, broken, age, debt_n)
+    light, light_text = _light(state, status, broken, age, debt_n, agent)
     return {
         "sectors": sectors,
         "circle": _circle(status, sectors, broken),
         "icon": _icon(state, status, broken),
         "header": _header(state, now),
         "role_line": _role_line(state),
-        "doing": _doing(state, status, items, now, broken),
+        "doing": _doing(state, status, items, now, broken, agent),
         "last_event_age_s": age,
         "verdict": _verdict(state, items),
         "verdict_age_s": _verdict_age(items, now),
@@ -88,18 +102,23 @@ def build_view(
         "phase_label": _phase_label(state),
         "phase_title": str(state.get("phase") or _current_title(state)),
         "role": str(state.get("role") or ""),
+        "agent": agent,
     }
 
 
-def _light(state: dict, status: str, broken: bool, age: int | None, debt_n: int) -> tuple[str, str]:
-    """Run health for the status light: green goes, yellow needs a look, red is dead."""
+def _light(state: dict, status: str, broken: bool, age: int | None, debt_n: int,
+           agent: dict | None = None) -> tuple[str, str]:
+    """Run health for the status light: green goes, yellow needs a look, red is dead,
+    ready is a finished run (debt or not: the debt is text, not a colour)."""
     if broken:
         return "red", "оборвался"
     if status == "stopped":
         return "red", "стоп"
     if status == "done":
-        return ("yellow", f"сдано с долгом {debt_n}") if debt_n else ("green", "сдано")
+        return "ready", f"сдано с долгом {debt_n}" if debt_n else "сдано"
     question = state.get("question")
+    if status in _AGENT_STATUSES and not (agent or {}).get("on_duty"):
+        return "yellow", "агента нет"
     if status in _WAITING_TEXT:
         return "yellow", _WAITING_TEXT[status]
     if isinstance(question, dict) and question.get("text"):
@@ -241,11 +260,22 @@ def _role_line(state: dict) -> str:
     return role or model
 
 
-def _doing(state: dict, status: str, events: list[dict], now: float, broken: bool) -> str:
+def agent_note(agent: dict | None) -> str:
+    """`хозяин жив, не дежурит` / `агента нет` for a stopped run's plaque."""
+    a = agent or {}
+    if a.get("alive"):
+        return "" if a.get("on_duty") else "хозяин жив, не дежурит"
+    return "агента нет"
+
+
+def _doing(state: dict, status: str, events: list[dict], now: float, broken: bool,
+           agent: dict | None = None) -> str:
     if broken:
         return "прогон оборвался"
     if status == "stopped":
-        return str(state.get("text") or state.get("reason") or "стоп")
+        text = str(state.get("text") or state.get("reason") or "стоп")
+        note = agent_note(agent)
+        return f"{text} · {note}" if note else text
     if status == "done":
         return hud_done_text(status, _debt_count(state))
     question = state.get("question")
@@ -301,50 +331,6 @@ def _gate_doing(events: list[dict], now: float) -> str | None:
     return str(text) if text else "тесты …"
 
 
-def _verdict(state: dict, events: list[dict]) -> dict:
-    # The stream is append-only and the verdict event is emitted before state.json is
-    # written, so the newest verdict event is the last verdict; state.json is only a
-    # fallback for when the event has left the tail.
-    for ev in reversed(events):
-        if ev.get("type") == "verdict" and ev.get("verdict"):
-            return _verdict_summary(ev)
-    saved = state.get("verdict")
-    if isinstance(saved, dict) and saved.get("verdict"):
-        return _verdict_summary(saved)
-    return {"verdict": None, "blocking": 0, "first": ""}
-
-
-def _verdict_age(events: list[dict], now: float) -> int | None:
-    """Seconds since the newest verdict event; None when it left the tail (or never came)."""
-    for ev in reversed(events):
-        if ev.get("type") == "verdict" and ev.get("verdict"):
-            ts = _parse_ts(ev.get("ts"))
-            return None if ts is None else max(0, int(now - ts))
-    return None
-
-
-def _verdict_summary(src: dict) -> dict:
-    try:
-        blocking = int(src.get("blocking", 0) or 0)
-    except (TypeError, ValueError):
-        blocking = 0
-    return {
-        "verdict": src.get("verdict"),
-        "blocking": blocking,
-        "first": _first_finding(src.get("first")),
-    }
-
-
-def _first_finding(first: Any) -> str:
-    if not isinstance(first, dict):
-        return ""
-    path = str(first.get("file") or "")
-    if path:
-        line = first.get("line")
-        return f"{path}:{line}" if line is not None else path
-    return str(first.get("issue") or "")
-
-
 def _tabs(events: list[dict]) -> dict[str, list[dict]]:
     tabs: dict[str, list[dict]] = {
         "all": [],
@@ -363,35 +349,3 @@ def _tabs(events: list[dict]) -> dict[str, list[dict]]:
     return tabs
 
 
-def _age(events: list[dict], now: float) -> int | None:
-    for ev in reversed(events):
-        ts = _parse_ts(ev.get("ts"))
-        if ts is not None:
-            return max(0, int(now - ts))
-    return None
-
-
-def _parse_ts(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            return datetime.fromisoformat(text).timestamp()
-        except ValueError:
-            return None
-    return None
-
-
-def _fmt_mmss(seconds: float) -> str:
-    total = max(0, int(seconds or 0))
-    return f"{total // 60:02d}:{total % 60:02d}"
-
-
-def _fmt_mss(seconds: float) -> str:
-    total = max(0, int(seconds or 0))
-    return f"{total // 60}:{total % 60:02d}"

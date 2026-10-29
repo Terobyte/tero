@@ -16,6 +16,8 @@ class Answer:
     uuid: str = ""
     woken: bool = False
     agent_pid: int | None = None
+    agent_pid_started: float | None = None
+    host: str = ""
     # "relay" — ответ пришёл с телефона; локальный inbox оставляет "".
     via: str = ""
 

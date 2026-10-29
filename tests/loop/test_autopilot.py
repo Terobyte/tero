@@ -228,34 +228,124 @@ def test_human_timeout_to_waiting_agent(tmp_path: Path, monkeypatch):
     assert not t3.is_alive(), "resolve hung"
 
 
-def test_lease_written_by_wait(tmp_path: Path):
+def _fake_host():
+    """A known host: this very process (alive, start time known)."""
     import os
 
-    from src.loop.wait import _AGENT_STATUSES, wait_run
+    from src.hud.registry import current_pid_started
+    from src.loop.host_id import Host
+
+    return Host("claude", os.getpid(), current_pid_started(), "sess-1")
+
+
+def _lease(run_dir: Path, *, until: float, pid: int | None = None,
+           started: float | None = None, alive: bool = True) -> None:
+    """A signed lease like `tero wait` writes it; by default for this process."""
+    import os
+
+    from src.hud.registry import current_pid_started
+    from src.loop import lease as lease_mod
+
+    if pid is None:
+        pid = os.getpid() if alive else 999999999
+    if started is None:
+        started = current_pid_started() if alive else 1.0
+    assert lease_mod.write(run_dir, until=until, pid=pid, pid_started=started, host="claude")
+
+
+def test_lease_written_by_wait(tmp_path: Path):
+    from src.loop import lease as lease_mod
+    from src.loop.wait import wait_run
     from tests.loop.test_wait import _repo as _wait_repo
 
     repo = _wait_repo(tmp_path)
     run_dir = tmp_path / "run"
     (run_dir).mkdir()
+    import os
+
     from src.hud.registry import current_pid_started
 
     (run_dir / "state.json").write_text(json.dumps(
-        {"status": "running", "pid": os.getpid(),
-         "pid_started": current_pid_started()}))
-    code = wait_run(run_dir, repo, timeout_s=0, poll_s=0,
-                    agent_pid=os.getpid())
+        {"status": "running", "pid": os.getpid(), "pid_started": current_pid_started()}))
+    host = _fake_host()
+    code = wait_run(run_dir, repo, timeout_s=0, poll_s=0, host=host)
     assert code == 6
     assert (run_dir / "lease").is_file(), "выход с 6 пишет аренду now+300"
     lease = json.loads((run_dir / "lease").read_text())
     assert lease["until"] > time.time()
-    assert lease["pid"] == os.getpid()
-    assert not auto.lease_valid(run_dir, alive=lambda pid: False)
-    assert auto.lease_valid(run_dir, alive=lambda pid: True)
+    assert lease["pid"] == os.getpid(), "pid хозяина, не оболочки"
+    assert lease["pid_started"] == current_pid_started()
+    assert (lease["host"], lease["session"]) == ("claude", "sess-1")
+    assert lease["sig"], "аренда подписана ключом вне репо"
+    assert lease_mod.on_duty(run_dir)
+    assert not lease_mod.on_duty(run_dir, is_alive=lambda pid, started: False)
+    assert not auto.lease_valid(run_dir, alive=lambda pid, started: False)
+    assert auto.lease_valid(run_dir)
+
+
+def test_wait_without_known_host_has_no_lease_and_no_code_8(tmp_path: Path, capsys):
+    from src.loop.host_id import Host
+    from src.loop.wait import wait_run
+    from tests.loop.test_wait import _repo as _wait_repo
+
+    repo = _wait_repo(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(json.dumps({"status": "waiting_agent"}))
+    assert wait_run(run_dir, repo, host=Host("claude", why="bwrap")) == 3
+    assert not (run_dir / "lease").exists()
+    assert "хозяин не определён" in capsys.readouterr().out
+
+
+def test_orphaned_wait_exits_8_before_3(tmp_path: Path):
+    from src.loop.host_id import Host
+    from src.loop.wait import wait_run
+    from tests.loop.test_wait import _repo as _wait_repo
+
+    repo = _wait_repo(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(json.dumps({"status": "waiting_agent"}))
+    dead = Host("claude", 999999999, 1.0)
+    assert wait_run(run_dir, repo, host=dead) == 8
+    assert not (run_dir / "lease").exists(), "мёртвый хозяин аренду не пишет"
+
+
+def test_live_wait_takes_over_dead_lease_but_not_a_live_one(tmp_path: Path):
+    import os
+
+    from src.loop import lease as lease_mod
+    from src.loop.wait import wait_run
+    from tests.loop.test_wait import _repo as _wait_repo
+
+    repo = _wait_repo(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    from src.hud.registry import current_pid_started
+
+    (run_dir / "state.json").write_text(json.dumps(
+        {"status": "running", "pid": os.getpid(), "pid_started": current_pid_started()}))
+    # a woken agent left a 30 min lease with a dead pid: the live host takes it at once
+    _lease(run_dir, until=time.time() + 1800, alive=False)
+    assert wait_run(run_dir, repo, timeout_s=0, poll_s=0, host=_fake_host()) == 6
+    assert lease_mod.read(run_dir)["pid"] == os.getpid()
+    # a live lease of another host is left alone
+    other_pid, other_started = _other_live_process()
+    _lease(run_dir, until=time.time() + 1800, pid=other_pid, started=other_started)
+    assert wait_run(run_dir, repo, timeout_s=0, poll_s=0, host=_fake_host()) == 6
+    assert lease_mod.read(run_dir)["pid"] == other_pid
+
+
+def _other_live_process() -> tuple[int, float]:
+    import os
+
+    import psutil
+
+    parent = psutil.Process(os.getpid()).parent()
+    return int(parent.pid), float(parent.create_time())
 
 
 def test_autopilot_after_lease_expired(tmp_path: Path):
-    import os as _os
-
     from src.loop.state import RunState as _RS
 
     repo = _repo(tmp_path, "repo_lease")
@@ -264,8 +354,7 @@ def test_autopilot_after_lease_expired(tmp_path: Path):
                autopilot_grace_s=0.15)
     step, ledger, qid = _ctx(tmp_path, repo, cfg, relay=relay)
     # F22: живая аренда задерживает автопилот до истечения срока.
-    (ledger.run_dir / "lease").write_text(json.dumps(
-        {"until": time.time() + 3600, "pid": _os.getpid()}))
+    _lease(ledger.run_dir, until=time.time() + 3600)
     assert auto.lease_valid(ledger.run_dir)
     import threading as _t
 
@@ -286,8 +375,7 @@ def test_autopilot_after_lease_expired(tmp_path: Path):
         mid = _RS.read(ledger.run_dir / "state.json") or {}
         assert (mid.get("decisions") or []) == []
         # истекаем аренду — дальше notify и skip от автопилота.
-        (ledger.run_dir / "lease").write_text(json.dumps(
-            {"until": time.time() - 1, "pid": _os.getpid()}))
+        _lease(ledger.run_dir, until=time.time() - 1)
         t.join(timeout=30)
         assert not t.is_alive(), "resolve hung"
     finally:
@@ -394,7 +482,7 @@ def test_wake_command_once_when_lease_expired(tmp_path: Path):
 
     pid = auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
                           60, popen=_Popen, now=time.time(),
-                          alive=lambda pid: False)
+                          alive=lambda pid, started: False)
     assert pid == 424242
     assert calls and str(run_dir) in " ".join(calls[0])
     assert "1-1" in " ".join(calls[0])
@@ -402,14 +490,19 @@ def test_wake_command_once_when_lease_expired(tmp_path: Path):
     assert state["woken"]["1-1"] == 424242
     before = len(calls)
     auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}", 60,
-                    popen=_Popen, now=time.time(), alive=lambda pid: False)
+                    popen=_Popen, now=time.time(), alive=lambda pid, started: False)
     assert len(calls) == before, "один раз на вопрос"
     (run_dir / "inbox").mkdir(exist_ok=True)
-    (run_dir / "lease").write_text(json.dumps({"until": time.time() + 600,
-                                               "pid": 424242}))
+    _lease(run_dir, until=time.time() + 600, pid=424242, started=5.0)
     auto.maybe_wake(run_dir, "2-1", "echo hi", 60, popen=_Popen,
-                    now=time.time(), alive=lambda pid: True)
+                    now=time.time(), alive=lambda pid, started: True)
     assert len(calls) == before, "при живой аренде не запущен"
+    # an unsigned lease planted by the player is no lease: wake goes ahead
+    (run_dir / "lease").write_text(json.dumps({"until": time.time() + 600, "pid": 424242,
+                                               "pid_started": 5.0}))
+    auto.maybe_wake(run_dir, "3-1", "echo hi", 60, popen=_Popen,
+                    now=time.time(), alive=lambda pid, started: True)
+    assert len(calls) == before + 1, "неподписанная аренда не держит пробуждение"
 
     (run_dir / "state.json").write_text(json.dumps({
         "question": {"id": "1-1", "reason": "stuck",
@@ -455,41 +548,47 @@ def test_notify_cooldown_30min(tmp_path: Path):
     assert len(relay.notified) == 2
 
 
-def test_pid_alive_zombie_is_dead(monkeypatch):
-    import os as _os
+def test_lease_with_reused_pid_is_dead(tmp_path: Path):
+    """The same pid with another start time is another process: no agent."""
+    import os
 
-    monkeypatch.setattr(_os, "kill", lambda pid, sig: None)
-    try:
-        import psutil as _psutil
+    from src.loop import lease as lease_mod
 
-        class _P:
-            def __init__(self, pid):
-                pass
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _lease(run_dir, until=time.time() + 600, pid=os.getpid(), started=1.0)
+    assert not lease_mod.on_duty(run_dir)
+    assert lease_mod.agent_view(run_dir)["alive"] is False
+    # no pid_started at all: dead even when signed
+    from src.loop.human_key import sign_file
 
-            def status(self):
-                return _psutil.STATUS_ZOMBIE
-
-        monkeypatch.setattr(_psutil, "Process", _P)
-    except Exception:
-        pytest.skip("no psutil")
-    assert auto.pid_alive(424242) is False
+    raw = sign_file("lease", run_dir.name, {"until": time.time() + 600, "pid": os.getpid()})
+    (run_dir / "lease").write_text(json.dumps(raw))
+    assert lease_mod.read(run_dir) is None
 
 
 def test_extend_from_answer_uses_agent_pid(tmp_path: Path):
     import os as _os
 
+    from src.hud.registry import current_pid_started
+
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "lease").write_text(json.dumps(
-        {"until": time.time() + 600, "pid": 111}))
-    auto.extend_from_answer(run_dir, 600, agent_pid=222)
+    _lease(run_dir, until=time.time() + 600, pid=111, started=1.0)
+    auto.extend_from_answer(run_dir, 600, agent_pid=_os.getpid(),
+                            pid_started=current_pid_started(), host="claude")
     data = json.loads((run_dir / "lease").read_text())
-    assert int(data["pid"]) == 222
-    # без pid ответа живая аренда сохраняет свой pid
-    auto.extend_from_answer(run_dir, 600, agent_pid=None,
-                            alive=lambda pid: True)
+    assert int(data["pid"]) == _os.getpid()
+    assert data["host"] == "claude" and data["sig"]
+    # без pid ответа живая аренда сохраняет свой pid и продлевается
+    before = data["until"]
+    auto.extend_from_answer(run_dir, 900, agent_pid=None)
     data2 = json.loads((run_dir / "lease").read_text())
-    assert int(data2["pid"]) == 222
+    assert int(data2["pid"]) == _os.getpid()
+    assert data2["until"] > before
+    # pid without its start time cannot make a lease: the live one is extended instead
+    auto.extend_from_answer(run_dir, 1200, agent_pid=222)
+    assert int(json.loads((run_dir / "lease").read_text())["pid"]) == _os.getpid()
 
 
 def test_woken_stamp_persisted_to_file(tmp_path: Path):
@@ -528,11 +627,21 @@ def test_answer_cli_marks_agent_pid(tmp_path: Path, monkeypatch):
                           "working_dir": str(tmp_path),
                           "run": str(run_dir), "agent_pid": None})()
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    import os as _os
+
+    from src.loop import host_id as _hid
+    from src.hud.registry import current_pid_started
+
+    monkeypatch.setattr(_cmds, "run_answer", _cmds.run_answer)
+    monkeypatch.setattr(_hid, "detect",
+                        lambda env=None, chain=None: _hid.Host("claude", _os.getpid(), current_pid_started()))
     assert _cmds.run_answer(args) == 1  # владелец не ответил, но файл записан
     files = list((run_dir / "inbox").glob("*.json"))
     assert files, "inbox файл записан"
     payload = json.loads(files[0].read_text())
-    assert int(payload.get("agent_pid") or 0) > 0
+    assert int(payload.get("agent_pid") or 0) == _os.getpid(), "pid хозяина по предкам"
+    assert payload.get("agent_pid_started") == current_pid_started()
+    assert payload.get("host") == "claude"
 
 
 def test_wake_only_after_waiting_agent(tmp_path: Path, monkeypatch):
@@ -701,47 +810,6 @@ def test_f20_claimed_pid_not_woken(tmp_path: Path):
     assert raw.get("woken") is not True
 
 
-def test_f23_pid_states(monkeypatch):
-    import os as _os
-
-    try:
-        import psutil as _p
-    except Exception:
-        import pytest as _pt
-
-        _pt.skip("no psutil")
-
-    class _Up:
-        def __init__(self, pid):
-            pass
-
-        def status(self):
-            return _p.STATUS_RUNNING
-
-    # EPERM от kill(0) при живом процессе — аренда жива.
-    monkeypatch.setattr(_p, "Process", _Up)
-    monkeypatch.setattr(_os, "kill",
-                        lambda pid, sig: (_ for _ in ()).throw(PermissionError(1, "x")))
-    assert auto.pid_alive(424242) is True
-
-    class _Gone:
-        def __init__(self, pid):
-            pass
-
-        def status(self):
-            raise _p.NoSuchProcess(424242)
-
-    # NoSuchProcess после успешного kill — процесс умер между проверками.
-    monkeypatch.setattr(_p, "Process", _Gone)
-    monkeypatch.setattr(_os, "kill", lambda pid, sig: None)
-    assert auto.pid_alive(424242) is False
-    # ESRCH от kill(0) — мёртв без psutil.
-    monkeypatch.setattr(_os, "kill",
-                        lambda pid, sig: (_ for _ in ()).throw(
-                            ProcessLookupError(3, "x")))
-    assert auto.pid_alive(424242) is False
-
-
 def test_f24_wake_once_on_failure(tmp_path: Path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -754,10 +822,10 @@ def test_f24_wake_once_on_failure(tmp_path: Path):
 
     assert auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
                            60, popen=_boom, now=time.time(),
-                           alive=lambda pid: False) is None
+                           alive=lambda pid, started: False) is None
     assert auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
                            60, popen=_boom, now=time.time(),
-                           alive=lambda pid: False) is None
+                           alive=lambda pid, started: False) is None
     assert len(calls) == 1, f"wake retried after failure: {len(calls)}"
 
 
@@ -773,34 +841,9 @@ def test_f25_run_dir_with_spaces(tmp_path: Path):
             self.pid = 424242
 
     auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                    60, popen=_P, now=time.time(), alive=lambda pid: False)
+                    60, popen=_P, now=time.time(), alive=lambda pid, started: False)
     assert calls, "wake not launched"
     assert str(run_dir) in calls[0], f"run_dir split: {calls[0]!r}"
-
-
-def test_f26_pid_eintr_keeps_lease(monkeypatch):
-    import errno as _errno
-    import os as _os
-
-    try:
-        import psutil as _p
-    except Exception:
-        import pytest as _pt
-
-        _pt.skip("no psutil")
-
-    class _Up:
-        def __init__(self, pid):
-            pass
-
-        def status(self):
-            return _p.STATUS_RUNNING
-
-    monkeypatch.setattr(_p, "Process", _Up)
-    monkeypatch.setattr(_os, "kill",
-                        lambda pid, sig: (_ for _ in ()).throw(
-                            OSError(_errno.EINTR, "interrupted")))
-    assert auto.pid_alive(424242) is True
 
 
 def test_f27_wake_not_launched_without_marker(tmp_path: Path, monkeypatch):
@@ -829,7 +872,7 @@ def test_f27_wake_not_launched_without_marker(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(_auto, "RunState", _BrokenState)
     assert _auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
                             60, popen=_boom, now=time.time(),
-                            alive=lambda pid: False) is None
+                            alive=lambda pid, started: False) is None
     assert calls == []
 
 

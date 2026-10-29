@@ -61,6 +61,9 @@ class RunSession:
         self.pulse: Any = None
 
     def register(self) -> None:
+        from src.loop.host_id import strip_host_env
+
+        strip_host_env()  # игроки и разбуженные не наследуют личность сессии хозяина
         try:
             self.registry.register(
                 self.run_dir.name, self.run_dir / "state.json",
@@ -75,6 +78,17 @@ class RunSession:
         except Exception:
             pass
 
+    def _agent_tick(self) -> None:
+        """Every pulse: alive/on_duty of the host; a change wakes the pusher."""
+        from src.loop.lease import agent_view
+        from src.relay.pusher import poke
+
+        view = agent_view(self.run_dir)
+        key = (view.get("alive"), view.get("on_duty"))
+        if key != getattr(self, "_agent_key", None):
+            self._agent_key = key
+            poke(self.run_dir)
+
     def _unregister(self) -> None:
         try:
             self.registry.unregister(self.run_dir.name)
@@ -84,6 +98,7 @@ class RunSession:
     def __enter__(self) -> RunSession:
         try:
             self.pulse = pulse_mod.Pulse(self.run_dir)
+            self.pulse.on_tick = self._agent_tick
         except Exception:
             # F4: a ticker that never started must surface — but without
             # leaking the repo lock or the registry entry.

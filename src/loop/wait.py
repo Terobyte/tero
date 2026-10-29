@@ -9,7 +9,6 @@ looks like "no info", not like death.
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +16,7 @@ from typing import Any, Callable
 from src.errors import scrub_data
 from src.fsio import read_json_dict
 from src.hud.registry import pid_is_alive
+from src.loop import host_id, lease as lease_mod
 
 DONE = 0
 DEBT_DONE = 4
@@ -24,6 +24,10 @@ STOPPED = 2
 NEED_AGENT = 3
 DEAD = 5
 TIMEOUT = 6
+MESSAGE = 7
+NO_HOST = 8
+BUSY = 9
+HOST_CHECK_S = 30.0
 
 _AGENT_STATUSES = ("waiting_agent", "judge_pending")
 _WAITING_STATUSES = ("waiting_human", "waiting_agent", "waiting_limit")
@@ -72,38 +76,42 @@ def done_line(status: str, debt: list | None) -> str:
     return hud_done_text(status, n)
 
 
-def _lease_pid(agent_pid: int | None) -> int:
-    try:
-        if agent_pid is not None:
-            return int(agent_pid)
-    except (TypeError, ValueError):
-        pass
-    try:
-        return int(os.getppid())
-    except (AttributeError, OSError, ValueError):
-        return 0
+def find_host(run_path: Path) -> host_id.Host:
+    """The host of this `wait`: by ancestry, never a descendant of the run owner."""
+    host = host_id.detect()
+    if host.known and host_id.under_owner(_read_state(run_path)):
+        return host_id.Host(host.kind, why="запущен из-под прогона")
+    return host
 
 
-def _refresh_lease(run_path: Path, agent_pid: int | None) -> None:
-    from src.loop import autopilot as auto
-
+def _refresh_lease(run_path: Path, host: host_id.Host, seconds: float) -> bool:
+    """Write the lease for `host` unless a live lease of another host holds it."""
+    if not host.known:
+        return False
     try:
-        auto.write_lease(run_path, time.time() + auto.LEASE_REFRESH_S,
-                         _lease_pid(agent_pid))
+        if not lease_mod.may_take(run_path, host.pid):
+            return False
+        return lease_mod.write(run_path, until=time.time() + seconds, pid=host.pid,
+                               pid_started=host.started, host=host.kind,
+                               session=host.session)
     except Exception:
-        pass
+        return False
 
 
-def _settle_lease(run_path: Path, code: int, agent_pid: int | None) -> bool:
+def _settle_lease(run_path: Path, code: int, host: host_id.Host) -> bool:
     from src.loop import autopilot as auto
 
     try:
         timeout = auto.agent_timeout_of(run_path)
         seconds = float(timeout) if code == NEED_AGENT else 300.0
-        return bool(auto.write_lease(run_path, time.time() + seconds,
-                                     _lease_pid(agent_pid)))
     except Exception:
-        return False
+        seconds = 300.0
+    return _refresh_lease(run_path, host, seconds)
+
+
+def host_gone(host: host_id.Host) -> bool:
+    """An orphaned `wait`: its host was known and its process is no longer there."""
+    return host.known and not pid_is_alive(host.pid, host.started)
 
 
 def wait_run(
@@ -114,39 +122,49 @@ def wait_run(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     poll_s: float = 2,
-    agent_pid: int | None = None,
+    host: host_id.Host | None = None,
+    out: Callable[[str], None] = print,
 ) -> int:
     """Block until the agent is needed, the run ends, or it looks dead.
 
     Codes: 0 done, 4 done with debt, 2 stopped, 3 agent needed
-    (waiting_agent/judge_pending), 5 dead or hung, 6 timeout expired.
-    Terminal statuses win even when the owner process is gone; 5 fires
-    only for unfinished statuses.
+    (waiting_agent/judge_pending), 5 dead or hung, 6 timeout expired,
+    8 the host of this `wait` is gone (checked before every other code,
+    so a dead host never takes messages). Terminal statuses win even when
+    the owner process is gone; 5 fires only for unfinished statuses.
 
-    ``tero wait`` пишет аренду: пока ждёт — ``now + 120`` каждые 30 с;
-    при выходе с 3 — ``now + agent_timeout_s``; с 6 — ``now + 300``.
+    ``tero wait`` пишет аренду хозяина (pid хозяина, не оболочки): пока
+    ждёт — ``now + 120`` каждые 30 с; при выходе с 3 — ``now +
+    agent_timeout_s``; с 6 — ``now + 300``. Хозяин не определён — аренды
+    нет и кода 8 нет.
     """
-    import os as _os
-
-    if agent_pid is None:
-        try:
-            agent_pid = int(_os.environ.get("TERO_AGENT_PID", "") or 0) or None
-        except ValueError:
-            agent_pid = None
     run_path = Path(run_dir)
     repo_path = Path(repo)
     start = clock()
     last_alive: Any = None
     alive_since = start
-    _refresh_lease(run_path, agent_pid)
+    if host is None:
+        host = find_host(run_path)
+    if not host.known:
+        try:
+            out(f"хозяин не определён: {host.why or 'нет pid'}")
+        except Exception:
+            pass
+    from src.loop import autopilot as auto
+
+    if host_gone(host):
+        return NO_HOST
+    _refresh_lease(run_path, host, auto.LEASE_REFRESH_S)
     last_refresh = clock()
 
     def _exit(code: int) -> int:
         if code in (NEED_AGENT, TIMEOUT):
-            _settle_lease(run_path, code, agent_pid)
+            _settle_lease(run_path, code, host)
         return code
 
     while True:
+        if host_gone(host):
+            return NO_HOST
         state = _read_state(run_path)
         status = state.get("status") or ""
         if status == "done":
@@ -193,10 +211,8 @@ def wait_run(
 
         if timeout_s is not None and clock() - start >= timeout_s:
             return _exit(TIMEOUT)
-        from src.loop import autopilot as auto
-
         if clock() - last_refresh >= auto.LEASE_REFRESH_EVERY_S:
-            _refresh_lease(run_path, agent_pid)
+            _refresh_lease(run_path, host, auto.LEASE_REFRESH_S)
             last_refresh = clock()
         try:
             sleep(poll_s)
@@ -264,6 +280,7 @@ def status_payload(
             seen.append(name)
 
     relay_hint = relay_status(run_path)
+    agent = lease_mod.agent_view(run_path)
 
     payload = {
         "phase": f"{index + 1}/{total if total else '?'}",
@@ -281,8 +298,39 @@ def status_payload(
         "debt": debt,
         "limits": normalize_limits(state.get("limits"), tuple(seen) or ("codex",)),
         "pulse_age_s": pulse_age,
-        "lease": None,
-        "push_ok": False,
+        "lease": lease_mod.legacy_view(run_path),
+        "push_ok": push_ok(run_path),
         "relay_error": relay_hint,
+        "agent": agent,
+        "view": {"agent": agent},
     }
     return scrub_data(payload)
+
+
+def push_ok(run_dir: str | Path) -> bool:
+    """The relay's last word on the push channel (`relay.json`); False until it spoke."""
+    from src.relay.pusher import RELAY_FILE
+
+    data = read_json_dict(Path(run_dir) / RELAY_FILE) or {}
+    return bool(data.get("ok")) and data.get("push_ok") is not False
+
+
+def agent_line(agent: dict | None) -> str:
+    """`агент: claude · дежурит · аренда до 14:42` for `tero status`."""
+    a = agent or {}
+    if a.get("lease_until") is None:
+        return "агент: не известен"
+    host = str(a.get("host") or "?")
+    until = _hhmm(a.get("lease_until"))
+    if a.get("on_duty"):
+        return f"агент: {host} · дежурит · аренда до {until}"
+    if a.get("alive"):
+        return f"агент: {host} · жив, не дежурит · аренда истекла {until}"
+    return f"агент: {host} · умер · аренда истекла {until}"
+
+
+def _hhmm(ts: Any) -> str:
+    try:
+        return time.strftime("%H:%M", time.localtime(float(ts)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"

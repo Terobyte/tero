@@ -196,14 +196,51 @@ def test_light_is_run_health_not_phase_progress():
         (_state(), [_ev("text", text="x", delta_s=5)], DEAD, "red", "оборвался"),
         (_state(status="stopped", reason="stuck"), [], ALIVE, "red", "стоп"),
         (_state(status="waiting_human", question={"id": "q", "text": "?"}), [], ALIVE, "yellow", "ждёт тебя"),
-        (_state(status="judge_pending"), [], ALIVE, "yellow", "ждёт тебя"),
+        # nobody on duty: the light says so instead of «ждёт тебя» (спек пульта 2, п. 1)
+        (_state(status="judge_pending"), [], ALIVE, "yellow", "агента нет"),
         (_state(status="waiting_limit"), [], ALIVE, "yellow", "ждёт лимит"),
-        (_state(status="done", debt=[]), [], ALIVE, "green", "сдано"),
-        (_state(status="done"), [], ALIVE, "yellow", "сдано с долгом 1"),
+        # a finished run has its own light; the debt is text, not a colour
+        (_state(status="done", debt=[]), [], ALIVE, "ready", "сдано"),
+        (_state(status="done"), [], ALIVE, "ready", "сдано с долгом 1"),
     ]
     for st, evs, alive, light, text in cases:
         view = build_view(st, evs, NOW, alive)
         assert (view["light"], view["light_text"]) == (light, text), st.get("status")
+
+
+ON_DUTY = {"host": "claude", "alive": True, "on_duty": True}
+GONE = {"host": "claude", "alive": False, "on_duty": False, "lease_until": NOW - 60}
+
+
+def test_agent_statuses_say_no_agent_when_nobody_is_on_duty():
+    for status in ("waiting_agent", "judge_pending"):
+        off = build_view(_state(status=status), [], NOW, ALIVE)
+        assert (off["light"], off["light_text"]) == ("yellow", "агента нет"), status
+        on = build_view(_state(status=status), [], NOW, ALIVE, agent=ON_DUTY)
+        assert on["light_text"] in ("ждёт тебя", "ждёт агента")
+        assert on["agent"]["on_duty"] is True
+    # a live but idle host does not change the waiting_human light
+    view = build_view(_state(status="waiting_human", question={"id": "q", "text": "?"}), [], NOW, ALIVE)
+    assert view["light_text"] == "ждёт тебя"
+    assert view["agent"]["on_duty"] is False
+
+
+def test_stopped_plaque_names_the_agent_state():
+    st = _state(status="stopped", reason="stuck", text="застрял")
+    assert build_view(st, [], NOW, ALIVE, agent=GONE)["doing"] == "застрял · агента нет"
+    idle = {"host": "claude", "alive": True, "on_duty": False}
+    assert build_view(st, [], NOW, ALIVE, agent=idle)["doing"] == "застрял · хозяин жив, не дежурит"
+    assert build_view(st, [], NOW, ALIVE, agent=ON_DUTY)["doing"] == "застрял"
+
+
+def test_dead_owner_is_broken_in_every_unfinished_status():
+    from src.hud.registry import is_dead
+
+    for status in ("starting", "running", "waiting_human", "waiting_agent", "waiting_limit", "judge_pending"):
+        assert is_dead({"status": status, "pid": 999999999, "pid_started": 1.0}) is True, status
+        assert build_view(_state(status=status), [], NOW, DEAD)["light"] == "red"
+    for status in ("done", "stopped"):
+        assert is_dead({"status": status, "pid": 999999999, "pid_started": 1.0}) is False
 
 
 def test_light_turns_yellow_when_run_goes_quiet():

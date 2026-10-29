@@ -1,7 +1,7 @@
 // relay/test/push.test.js — фаза 08-7: web push (VAPID JWT ES256 + aes128gcm RFC 8291).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encryptPayload, createVapidJwt, notify, textFor, pushOk } from '../src/push.js';
+import { encryptPayload, createVapidJwt, notify, textFor, pushOk, PUSH_MAX } from '../src/push.js';
 import { openFakeDb as openRawDb } from './fake_d1.js';
 
 // B17: подписки принадлежат неотозванному устройству dev1.
@@ -286,4 +286,9 @@ test('claim удерживается до конца обработки неск
   assert.equal((await notify(env, 'r1', 'm1', { status: 'done' }, at)).sent, true);
   assert.equal(concurrent.skipped, 'cooldown');
   assert.equal(calls, 2);
+});
+
+test('notify-пуш: текст как есть за префиксом, ≤200, причина по тексту', () => {
+  assert.equal(textFor({ notify: 'агента нет' }), 'tero: агента нет');
+  assert.ok([...textFor({ notify: 'я'.repeat(500) })].length <= PUSH_MAX);
 });

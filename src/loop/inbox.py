@@ -57,6 +57,11 @@ def _pid_of(payload: dict[str, Any]) -> int | None:
     return None
 
 
+def _started_of(payload: dict[str, Any]) -> float | None:
+    value = payload.get("agent_pid_started")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def inbox_dir(run_dir: str | Path, create: bool = False) -> Path | None:
     """`<run_dir>/inbox`, если это настоящая папка внутри прогона, иначе None.
 
@@ -239,13 +244,12 @@ class Inbox:
 
     @staticmethod
     def _phone_text(state: dict) -> bool:
+        """Only ~/.tero/config.yaml decides: the snapshot in state.json lies in the repo."""
+        from src.config_env import phone_text_allowed
+
+        _ = state
         try:
-            phone = (state.get("config") or {}).get("phone_text_answers")
-            if phone is None:
-                phone = state.get("phone_text_answers")
-            if phone is None:
-                return True
-            return bool(phone)
+            return phone_text_allowed()
         except Exception:
             return True
 
@@ -348,6 +352,8 @@ class Inbox:
                 uuid=payload.get("uuid"),
                 woken=bool(payload.get("woken")),
                 agent_pid=_pid_of(payload),
+                agent_pid_started=_started_of(payload),
+                host=str(payload.get("host") or ""),
             )
             if self._apply(candidate, actions):
                 self._reject_rest(question_id, candidate)

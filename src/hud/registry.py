@@ -20,7 +20,7 @@ from typing import Any, Mapping
 import psutil
 from src.fsio import atomic_write_json
 
-ACTIVE_STATUSES = ("starting", "running")
+ACTIVE_STATUSES = ("starting", "running", "waiting_human", "waiting_agent", "waiting_limit", "judge_pending")
 
 
 def registry_dir() -> Path:
@@ -62,7 +62,7 @@ def pid_is_alive(pid: Any, pid_started: Any) -> bool:
 
 
 def is_dead(state: Mapping[str, Any]) -> bool:
-    """"Run is gone": active status but its owner process is no longer alive."""
+    """"Run is gone": unfinished status but its owner process is no longer alive."""
     if not isinstance(state, Mapping):
         return False
     if state.get("status") not in ACTIVE_STATUSES:

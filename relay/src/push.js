@@ -126,7 +126,16 @@ export async function createVapidJwt(audience, subject, opts = {}) {
   return { jwt: `${unsigned}.${b64uEncode(sig)}`, publicKey: pubJwk };
 }
 
+function textHash(text) {
+  let h = 5381;
+  for (const ch of String(text)) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0;
+  return h.toString(16);
+}
+
 function reasonFor(payload) {
+  // `POST /notify` (tero notify, «агента нет, решу сам»): кулдаун по тексту,
+  // чтобы два разных уведомления за 30 мин не глушили друг друга.
+  if (payload && typeof payload.notify === 'string') return `notify:${textHash(payload.notify)}`;
   const stale = payload && payload.stale === true ? ':stale' : '';
   const q = payload && payload.question;
   if (q && typeof q === 'object' && typeof q.id === 'string' && q.id) return `question:${q.id}${stale}`;
@@ -136,6 +145,10 @@ function reasonFor(payload) {
 const SUFFIX = ' — подробно — в пульте';
 
 export function textFor(payload) {
+  if (payload && typeof payload.notify === 'string') {
+    const room = PUSH_MAX - 'tero: '.length;
+    return `tero: ${[...payload.notify].slice(0, Math.max(room, 0)).join('')}`;
+  }
   // F2: stale-пуш cron'а — это потеря связи, а не старый вопрос/статус.
   if (payload && payload.stale === true) {
     return `tero: нет связи с машиной (сон, сеть или краш)${SUFFIX}`.slice(0, PUSH_MAX);
