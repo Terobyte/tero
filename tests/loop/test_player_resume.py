@@ -370,3 +370,46 @@ async def test_kmax_rephrased_findings_count_as_flat(tmp_path: Path):
     assert "Продолжай, не переписывай готовое" not in prompts[3]
     assert prewrite == ["v1-crash\n", "v2\n", None]
     assert "completely different wording" in prompts[3]
+
+
+@pytest.mark.asyncio
+async def test_kmax_resolved_previous_is_progress(tmp_path: Path):
+    # dream 1.2b: после падения в раунде 1 каждый раунд закрывал прошлый
+    # блокер и находил один новый в другом месте; K_max считал это «не
+    # уменьшились» и чистой попыткой стёр пять раундов работы.
+    repo = _repo(tmp_path)
+    prompts: list[str] = []
+    prewrite: list = []
+    agents = FakeAgents(
+        repo,
+        [
+            _crash_step(repo, prompts, "v1-crash\n"),
+            _player_step(repo, prompts, prewrite, "v2\n"),
+            judge_returns(
+                no_ship([finding(file="src/greet.py", line=7, problem="bad A")])
+            ),
+            _player_step(repo, prompts, prewrite, "v3\n"),
+            judge_returns(
+                no_ship(
+                    [finding(file="src/greet.py", line=9, problem="bad B")],
+                    previous=[{"id": "F1", "state": "resolved"}],
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v4\n"),
+            judge_returns(
+                no_ship(
+                    [finding(file="src/greet.py", line=11, problem="bad C")],
+                    previous=[{"id": "F2", "state": "resolved"}],
+                )
+            ),
+            _player_step(repo, prompts, prewrite, "v5\n"),
+            judge_returns(ship()),
+        ],
+    )
+    outcome, ledger = await _run(repo, agents)
+    assert outcome.status == "ship"
+    assert len(prompts) == 5
+    # Отката не было: каждый раунд начинал с дерева прошлого.
+    assert prewrite == ["v1-crash\n", "v2\n", "v3\n", "v4\n"]
+    rows = [json.loads(line) for line in (ledger.run_dir / "ledger.jsonl").read_text().splitlines()]
+    assert not [r for r in rows if r.get("kind") == "clean_retry"]

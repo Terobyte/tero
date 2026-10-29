@@ -134,7 +134,11 @@ async def apply_verdict_continuation(
     # В раунде-продолжении _stalled/_no_progress не проверяются:
     # решает счётчик K_max.
     key = findings_key(findings)
-    if not_shrunk(step.ctx.st, key):
+    # Закрытая судьёй находка — прогресс, даже если на её месте новая:
+    # иначе «закрыл одну, нашёл одну» считается застоем и стирает дерево.
+    resolved = any(previous.get(item.id) == "resolved"
+                   for item in step.ctx.st.open_findings)
+    if not resolved and not_shrunk(step.ctx.st, key):
         step.ctx.st.kmax_flat += 1
     else:
         step.ctx.st.kmax_flat = 0
