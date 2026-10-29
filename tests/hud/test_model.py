@@ -59,7 +59,8 @@ DEAD = lambda s: False  # noqa: E731
 
 def test_sectors_colors_by_phase_status():
     view = build_view(_state(), [], NOW, ALIVE)
-    assert [s["color"] for s in view["sectors"]] == ["green", "yellow", "red", "orange"]
+    # future phases are grey: red is reserved for a broken or stopped run
+    assert [s["color"] for s in view["sectors"]] == ["green", "yellow", "grey", "orange"]
     assert [s["title"] for s in view["sectors"]] == ["a", "b", "c", "d"]
 
 
@@ -187,3 +188,77 @@ def test_none_state_is_grey_not_crash_and_tabs_capped():
     assert len(view["tabs"]["player"]) == TAB_LIMIT
     assert len(view["tabs"]["all"]) == TAB_LIMIT
     assert TAB_LIMIT == 2000
+
+
+def test_light_is_run_health_not_phase_progress():
+    cases = [
+        (_state(), [_ev("text", text="x", delta_s=5)], ALIVE, "green", "работает"),
+        (_state(), [_ev("text", text="x", delta_s=5)], DEAD, "red", "оборвался"),
+        (_state(status="stopped", reason="stuck"), [], ALIVE, "red", "стоп"),
+        (_state(status="waiting_human", question={"id": "q", "text": "?"}), [], ALIVE, "yellow", "ждёт тебя"),
+        (_state(status="judge_pending"), [], ALIVE, "yellow", "ждёт тебя"),
+        (_state(status="waiting_limit"), [], ALIVE, "yellow", "ждёт лимит"),
+        (_state(status="done", debt=[]), [], ALIVE, "green", "сдано"),
+        (_state(status="done"), [], ALIVE, "yellow", "сдано с долгом 1"),
+    ]
+    for st, evs, alive, light, text in cases:
+        view = build_view(st, evs, NOW, alive)
+        assert (view["light"], view["light_text"]) == (light, text), st.get("status")
+
+
+def test_light_turns_yellow_when_run_goes_quiet():
+    view = build_view(_state(), [_ev("text", text="x", delta_s=900)], NOW, ALIVE)
+    assert view["light"] == "yellow"
+    assert view["light_text"] == "тихо 15 мин"
+
+
+def test_light_grey_without_state():
+    view = build_view(None, [], NOW, ALIVE)
+    assert (view["light"], view["light_text"]) == ("grey", "нет данных")
+
+
+def test_phase_label_and_current_title():
+    view = build_view(_state(), [], NOW, ALIVE)
+    assert view["phase_label"] == "2/4"
+    assert view["phase_title"] == "b"
+
+
+def test_role_line_drops_provider_prefix_of_model():
+    view = build_view(_state(model="meta-model-api/muse-spark-1.3-contributor"), [], NOW, ALIVE)
+    assert view["role_line"] == "player · muse-spark-1.3-contributor"
+
+
+def test_view_exposes_acting_role():
+    assert build_view(_state(role="judge"), [], NOW, ALIVE)["role"] == "judge"
+    assert build_view(None, [], NOW, ALIVE)["role"] == ""
+
+
+def test_html_colors_log_lines_by_role():
+    from pathlib import Path
+
+    html = Path("src/hud/view.html").read_text(encoding="utf-8")
+    for role in ("player", "judge", "tester", "gate"):
+        assert f".r-{role}" in html
+    assert "text-shadow" in html
+
+
+def test_verdict_age_from_newest_verdict_event():
+    events = [_ev("verdict", role="judge", delta_s=42, verdict="NO_SHIP", blocking=1)]
+    assert build_view(_state(), events, NOW, ALIVE)["verdict_age_s"] == 42
+    st = _state(verdict={"verdict": "SHIP", "blocking": 0, "first": {}})
+    assert build_view(st, [], NOW, ALIVE)["verdict_age_s"] is None
+    assert build_view(None, [], NOW, ALIVE)["verdict_age_s"] is None
+
+
+def test_fresh_judge_does_not_show_last_rounds_text():
+    events = [
+        _ev("text", role="judge", text='{"verdict":"NO_SHIP"}', delta_s=300),
+        _ev("verdict", role="judge", delta_s=299, verdict="NO_SHIP", blocking=1),
+        _ev("start_step", role="player", text="раунд 5 начат", delta_s=200),
+        _ev("text", role="player", text="пишу код", delta_s=100),
+        _ev("gate", role="gate", text="тесты: зелёные", delta_s=10),
+    ]
+    view = build_view(_state(role="judge"), events, NOW, ALIVE)
+    assert view["doing"] == "судья читает…"
+    events.append(_ev("text", role="judge", text="сверяю спеку", delta_s=2))
+    assert build_view(_state(role="judge"), events, NOW, ALIVE)["doing"] == "сверяю спеку"
