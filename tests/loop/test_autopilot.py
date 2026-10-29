@@ -475,15 +475,19 @@ def test_wake_command_once_when_lease_expired(tmp_path: Path):
     (run_dir / "state.json").write_text(json.dumps({"question": {"id": "1-1"}}))
     calls: list[list[str]] = []
 
+    envs: list = []
+
     class _Popen:
         def __init__(self, cmd, **kw):
             calls.append(cmd)
+            envs.append(kw.get("env"))
             self.pid = 424242
 
     pid = auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
                           60, popen=_Popen, now=time.time(),
                           alive=lambda pid, started: False)
     assert pid == 424242
+    assert isinstance(envs[0], dict) and "CLAUDE_PID" not in envs[0]
     assert calls and str(run_dir) in " ".join(calls[0])
     assert "1-1" in " ".join(calls[0])
     state = json.loads((run_dir / "state.json").read_text())
@@ -567,28 +571,48 @@ def test_lease_with_reused_pid_is_dead(tmp_path: Path):
     assert lease_mod.read(run_dir) is None
 
 
-def test_extend_from_answer_uses_agent_pid(tmp_path: Path):
+def test_extend_from_answer_follows_may_take(tmp_path: Path):
+    """An answer file is unsigned: its pid takes the lease only when nobody live holds it."""
     import os as _os
 
     from src.hud.registry import current_pid_started
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
+    me, started = _os.getpid(), current_pid_started()
+    # dead lease: the answering host takes it, with host and signature
     _lease(run_dir, until=time.time() + 600, pid=111, started=1.0)
-    auto.extend_from_answer(run_dir, 600, agent_pid=_os.getpid(),
-                            pid_started=current_pid_started(), host="claude")
+    assert auto.extend_from_answer(run_dir, 600, agent_pid=me, pid_started=started, host="claude")
     data = json.loads((run_dir / "lease").read_text())
-    assert int(data["pid"]) == _os.getpid()
-    assert data["host"] == "claude" and data["sig"]
-    # без pid ответа живая аренда сохраняет свой pid и продлевается
+    assert (int(data["pid"]), data["host"]) == (me, "claude") and data["sig"]
+    # its own: extended
     before = data["until"]
-    auto.extend_from_answer(run_dir, 900, agent_pid=None)
-    data2 = json.loads((run_dir / "lease").read_text())
-    assert int(data2["pid"]) == _os.getpid()
-    assert data2["until"] > before
-    # pid without its start time cannot make a lease: the live one is extended instead
-    auto.extend_from_answer(run_dir, 1200, agent_pid=222)
-    assert int(json.loads((run_dir / "lease").read_text())["pid"]) == _os.getpid()
+    assert auto.extend_from_answer(run_dir, 900, agent_pid=me, pid_started=started, host="claude")
+    assert json.loads((run_dir / "lease").read_text())["until"] > before
+    # a planted answer naming another live process does not steal a live lease
+    other_pid, other_started = _other_live_process()
+    assert not auto.extend_from_answer(run_dir, 1200, agent_pid=other_pid,
+                                       pid_started=other_started, host="claude")
+    assert int(json.loads((run_dir / "lease").read_text())["pid"]) == me
+    # pid without its start time, or no pid: nothing happens
+    assert not auto.extend_from_answer(run_dir, 1200, agent_pid=222)
+    assert not auto.extend_from_answer(run_dir, 1200, agent_pid=None)
+    assert json.loads((run_dir / "lease").read_text())["until"] <= time.time() + 900
+    # expired lease of another host: taken
+    _lease(run_dir, until=time.time() - 1, pid=other_pid, started=other_started)
+    assert auto.extend_from_answer(run_dir, 600, agent_pid=me, pid_started=started)
+    assert int(json.loads((run_dir / "lease").read_text())["pid"]) == me
+
+
+def test_wake_env_drops_provider_keys_and_session_identity(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.setenv("CLAUDE_PID", "5")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "keep")
+    env = auto.wake_env("claude")
+    assert "ANTHROPIC_API_KEY" not in env and "CLAUDE_PID" not in env
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "keep"
+    assert "ANTHROPIC_API_KEY" in auto.wake_env("muse"), "хозяин Muse живёт на своём ключе"
+    assert "CLAUDE_PID" not in auto.wake_env("muse")
 
 
 def test_woken_stamp_persisted_to_file(tmp_path: Path):

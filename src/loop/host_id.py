@@ -20,7 +20,8 @@ WRAPPERS = frozenset({
     "bwrap", "caffeinate", "nohup", "setsid", "script", "sudo", "doas",
 })
 SUBREAPERS = frozenset({"launchd", "systemd", "init", "bwrap", "tini", "dumb-init"})
-HOST_NAMES = {"claude": ("claude", "node"), "opencode": ("opencode", "node", "bun")}
+HOST_NAMES = {"claude": ("claude", "node"), "muse": ("claude", "node"),
+              "opencode": ("opencode", "node", "bun")}
 
 # session identity Claude Code passes to its commands; the owner and a woken
 # agent must not hand it further down (a player would look like the host)
@@ -90,14 +91,13 @@ def _is_wrapper(proc: Proc) -> bool:
 
 
 def _name_matches(kind: str, proc: Proc) -> bool:
-    wanted = HOST_NAMES.get(kind)
-    if not wanted:
-        return True
+    wanted = HOST_NAMES.get(kind) or ()
     base = _base(proc.name)
     argv = " ".join(proc.cmdline).lower()
-    if base in wanted and (base == kind or kind in argv or not proc.cmdline):
+    probe = "claude" if kind == "muse" else kind
+    if base in wanted and (base == probe or probe in argv or not proc.cmdline):
         return True
-    return kind in base
+    return bool(probe) and probe in base
 
 
 def _reject(kind: str, proc: Proc) -> str:
@@ -117,6 +117,11 @@ def detect(env: Mapping[str, str] | None = None,
     """The host of this process: kind from the environment, pid from ancestry."""
     e = os.environ if env is None else env
     kind = host_kind(e)
+    if kind not in HOST_NAMES:
+        # a plain terminal (zsh → login) or an unknown host: nobody is on duty,
+        # no lease, no code 8 (спек: «имя процесса соответствует host»)
+        return Host(kind, why="хозяин не известен (нет CLAUDECODE / TERO_HOST)" if not kind
+                    else f"хозяин {kind} не известен tero")
     parents = list(ancestors() if chain is None else chain)
     by_pid = {p.pid: p for p in parents}
     candidate: Proc | None = None
@@ -139,9 +144,25 @@ def detect(env: Mapping[str, str] | None = None,
                 str(e.get("CLAUDE_CODE_SESSION_ID") or ""))
 
 
+def _woken_pids(state: Mapping[str, Any] | None) -> set[int]:
+    raw = (state or {}).get("woken")
+    items = raw.values() if isinstance(raw, dict) else raw if isinstance(raw, list) else ()
+    out: set[int] = set()
+    for item in items:
+        value = item.get("pid") if isinstance(item, dict) else item
+        try:
+            if int(value or 0) > 0:
+                out.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def under_owner(state: Mapping[str, Any] | None,
                 chain: Iterable[Proc] | None = None) -> bool:
-    """True when the run owner (pid + pid_started from state.json) is our ancestor."""
+    """True when the run owner (pid + pid_started from state.json) is our ancestor,
+    i.e. we are the player or its child. A woken agent is spawned by the owner too,
+    so an ancestor recorded in `state.woken` nearer than the owner makes us the host."""
     try:
         pid = int((state or {}).get("pid") or 0)
     except (TypeError, ValueError):
@@ -149,7 +170,10 @@ def under_owner(state: Mapping[str, Any] | None,
     if pid <= 0:
         return False
     started = (state or {}).get("pid_started")
+    woken = _woken_pids(state)
     for proc in (ancestors() if chain is None else chain):
+        if proc.pid in woken:
+            return False
         if proc.pid != pid:
             continue
         if proc.started is None or not isinstance(started, (int, float)):

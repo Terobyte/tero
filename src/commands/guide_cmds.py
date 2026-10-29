@@ -72,5 +72,9 @@ def run_notify(args: Any) -> int:
     if relay.notify(text):
         print("уведомление отправлено")
     else:
-        print("ретранслятора нет, сообщение не ушло")
+        skipped = str(getattr(relay, "last_skipped", "") or "")
+        why = {"cooldown": "то же уведомление уже уходило за последние 30 мин",
+               "no-subscription": "на телефоне не включены пуши",
+               "rate": "слишком много уведомлений за 30 мин"}.get(skipped, "")
+        print(f"не ушло: {why}" if why else "ретранслятора нет, сообщение не ушло")
     return 0

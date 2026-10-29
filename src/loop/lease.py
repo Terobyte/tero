@@ -11,6 +11,7 @@ Nothing here raises.
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -32,14 +33,29 @@ def _run_id(run_dir: str | Path) -> str:
     return Path(run_dir).name
 
 
+_HELD = threading.local()  # per thread: lock path → depth (flock is per open file)
+
+
+def _depth() -> dict:
+    held = getattr(_HELD, "depth", None)
+    if held is None:
+        held = _HELD.depth = {}
+    return held
+
+
 class _Locked:
-    """`flock` on `<run_dir>/lease.lock`; a missing fcntl (Windows) degrades to no lock."""
+    """`flock` on `<run_dir>/lease.lock`, re-entrant in one thread; a missing
+    fcntl (Windows) degrades to no lock."""
 
     def __init__(self, run_dir: str | Path) -> None:
         self.path = Path(run_dir) / "lease.lock"
         self._fh = None
 
     def __enter__(self) -> "_Locked":
+        key = str(self.path)
+        if _depth().get(key, 0) > 0:
+            _depth()[key] += 1
+            return self
         try:
             import fcntl
 
@@ -48,9 +64,16 @@ class _Locked:
             fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
         except Exception:
             self._fh = None
+        _depth()[key] = 1
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        key = str(self.path)
+        left = _depth().get(key, 1) - 1
+        if left > 0:
+            _depth()[key] = left
+            return
+        _depth().pop(key, None)
         try:
             if self._fh is not None:
                 self._fh.close()
@@ -115,8 +138,13 @@ def on_duty(run_dir: str | Path, now: float | None = None,
 
 
 def write(run_dir: str | Path, *, until: float, pid: int, pid_started: float | None,
-          host: str = "", session: str = "", now: float | None = None) -> bool:
-    """Replace the lease (merge under flock: unknown keys survive). False on failure."""
+          host: str = "", session: str = "", now: float | None = None,
+          if_may_take: bool = False, is_alive: AliveFn = pid_is_alive) -> bool:
+    """Write the lease under flock. Only the signed fields are kept: an unsigned
+    key planted next to them is not laundered into a signed file. With
+    `if_may_take` the `may_take` rule is checked inside the same lock, so two
+    hosts cannot both pass the check and overwrite each other. False on failure
+    or refusal."""
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -124,10 +152,10 @@ def write(run_dir: str | Path, *, until: float, pid: int, pid_started: float | N
     ts = time.time() if now is None else now
     try:
         with _Locked(run_dir):
-            data = read_raw(run_dir) or {}
-            data.update({"until": float(until), "pid": pid, "pid_started": pid_started,
-                         "host": str(host or ""), "session": str(session or ""),
-                         "written_at": ts})
+            if if_may_take and not may_take(run_dir, pid, ts, is_alive):
+                return False
+            data = {"until": float(until), "pid": pid, "pid_started": pid_started,
+                    "host": str(host or ""), "session": str(session or ""), "written_at": ts}
             sign_file(KIND, _run_id(run_dir), data)
             Path(run_dir).mkdir(parents=True, exist_ok=True)
             atomic_write_json(lease_path(run_dir), data, mode=0o600)

@@ -369,6 +369,24 @@ test('POST /notify: ключ записи, текст уходит пушем, �
   assert.equal(sent.length, 2);
 });
 
+test('POST /notify: не больше шести разных уведомлений за 30 мин', async () => {
+  const env = await setupEnv();
+  env.__fetch = async () => ({ status: 201 });
+  const { generateKeyPairSync } = await import('node:crypto');
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  env.VAPID_PRIVATE_KEY = JSON.stringify(privateKey.export({ format: 'jwk' }));
+  await env.DB.prepare(
+    "INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, 'device-id')",
+  ).bind('https://web.push.apple.com/x', 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', 'BTBZMqHH6r4Tts7J_aSIgg').run();
+  const send = async (text) => (await handleFetch(
+    request('POST', '/notify', { token: WRITE_KEY, body: { text, run_id: 'r1' } }), env,
+  )).json();
+  for (let i = 0; i < 6; i++) assert.equal((await send(`текст ${i}`)).sent, true);
+  const seventh = await send('ещё один');
+  assert.equal(seventh.sent, false);
+  assert.equal(seventh.skipped, 'rate');
+});
+
 test('POST /notify без подписок — не ошибка', async () => {
   const env = await setupEnv();
   const res = await handleFetch(request('POST', '/notify', { token: WRITE_KEY, body: { text: 'привет' } }), env);

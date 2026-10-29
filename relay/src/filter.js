@@ -101,7 +101,7 @@ export const AGENT_FIELDS = new Set([
 ]);
 
 function pickFields(value, fields) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return deepRedact(value);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const out = {};
   for (const key of fields) {
     if (key in value) out[key] = deepRedact(value[key]);

@@ -149,7 +149,7 @@ class RelayClient:
                     "total_phases", "round", "role", "model", "question", "actions", "models",
                     "decisions", "debts", "limits", "findings", "events",
                     "answered", "history",
-                    "phone_text_answers", "updated_at"):
+                    "phone_text_answers", "updated_at", "agent"):
             if key in state:
                 out[key] = state[key]
         if "events" not in out:
@@ -275,7 +275,11 @@ class RelayClient:
             pass
         if not self._base or not (self._key or self._fetch):
             return False
-        return self._call("POST", "/notify", {"text": text[:500]}) is not None
+        got = self._call("POST", "/notify", {"text": text[:500], "run_id": self.run_id or ""})
+        if not isinstance(got, dict):
+            return False
+        self.last_skipped = str(got.get("skipped") or "")
+        return bool(got.get("sent"))
 
     @property
     def push_ok(self) -> bool:

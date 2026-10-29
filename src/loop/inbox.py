@@ -136,18 +136,22 @@ class Inbox:
             except (OSError, ValueError):
                 pass
             return
-        # O_NOFOLLOW: a symlink planted at <uid>.result is never written through
-        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        flags |= os.O_EXCL
+        # Whole file or nothing: written to a temp name, then linked into place
+        # (`link` fails when the target exists, like O_EXCL, and never follows a
+        # symlink planted at <uid>.result). A reader never sees an empty file.
+        tmp = inbox / f".{uid}.result.{os.getpid()}.tmp"
         try:
-            fd = os.open(inbox / f"{uid}.result", flags, 0o644)
-        except OSError:
-            return
-        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(text)
+            os.link(tmp, inbox / f"{uid}.result")
         except OSError:
             pass
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     def _reject(self, path: Path, payload: dict[str, Any], text: str) -> None:
         self._write_result(str(payload.get("uuid")), text)

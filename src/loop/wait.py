@@ -89,11 +89,9 @@ def _refresh_lease(run_path: Path, host: host_id.Host, seconds: float) -> bool:
     if not host.known:
         return False
     try:
-        if not lease_mod.may_take(run_path, host.pid):
-            return False
         return lease_mod.write(run_path, until=time.time() + seconds, pid=host.pid,
                                pid_started=host.started, host=host.kind,
-                               session=host.session)
+                               session=host.session, if_may_take=True)
     except Exception:
         return False
 
@@ -158,6 +156,8 @@ def wait_run(
     last_refresh = clock()
 
     def _exit(code: int) -> int:
+        if host_gone(host):  # an orphan never extends the lease, whatever it saw
+            return NO_HOST
         if code in (NEED_AGENT, TIMEOUT):
             _settle_lease(run_path, code, host)
         return code

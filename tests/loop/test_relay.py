@@ -417,7 +417,7 @@ def test_phone_text_answers_in_config(tmp_path, monkeypatch):
     cfg = resolve_config({"working_dir": str(repo)})
     assert cfg.phone_text_answers is False
     assert (cfg.wake_command, cfg.host) == ("echo hi", "claude")
-    assert _public_config(cfg)["phone_text_answers"] is False
+    assert "phone_text_answers" not in _public_config(cfg), "снимок в репо глобальные поля не несёт"
 
 
 def test_transition_ledger_has_phase_role_and_never_raises(tmp_path):

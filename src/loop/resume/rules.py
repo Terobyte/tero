@@ -51,12 +51,24 @@ def resume_refusal(state: dict, answer: str = "", force: bool = False) -> str:
 
 
 def _cfg_from_state_fields(saved: dict) -> Config:
+    """Config from the snapshot in state.json. The snapshot lies in the repo, so
+    the global-only fields (wake_command, host, phone_text_answers) are taken
+    from ~/.tero/config.yaml instead (спек пульта 2, приёмка 10)."""
     import dataclasses
+
+    from src.config_env import GLOBAL_ONLY, global_defaults
 
     fields = saved.get("fields")
     source = fields if isinstance(fields, dict) else saved
     valid = {f.name for f in dataclasses.fields(Config)}
-    clean = {k: v for k, v in source.items() if k in valid}
+    clean = {k: v for k, v in source.items() if k in valid and k not in GLOBAL_ONLY}
+    base = Config()
+    for key, value in global_defaults().items():
+        if key in GLOBAL_ONLY and key in valid and value is not None:
+            fallback = getattr(base, key)
+            if isinstance(fallback, bool) and isinstance(value, str):
+                value = value.strip().lower() in ("true", "1", "yes")
+            clean[key] = type(fallback)(value) if not isinstance(fallback, bool) else bool(value)
     return Config(**clean)
 
 

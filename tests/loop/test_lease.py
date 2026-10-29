@@ -160,7 +160,8 @@ def test_relay_payload_has_agent_without_pid(tmp_path: Path):
     assert out["agent"]["on_duty"] is True and out["agent"]["host"] == "claude"
     assert "pid" not in out["agent"]
     assert out["phone_text_answers"] is True, "из state.json флаг не читается"
-    assert '"pid"' not in json.dumps(out) and "4242" not in json.dumps(out).replace(str(pid), "")
+    assert '"pid"' not in json.dumps(out)
+    assert str(pid) not in json.dumps(out["agent"]), "pid хозяина не уходит в ретранслятор"
 
 
 def test_machine_id_is_random_stable_and_in_a_file(monkeypatch):
@@ -215,3 +216,66 @@ def test_pulse_tick_pokes_pusher_when_agent_changes(tmp_path: Path, monkeypatch)
     s._agent_tick()
     s._agent_tick()
     assert len(pokes) == 2, "смена on_duty будит пушер один раз"
+
+
+def test_write_keeps_only_signed_fields(tmp_path: Path):
+    run_dir = _run(tmp_path)
+    pid, started = _me()
+    (run_dir / "lease").write_text(json.dumps({"until": 1, "pid": 1, "planted": "x"}))
+    lease_mod.write(run_dir, until=time.time() + 60, pid=pid, pid_started=started)
+    assert "planted" not in json.loads((run_dir / "lease").read_text())
+
+
+def test_write_if_may_take_refuses_live_foreign_lease(tmp_path: Path):
+    run_dir = _run(tmp_path)
+    pid, started = _me()
+    import psutil
+
+    parent = psutil.Process(pid).parent()
+    lease_mod.write(run_dir, until=time.time() + 600, pid=parent.pid, pid_started=parent.create_time())
+    assert not lease_mod.write(run_dir, until=time.time() + 60, pid=pid, pid_started=started,
+                               if_may_take=True)
+    assert lease_mod.read(run_dir)["pid"] == parent.pid
+    assert lease_mod.write(run_dir, until=time.time() + 60, pid=pid, pid_started=started,
+                           if_may_take=True, is_alive=lambda p, st: False)
+    assert lease_mod.read(run_dir)["pid"] == pid
+
+
+def test_resume_config_ignores_global_only_fields_from_state(tmp_path: Path):
+    """Приёмка 10: wake_command / host / phone_text_answers в state.json не действуют при resume."""
+    from src.config import Config
+    from src.loop.resume.rules import _cfg_from_state_fields
+    from src.loop.session import _public_config
+
+    snap = _public_config(Config(wake_command="echo hi", host="claude", phone_text_answers=False))
+    assert not {"wake_command", "host", "phone_text_answers"} & set(snap), "снимок их не несёт"
+    planted = {**snap, "wake_command": "sh -c 'touch /tmp/pwned'", "host": "evil",
+               "phone_text_answers": True, "max_rounds": 4}
+    cfg = _cfg_from_state_fields(planted)
+    assert (cfg.wake_command, cfg.host, cfg.phone_text_answers, cfg.max_rounds) == ("", "", True, 4)
+    cfg_file = Path.home() / ".tero" / "config.yaml"
+    cfg_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg_file.write_text("defaults:\n  wake_command: claude -p x\n  host: claude\n  phone_text_answers: false\n")
+    cfg = _cfg_from_state_fields(planted)
+    assert (cfg.wake_command, cfg.host, cfg.phone_text_answers) == ("claude -p x", "claude", False)
+
+
+def test_orphan_never_settles_a_lease(tmp_path: Path):
+    """The host dies while `wait` is about to exit with 3: code 8, no lease."""
+    from src.loop import wait as wait_mod
+    from src.loop.host_id import Host
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run_dir = _run(tmp_path)
+    (run_dir / "state.json").write_text(json.dumps({"status": "waiting_agent"}))
+    pid, started = _me()
+    checks = iter([False, True, True])
+    monkeypatch_target = wait_mod.host_gone
+    wait_mod.host_gone = lambda host: next(checks, True)
+    try:
+        assert wait_mod.wait_run(run_dir, repo, host=Host("claude", pid, started)) == 8
+    finally:
+        wait_mod.host_gone = monkeypatch_target
+    lease = lease_mod.read(run_dir)
+    assert lease is None or lease["until"] <= time.time() + 130, "аренда на agent_timeout не записана"

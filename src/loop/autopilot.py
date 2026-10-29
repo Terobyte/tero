@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import time
@@ -91,17 +92,36 @@ def write_lease(run_dir: str | Path, until: float, pid: int,
 
 def extend_from_answer(run_dir: str | Path, agent_timeout_s: float,
                        agent_pid: int | None = None, pid_started: float | None = None,
-                       host: str = "", alive: Callable[[Any, Any], bool] | None = None) -> None:
-    """After an agent answer: a lease for the answering host, else extend the live one."""
+                       host: str = "", alive: Callable[[Any, Any], bool] | None = None) -> bool:
+    """After an agent answer: a lease for the answering host, by the `may_take` rule.
+
+    The answer file is unsigned (the player can write one), so it never
+    overwrites another host's live lease and never extends a lease it did
+    not name: only its own, an expired or a dead one (under the lease lock).
+    """
     try:
         given = int(agent_pid or 0)
     except (TypeError, ValueError):
         given = 0
-    until = time.time() + float(agent_timeout_s)
-    if given > 0 and isinstance(pid_started, (int, float)):
-        lease_mod.write(run_dir, until=until, pid=given, pid_started=pid_started, host=host)
-        return
-    lease_mod.extend(run_dir, until, is_alive=alive or pid_is_alive)
+    if given <= 0 or not isinstance(pid_started, (int, float)) or isinstance(pid_started, bool):
+        return False
+    return lease_mod.write(run_dir, until=time.time() + float(agent_timeout_s), pid=given,
+                           pid_started=pid_started, host=host, if_may_take=True,
+                           is_alive=alive or pid_is_alive)
+
+
+def wake_env(host: str = "") -> dict[str, str]:
+    """Environment of a woken agent: no provider keys (except for a Muse host), no
+    identity of the session that started the owner."""
+    from src.loop.host_id import strip_host_env
+    from src.providers.claude_native import _BLOCKED_ENV_VARS
+
+    env = dict(os.environ)
+    strip_host_env(env)
+    if host != "muse":
+        for name in _BLOCKED_ENV_VARS:
+            env.pop(name, None)
+    return env
 
 
 def should_notify(run_dir: str | Path, reason: str, now: float | None = None) -> bool:
@@ -181,7 +201,8 @@ def _remember_wake(run_dir: str | Path, question_id: str, pid: int) -> bool:
 def maybe_wake(run_dir: str | Path, question_id: str, wake_command: str,
                agent_timeout_s: float, popen: Any = subprocess.Popen,
                now: float | None = None,
-               alive: Callable[[Any, Any], bool] | None = None) -> int | None:
+               alive: Callable[[Any, Any], bool] | None = None,
+               host: str = "") -> int | None:
     if ((wake_command or "").strip() and _wake_marker(run_dir, question_id) is None
             and not lease_valid(run_dir, now=now, alive=alive)):
         if not _remember_wake(run_dir, question_id, 0):  # F24/F27: метка до Popen
@@ -190,13 +211,13 @@ def maybe_wake(run_dir: str | Path, question_id: str, wake_command: str,
             proc = popen([format_wake_command(p, run_dir, question_id)
                           for p in shlex.split(wake_command)],
                          start_new_session=True, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
+                         stderr=subprocess.DEVNULL, env=wake_env(host))
             pid = int(getattr(proc, "pid", 0) or 0)
         except Exception:
             return None
         if pid > 0:
             ts = time.time() if now is None else now
-            write_lease(run_dir, ts + float(agent_timeout_s), pid)
+            write_lease(run_dir, ts + float(agent_timeout_s), pid, host=host)
             _remember_wake(run_dir, question_id, pid)
             return pid
     return None
@@ -270,7 +291,8 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
             try:
                 leased = bool(maybe_wake(ctx.run_dir, qid,
                     str(getattr(cfg, "wake_command", "") or ""), agent_t,
-                    popen=step._popen or subprocess.Popen, now=now))
+                    popen=step._popen or subprocess.Popen, now=now,
+                    host=str(getattr(cfg, "host", "") or "")))
             except Exception:
                 pass
         if is_noop(step.relay) and not leased and now - opened >= NO_RELAY_GRACE_S:

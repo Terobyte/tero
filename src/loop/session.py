@@ -352,10 +352,14 @@ def _is_secret_name(name: str) -> bool:
 
 
 def _public_config(cfg: Config) -> dict:
+    """The config snapshot for state.json: no secrets, no global-only fields
+    (those are read from ~/.tero/config.yaml and must not come back from the repo)."""
+    from src.config_env import GLOBAL_ONLY
+
     return {
         f.name: getattr(cfg, f.name)
         for f in dataclasses.fields(Config)
-        if not _is_secret_name(f.name)
+        if not _is_secret_name(f.name) and f.name not in GLOBAL_ONLY
     }
 
 

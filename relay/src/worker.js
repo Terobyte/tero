@@ -3,7 +3,9 @@
 
 import { checkStale } from './cron.js';
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
-import { PUSH_MAX } from './push.js';
+import { COOLDOWN_MS, PUSH_MAX } from './push.js';
+
+const NOTIFY_PER_WINDOW = 6;
 import {
   clientIp,
   consumeBadAttempt,
@@ -274,6 +276,15 @@ async function postNotify(request, env) {
   const text = redactSecrets(stripCodeAndDiffs(raw)).slice(0, PUSH_MAX);
   const runId = typeof body.run_id === 'string' && body.run_id ? sanitizeId(body.run_id) : 'notify';
   await ensurePushTables(env.DB);
+  // Кулдаун по тексту отсекает повтор; общий потолок отсекает поток разных текстов
+  // (ключ записи есть у каждого прогона на машине): не больше NOTIFY_PER_WINDOW за 30 мин.
+  const since = Date.now() - COOLDOWN_MS;
+  const recent = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM push_log WHERE reason LIKE 'notify:%' AND code >= 200 AND code < 300 AND at > ?",
+  ).bind(since).first();
+  if (Number(recent && recent.n) >= NOTIFY_PER_WINDOW) {
+    return jsonResponse({ ok: true, sent: false, skipped: 'rate' });
+  }
   let result;
   try {
     result = await sendPush(env, runId, '', { notify: text });

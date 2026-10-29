@@ -59,13 +59,31 @@ def test_host_kind_from_environment():
     assert host_id.host_kind({"CLAUDECODE": "1"}) == "claude"
     assert host_id.host_kind({"TERO_HOST": "opencode"}) == "opencode"
     assert host_id.host_kind({}) == ""
-    # unknown kind: first non-wrapper ancestor, no name check
-    assert detect({}, [Proc(5001, "bash", ("bash",), 1.0), Proc(4001, "vim", ("vim",), 1.0)]).pid == 4001
+
+
+def test_plain_terminal_and_unknown_hosts_are_nobody():
+    """`tero wait` typed by a human (zsh → login → launchd), ssh, or an unknown
+    TERO_HOST: no host, no lease, «агента нет» (приёмка 1)."""
+    terminal = [Proc(5001, "zsh", ("-zsh",), 1.0), Proc(4001, "login", ("login",), 2.0),
+                Proc(1, "launchd", ("launchd",), 0.5)]
+    host = detect({}, terminal)
+    assert not host.known and "не известен" in host.why
+    ssh = [Proc(5001, "bash", ("bash",), 1.0), Proc(4001, "sshd-session", ("sshd-session",), 2.0)]
+    assert not detect({}, ssh).known
+    assert not detect({"TERO_HOST": "vim"}, [Proc(5001, "bash", ("bash",), 1.0), Proc(4001, "vim", ("vim",), 1.0)]).known
+    # the same chain under Claude Code is a host
+    assert detect({"CLAUDECODE": "1"}, CHAIN).known
+    # Muse inside Claude Code: TERO_HOST=muse, the process is still claude
+    assert detect({"TERO_HOST": "muse"}, CHAIN).pid == 4001
 
 
 def test_under_owner_matches_pid_and_start_time():
     state = {"pid": 3001, "pid_started": 80.0}
     assert under_owner(state, CHAIN) is True
+    # a woken agent is spawned by the owner: its pid in state.woken makes us the host, not the player
+    assert under_owner({"pid": 3001, "pid_started": 80.0, "woken": {"1-1": 4001}}, CHAIN) is False
+    assert under_owner({"pid": 3001, "pid_started": 80.0, "woken": [{"pid": 4001}]}, CHAIN) is False
+    assert under_owner({"pid": 3001, "pid_started": 80.0, "woken": {"1-1": 0}}, CHAIN) is True
     assert under_owner({"pid": 3001, "pid_started": 81.5}, CHAIN) is False, "тот же pid, другой старт"
     assert under_owner({"pid": 9999, "pid_started": 1.0}, CHAIN) is False
     assert under_owner({}, CHAIN) is False
