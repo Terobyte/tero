@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from typing import Any, Callable
 
 from src.errors import scrub_secrets
 from src.loop.git import secret_paths as _secret_paths
 from src.relay.iface import Answer, RelayClient as _Proto  # noqa: F401 — реэкспорт имени
 from src.relay.machine import machine_id as _machine_id
-from src.relay.payload import _recent_run_events, _state_models
+from src.relay.payload import _state_models
 from src.relay.redact import redact
 
 TIMEOUT_S = 5.0
+
+# flat payload keys (relay/src/filter.js STATE_FIELDS minus `state_at`, which the
+# client sets itself); nested whitelists live in src/hud/model_view.py
+STATE_FIELDS = ("run_id", "machine_id", "status", "phase", "phase_index", "total_phases",
+                "round", "role", "model", "question", "actions", "models", "decisions", "debts",
+                "limits", "findings", "answered", "history", "phone_text_answers", "updated_at",
+                "agent", "view")
 
 
 def _cfg_get(cfg: Any, name: str, default: Any = None) -> Any:
@@ -63,6 +72,21 @@ def _secret_list() -> list[str]:
         return list(_secret_paths(".") or [])
     except Exception:
         return []
+
+
+_logged: set[str] = set()
+
+
+def _log_once(run_dir: Any, line: str) -> None:
+    """One line per reason into <run_dir>/hud.log: a swallowed error here hides a blind phone."""
+    if line in _logged or not run_dir:
+        return
+    _logged.add(line)
+    try:
+        with open(Path(run_dir) / "hud.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} relay {line}\n")
+    except OSError:
+        pass
 
 
 class RelayClient:
@@ -145,17 +169,21 @@ class RelayClient:
     def _redacted_state(self, state: dict) -> dict:
         paths = _secret_list()
         out: dict[str, Any] = {}
-        for key in ("run_id", "machine_id", "status", "phase", "phase_index",
-                    "total_phases", "round", "role", "model", "question", "actions", "models",
-                    "decisions", "debts", "limits", "findings", "events",
-                    "answered", "history",
-                    "phone_text_answers", "updated_at", "agent"):
+        for key in STATE_FIELDS:
             if key in state:
                 out[key] = state[key]
-        if "events" not in out:
-            recent = _recent_run_events(self.run_id, run_dir=self.run_dir)
-            if recent:
-                out["events"] = recent
+        if "debts" not in out and isinstance(state.get("debt"), list):
+            out["debts"] = state["debt"]  # state.json calls it `debt`, the page `debts`
+        # `agent` and `view` are built here, never taken raw from state.json (pid lives there)
+        out.pop("agent", None)
+        out.pop("view", None)
+        try:
+            from src.hud.model_view import relay_view
+
+            if self.run_dir:
+                out["view"] = relay_view(self.run_dir, time.time(), state=state)
+        except Exception as exc:
+            _log_once(self.run_dir, f"relay_view: {exc!r}")
         if "models" not in out:
             got = _state_models(state)
             if got:
@@ -171,8 +199,8 @@ class RelayClient:
 
             if self.run_dir:
                 out["agent"] = agent_view(self.run_dir)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_once(self.run_dir, f"agent_view: {exc!r}")
         if isinstance(state.get("updated_at"), str):
             out["state_at"] = state["updated_at"]  # порядок: старый push не затрёт новый
         if not out.get("run_id"):

@@ -26,6 +26,7 @@ _FULL_SUITE_FILES = frozenset(
 )
 _STRUCTURE_TEST = "tests/test_structure.py"
 _RELAY_WRAPPER = "tests/relay/test_worker_js.py"
+_JS_COUPLED = frozenset({"src/hud/view.html", "src/relay/client.py", "src/hud/model_view.py"})
 
 
 def _relay_wrapper_for(repo: str | Path, changed: set[str]) -> set[str]:
@@ -38,7 +39,10 @@ def _relay_wrapper_for(repo: str | Path, changed: set[str]) -> set[str]:
     root = Path(repo)
     # F2: любой файл relay/** или widget/** (не только .js) — иначе
     # правка schema.sql/wrangler.toml/package.json проскакивает мимо обёртки.
-    hits = {p for p in changed if p.startswith(("relay/", "widget/"))}
+    # спек пульта 2: страница пульта это копия src/hud/view.html, а белые списки
+    # ретранслятора сверяются с src/relay/client.py — их правка тоже гоняет JS.
+    hits = {p for p in changed if p.startswith(("relay/", "widget/"))
+            or p in _JS_COUPLED}
     if not hits:
         return set()
     if (root / _RELAY_WRAPPER).is_file():

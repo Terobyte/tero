@@ -64,21 +64,6 @@ def test_sectors_colors_by_phase_status():
     assert [s["title"] for s in view["sectors"]] == ["a", "b", "c", "d"]
 
 
-def test_icon_per_role_and_status():
-    cases = [
-        ({"role": "player", "status": "running"}, "🛠"),
-        ({"role": "judge", "status": "running"}, "⚖️"),
-        ({"role": "tester", "status": "running"}, "🧪"),
-        ({"role": "gate", "status": "running"}, "⏱"),
-        ({"status": "stopped", "reason": "stuck"}, "❓"),
-        ({"status": "judge_pending"}, "⏸"),
-        ({"status": "done"}, "✓"),
-        ({"status": "waiting_human", "question": {"id": "q1", "text": "идём дальше?"}, "reason": ""}, "❓"),
-    ]
-    for kw, icon in cases:
-        assert build_view(_state(**kw), [], NOW, ALIVE)["icon"] == icon, kw
-
-
 def test_doing_prefers_role_text_then_tool_then_gate_timer():
     view = build_view(
         _state(),
@@ -87,7 +72,8 @@ def test_doing_prefers_role_text_then_tool_then_gate_timer():
         ALIVE,
     )
     assert view["doing"] == "пишу код"
-    assert view["header"] == "Фаза 2/4 · раунд 3 · 02:05"
+    assert view["round"] == 3 and view["phase_index"] == 1 and view["total_phases"] == 4
+    assert view["phase_started_at"] == NOW - 125
     assert view["role_line"] == "player · opus"
 
     view = build_view(_state(), [_ev("tool", text="Read src/x.py", delta_s=30)], NOW, ALIVE)
@@ -133,12 +119,12 @@ def test_doing_prefers_newest_tool_of_any_role():
 
 def test_dead_owner_shows_broken():
     view = build_view(_state(), [_ev("text", text="пишу", delta_s=5)], NOW, DEAD)
-    assert view["icon"] == "❓"
+    assert view["light"] == "red"
     assert view["doing"] == "прогон оборвался"
 
     view = build_view(_state(), [_ev("text", text="пишу", delta_s=1200)], NOW, ALIVE)
     assert view["doing"] != "прогон оборвался"
-    assert view["last_event_age_s"] == 1200
+    assert view["last_event_at"] == NOW - 1200
 
 
 def test_verdict_first_renders_line_zero():
@@ -177,17 +163,18 @@ def test_verdict_prefers_newer_stream_event_over_stale_saved():
     assert view["verdict"] == {"verdict": "NO_SHIP", "blocking": 1, "first": "src/x.py:3"}
 
 
-def test_none_state_is_grey_not_crash_and_tabs_capped():
+def test_none_state_is_grey_not_crash_and_log_capped():
     view = build_view(None, [], NOW, ALIVE)
     assert view["sectors"] == []
-    assert view["circle"] == "grey"
+    assert view["light"] == "grey"
     assert view["doing"] == "нет данных"
 
     events = [_ev("text", text=f"m{i}", delta_s=5000 - i) for i in range(5000)]
     view = build_view(_state(), events, NOW, ALIVE)
-    assert len(view["tabs"]["player"]) == TAB_LIMIT
-    assert len(view["tabs"]["all"]) == TAB_LIMIT
+    assert len(view["log"]) == TAB_LIMIT
+    assert view["log"][-1]["text"] == "m4999" and view["log"][0]["text"] == "m3000"
     assert TAB_LIMIT == 2000
+    assert len(build_view(_state(), events, NOW, ALIVE, log_limit=40)["log"]) == 40
 
 
 def test_light_is_run_health_not_phase_progress():
@@ -254,9 +241,9 @@ def test_light_grey_without_state():
     assert (view["light"], view["light_text"]) == ("grey", "нет данных")
 
 
-def test_phase_label_and_current_title():
+def test_phase_index_and_current_title():
     view = build_view(_state(), [], NOW, ALIVE)
-    assert view["phase_label"] == "2/4"
+    assert (view["phase_index"], view["total_phases"]) == (1, 4)
     assert view["phase_title"] == "b"
 
 
@@ -279,12 +266,12 @@ def test_html_colors_log_lines_by_role():
     assert "text-shadow" in html
 
 
-def test_verdict_age_from_newest_verdict_event():
+def test_verdict_at_from_newest_verdict_event():
     events = [_ev("verdict", role="judge", delta_s=42, verdict="NO_SHIP", blocking=1)]
-    assert build_view(_state(), events, NOW, ALIVE)["verdict_age_s"] == 42
+    assert build_view(_state(), events, NOW, ALIVE)["verdict_at"] == NOW - 42
     st = _state(verdict={"verdict": "SHIP", "blocking": 0, "first": {}})
-    assert build_view(st, [], NOW, ALIVE)["verdict_age_s"] is None
-    assert build_view(None, [], NOW, ALIVE)["verdict_age_s"] is None
+    assert build_view(st, [], NOW, ALIVE)["verdict_at"] is None
+    assert build_view(None, [], NOW, ALIVE)["verdict_at"] is None
 
 
 def test_fresh_judge_does_not_show_last_rounds_text():

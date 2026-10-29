@@ -84,7 +84,6 @@ export const STATE_FIELDS = new Set([
   'models',
   'decisions',
   'debts',
-  'events',
   'answered',
   'history',
   'limits',
@@ -93,7 +92,23 @@ export const STATE_FIELDS = new Set([
   'updated_at',
   'state_at',
   'agent',
+  'view',
 ]);
+
+// Вложенные белые списки `view` (спек пульта 2, п. 6): ровно входы render() в
+// src/hud/view.html; Python-копии в src/hud/model_view.py, тест сверяет их через node -e.
+export const VIEW_FIELDS = new Set([
+  'light', 'light_text', 'sectors', 'phase_title', 'phase_index', 'total_phases', 'round',
+  'phase_started_at', 'role', 'role_line', 'doing', 'gate_started_at', 'last_event_at',
+  'verdict', 'verdict_at', 'stop_text', 'done_text', 'debt_line', 'agent', 'messages_waiting',
+  'resume', 'log', 'built_at', 'quiet_after_s',
+]);
+export const LOG_FIELDS = new Set(['ts', 'role', 'type', 'text']);
+export const SECTOR_FIELDS = new Set(['title', 'color']);
+export const VERDICT_FIELDS = new Set(['verdict', 'blocking', 'first']);
+export const RESUME_FIELDS = new Set(['mode', 'why']);
+export const LOG_TEXT_LIMIT = 300;
+export const LOG_LIMIT = 40;
 
 // Вложенный белый список `agent` (спек пульта 2, п. 1): pid сюда не попадает.
 export const AGENT_FIELDS = new Set([
@@ -105,6 +120,31 @@ function pickFields(value, fields) {
   const out = {};
   for (const key of fields) {
     if (key in value) out[key] = deepRedact(value[key]);
+  }
+  return out;
+}
+
+function sanitizeLog(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.slice(-LOG_LIMIT).map((row) => {
+    const item = pickFields(row, LOG_FIELDS);
+    item.text = String(item.text ?? '').slice(0, LOG_TEXT_LIMIT);
+    return item;
+  });
+}
+
+function sanitizeView(view) {
+  if (!view || typeof view !== 'object' || Array.isArray(view)) return {};
+  const out = {};
+  for (const key of VIEW_FIELDS) {
+    if (!(key in view)) continue;
+    const value = view[key];
+    if (key === 'agent') out[key] = pickFields(value, AGENT_FIELDS);
+    else if (key === 'log') out[key] = sanitizeLog(value);
+    else if (key === 'sectors') out[key] = Array.isArray(value) ? value.map((s) => pickFields(s, SECTOR_FIELDS)) : [];
+    else if (key === 'verdict') out[key] = pickFields(value, VERDICT_FIELDS);
+    else if (key === 'resume') out[key] = value === null ? null : pickFields(value, RESUME_FIELDS);
+    else out[key] = deepRedact(value);
   }
   return out;
 }
@@ -222,6 +262,7 @@ export function filterState(state) {
     const value = state[key];
     if (key === 'question') out[key] = sanitizeQuestion(value);
     else if (key === 'agent') out[key] = pickFields(value, AGENT_FIELDS);
+    else if (key === 'view') out[key] = sanitizeView(value);
     else if (key === 'findings' && Array.isArray(value)) {
       out[key] = value.map(sanitizeFinding).filter((finding) => finding !== null);
     } else {

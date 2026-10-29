@@ -67,7 +67,7 @@ def run_status(args) -> int:
     run_dir = resolve_run_dir(args)
     if run_dir is None:
         return 1
-    payload = status_payload(run_dir, repo)
+    payload = status_payload(run_dir, repo, with_log=bool(getattr(args, "log", False)))
     if getattr(args, "json", False):
         print(_json.dumps(payload, ensure_ascii=False, sort_keys=True))
         return 0

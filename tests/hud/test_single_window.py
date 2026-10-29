@@ -60,12 +60,12 @@ def test_window_switches_on_target(monkeypatch, tmp_path):
     first = _run(tmp_path, "a", header_round=1)
     second = _run(tmp_path, "b", header_round=7)
     bridge = hud_view.Bridge(first)
-    assert "раунд 1" in bridge.view()["header"]
+    assert bridge.view()["round"] == 1
     single.write_target(second)
-    assert "раунд 7" in bridge.view()["header"]
+    assert bridge.view()["round"] == 7
     assert bridge.run_dir == second
     assert not single.target_path().exists()
-    assert "раунд 7" in bridge.view()["header"]
+    assert bridge.view()["round"] == 7
 
 
 def test_free_lock_opens_window(monkeypatch, tmp_path):
@@ -95,7 +95,7 @@ def test_plus_n_label_from_registry(monkeypatch, tmp_path):
     reg.register("b", second / "state.json", pid=2, pid_started=1.0)
     assert bridge.view()["plus"] == "+1"
     assert bridge.switch("") == str(second.resolve())
-    assert "раунд 7" in bridge.view()["header"]
+    assert bridge.view()["round"] == 7
     assert bridge.view()["plus"] == "+1"
     html = Path(hud_view.__file__).with_name("view.html").read_text(encoding="utf-8")
     assert 'id="plus"' in html and "switch(" in html

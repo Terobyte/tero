@@ -606,3 +606,49 @@ def test_phone_markup_cannot_escape_data_block():
         for line in body.rstrip("\n").split("\n"):
             assert line.startswith("> "), line
         assert "##" not in body and "```" not in body
+
+
+def test_redacted_state_never_ships_raw_agent_or_view(tmp_path):
+    """agent и view строятся клиентом; сырые из state.json (с pid) не уезжают, даже без run_dir."""
+    from src.relay.client import RelayClient
+    c = RelayClient(_cfg(), fetch=lambda *a, **k: None)
+    raw = {"status": "running", "agent": {"pid": 77, "on_duty": True}, "view": {"agent": {"pid": 77}}}
+    out = c._redacted_state(raw)
+    assert "agent" not in out and "view" not in out
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text(json.dumps(raw))
+    c = RelayClient(_cfg(), fetch=lambda *a, **k: None, run_dir=run)
+    out = c._redacted_state(raw)
+    assert '"pid"' not in json.dumps(out) and "77" not in json.dumps(out)
+    assert out["agent"]["on_duty"] is False and out["view"]["agent"] == out["agent"]
+
+
+def test_pusher_due_throttles_log_and_keeps_pulse(tmp_path, monkeypatch):
+    """state.json — сразу; stream.jsonl — не чаще 15 с; без изменений — пульс раз в 5 мин."""
+    from src.relay import pusher as mod
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "state.json").write_text("{}")
+    p = mod.Pusher.__new__(mod.Pusher)
+    p.run_dir = run
+    p._dirty = False
+    p._sent = mod._signature(p.state_path)
+    (run / "stream.jsonl").write_text("1\n")
+    p._sent_log = mod._signature(p.log_path)
+    clock = [1000.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    p._last = clock[0]
+    assert p._due() is False
+    with open(run / "stream.jsonl", "a") as fh:
+        fh.write("2\n")
+    assert p._due() is False, "лог изменился, но 15 с не прошло"
+    clock[0] += mod.LOG_EVERY_S
+    assert p._due() is True
+    p._sent_log = mod._signature(p.log_path)
+    assert p._due() is False
+    clock[0] += mod.PULSE_EVERY_S
+    assert p._due() is True, "пульс"
+    clock[0] -= mod.PULSE_EVERY_S
+    (run / "state.json").write_text('{"x": 1}')
+    assert p._due() is True, "state.json уходит сразу"

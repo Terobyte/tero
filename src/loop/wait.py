@@ -221,9 +221,12 @@ def wait_run(
 
 
 def status_payload(
-    run_dir: str | Path, repo: str | Path
+    run_dir: str | Path, repo: str | Path, *, with_log: bool = False
 ) -> dict[str, Any]:
-    """All `tero status` fields from state.json + pulse. Secrets scrubbed."""
+    """All `tero status` fields from state.json + pulse. Secrets scrubbed.
+
+    Old keys keep their meaning; the HUD model comes as the `view` sub-object
+    (without `log` unless `with_log`), `agent` also flat."""
     run_path = Path(run_dir)
     repo_path = Path(repo)
     state = _read_state(run_path)
@@ -302,9 +305,20 @@ def status_payload(
         "push_ok": push_ok(run_path),
         "relay_error": relay_hint,
         "agent": agent,
-        "view": {"agent": agent},
+        "view": _status_view(run_path, agent, with_log),
     }
     return scrub_data(payload)
+
+
+def _status_view(run_path: Path, agent: dict, with_log: bool) -> dict:
+    try:
+        from src.hud.model_view import status_view
+
+        view = status_view(run_path, time.time(), with_log=with_log)
+    except Exception:
+        view = {}
+    view["agent"] = agent
+    return view
 
 
 def push_ok(run_dir: str | Path) -> bool:

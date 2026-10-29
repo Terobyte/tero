@@ -11,7 +11,7 @@
 :root {
   --player: #5ac8fa; --judge: #c38bff; --tester: #ff8fc8; --gate: #ffb35c;
   --green: #3ddc84; --yellow: #f5c542; --red: #ff6b6b; --orange: #ff9f43; --grey: #8c94a1;
-  --ready: #dbedff;
+  --ready: #dbedff; --host: #e8c48a;
   --text: #f2f4f8; --dim: #9aa3b2; --faint: rgba(255,255,255,0.10);
   /* two sizes only: --big for what matters, --small for everything else */
   --big: 13px; --small: 11px;
@@ -147,6 +147,31 @@ body {
 /* narrow window, what goes first: age (a quiet run turns the light yellow anyway),
    then the phase name (dots stay, the name is in their tooltip), then round and time.
    light, status, dots, model and the ticker always stay */
+/* the host (Claude Code over the run) in the log: warm sand, not a run role */
+#log .r-host { color: var(--host); text-shadow: 0 0 6px rgba(232,196,138,0.45); }
+/* phone (source.js sets data-host="phone"): the page scrolls, the card is a block
+   about half the screen, the log scrolls inside it; mac-only controls are gone */
+html[data-host="phone"], html[data-host="phone"] body { background: #0f1218; overflow: auto; height: auto; }
+html[data-host="phone"] body { -webkit-user-select: text; user-select: text; padding: 10px 10px 40px; }
+html[data-host="phone"] #card { height: 55vh; width: auto; margin: 0 0 10px; }
+html[data-host="phone"] #light { cursor: default; }
+html[data-host="phone"] #light:hover { transform: none; }
+html[data-host="phone"] #plus, html[data-host="phone"] #close { display: none !important; }
+/* the blocks pult.js puts above (#pult-top: question or outcome) and below (#pult)
+   the card share the card's font and two sizes; the question is the big thing */
+html[data-host="phone"] #pult-top, html[data-host="phone"] #pult { color: var(--text); font-size: var(--small); }
+html[data-host="phone"] #pult-top section, html[data-host="phone"] #pult section { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05); }
+html[data-host="phone"] #pult section section { margin: 8px 0 0; padding: 0; background: none; }
+html[data-host="phone"] #pult-top h2, html[data-host="phone"] #pult h2, html[data-host="phone"] #pult-top h1 { font-size: var(--small); font-weight: 600; color: var(--dim); text-transform: lowercase; margin: 0 0 4px; }
+html[data-host="phone"] #question p:first-of-type { font-size: var(--big); line-height: 1.35; }
+html[data-host="phone"] .qid { color: var(--dim); }
+html[data-host="phone"] #pult-top p, html[data-host="phone"] #pult p, html[data-host="phone"] #pult li { margin: 2px 0; line-height: 1.35; }
+html[data-host="phone"] #pult ul { list-style: none; }
+html[data-host="phone"] #pult a { color: var(--player); text-decoration: none; }
+html[data-host="phone"] button { font: inherit; font-size: var(--big); color: var(--text); background: rgba(255,255,255,0.10); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 14px; margin: 6px 6px 0 0; min-height: 40px; }
+html[data-host="phone"] button[data-action="stop"] { color: var(--red); }
+html[data-host="phone"] textarea, html[data-host="phone"] select, html[data-host="phone"] input { font: inherit; font-size: var(--big); color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 10px; margin: 8px 0 0; width: 100%; display: block; }
+html[data-host="phone"] textarea { min-height: 72px; resize: vertical; }
 @media (max-width: 440px) { #age { display: none; } }
 @media (max-width: 380px) { .phase-name { display: none; } #model { max-width: none; } }
 @media (max-width: 320px) { #meta { display: none; } }
@@ -173,32 +198,45 @@ body {
   <div id="foot"><span id="who"></span><div id="doing"></div></div>
 </div>
 <script>
-var lastW = null, lastH = null;
-var api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
-function getApi() {
-  if (!api && window.pywebview && window.pywebview.api) api = window.pywebview.api;
-  return api;
-}
-window.addEventListener("pywebviewready", function () { getApi(); poll(); });
-
-var ROLE_NAMES = {player: "игрок", judge: "судья", tester: "тестер", gate: "тесты"};
+/*render:start*/
+var ROLE_NAMES = {player: "игрок", judge: "судья", tester: "тестер", gate: "тесты", host: "хозяин"};
 var VERDICT_SHOW_S = 60;
+var LOG_SHOW = 80;
+function nowS(d) { return (window.teroNow ? window.teroNow() : Date.now() / 1000); }
+function since(d, at) { return at == null ? null : Math.max(0, Math.floor(nowS(d) - at)); }
+// age bucket of the newest event: quiet runs turn the age yellow, then red
+function ageColor(age) {
+  if (age == null) return "normal";
+  if (age > 300) return "red";
+  if (age > 60) return "yellow";
+  return "normal";
+}
+function mss(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+function mmss(s) { s = Math.max(0, Math.floor(s || 0)); return ("0" + Math.floor(s / 60)).slice(-2) + ":" + ("0" + (s % 60)).slice(-2); }
+// the gate timer ticks on the screen: the model gives the absolute start
+function doingOf(d) {
+  if (d.role === "gate" && d.gate_started_at != null && d.light !== "red" && d.light !== "ready") {
+    return "⏱ тесты идут " + mss(nowS(d) - d.gate_started_at);
+  }
+  return d.doing || "";
+}
 // [who, text, class]: a stop, a fresh verdict or "done" win over the acting role's newest line
 function footOf(d, acting) {
   if (d.stop_text) return ["", d.stop_text, "bad"];
   var v = d.verdict || {};
-  var fresh = d.verdict_age_s != null && d.verdict_age_s < VERDICT_SHOW_S;
+  var vAge = since(d, d.verdict_at);
+  var fresh = vAge != null && vAge < VERDICT_SHOW_S;
   if (v.verdict && (fresh || !acting)) {
     var cls = v.verdict === "SHIP" ? "good" : "bad";
     return ["судья", v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : ""), cls];
   }
   if (d.done_text) return ["", d.done_text, "good"];
-  return [acting ? ROLE_NAMES[acting] : "", d.doing || "", acting ? "r-" + acting : ""];
+  return [acting ? ROLE_NAMES[acting] : "", doingOf(d), acting ? "r-" + acting : ""];
 }
 // keep the newest tail in sight; fade the top edge when older text is cut off
 function pinTail(el) {
   el.scrollTop = el.scrollHeight;
-  el.classList.toggle("cut", el.scrollHeight > el.clientHeight + 1);
+  if (el.classList) el.classList.toggle("cut", el.scrollHeight > el.clientHeight + 1);
 }
 // the newest line types itself out; never longer than ~1 s
 var typing = {target: "", shown: 0, timer: null};
@@ -220,8 +258,8 @@ function typeDoing(text) {
 var STEP_STATE = {green: "готово", orange: "с долгом", red: "стоп", grey: "впереди"};
 var planKey = "";
 function renderPlan(secs, d) {
-  var round = String(d.header || "").match(/раунд\s*(\d+)/);
-  var key = JSON.stringify(secs) + (round ? round[1] : "");
+  var round = d.round ? String(d.round) : "";
+  var key = JSON.stringify(secs) + round;
   if (key === planKey) return;
   planKey = key;
   var plan = document.getElementById("plan");
@@ -238,7 +276,7 @@ function renderPlan(secs, d) {
     t.className = "t"; t.textContent = secs[i].title || "";
     var st = document.createElement("span");
     st.className = "s";
-    st.textContent = c === "yellow" ? "идёт" + (round ? " · раунд " + round[1] : "") : (STEP_STATE[c] || "");
+    st.textContent = c === "yellow" ? "идёт" + (round ? " · раунд " + round : "") : (STEP_STATE[c] || "");
     row.appendChild(n); row.appendChild(dot); row.appendChild(t); row.appendChild(st);
     plan.appendChild(row);
   }
@@ -246,11 +284,12 @@ function renderPlan(secs, d) {
 function ago(s) {
   return s < 60 ? s + " с" : Math.floor(s / 60) + " мин";
 }
+var logFilter = "";  // "" all roles, "host" only the host (the phone's «только хозяин»)
 function render(d) {
   if (!d) return;
   var light = d.light || "grey";
   document.getElementById("light").className = light;
-  document.getElementById("close").style.display = light === "ready" ? "flex" : "none";
+  document.getElementById("close").style.display = light === "ready" && !window.teroSource ? "flex" : "none";
   // a green dot says "working" by itself: words only when something needs a look
   var st = document.getElementById("status");
   st.className = light;
@@ -281,13 +320,16 @@ function render(d) {
   var model = document.getElementById("model");
   model.textContent = String(d.role_line || "").split(" · ").slice(1).join(" · ");
   model.className = acting ? "r-" + acting : "";
-  // "Фаза 4/5 · раунд 1 · 22:07" -> "р1 · 22:07": the phase is in the dots
-  var rest = String(d.header || "").replace(/^Фаза [^·]*·\s*/, "").replace(/раунд\s*/, "р");
-  document.getElementById("meta").textContent = rest;
+  // "р1 · 22:07": round and time in the phase; the phase itself is in the dots
+  var meta = [];
+  if (d.round) meta.push("р" + d.round);
+  if (d.phase_started_at != null) meta.push(mmss(nowS(d) - d.phase_started_at));
+  document.getElementById("meta").textContent = meta.join(" · ");
   var age = document.getElementById("age");
-  age.textContent = (d.last_event_age_s == null) ? "" : ago(d.last_event_age_s);
+  var lastAge = since(d, d.last_event_at);
+  age.textContent = (lastAge == null) ? "" : ago(lastAge);
   age.title = "с последнего события";
-  age.className = "age-" + (d.age_color || "normal");
+  age.className = "age-" + ageColor(lastAge);
 
   var f = footOf(d, acting);
   var who = document.getElementById("who");
@@ -301,11 +343,12 @@ function render(d) {
   plus.textContent = d.plus || "";
   plus.style.display = d.plus ? "flex" : "none";
 
-  var items = ((d.tabs || {}).all) || [];
+  var items = d.log || [];
+  if (logFilter) items = items.filter(function (it) { return it.role === logFilter; });
   var log = document.getElementById("log");
   var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   var frag = document.createDocumentFragment();
-  for (var m = Math.max(0, items.length - 80); m < items.length; m++) {
+  for (var m = Math.max(0, items.length - LOG_SHOW); m < items.length; m++) {
     var line = document.createElement("div");
     var r = items[m].role;
     // agent speech glows in its role color, tool calls stay dim
@@ -317,6 +360,13 @@ function render(d) {
   log.appendChild(frag);
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
+/*render:end*/
+var lastW = null, lastH = null;
+var api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+function getApi() {
+  if (!api && window.pywebview && window.pywebview.api) api = window.pywebview.api;
+  return api;
+}
 function call(name) {
   // pywebview counts every js argument, undefined included
   var a = getApi();
@@ -327,6 +377,12 @@ function after(p, fn) {
   if (p && typeof p.then === "function") p.then(fn); else fn(p);
 }
 function poll() {
+  // the phone sets window.teroSource (source.js) before this script runs: the
+  // same card, another feed; only without it the pywebview bridge is used
+  if (window.teroSource) {
+    after(window.teroSource.view(), function (d) { if (d) { window._last = d; render(d); } });
+    return;
+  }
   var a = getApi();
   if (!a) return;
   after(call("view"), function (d) { if (d) { window._last = d; render(d); } });
@@ -335,12 +391,13 @@ function poll() {
     call("save_size", lastW, lastH);
   }
 }
+if (!window.teroSource) window.addEventListener("pywebviewready", function () { getApi(); poll(); });
 document.getElementById("plus").onclick = function () {
   var a = getApi();
   if (!a) return;
   try { after(a.switch(""), poll); } catch (e) {}
 };
-document.getElementById("light").onclick = function () { call("toggle_visible"); };
+document.getElementById("light").onclick = function () { if (!window.teroSource) call("toggle_visible"); };
 document.getElementById("close").onclick = function () { call("close"); };
 // a click on the phases opens the plan, any other click closes it
 document.addEventListener("click", function (e) {

@@ -1,246 +1,417 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>теро-пульт</title>
 <link rel="manifest" href="/manifest.webmanifest">
+<script src="source.js"></script>
+<style>
+@font-face {
+  font-family: "TeroGlass";
+  src: url("data:font/woff2;base64,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") format("woff2");
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --player: #5ac8fa; --judge: #c38bff; --tester: #ff8fc8; --gate: #ffb35c;
+  --green: #3ddc84; --yellow: #f5c542; --red: #ff6b6b; --orange: #ff9f43; --grey: #8c94a1;
+  --ready: #dbedff; --host: #e8c48a;
+  --text: #f2f4f8; --dim: #9aa3b2; --faint: rgba(255,255,255,0.10);
+  /* two sizes only: --big for what matters, --small for everything else */
+  --big: 13px; --small: 11px;
+}
+html, body { background: transparent; height: 100%; overflow: hidden; }
+body {
+  font-family: "TeroGlass", -apple-system, "SF Pro Text", system-ui, sans-serif;
+  font-size: var(--small); line-height: 1.4;
+  color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* the card is the window: it stretches with every resize */
+#card {
+  height: 100vh; width: 100vw;
+  display: flex; flex-direction: column; gap: 6px;
+  background: rgba(20, 24, 32, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 8px 12px;
+  overflow: hidden; position: relative;
+}
+/* everything about the run in one line: health, phases, model, round, time */
+#top { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-width: 0; white-space: nowrap; }
+/* the light is the hide button: one click and tero flies into the menu bar */
+#light {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  background: var(--grey); position: relative; cursor: pointer;
+  transition: transform 0.15s;
+}
+#light::after { content: ""; position: absolute; inset: -7px; }
+#light:hover { transform: scale(1.3); }
+#light.green { background: var(--green); box-shadow: 0 0 8px var(--green); animation: breathe 2.4s ease-in-out infinite; }
+#light.yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+#light.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
+/* a finished run: its own steady glow, no breathing, no role colour */
+#light.ready { background: var(--ready); box-shadow: 0 0 10px var(--ready); }
+@keyframes breathe { 50% { opacity: 0.45; } }
+#status { font-size: var(--big); font-weight: 600; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; }
+#status:empty { display: none; }
+#status.green { color: var(--green); } #status.yellow { color: var(--yellow); }
+#status.red { color: var(--red); } #status.grey { color: var(--grey); }
+#status.ready { color: var(--ready); }
+/* the ✕ shows up only next to a ready light */
+#close { display: none; }
+#phases { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; color: var(--dim); cursor: pointer; }
+#phases:hover { color: var(--text); }
+/* the plan slides down over the log on a click on the phases */
+#plan {
+  position: absolute; left: 8px; right: 8px; top: 34px; z-index: 5;
+  background: rgba(28, 33, 44, 0.98); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  padding: 4px 6px; overflow-y: auto; max-height: calc(100vh - 44px);
+  opacity: 0; transform: translateY(-8px) scaleY(0.92); transform-origin: top;
+  pointer-events: none; transition: opacity 0.2s ease, transform 0.25s cubic-bezier(.2,.9,.3,1.2);
+}
+#plan.open { opacity: 1; transform: none; pointer-events: auto; }
+.step { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 6px; }
+.step + .step { border-top: 1px solid var(--faint); }
+.step .n { color: var(--dim); width: 14px; text-align: right; flex-shrink: 0; }
+.step .t { flex: 1; min-width: 0; font-size: var(--big); }
+.step .s { color: var(--dim); flex-shrink: 0; }
+.step.green .t { color: var(--dim); } .step.green .s { color: var(--green); }
+.step.yellow { background: rgba(245, 197, 66, 0.10); }
+.step.yellow .t { font-weight: 600; } .step.yellow .s { color: var(--yellow); }
+.step.orange .s { color: var(--orange); } .step.red .s { color: var(--red); }
+.step.grey .t { color: var(--dim); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.dot.red { background: var(--red); } .dot.orange { background: var(--orange); }
+.dot.grey { background: rgba(255,255,255,0.22); }
+.phase-name { margin-left: 5px; overflow: hidden; text-overflow: ellipsis; }
+#model { font-size: var(--big); font-weight: 600; flex-shrink: 1; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+#model.r-player { color: var(--player); } #model.r-judge { color: var(--judge); }
+#model.r-tester { color: var(--tester); } #model.r-gate { color: var(--gate); }
+#meta, #age { color: var(--dim); flex-shrink: 0; }
+#plus { flex-shrink: 0; }
+#age.age-yellow { color: var(--yellow); } #age.age-red { color: var(--red); }
+.btn {
+  width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--big); line-height: 1; color: var(--dim); cursor: pointer;
+  background: var(--faint);
+}
+.btn:hover { background: rgba(255,255,255,0.22); color: var(--text); }
+#plus { display: none; width: auto; padding: 0 6px; font-size: var(--small); }
+/* the log of the fight takes all the room there is */
+#detail {
+  display: flex; flex: 1; min-height: 0; flex-direction: column;
+  border-top: 1px solid var(--faint); padding-top: 6px;
+}
+#log .r-player { color: var(--player); text-shadow: 0 0 6px rgba(90,200,250,0.55); }
+#log .r-judge { color: var(--judge); text-shadow: 0 0 6px rgba(195,139,255,0.55); }
+#log .r-tester { color: var(--tester); text-shadow: 0 0 6px rgba(255,143,200,0.55); }
+#log .r-gate { color: var(--gate); text-shadow: 0 0 6px rgba(255,179,92,0.45); }
+#log .tool { opacity: 0.6; text-shadow: none; }
+#log {
+  flex: 1; min-height: 0; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  color: #aeb7c6;
+  -webkit-user-select: text; user-select: text;
+}
+/* bottom: who acts and the newest line running beside it; a fresh verdict glows green/red */
+#foot {
+  display: flex; align-items: flex-start; gap: 8px; flex-shrink: 0;
+  padding: 4px 8px; border-radius: 7px; border: 1px solid var(--faint);
+}
+#who { display: none; font-weight: 600; flex-shrink: 0; line-height: calc(var(--big) * 1.4); }
+#who.r-player { color: var(--player); text-shadow: 0 0 6px rgba(90,200,250,0.6); }
+#who.r-judge { color: var(--judge); text-shadow: 0 0 6px rgba(195,139,255,0.6); }
+#who.r-tester { color: var(--tester); text-shadow: 0 0 6px rgba(255,143,200,0.6); }
+#who.r-gate { color: var(--gate); text-shadow: 0 0 6px rgba(255,179,92,0.6); }
+#foot.r-player { border-color: var(--player); box-shadow: 0 0 10px rgba(90,200,250,0.3); }
+#foot.r-judge { border-color: var(--judge); box-shadow: 0 0 10px rgba(195,139,255,0.3); }
+#foot.r-tester { border-color: var(--tester); box-shadow: 0 0 10px rgba(255,143,200,0.3); }
+#foot.r-gate { border-color: var(--gate); box-shadow: 0 0 10px rgba(255,179,92,0.3); }
+/* the ticker grows to fit the whole text, the log gives way; only when the window
+   itself is too short the newest tail stays and the top fades */
+#doing {
+  flex: 1; min-width: 0; font-size: var(--big);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: calc(100vh - 58px); overflow: hidden;
+}
+#doing.cut { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.2em); }
+#foot.bad, #foot.bad #who {
+  color: var(--red); border-color: var(--red); background: rgba(255, 107, 107, 0.14);
+  box-shadow: 0 0 12px rgba(255, 107, 107, 0.45); text-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+}
+#foot.good, #foot.good #who {
+  color: var(--green); border-color: var(--green); background: rgba(61, 220, 132, 0.12);
+  box-shadow: 0 0 12px rgba(61, 220, 132, 0.45); text-shadow: 0 0 6px rgba(61, 220, 132, 0.6);
+}
+#foot.bad #who, #foot.good #who { background: none; box-shadow: none; }
+/* narrow window, what goes first: age (a quiet run turns the light yellow anyway),
+   then the phase name (dots stay, the name is in their tooltip), then round and time.
+   light, status, dots, model and the ticker always stay */
+/* the host (Claude Code over the run) in the log: warm sand, not a run role */
+#log .r-host { color: var(--host); text-shadow: 0 0 6px rgba(232,196,138,0.45); }
+/* phone (source.js sets data-host="phone"): the page scrolls, the card is a block
+   about half the screen, the log scrolls inside it; mac-only controls are gone */
+html[data-host="phone"], html[data-host="phone"] body { background: #0f1218; overflow: auto; height: auto; }
+html[data-host="phone"] body { -webkit-user-select: text; user-select: text; padding: 10px 10px 40px; }
+html[data-host="phone"] #card { height: 55vh; width: auto; margin: 0 0 10px; }
+html[data-host="phone"] #light { cursor: default; }
+html[data-host="phone"] #light:hover { transform: none; }
+html[data-host="phone"] #plus, html[data-host="phone"] #close { display: none !important; }
+/* the blocks pult.js puts above (#pult-top: question or outcome) and below (#pult)
+   the card share the card's font and two sizes; the question is the big thing */
+html[data-host="phone"] #pult-top, html[data-host="phone"] #pult { color: var(--text); font-size: var(--small); }
+html[data-host="phone"] #pult-top section, html[data-host="phone"] #pult section { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05); }
+html[data-host="phone"] #pult section section { margin: 8px 0 0; padding: 0; background: none; }
+html[data-host="phone"] #pult-top h2, html[data-host="phone"] #pult h2, html[data-host="phone"] #pult-top h1 { font-size: var(--small); font-weight: 600; color: var(--dim); text-transform: lowercase; margin: 0 0 4px; }
+html[data-host="phone"] #question p:first-of-type { font-size: var(--big); line-height: 1.35; }
+html[data-host="phone"] .qid { color: var(--dim); }
+html[data-host="phone"] #pult-top p, html[data-host="phone"] #pult p, html[data-host="phone"] #pult li { margin: 2px 0; line-height: 1.35; }
+html[data-host="phone"] #pult ul { list-style: none; }
+html[data-host="phone"] #pult a { color: var(--player); text-decoration: none; }
+html[data-host="phone"] button { font: inherit; font-size: var(--big); color: var(--text); background: rgba(255,255,255,0.10); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 14px; margin: 6px 6px 0 0; min-height: 40px; }
+html[data-host="phone"] button[data-action="stop"] { color: var(--red); }
+html[data-host="phone"] textarea, html[data-host="phone"] select, html[data-host="phone"] input { font: inherit; font-size: var(--big); color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 10px; margin: 8px 0 0; width: 100%; display: block; }
+html[data-host="phone"] textarea { min-height: 72px; resize: vertical; }
+@media (max-width: 440px) { #age { display: none; } }
+@media (max-width: 380px) { .phase-name { display: none; } #model { max-width: none; } }
+@media (max-width: 320px) { #meta { display: none; } }
+/* short window: the log goes first, then the ticker keeps its newest tail */
+@media (max-height: 179px) { #detail { display: none; } }
+</style>
 </head>
 <body>
-<div id="app">загрузка…</div>
-<script type="module">
-import { captureDraft, renderPage, restoreDraft, tokenFromLink } from './render.js';
-
-const app = document.getElementById('app');
-let token = localStorage.getItem('tero_token') || '';
-// Тап по виджету открывает пульт с read-токеном во фрагменте #token= (B18):
-// фрагмент не уходит на сервер и в логи; токен сразу стирается из адреса.
-// Привязанный токен устройства он не подменяет — только если своего нет,
-// и хранится отдельно (tero_read_token), а не как tero_token.
-try {
-  token = tokenFromLink(localStorage, location, history);
-} catch { token = token || ''; }
-
-function currentCode() {
-  const fromQuery = new URLSearchParams(location.search).get('code');
-  if (fromQuery) return fromQuery;
-  // Старые ссылки `tero pair` вида /pair/<code>: wrangler не отдаёт их сам.
-  const m = /^\/pair\/([A-Za-z0-9]+)\/?$/.exec(location.pathname || '');
-  return (m && m[1]) || '';
+<div id="card">
+  <div id="top">
+    <span id="light" title="спрятать в трей"></span>
+    <span id="close" class="btn" title="закрыть HUD">✕</span>
+    <span id="status"></span>
+    <div id="phases"></div>
+    <span id="model"></span>
+    <span id="meta"></span>
+    <span id="age"></span>
+    <span id="plus" class="btn" title="другой прогон"></span>
+  </div>
+  <div id="plan"></div>
+  <div id="detail">
+    <div id="log"></div>
+  </div>
+  <div id="foot"><span id="who"></span><div id="doing"></div></div>
+</div>
+<script>
+/*render:start*/
+var ROLE_NAMES = {player: "игрок", judge: "судья", tester: "тестер", gate: "тесты", host: "хозяин"};
+var VERDICT_SHOW_S = 60;
+var LOG_SHOW = 80;
+function nowS(d) { return (window.teroNow ? window.teroNow() : Date.now() / 1000); }
+function since(d, at) { return at == null ? null : Math.max(0, Math.floor(nowS(d) - at)); }
+// age bucket of the newest event: quiet runs turn the age yellow, then red
+function ageColor(age) {
+  if (age == null) return "normal";
+  if (age > 300) return "red";
+  if (age > 60) return "yellow";
+  return "normal";
 }
-
-(function linkManifestToCode() {
-  const code = currentCode();
-  if (!code) return;
-  const link = document.querySelector('link[rel="manifest"]');
-  if (link) link.href = `/manifest.webmanifest?code=${encodeURIComponent(code)}`;
-})();
-
-function unpaired(res) {
-  return res.status === 401 && res.body && res.body.error === 'unpaired';
+function mss(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+function mmss(s) { s = Math.max(0, Math.floor(s || 0)); return ("0" + Math.floor(s / 60)).slice(-2) + ":" + ("0" + (s % 60)).slice(-2); }
+// the gate timer ticks on the screen: the model gives the absolute start
+function doingOf(d) {
+  if (d.role === "gate" && d.gate_started_at != null && d.light !== "red" && d.light !== "ready") {
+    return "⏱ тесты идут " + mss(nowS(d) - d.gate_started_at);
+  }
+  return d.doing || "";
 }
-
-async function get(path) {
-  const headers = token ? { authorization: `Bearer ${token}` } : {};
-  const res = await fetch(path, { headers });
-  let body = null;
-  try { body = await res.json(); } catch { body = null; }
-  return { status: res.status, body };
+// [who, text, class]: a stop, a fresh verdict or "done" win over the acting role's newest line
+function footOf(d, acting) {
+  if (d.stop_text) return ["", d.stop_text, "bad"];
+  var v = d.verdict || {};
+  var vAge = since(d, d.verdict_at);
+  var fresh = vAge != null && vAge < VERDICT_SHOW_S;
+  if (v.verdict && (fresh || !acting)) {
+    var cls = v.verdict === "SHIP" ? "good" : "bad";
+    return ["судья", v.verdict + (v.blocking ? " · блокеров " + v.blocking : "") + (v.first ? " · " + v.first : ""), cls];
+  }
+  if (d.done_text) return ["", d.done_text, "good"];
+  return [acting ? ROLE_NAMES[acting] : "", doingOf(d), acting ? "r-" + acting : ""];
 }
-
-function isPwaLaunch() {
-  if (window.matchMedia
-    && (window.matchMedia('(display-mode: standalone)').matches
-      || window.matchMedia('(display-mode: fullscreen)').matches)) return true;
-  return window.navigator.standalone === true;
+// keep the newest tail in sight; fade the top edge when older text is cut off
+function pinTail(el) {
+  el.scrollTop = el.scrollHeight;
+  if (el.classList) el.classList.toggle("cut", el.scrollHeight > el.clientHeight + 1);
 }
+// the newest line types itself out; never longer than ~1 s
+var typing = {target: "", shown: 0, timer: null};
+function typeDoing(text) {
+  var el = document.getElementById("doing");
+  if (text === typing.target) { pinTail(el); return; }
+  var keep = text.indexOf(typing.target.slice(0, typing.shown)) === 0 ? typing.shown : 0;
+  typing.target = text;
+  typing.shown = keep;
+  if (typing.timer) clearInterval(typing.timer);
+  var step = Math.max(1, Math.ceil((text.length - keep) / 50));
+  typing.timer = setInterval(function () {
+    typing.shown = Math.min(text.length, typing.shown + step);
+    el.textContent = text.slice(0, typing.shown) + (typing.shown < text.length ? "▍" : "");
+    pinTail(el);
+    if (typing.shown >= text.length) { clearInterval(typing.timer); typing.timer = null; }
+  }, 20);
+}
+var STEP_STATE = {green: "готово", orange: "с долгом", red: "стоп", grey: "впереди"};
+var planKey = "";
+function renderPlan(secs, d) {
+  var round = d.round ? String(d.round) : "";
+  var key = JSON.stringify(secs) + round;
+  if (key === planKey) return;
+  planKey = key;
+  var plan = document.getElementById("plan");
+  plan.innerHTML = "";
+  for (var i = 0; i < secs.length; i++) {
+    var c = secs[i].color || "grey";
+    var row = document.createElement("div");
+    row.className = "step " + c;
+    var dot = document.createElement("span");
+    dot.className = "dot " + c;
+    var n = document.createElement("span");
+    n.className = "n"; n.textContent = i + 1;
+    var t = document.createElement("span");
+    t.className = "t"; t.textContent = secs[i].title || "";
+    var st = document.createElement("span");
+    st.className = "s";
+    st.textContent = c === "yellow" ? "идёт" + (round ? " · раунд " + round : "") : (STEP_STATE[c] || "");
+    row.appendChild(n); row.appendChild(dot); row.appendChild(t); row.appendChild(st);
+    plan.appendChild(row);
+  }
+}
+function ago(s) {
+  return s < 60 ? s + " с" : Math.floor(s / 60) + " мин";
+}
+var logFilter = "";  // "" all roles, "host" only the host (the phone's «только хозяин»)
+function render(d) {
+  if (!d) return;
+  var light = d.light || "grey";
+  document.getElementById("light").className = light;
+  document.getElementById("close").style.display = light === "ready" && !window.teroSource ? "flex" : "none";
+  // a green dot says "working" by itself: words only when something needs a look
+  var st = document.getElementById("status");
+  st.className = light;
+  st.textContent = light === "green" ? "" : (d.light_text || "");
+  var acting = ROLE_NAMES[d.role] && (d.light === "green" || d.light === "yellow") ? d.role : "";
 
-async function load() {
-  if (!token) {
-    // PWA после «добавить на экран Домой» стартует с чистым хранилищем —
-    // код из start_url меняем только здесь. Safari держит код в адресной
-    // строке: по таппу на PWA-иконку он не теряется (F14).
-    const code = currentCode();
-    if (code && isPwaLaunch()) {
-      await pair(code, true);
-      return;
-    }
-    app.innerHTML = renderPage({}, { token: '' });
-    document.getElementById('pair-btn').onclick = () => pair();
+  var secs = d.sectors || [];
+  var ph = document.getElementById("phases");
+  ph.innerHTML = "";
+  var curTitle = null;
+  for (var j = 0; j < secs.length; j++) {
+    var dot = document.createElement("span");
+    dot.className = "dot " + (secs[j].color || "grey");
+    dot.title = (j + 1) + ". " + (secs[j].title || "");
+    ph.appendChild(dot);
+    if (secs[j].color === "yellow") curTitle = secs[j].title || "";
+  }
+  renderPlan(secs, d);
+  if (curTitle !== null) {
+    var label = document.createElement("span");
+    label.className = "phase-name";
+    label.textContent = curTitle;
+    label.title = curTitle;
+    ph.appendChild(label);
+  }
+
+  // "player · opus": the role is on the bottom chip, the model gets its own place
+  var model = document.getElementById("model");
+  model.textContent = String(d.role_line || "").split(" · ").slice(1).join(" · ");
+  model.className = acting ? "r-" + acting : "";
+  // "р1 · 22:07": round and time in the phase; the phase itself is in the dots
+  var meta = [];
+  if (d.round) meta.push("р" + d.round);
+  if (d.phase_started_at != null) meta.push(mmss(nowS(d) - d.phase_started_at));
+  document.getElementById("meta").textContent = meta.join(" · ");
+  var age = document.getElementById("age");
+  var lastAge = since(d, d.last_event_at);
+  age.textContent = (lastAge == null) ? "" : ago(lastAge);
+  age.title = "с последнего события";
+  age.className = "age-" + ageColor(lastAge);
+
+  var f = footOf(d, acting);
+  var who = document.getElementById("who");
+  who.textContent = f[0];
+  who.className = acting ? "r-" + acting : "";
+  who.style.display = f[0] ? "inline" : "none";
+  document.getElementById("foot").className = f[2];
+  typeDoing(f[1]);
+
+  var plus = document.getElementById("plus");
+  plus.textContent = d.plus || "";
+  plus.style.display = d.plus ? "flex" : "none";
+
+  var items = d.log || [];
+  if (logFilter) items = items.filter(function (it) { return it.role === logFilter; });
+  var log = document.getElementById("log");
+  var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  var frag = document.createDocumentFragment();
+  for (var m = Math.max(0, items.length - LOG_SHOW); m < items.length; m++) {
+    var line = document.createElement("div");
+    var r = items[m].role;
+    // agent speech glows in its role color, tool calls stay dim
+    line.className = (ROLE_NAMES[r] ? "r-" + r : "") + (items[m].type === "tool" ? " tool" : "");
+    line.textContent = items[m].text || items[m].type || "";
+    frag.appendChild(line);
+  }
+  log.innerHTML = "";
+  log.appendChild(frag);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+/*render:end*/
+var lastW = null, lastH = null;
+var api = (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+function getApi() {
+  if (!api && window.pywebview && window.pywebview.api) api = window.pywebview.api;
+  return api;
+}
+function call(name) {
+  // pywebview counts every js argument, undefined included
+  var a = getApi();
+  if (!a || !a[name]) return null;
+  try { return a[name].apply(a, [].slice.call(arguments, 1)); } catch (e) { return null; }
+}
+function after(p, fn) {
+  if (p && typeof p.then === "function") p.then(fn); else fn(p);
+}
+function poll() {
+  // the phone sets window.teroSource (source.js) before this script runs: the
+  // same card, another feed; only without it the pywebview bridge is used
+  if (window.teroSource) {
+    after(window.teroSource.view(), function (d) { if (d) { window._last = d; render(d); } });
     return;
   }
-  const params = new URLSearchParams(location.search);
-  const runId = params.get('run_id');
-  const machineId = params.get('machine_id');
-  const runsRes = await get('/runs');
-  if (unpaired(runsRes)) {
-    app.innerHTML = renderPage({}, { token, unpaired: true });
-    document.getElementById('pair-btn').onclick = pair;
-    return;
-  }
-  const runs = (runsRes.body && runsRes.body.runs) || [];
-  const target = (runId && machineId)
-    ? { run_id: runId, machine_id: machineId }
-    : { run_id: runs[0] && runs[0].run_id, machine_id: runs[0] && runs[0].machine_id };
-  let state = {};
-  if (target.run_id && target.machine_id) {
-    const st = await get(`/state?run_id=${encodeURIComponent(target.run_id)}`
-      + `&machine_id=${encodeURIComponent(target.machine_id)}`);
-    if (unpaired(st)) {
-      app.innerHTML = renderPage({}, { token, unpaired: true });
-      document.getElementById('pair-btn').onclick = pair;
-      return;
-    }
-    state = (st.body && st.body.state) || {};
-  }
-  const draft = captureDraft(document);
-  app.innerHTML = renderPage(state, { token, runs });
-  wire(state);
-  restoreDraft(document, draft);
-}
-
-async function pair(presetCode = '', auto = false) {
-  const code = String(presetCode
-    || (document.getElementById('pair-code') || {}).value || '').trim();
-  if (!code) return;
-  const res = await fetch('/pair/exchange', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code: code.trim() }),
-  });
-  const body = await res.json().catch(() => null);
-  if (res.ok && body && body.device_token) {
-    localStorage.setItem('tero_token', body.device_token);
-    token = body.device_token;
-    if (body.read_token) localStorage.setItem('tero_read_token', body.read_token);
-    await load();
-    return;
-  }
-  if (auto) {
-    app.innerHTML = renderPage({}, { token: '' });
-    document.getElementById('pair-btn').onclick = () => pair();
+  var a = getApi();
+  if (!a) return;
+  after(call("view"), function (d) { if (d) { window._last = d; render(d); } });
+  if (window.innerWidth !== lastW || window.innerHeight !== lastH) {
+    lastW = window.innerWidth; lastH = window.innerHeight;
+    call("save_size", lastW, lastH);
   }
 }
-
-async function answer(action, text, target) {
-  const payload = { question_id: target.id, action, text: text || '' };
-  if (target.run_id) payload.run_id = target.run_id;
-  if (target.machine_id) payload.machine_id = target.machine_id;
-  const res = await fetch('/answer', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify(payload),
-  });
-  if (res.status === 401) {
-    const body = await res.json().catch(() => ({}));
-    if (body.error === 'unpaired') {
-      app.innerHTML = renderPage({}, { token, unpaired: true });
-      document.getElementById('pair-btn').onclick = () => pair();
-      return;
-    }
-  }
-  await load();
-}
-
-function wire(state) {
-  const q = (state && state.question) || {};
-  const section = document.getElementById('question');
-  if (section) {
-    const target = { id: q.id, run_id: state.run_id, machine_id: state.machine_id };
-    section.querySelectorAll('button[data-action]').forEach((btn) => {
-      if (btn.dataset.action === 'stop') {
-        btn.onclick = (event) => {
-          if (typeof confirm === 'function' && !confirm('Остановить прогон?')) return;
-          answer('stop', '', target);
-        };
-  } else if (btn.dataset.action === 'model') {
-          btn.onclick = () => {
-            const modelEl = section.querySelector('select[name="model"]');
-            const model = modelEl ? String(modelEl.value || '').trim() : '';
-            const textEl = section.querySelector('textarea[name="text"]');
-            const text = textEl ? textEl.value : '';
-            // Без текстового поля нет честного model: селект скрыт, пустой
-            // текст дал бы 422 — не шлём ничего, только перечитываем.
-            if (!textEl && !model) { load(); return; }
-            answer('model', model ? `player ${model}` : text, target);
-          };
-      } else {
-        btn.onclick = () => {
-          const textEl = section.querySelector('textarea[name="text"]');
-          answer(btn.dataset.action, textEl ? textEl.value : '', target);
-        };
-      }
-    });
-  }
-  const pushBtn = document.getElementById('push-btn');
-  if (pushBtn) pushBtn.onclick = enablePush;
-}
-
-async function enablePush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-  // iOS молча отказывает без явного запроса из жеста: только по кнопке.
-  if (window.Notification && Notification.requestPermission) {
-    if (Notification.permission === 'denied') return;
-    if (Notification.permission !== 'granted' && await Notification.requestPermission() !== 'granted') return;
-  }
-  const reg = await navigator.serviceWorker.register('/sw.js');
-  const vapidRes = await get('/push/vapid');
-  const key = vapidRes.body && vapidRes.body.vapid_public_key;
-  if (!key) return;
-  // Сервер отдаёт публичный ключ JWK-JSON; subscribe нужен несжатый P-256.
-  const appKey = jwkToU8(key) || urlToU8(key);
-  if (!appKey) return;
-  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey.buffer });
-  const p256dh = u8ToB64(new Uint8Array(sub.getKey('p256dh')));
-  const auth = u8ToB64(new Uint8Array(sub.getKey('auth')));
-  if (!p256dh || !auth) return;
-  await fetch('/push/subscribe', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ endpoint: sub.endpoint, p256dh, auth }),
-  });
-}
-
-function jwkToU8(key) {
-  if (typeof key !== 'string') return null;
-  let jwk = null;
-  try {
-    jwk = JSON.parse(key);
-  } catch {
-    return null;
-  }
-  if (!jwk || typeof jwk !== 'object' || !jwk.x || !jwk.y) return null;
-  const xy = urlToU8(jwk.x);
-  const yy = urlToU8(jwk.y);
-  if (!xy || !yy || xy.length !== 32 || yy.length !== 32) return null;
-  const out = new Uint8Array(65);
-  out[0] = 4;
-  out.set(xy, 1);
-  out.set(yy, 33);
-  return out;
-}
-
-function u8ToB64(bytes) {
-  if (!bytes || !bytes.length) return '';
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
-}
-
-function urlToU8(urlKey) {
-  try {
-    const norm = String(urlKey).replace(/-/g, '+').replace(/_/g, '/');
-    const bin = atob(norm);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out.length ? out : null;
-  } catch {
-    return null;
-  }
-}
-
-setInterval(() => { if (document.visibilityState === 'visible') load(); }, 15000);
-load();
+if (!window.teroSource) window.addEventListener("pywebviewready", function () { getApi(); poll(); });
+document.getElementById("plus").onclick = function () {
+  var a = getApi();
+  if (!a) return;
+  try { after(a.switch(""), poll); } catch (e) {}
+};
+document.getElementById("light").onclick = function () { if (!window.teroSource) call("toggle_visible"); };
+document.getElementById("close").onclick = function () { call("close"); };
+// a click on the phases opens the plan, any other click closes it
+document.addEventListener("click", function (e) {
+  var plan = document.getElementById("plan");
+  var onPhases = document.getElementById("phases").contains(e.target);
+  if (onPhases) plan.classList.toggle("open");
+  else if (!plan.contains(e.target)) plan.classList.remove("open");
+});
+setInterval(poll, 1000);
+poll();
 </script>
 </body>
 </html>

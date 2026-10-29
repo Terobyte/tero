@@ -101,12 +101,6 @@ def test_view_html_is_self_contained():
     assert "toggle" in html
 
 
-def test_age_color_thresholds():
-    assert hud_view.age_color(3) == "normal"
-    assert hud_view.age_color(61) == "yellow"
-    assert hud_view.age_color(301) == "red"
-
-
 def test_bridge_view_reads_run_files(monkeypatch, tmp_path):
     monkeypatch.setattr(hud_view, "is_dead", lambda s: False)
     now = time.time()
@@ -122,12 +116,12 @@ def test_bridge_view_reads_run_files(monkeypatch, tmp_path):
     (tmp_path / "stream.jsonl").write_text(json.dumps(ev) + "\n", encoding="utf-8")
     bridge = hud_view.Bridge(tmp_path)
     data = bridge.view()
-    assert "Фаза" in data["header"]
+    assert data["round"] == 1 and data["phase_title"]
     assert data["doing"] == "пишу код"
     (tmp_path / "state.json").write_text("{broken", encoding="utf-8")
     data2 = bridge.view()
     assert data2["doing"] == "пишу код"
-    assert data2["header"].rsplit("·", 1)[0] == data["header"].rsplit("·", 1)[0]
+    assert (data2["round"], data2["phase_title"]) == (data["round"], data["phase_title"])
 
 
 def test_no_focus_steal_order(monkeypatch, tmp_path):

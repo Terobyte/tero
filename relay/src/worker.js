@@ -417,7 +417,7 @@ export async function handleFetch(request, env) {
     const code = pathname.slice('/pair/'.length).split('/')[0] || '';
     return Response.redirect(new URL(`/?code=${encodeURIComponent(code)}`, url), 302);
   }
-  // Статику relay/public (index.html, sw.js, render.js) отдаёт [assets] wrangler —
+  // Статику relay/public (index.html, source.js, pult.js, sw.js) отдаёт [assets] wrangler —
   // см. wrangler.toml; Worker держит только API и манифест с кодом в start_url.
   return jsonResponse({ error: 'not found' }, 404);
 }

@@ -132,7 +132,8 @@ def test_status_payload_carries_agent_lease_and_push_ok(tmp_path: Path):
     payload = status_payload(run_dir, repo)
     assert payload["lease"] is None and payload["push_ok"] is False
     assert payload["agent"]["on_duty"] is False
-    assert payload["view"] == {"agent": payload["agent"]}
+    assert payload["view"]["agent"] == payload["agent"]
+    assert payload["view"]["light"] == "red" and "log" not in payload["view"]
     assert agent_line(payload["agent"]) == "агент: не известен"
     pid, started = _me()
     lease_mod.write(run_dir, until=time.time() + 600, pid=pid, pid_started=started, host="claude")

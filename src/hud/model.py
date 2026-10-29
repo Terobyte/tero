@@ -1,8 +1,12 @@
-"""HUD screen model: pure function run-files -> what to draw (phase 7).
+"""HUD screen model: pure function run-files -> what to draw (phase 7, спек пульта 2 п. 6).
 
 No window here: `build_view` turns one `state.json` snapshot plus the
-`stream.jsonl` tail events into a JSON-ready dict for the HUD window
-(phase 8). Reads nothing, writes nothing, never raises on bad input.
+`stream.jsonl` tail events into a JSON-ready dict for the HUD window and,
+through `src/hud/model_view.py`, for the relay and `tero status --json`.
+Texts (`light_text`, `doing`) are computed at `built_at`; next to them go
+absolute times (`phase_started_at`, `gate_started_at`, `last_event_at`,
+`verdict_at`), so a screen that is not rebuilt every second (the phone)
+recomputes ages itself. Reads nothing, writes nothing, never raises on bad input.
 """
 
 from __future__ import annotations
@@ -12,10 +16,11 @@ from typing import Any, Callable
 
 from src.hud.app import debt_line, hud_done_text  # noqa: F401 (единые строки HUD)
 from src.hud.model_parts import (  # noqa: F401 (реэкспорт)
-    _age, _first_finding, _fmt_mmss, _fmt_mss, _parse_ts, _verdict, _verdict_age, _verdict_summary,
+    _age, _first_finding, _fmt_mss, _parse_ts, _verdict, _verdict_summary,
 )
 
-TAB_LIMIT = 2000
+TAB_LIMIT = 2000  # log lines kept on the mac
+LOG_TEXT_LIMIT = 300
 
 _UNFINISHED = (
     "starting",
@@ -36,11 +41,16 @@ _WAITING_TEXT = {
     "waiting_limit": "ждёт лимит",
 }
 
-_ROLE_ICONS = {"player": "🛠", "judge": "⚖️", "tester": "🧪", "gate": "⏱"}
-
-
 NO_AGENT = {"host": "", "alive": False, "on_duty": False, "pid_started_at": None,
             "lease_until": None, "lease_written_at": None}
+
+# every key `render()` in view.html reads; the relay and `tero status` carry the same set
+VIEW_KEYS = (
+    "light", "light_text", "sectors", "phase_title", "phase_index", "total_phases", "round",
+    "phase_started_at", "role", "role_line", "doing", "gate_started_at", "last_event_at",
+    "verdict", "verdict_at", "stop_text", "done_text", "debt_line", "agent", "messages_waiting",
+    "resume", "log", "built_at", "quiet_after_s",
+)
 
 
 def build_view(
@@ -49,34 +59,47 @@ def build_view(
     now: float,
     alive: Callable[[dict], bool],
     agent: dict | None = None,
+    *,
+    log_limit: int = TAB_LIMIT,
+    messages_waiting: int = 0,
+    resume: dict | None = None,
 ) -> dict:
     """Snapshot + tail events -> screen fields. `None` state keeps the old frame.
 
     `agent` is `lease.agent_view(run_dir)`: whether the host is alive and on duty.
+    `log_limit` caps the merged event log (the relay asks for 40).
     """
     items = [e for e in (events or []) if isinstance(e, dict)]
-    tabs = _tabs(items)
     agent = dict(NO_AGENT, **(agent or {}))
+    base = {
+        "agent": agent,
+        "messages_waiting": int(messages_waiting or 0),
+        "resume": resume if isinstance(resume, dict) else None,
+        "log": _log(items, log_limit),
+        "last_event_at": _last_ts(items),
+        "built_at": float(now),
+        "quiet_after_s": QUIET_AFTER_S,
+    }
     if not isinstance(state, dict):
         return {
+            **base,
             "sectors": [],
-            "circle": "grey",
-            "icon": "❓",
-            "header": "",
             "role_line": "",
             "doing": "нет данных",
-            "last_event_age_s": _age(items, now),
             "verdict": {"verdict": None, "blocking": 0, "first": ""},
-            "verdict_age_s": None,
+            "verdict_at": None,
             "debt_line": debt_line(0),
             "done_text": "",
-            "tabs": tabs,
+            "stop_text": "",
             "light": "grey",
             "light_text": "нет данных",
-            "phase_label": "",
             "phase_title": "",
+            "phase_index": 0,
+            "total_phases": None,
+            "round": 0,
+            "phase_started_at": None,
             "role": "",
-            "agent": agent,
+            "gate_started_at": None,
         }
     status = state.get("status") or ""
     broken = _is_broken(state, status, alive)
@@ -84,26 +107,48 @@ def build_view(
     debt_n = _debt_count(state)
     age = _age(items, now)
     light, light_text = _light(state, status, broken, age, debt_n, agent)
+    role = str(state.get("role") or "")
     return {
+        **base,
         "sectors": sectors,
-        "circle": _circle(status, sectors, broken),
-        "icon": _icon(state, status, broken),
-        "header": _header(state, now),
         "role_line": _role_line(state),
         "doing": _doing(state, status, items, now, broken, agent),
-        "last_event_age_s": age,
         "verdict": _verdict(state, items),
-        "verdict_age_s": _verdict_age(items, now),
+        "verdict_at": _verdict_at(items),
         "debt_line": debt_line(debt_n),
         "done_text": hud_done_text(status, debt_n),
-        "tabs": tabs,
+        "stop_text": stop_text(state),
         "light": light,
         "light_text": light_text,
-        "phase_label": _phase_label(state),
         "phase_title": str(state.get("phase") or _current_title(state)),
-        "role": str(state.get("role") or ""),
-        "agent": agent,
+        "phase_index": _int(state.get("phase_index")),
+        "total_phases": _total(state),
+        "round": _int(state.get("round")),
+        "phase_started_at": _parse_ts(state.get("phase_started")),
+        "role": role,
+        "gate_started_at": _gate_started_at(items) if role == "gate" else None,
     }
+
+
+def _int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _total(state: dict) -> int | None:
+    total: Any = state.get("total_phases")
+    if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
+        phases = state.get("phases")
+        return len(phases) if isinstance(phases, list) and phases else None
+    return total
+
+
+def stop_text(state: dict) -> str:
+    if state.get("status") != "stopped":
+        return ""
+    return str(state.get("text") or state.get("reason") or "стоп")
 
 
 def _light(state: dict, status: str, broken: bool, age: int | None, debt_n: int,
@@ -126,18 +171,6 @@ def _light(state: dict, status: str, broken: bool, age: int | None, debt_n: int,
     if age is not None and age >= QUIET_AFTER_S:
         return "yellow", f"тихо {age // 60} мин"
     return "green", "работает"
-
-
-def _phase_label(state: dict) -> str:
-    try:
-        index = int(state.get("phase_index", 0) or 0)
-    except (TypeError, ValueError):
-        index = 0
-    phases = state.get("phases")
-    total: Any = state.get("total_phases")
-    if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
-        total = len(phases) if isinstance(phases, list) and phases else "?"
-    return f"{index + 1}/{total}"
 
 
 def _current_title(state: dict) -> str:
@@ -204,54 +237,6 @@ def _debt_count(state: dict) -> int:
     return len(debt) if isinstance(debt, list) else 0
 
 
-def _circle(status: str, sectors: list[dict], broken: bool) -> str:
-    if not sectors:
-        return "grey"
-    if broken or status == "stopped":
-        return "red"
-    if status == "done":
-        return "green"
-    colors = {s["color"] for s in sectors}
-    if "yellow" in colors:
-        return "yellow"
-    if colors == {"green"}:
-        return "green"
-    return "grey"
-
-
-def _icon(state: dict, status: str, broken: bool) -> str:
-    if status == "done":
-        return "✓"
-    if broken or status == "stopped":
-        return "❓"
-    if status == "judge_pending":
-        return "⏸"
-    if status in ("waiting_human", "waiting_agent", "waiting_limit"):
-        return "❓"
-    question = state.get("question")
-    if isinstance(question, dict) and question.get("text"):
-        return "❓"
-    return _ROLE_ICONS.get(state.get("role") or "", "❓")
-
-
-def _header(state: dict, now: float) -> str:
-    try:
-        index = int(state.get("phase_index", 0) or 0)
-    except (TypeError, ValueError):
-        index = 0
-    total: Any = state.get("total_phases")
-    if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
-        phases = state.get("phases")
-        total = len(phases) if isinstance(phases, list) and phases else "?"
-    try:
-        rnd = int(state.get("round", 0) or 0)
-    except (TypeError, ValueError):
-        rnd = 0
-    started = _parse_ts(state.get("phase_started"))
-    elapsed = now - started if started is not None else 0
-    return f"Фаза {index + 1}/{total} · раунд {rnd} · {_fmt_mmss(elapsed)}"
-
-
 def _role_line(state: dict) -> str:
     role = str(state.get("role") or "")
     model = str(state.get("model") or "").rsplit("/", 1)[-1]
@@ -273,7 +258,7 @@ def _doing(state: dict, status: str, events: list[dict], now: float, broken: boo
     if broken:
         return "прогон оборвался"
     if status == "stopped":
-        text = str(state.get("text") or state.get("reason") or "стоп")
+        text = stop_text(state)
         note = agent_note(agent)
         return f"{text} · {note}" if note else text
     if status == "done":
@@ -314,13 +299,26 @@ def _current_turn(events: list[dict]) -> list[dict]:
     return events
 
 
-def _gate_doing(events: list[dict], now: float) -> str | None:
+def _gate_bounds(events: list[dict]) -> tuple[int, int]:
     start_idx = end_idx = -1
     for i, ev in enumerate(events):
         if ev.get("type") == "gate_start":
             start_idx = i
         elif ev.get("type") == "gate":
             end_idx = i
+    return start_idx, end_idx
+
+
+def _gate_started_at(events: list[dict]) -> float | None:
+    """Start of a gate that is still running (absolute): the screen ticks the timer itself."""
+    start_idx, end_idx = _gate_bounds(events)
+    if start_idx < 0 or start_idx < end_idx:
+        return None
+    return _parse_ts(events[start_idx].get("ts"))
+
+
+def _gate_doing(events: list[dict], now: float) -> str | None:
+    start_idx, end_idx = _gate_bounds(events)
     if start_idx < 0 and end_idx < 0:
         return None
     if start_idx > end_idx:
@@ -331,21 +329,31 @@ def _gate_doing(events: list[dict], now: float) -> str | None:
     return str(text) if text else "тесты …"
 
 
-def _tabs(events: list[dict]) -> dict[str, list[dict]]:
-    tabs: dict[str, list[dict]] = {
-        "all": [],
-        "player": [],
-        "judge": [],
-        "tester": [],
-        "gate": [],
-    }
-    for ev in events:
-        tabs["all"].append(ev)
-        role = ev.get("role")
-        if role in tabs and role != "all":
-            tabs[role].append(ev)
-    for key, items in tabs.items():
-        tabs[key] = items[-TAB_LIMIT:]
-    return tabs
+def _verdict_at(events: list[dict]) -> float | None:
+    for ev in reversed(events):
+        if ev.get("type") == "verdict" and ev.get("verdict"):
+            return _parse_ts(ev.get("ts"))
+    return None
 
 
+def _last_ts(events: list[dict]) -> float | None:
+    for ev in reversed(events):
+        ts = _parse_ts(ev.get("ts"))
+        if ts is not None:
+            return ts
+    return None
+
+
+def _log(events: list[dict], limit: int) -> list[dict]:
+    """`{ts, role, type, text}` per event, newest last, texts cut to LOG_TEXT_LIMIT."""
+    out = []
+    for ev in events[-max(0, int(limit or 0)):] if limit else []:
+        text = ev.get("text")
+        text = str(text) if text is not None else str(ev.get("type") or "")
+        out.append({
+            "ts": ev.get("ts"),
+            "role": str(ev.get("role") or ""),
+            "type": str(ev.get("type") or ""),
+            "text": text[:LOG_TEXT_LIMIT],
+        })
+    return out

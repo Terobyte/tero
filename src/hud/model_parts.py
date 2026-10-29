@@ -22,15 +22,6 @@ def _verdict(state: dict, events: list[dict]) -> dict:
     return {"verdict": None, "blocking": 0, "first": ""}
 
 
-def _verdict_age(events: list[dict], now: float) -> int | None:
-    """Seconds since the newest verdict event; None when it left the tail (or never came)."""
-    for ev in reversed(events):
-        if ev.get("type") == "verdict" and ev.get("verdict"):
-            ts = _parse_ts(ev.get("ts"))
-            return None if ts is None else max(0, int(now - ts))
-    return None
-
-
 def _verdict_summary(src: dict) -> dict:
     try:
         blocking = int(src.get("blocking", 0) or 0)
@@ -75,11 +66,6 @@ def _parse_ts(value: Any) -> float | None:
         except ValueError:
             return None
     return None
-
-
-def _fmt_mmss(seconds: float) -> str:
-    total = max(0, int(seconds or 0))
-    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 def _fmt_mss(seconds: float) -> str:

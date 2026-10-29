@@ -76,6 +76,8 @@ def add_run_parsers(sub: Any) -> None:
     status_parser.add_argument("--working-dir", "-w", type=str, default=".")
     status_parser.add_argument("--run", type=str, default=None)
     status_parser.add_argument("--json", action="store_true", default=False)
+    status_parser.add_argument("--log", action="store_true", default=False,
+                               help="с --json: добавить view.log (хвост журнала)")
 
 
 def add_answer_parsers(sub: Any) -> None:

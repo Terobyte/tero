@@ -2,8 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleFetch, sha256Hex } from '../src/worker.js';
-import { captureDraft, restoreDraft, renderPage, tokenFromLink } from '../public/render.js';
+import {
+  captureDraft, phoneLight, renderBelow, renderPair, renderQuestion, renderTop, restoreDraft,
+  tokenFromLink, viewOf,
+} from '../public/pult.js';
 import { openFakeDb } from './fake_d1.js';
+
+// Страница теперь = карточка view.html + pult.js; старые проверки страницы
+// идут через то же сочетание: без токена / unpaired — экран привязки, иначе верх + низ.
+function renderPage(state = {}, opts = {}) {
+  if (!opts.token) return renderPair(false);
+  if (opts.unpaired) return renderPair(true);
+  return renderTop(state) + renderBelow(state, opts);
+}
+const SHELL = new URL('../public/pult.js', import.meta.url);
 
 const WRITE_KEY = 'write-key-1';
 const DEVICE_TOKEN = 'device-token-1';
@@ -64,7 +76,7 @@ test('stop — с подтверждением', () => {
 test('кнопка пушей есть; requestPermission только по ней', () => {
   const html = renderPage(fixture(), { token: 't' });
   assert.ok(html.includes('id="push-btn"'), 'нет кнопки включения пушей');
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   const hits = shell.split('requestPermission').length - 1;
   assert.equal(hits, 2, 'requestPermission: проверка API + вызов');
   assert.ok(shell.includes('pushBtn') || shell.includes('push-btn'), 'привязка к кнопке пушей');
@@ -73,11 +85,11 @@ test('кнопка пушей есть; requestPermission только по не
   assert.ok(shell.lastIndexOf('enablePush', at) >= 0, 'вызов — только из обработчика кнопки пушей');
 });
 
-test('прогоны, журнал, долг и история — на странице', () => {
+test('прогоны, долг и история — на странице; журнал теперь в карточке (view.log)', () => {
   const runs = [{ run_id: 'r1', status: 'waiting_human' }, { run_id: 'r2', status: 'running' }];
   const html = renderPage(fixture(), { token: 't', runs });
   assert.ok(html.includes('r2'), 'список прогонов с переключением');
-  assert.ok(html.includes('вопрос 3-1'), 'журнал последних событий');
+  assert.ok(!html.includes('id="events"'), 'отдельного журнала под карточкой нет');
   assert.ok(html.includes('1/8'), 'долг и история фазы');
 });
 
@@ -166,10 +178,15 @@ test('sw.js: пуш показывает уведомление, тап откр
   assert.ok(!sw.includes('import'), 'sw без импортов — кешируется целиком');
 });
 
-test('index.html ссылается на манифест и render.js', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(shell.includes('/manifest.webmanifest'), 'PWA без манифеста не встанет');
-  assert.ok(shell.includes('render.js'), 'рендер — общий с тестами модуль');
+test('index.html — копия view.html с манифестом и source.js; source.js грузит pult.js', () => {
+  const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(page.includes('/manifest.webmanifest'), 'PWA без манифеста не встанет');
+  assert.ok(page.includes('src="source.js"'), 'подача карточки');
+  assert.ok(page.includes('/*render:start*/'), 'карточка HUD внутри страницы');
+  assert.ok(!page.includes('render.js'), 'старого render.js больше нет');
+  const source = readFileSync(new URL('../public/source.js', import.meta.url), 'utf8');
+  assert.ok(source.includes("'data-host', 'phone'") && source.includes('pult.js'));
+  assert.ok(source.includes('window.teroSource'));
 });
 
 test('неизвестный путь — 404 json, а не статика', async () => {
@@ -198,19 +215,19 @@ test('F2: действие model — с выбором не-judge моделей
 });
 
 test('F3: wire спрашивает подтверждение перед stop', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('confirm('), 'stop спрашивает подтверждение в обработчике');
 });
 
 test('F4: подписка без exportKey, ключ — из JWK', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(!shell.includes('exportKey'), 'getKey возвращает буфер, exportKey нет');
   assert.ok(shell.includes("getKey('p256dh')"), 'ключи читаются напрямую');
   assert.ok(shell.includes('applicationServerKey'), 'ключ передаётся в subscribe');
 });
 
 test('F5: кнопка пушей привязана независимо от вопроса', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   const wireAt = shell.indexOf('function wire(');
   const pushAt = shell.indexOf("getElementById('push-btn')");
   assert.ok(wireAt >= 0 && pushAt > wireAt, 'кнопка пушей привязана в wire');
@@ -219,23 +236,23 @@ test('F5: кнопка пушей привязана независимо от �
 });
 
 test('F6: код из ссылки попадает в манифест и обмен', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes("get('code')"), 'код читается из query');
   assert.ok(shell.includes('/manifest.webmanifest?code='), 'манифест хранит код в start_url');
   assert.ok(shell.includes('/pair/exchange'), 'код обменивается автоматически');
 });
 
-test('F7: filterState пропускает журнал событий', async () => {
+test('F7: filterState пропускает view.log, итог и историю', async () => {
   const { filterState } = await import('../src/filter.js');
   const out = filterState({
     run_id: 'r',
     machine_id: 'm',
-    events: [{ at: '2026-10-27T01:00:00Z', text: 'вопрос 3-1' }],
+    view: { log: [{ ts: '2026-10-27T01:00:00Z', role: 'judge', type: 'text', text: 'вопрос 3-1' }] },
     answered: { by: 'human', action: 'more' },
     history: [{ phase: '1/8', verdict: 'SHIP' }],
   });
-  assert.ok(Array.isArray(out.events) && out.events.length === 1, 'события проходят фильтр');
-  assert.ok(out.events[0].text.includes('вопрос 3-1'), 'текст события цел');
+  assert.ok(Array.isArray(out.view.log) && out.view.log.length === 1, 'журнал проходит фильтр');
+  assert.ok(out.view.log[0].text.includes('вопрос 3-1'), 'текст события цел');
   assert.ok(out.answered && out.history, 'итог и история проходят фильтр');
 });
 
@@ -254,17 +271,17 @@ test('F13: без текстовых ответов нет кнопки answer',
 });
 
 test('F9: выбор модели уходит ролью player', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('player ${model}') || shell.includes('player " + model'), 'model шлётся как player <спека>');
 });
 
 test('F10: vapid JWK превращается в 65 байт', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('.x') && shell.includes('.y'), 'JWK x/y разбираются в несжатый ключ');
 });
 
 test('F11: код из пути /pair/<code> тоже подбирается', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('pathname'), 'старые ссылки /pair/<code> ведут на пульт');
 });
 
@@ -278,10 +295,10 @@ test('F16: без текстовых ответов model не рендерит�
 });
 
 test('F17: опрос каждые 15с не стирает черновик ответа', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('captureDraft'), 'черновик должен сниматься перед перерисовкой');
   assert.ok(shell.includes('restoreDraft'), 'черновик должен восстанавливаться после перерисовки');
-  const renderAt = shell.indexOf('app.innerHTML = renderPage(state');
+  const renderAt = shell.indexOf('top.innerHTML = renderTop(state)');
   const captureAt = shell.lastIndexOf('captureDraft(', renderAt);
   assert.ok(captureAt >= 0 && captureAt < renderAt, 'черновик снимается перед заменой innerHTML');
   const wireAt = shell.indexOf('wire(state)');
@@ -290,7 +307,7 @@ test('F17: опрос каждые 15с не стирает черновик о�
 });
 
 test('F14: код обменивается только в PWA, Safari код бережёт', () => {
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('display-mode') || shell.includes('standalone'), 'PWA-режим определяется');
   const loadAt = shell.indexOf('async function load(');
   const pairAt = shell.indexOf('/pair/exchange');
@@ -393,6 +410,58 @@ test('B18: токен из ссылки — только из фрагмента
   assert.ok(!('tero_token' in fresh.data));
   assert.equal(replaced[1], '/?run_id=r1');
   assert.equal(tokenFromLink(memStorage(), { hash: '', pathname: '/', search: '?token=Q' }, hist), '');
-  const shell = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('tokenFromLink(localStorage, location, history)'));
+});
+
+const VIEW = {
+  light: 'green', light_text: 'работает', sectors: [{ title: 'a', color: 'yellow' }], role: 'player',
+  role_line: 'player · opus', doing: 'пишу код', last_event_at: 1000, built_at: 1010, quiet_after_s: 600,
+  log: [{ ts: 1, role: 'player', type: 'text', text: 'x' }], stop_text: '', done_text: '',
+};
+
+test('phoneLight: терминальный как есть, мёртвый владелец, старые данные, тихо', () => {
+  assert.deepEqual(phoneLight({ ...VIEW, light: 'ready', light_text: 'сдано', done_text: '✓ сдано' },
+    { owner_alive: false, updated_at: '2000-01-01T00:00:00Z' }, 5000), { light: 'ready', light_text: 'сдано' });
+  assert.deepEqual(phoneLight({ ...VIEW, light: 'red', light_text: 'стоп', stop_text: 'стоп' },
+    { updated_at: '2000-01-01T00:00:00Z' }, 5000), { light: 'red', light_text: 'стоп' });
+  const dead = phoneLight(VIEW, { owner_alive: false, owner_checked_at: 1100 }, 1200);
+  assert.equal(dead.light, 'red');
+  assert.match(dead.light_text, /^оборвался · проверено в \d\d:\d\d$/);
+  const now = 1_800_000_000;
+  const old = new Date((now - 700) * 1000).toISOString();
+  assert.deepEqual(phoneLight(VIEW, { updated_at: old }, now), { light: 'grey', light_text: 'нет свежих данных' });
+  const fresh = new Date((now - 5) * 1000).toISOString();
+  assert.deepEqual(phoneLight({ ...VIEW, last_event_at: now - 900 }, { updated_at: fresh }, now),
+    { light: 'yellow', light_text: 'тихо 15 мин' });
+  assert.deepEqual(phoneLight({ ...VIEW, last_event_at: now - 30 }, { updated_at: fresh }, now),
+    { light: 'green', light_text: 'работает' });
+  // yellow stays yellow: the quiet rule is for green only
+  assert.deepEqual(phoneLight({ ...VIEW, light: 'yellow', light_text: 'ждёт тебя', last_event_at: now - 900 },
+    { updated_at: fresh }, now), { light: 'yellow', light_text: 'ждёт тебя' });
+});
+
+test('viewOf: модель как есть плюс лампочка; без view — серая карточка', () => {
+  const now = 1_800_000_000;
+  const body = { state: { updated_at: new Date((now - 1) * 1000).toISOString(), view: { ...VIEW, last_event_at: now - 3 } }, marks: {} };
+  const v = viewOf(body, now);
+  assert.equal(v.doing, 'пишу код');
+  assert.equal(v.plus, '');
+  assert.equal(v.visible, true);
+  assert.equal(v.light, 'green');
+  const grey = viewOf({ state: { status: 'running' } }, now);
+  assert.equal(grey.light, 'grey');
+  assert.deepEqual(grey.log, []);
+});
+
+test('renderBelow показывает непрочитанные сообщения хозяину', () => {
+  const html = renderBelow({ status: 'running', view: { messages_waiting: 2 } }, {});
+  assert.ok(html.includes('непрочитанных сообщений хозяину: 2'));
+  assert.ok(!renderBelow({ status: 'running', view: { messages_waiting: 0 } }, {}).includes('непрочитанных'));
+});
+
+test('renderQuestion экранирует текст вопроса', () => {
+  const html = renderQuestion({ id: 'q', text: '<img src=x onerror=alert(1)>', actions: ['skip'] }, true, []);
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img'));
 });

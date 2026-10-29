@@ -69,12 +69,12 @@ def test_limits_in_status_and_page(tmp_path):
     assert payload["limits"] == {"codex": "неизвестно"}
 
     root = __import__("pathlib").Path(__file__).resolve().parent.parent.parent
-    render_js = (root / "relay" / "public" / "render.js").as_uri()
+    pult_js = (root / "relay" / "public" / "pult.js").as_uri()
     page = tmp_path / "page_check.mjs"
     page.write_text(
-        f"import {{ renderPage }} from '{render_js}';\n"
-        "const withKnown = renderPage({ limits: { codex: 'квота' } }, { token: 't' });\n"
-        "const without = renderPage({}, { token: 't' });\n"
+        f"import {{ renderBelow }} from '{pult_js}';\n"
+        "const withKnown = renderBelow({ limits: { codex: 'квота' } }, { token: 't' });\n"
+        "const without = renderBelow({}, { token: 't' });\n"
         "if (!withKnown.includes('квота')) throw new Error('limits не на странице');\n"
         "if (!without.includes('неизвестно')) throw new Error('нет «неизвестно»');\n"
         "console.log('page limits ok');\n"

@@ -23,7 +23,8 @@ from pathlib import Path
 from src.errors import scrub_secrets
 from src.fsio import append_text, atomic_write_json, read_json_dict
 from src.hud import registry, single
-from src.hud.model import build_view
+from src.hud.model import TAB_LIMIT, build_view
+from src.hud.model_view import messages_waiting
 from src.hud.registry import is_dead
 from src.hud.tail import Tail
 from src.loop.lease import agent_view
@@ -54,21 +55,6 @@ DEFAULT_H = 340
 WINDOW_W = 340
 MIN_W = 280
 TRAY_EVERY_S = 1.5
-
-
-def age_color(age_s: int | float | None) -> str:
-    """Age bucket for the "N с назад" tail of the header."""
-    if age_s is None:
-        return "normal"
-    try:
-        age = float(age_s)
-    except (TypeError, ValueError):
-        return "normal"
-    if age > 300:
-        return "red"
-    if age > 60:
-        return "yellow"
-    return "normal"
 
 
 def no_focus_steal() -> None:
@@ -188,17 +174,18 @@ class Bridge:
             agent = agent_view(self.run_dir, now)
         except Exception:
             agent = None
-        data = build_view(self._state, self._events, now, lambda s: not is_dead(s), agent=agent)
-        data["age_color"] = age_color(data.get("last_event_age_s"))
+        try:
+            waiting = messages_waiting(self.run_dir)
+        except Exception:
+            waiting = 0
+        data = build_view(self._state, self._events, now, lambda s: not is_dead(s), agent=agent,
+                          log_limit=TAB_LIMIT, messages_waiting=waiting)
+        # mac-only: how many other live runs there are; `visible` is added in view()
         try:
             others = len(self._others())
         except Exception:
             others = 0
         data["plus"] = f"+{others}" if others else ""
-        if isinstance(self._state, dict):
-            data["stop_text"] = _stop_text(self._state)
-        else:
-            data["stop_text"] = ""
         return data
 
     def save_size(self, w: int, h: int) -> bool:
@@ -250,12 +237,6 @@ class Bridge:
 
 def _int_or(value, default: int) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
-
-
-def _stop_text(state: dict) -> str:
-    if state.get("status") != "stopped":
-        return ""
-    return str(state.get("text") or state.get("reason") or "стоп")
 
 
 def _read_html() -> str:

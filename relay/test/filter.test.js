@@ -197,3 +197,26 @@ test('B14: длинное имя и вложенное присваивание 
   assert.equal(redactSecrets('note: password=abc'), 'note: password=[redacted]');
   assert.equal(redactSecrets('status: ok'), 'status: ok');
 });
+
+test('view: вложенные белые списки, лог ≤ 40 строк по 300 символов, pid не проходит', async () => {
+  const { filterState, VIEW_FIELDS, AGENT_FIELDS, LOG_FIELDS } = await import('../src/filter.js');
+  const log = Array.from({ length: 50 }, (_, i) => ({ ts: i, role: 'player', type: 'text', text: 'слово '.repeat(80), extra: 1 }));
+  const out = filterState({
+    run_id: 'r', machine_id: 'm',
+    view: {
+      light: 'green', light_text: 'работает', log, agent: { host: 'claude', on_duty: true, pid: 42 },
+      sectors: [{ title: 'a', color: 'green', secret: 'sk-aaaaaaaaaaaaaaaaaaaaaaaa' }],
+      verdict: { verdict: 'SHIP', blocking: 0, first: '', raw: 'x' }, resume: null, evil: 'drop',
+    },
+  });
+  assert.equal(out.view.log.length, 40);
+  assert.equal(out.view.log[0].text.length, 300);
+  assert.ok(!('extra' in out.view.log[0]));
+  assert.deepEqual(out.view.agent, { host: 'claude', on_duty: true });
+  assert.deepEqual(out.view.sectors, [{ title: 'a', color: 'green' }]);
+  assert.deepEqual(out.view.verdict, { verdict: 'SHIP', blocking: 0, first: '' });
+  assert.equal(out.view.resume, null);
+  assert.ok(!('evil' in out.view));
+  assert.ok(VIEW_FIELDS.has('log') && AGENT_FIELDS.has('on_duty') && LOG_FIELDS.has('text'));
+  assert.ok(!JSON.stringify(out).includes('"pid"'));
+});

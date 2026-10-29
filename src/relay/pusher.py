@@ -19,6 +19,7 @@ from typing import Any
 from src.fsio import atomic_write_json, read_json_dict
 
 PULSE_EVERY_S = 300.0
+LOG_EVERY_S = 15.0  # stream.jsonl alone (the log) is pushed at most this often
 POLL_S = 1.0
 RELAY_FILE = "relay.json"
 NO_LINK = "нет связи с ретранслятором"
@@ -44,6 +45,7 @@ class Pusher:
         self._dirty = True  # стартовое состояние уходит сразу
         self._busy = False
         self._sent: tuple[int, int] | None = None
+        self._sent_log: tuple[int, int] | None = None
         self._last = 0.0
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="tero-relay-push")
@@ -52,6 +54,10 @@ class Pusher:
     @property
     def state_path(self) -> Path:
         return self.run_dir / "state.json"
+
+    @property
+    def log_path(self) -> Path:
+        return self.run_dir / "stream.jsonl"
 
     def poke(self) -> None:
         with self._cond:
@@ -64,7 +70,11 @@ class Pusher:
         sig = _signature(self.state_path)
         if sig is not None and sig != self._sent:
             return True
-        return time.monotonic() - self._last >= PULSE_EVERY_S
+        since = time.monotonic() - self._last
+        log_sig = _signature(self.log_path)
+        if log_sig is not None and log_sig != self._sent_log and since >= LOG_EVERY_S:
+            return True
+        return since >= PULSE_EVERY_S
 
     def _loop(self) -> None:
         while True:
@@ -82,6 +92,7 @@ class Pusher:
 
     def send_once(self) -> bool:
         sig = _signature(self.state_path)
+        self._sent_log = _signature(self.log_path)
         state = read_json_dict(self.state_path)
         if state is None:
             self._last = time.monotonic()
