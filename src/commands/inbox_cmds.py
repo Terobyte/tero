@@ -194,3 +194,20 @@ def run_compact(args) -> int:
         return 1
     print(f"запрошен компакт `{role}`")
     return 0
+
+
+def run_inbox(args) -> int:
+    """Print the unread signed messages to the host and mark them read; `--all` keeps them."""
+    from src.loop import messages
+
+    run_dir = resolve_run_dir(args)
+    if run_dir is None:
+        return 1
+    texts = messages.history(run_dir) if getattr(args, "all", False) else messages.take_unread(run_dir)
+    if not texts:
+        print("сообщений нет")
+    for text in texts:
+        from src.errors import scrub_secrets
+
+        print(scrub_secrets(text))
+    return 0

@@ -34,8 +34,10 @@ from src.loop.session import (
     run_phases,
 )
 from src.loop.resume.step import _restore_resume_tree, _stopped_phases
+from src.loop.run_ledger import _start_ledger
 from src.loop.state import RunState, Status
 from src.loop.transition import resume_transition
+from src.relay.poller import start_owner_poller, stop_poller
 
 __all__ = [
     "RunOutcome",
@@ -79,6 +81,7 @@ async def run(
         lock, run_dir, pid_started=pid_started, release_on_exit=False, hud_cfg=cfg
     )
     session.register()
+    start_owner_poller(run_dir, cfg)  # план 09: опрос — до стартовых проверок
     _update(
         state,
         status=Status.STARTING.value,
@@ -189,14 +192,17 @@ async def resume(
     phase_title = state.get("phase") or ""
     phase_index = state.get("phase_index", 0) or 0
     round_no = state.get("round", 1) or 1
+    start_owner_poller(run_path, cfg)  # план 09: опрос — до предпроверок и восстановления
 
     from src.loop.resume.lock import acquire_for_resume as _acq
     from src.loop.resume.step import pre_lock_refusal as _e
 
     if (_o := _e(repo_path, run_path, cfg, state)) is not None:
+        stop_poller(run_path)
         return _o
     lock, denied = _acq(repo_path, run_path, state)
     if denied is not None:
+        stop_poller(run_path)
         return denied
 
     done_io = RunState(run_path / "state.json")
@@ -371,17 +377,6 @@ def _nothing_to_do(session: RunSession, run_dir: Path, total: int) -> RunOutcome
         reason="nothing_to_do",
         phases_total=total,
     )
-
-
-def _start_ledger(run_dir: Path, cfg: Config, slug: str) -> Ledger:
-    ledger = Ledger(run_dir)
-    ledger.event("run_start", plan=cfg.plan_file, slug=slug)
-    ledger.event(
-        "compact_config",
-        player_at_tokens=cfg.compact_player_at_tokens,
-        judge_at_tokens=cfg.compact_judge_at_tokens,
-    )
-    return ledger
 
 
 def agy_preflight_check(role: str, model: str, working_dir: str) -> str | None:

@@ -59,12 +59,10 @@ def read_events(run_dir: str | Path, limit: int) -> list[dict]:
 
 
 def messages_waiting(run_dir: str | Path) -> int:
-    """Unread messages to the host: `inbox/msg-*.json` without `.read` (фаза 3 пишет их)."""
-    try:
-        return sum(1 for p in (Path(run_dir) / "inbox").glob("msg-*.json")
-                   if not p.name.endswith(".read.json"))
-    except OSError:
-        return 0
+    """Unread messages to the host: `inbox/msg-*.json` without `.read` (фаза 1 пишет их)."""
+    from src.loop.messages import count_unread
+
+    return count_unread(run_dir)
 
 
 def build_from_files(run_dir: str | Path, now: float, *, log_limit: int,

@@ -108,3 +108,21 @@ test('stale-уведомление помечено stale: true (текст — 
   assert.equal(got && got.stale, true);
   assert.equal(got.question.id, 'q1');
 });
+
+test('purgeAnswers: терминальный прогон старше 7 дней чистится, живой — нет', async () => {
+  const { openFakeDb } = await import('./fake_d1.js');
+  const { purgeAnswers } = await import('../src/cron.js');
+  const DB = openFakeDb();
+  const now = Date.now();
+  const old = new Date(now - 8 * 86400000).toISOString();
+  for (const [rid, status] of [['done1', 'done'], ['live1', 'running']]) {
+    await DB.prepare('INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?)')
+      .bind(rid, 'm', JSON.stringify({ status }), old).run();
+    await DB.prepare(
+      'INSERT INTO answers (uuid, run_id, machine_id, question_id, action, who, received_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(`u-${rid}`, rid, 'm', '', 'message', 'human', old, 'message').run();
+  }
+  await purgeAnswers({ DB }, now);
+  const left = (await DB.prepare('SELECT uuid FROM answers').all()).results.map((r) => r.uuid);
+  assert.deepEqual(left, ['u-live1']);
+});

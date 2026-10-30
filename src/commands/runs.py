@@ -41,7 +41,8 @@ def run_wait(args) -> int:
     run_dir = resolve_run_dir(args)
     if run_dir is None:
         return 1
-    code = wait_run(run_dir, repo, timeout_s=getattr(args, "timeout", None))
+    code = wait_run(run_dir, repo, timeout_s=getattr(args, "timeout", None),
+                    messages=bool(getattr(args, "messages", False)))
     state = RunState.read(run_dir / "state.json") or {}
     why = {
         0: "готово",
@@ -99,6 +100,9 @@ def run_status(args) -> int:
     from src.loop.wait import agent_line
 
     print(agent_line(payload.get("agent")))
+    unread = int((payload.get("view") or {}).get("messages_waiting") or 0)
+    if unread:
+        print(f"непрочитанных: {unread}")
     print(f"аренда: {_json.dumps(payload['lease'], ensure_ascii=False)}")
     print(f"push_ok: {str(payload['push_ok']).lower()}")
     if payload.get("relay_error"):

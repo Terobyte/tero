@@ -612,7 +612,9 @@ def test_redacted_state_never_ships_raw_agent_or_view(tmp_path):
     """agent и view строятся клиентом; сырые из state.json (с pid) не уезжают, даже без run_dir."""
     from src.relay.client import RelayClient
     c = RelayClient(_cfg(), fetch=lambda *a, **k: None)
-    raw = {"status": "running", "agent": {"pid": 77, "on_duty": True}, "view": {"agent": {"pid": 77}}}
+    # метка pid уникальна: короткое «77» случайно встречается в machine_id и отметках времени
+    pid = 918273645546372819
+    raw = {"status": "running", "agent": {"pid": pid, "on_duty": True}, "view": {"agent": {"pid": pid}}}
     out = c._redacted_state(raw)
     assert "agent" not in out and "view" not in out
     run = tmp_path / "run"
@@ -620,7 +622,7 @@ def test_redacted_state_never_ships_raw_agent_or_view(tmp_path):
     (run / "state.json").write_text(json.dumps(raw))
     c = RelayClient(_cfg(), fetch=lambda *a, **k: None, run_dir=run)
     out = c._redacted_state(raw)
-    assert '"pid"' not in json.dumps(out) and "77" not in json.dumps(out)
+    assert '"pid"' not in json.dumps(out) and str(pid) not in json.dumps(out)
     assert out["agent"]["on_duty"] is False and out["view"]["agent"] == out["agent"]
 
 

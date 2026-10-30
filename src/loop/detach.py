@@ -19,9 +19,9 @@ from src.fsio import read_json_dict
 DETACH_READY_S = 120
 
 AGENT_PROTOCOL = (
-    "1. `tero go --detach`, потом `tero wait` фоновой командой — спать.\n"
-    "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; `3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — снова `tero wait`; иначе решить, `tero answer <id> … --why …`, снова `tero wait`; `5` → `tero resume`, снова `tero wait`; `2` → отчитаться; `6` → снова `tero wait`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова `tero wait`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
-    "3. Если сессия закрылась, прогон живёт; новый агент подхватывает его: `tero status` + `tero wait`."
+    "1. `tero go --detach`, потом `tero wait --messages` фоновой командой — спать.\n"
+    "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; `3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — снова `tero wait --messages`; иначе решить, `tero answer <id> … --why …`, снова `tero wait --messages`; `5` → `tero resume`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; `7` → текст сообщения уже в выводе; на вопрос отвечай только если статус `waiting_agent`, снова `tero wait --messages`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова `tero wait --messages`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
+    "3. Если сессия закрылась, прогон живёт; новый агент подхватывает его: `tero status` + `tero wait --messages`."
 )
 
 _READY_STATUSES = ("running", "waiting_human", "waiting_agent", "waiting_limit")
@@ -178,7 +178,7 @@ def detach_go(
         if clock() >= deadline:
             print(f"владелец продолжает запуск (PID {owner_pid}); готовность пока не подтверждена")
             print(f"лог: {log_path}")
-            print("проверьте `tero status` и `tero wait` перед повторным запуском")
+            print("проверьте `tero status` и `tero wait --messages` перед повторным запуском")
             try:
                 _maybe_caffeinate(int(owner_pid), popen=popen)
             except (TypeError, ValueError):

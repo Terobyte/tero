@@ -125,6 +125,15 @@ class RunSession:
                 self.pulse.stop()
         except Exception:
             pass
+        try:
+            # План 09 фаза 1: поток опроса живёт до конца прогона; владелец
+            # останавливает его при любом выходе (включая judge_pending),
+            # ожидание ограничено одним таймаутом внутри Poller.stop.
+            from src.relay.poller import stop_poller
+
+            stop_poller(self.run_dir)
+        except Exception:
+            pass
         if self.release_on_exit:
             self.release()
         self._unregister()

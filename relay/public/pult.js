@@ -131,7 +131,7 @@ export function renderTop(state = {}) {
 }
 
 // Под карточкой по спеку: «уже отвечено», статус и лимиты, прогоны, решения, долг, пуши
-// (сообщение, wake/resume и список «остановлены» — фазы 3 и 4).
+// (сообщение — фаза 1; wake/resume и список «остановлены» — фазы 2–4).
 export function renderBelow(state = {}, opts = {}) {
   const st = state && typeof state === 'object' ? state : {};
   const runs = Array.isArray(opts.runs) ? opts.runs : [];
@@ -149,6 +149,9 @@ export function renderBelow(state = {}, opts = {}) {
   return answered + `<section id="run-status"><h2>статус</h2>`
     + `<p>${escapeHtml(st.status)} · фаза ${escapeHtml(st.phase)} · раунд ${escapeHtml(st.round)} · `
     + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
+    + (st.phone_text_answers === false ? '' : '<section id="message"><h2>сообщение хозяину</h2>'
+      + '<input type="text" name="message" maxlength="2000">'
+      + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>')
     + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
     + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
     + `<section id="decisions"><h2>решения</h2>${decisionsHtml}</section>`
@@ -371,6 +374,23 @@ if (inBrowser) {
     }
     const pushBtn = document.getElementById('push-btn');
     if (pushBtn) pushBtn.onclick = enablePush;
+    const msgBtn = document.getElementById('msg-btn');
+    if (msgBtn) msgBtn.onclick = () => sendMessage(state);
+  }
+
+  async function sendMessage(state) {
+    const box = document.querySelector('#message input[name="message"]');
+    const errEl = document.getElementById('msg-error');
+    const text = box ? box.value.trim() : '';
+    if (!text) return;
+    const res = await fetch('/answer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ kind: 'message', text, run_id: state.run_id, machine_id: state.machine_id }),
+    });
+    if (res.ok) { if (box) box.value = ''; if (errEl) errEl.textContent = 'отправлено'; return; }
+    const body = await res.json().catch(() => ({}));
+    if (errEl) errEl.textContent = String(body.error || `отказ: ${res.status}`);
   }
 
   async function enablePush() {

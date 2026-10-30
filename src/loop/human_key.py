@@ -25,18 +25,48 @@ def key_path() -> Path:
     return Path.home() / ".tero" / "human.key"
 
 
+def _read_key_bytes(path: Path, timeout_s: float = 6.0) -> bytes | None:
+    """Содержимое ключа, ожидая запись: соседний поток мог создать пустой файл.
+
+    Гонка F15/F18: читаем до `timeout_s`, а не 0.5 с — иначе второй signer
+    при долгой записи первого подпишет пустой подписью и сообщение потеряется.
+    """
+    import time as _time
+
+    start = _time.monotonic()
+    while True:
+        try:
+            data = path.read_bytes().strip()
+        except OSError:
+            return None
+        if data:
+            return data
+        if _time.monotonic() - start >= timeout_s:
+            return None
+        _time.sleep(0.005)
+
+
 def _key(create: bool = False) -> bytes | None:
     path = key_path()
     try:
         if path.stat().st_mode & 0o077:
             os.chmod(path, 0o600)
-        return path.read_bytes().strip() or None
+        got = _read_key_bytes(path)
+        if got is not None:
+            return got
+        if not create:
+            return None
     except OSError:
         if not create:
             return None
     path.parent.mkdir(parents=True, exist_ok=True)
     value = secrets.token_hex(32).encode()
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Гонка: ключ уже создал соседний поток — читаем его, а не падаем.
+        # Файл может быть ещё пустым (создан, но не записан): ждём содержимое.
+        return _read_key_bytes(path)
     with os.fdopen(fd, "wb") as fh:
         fh.write(value)
     return value
@@ -124,3 +154,25 @@ def file_signed(kind: str, run_id: str, payload: Mapping[str, Any]) -> bool:
     except Exception:
         return False
 
+
+
+def _message_text(run_id: str, payload: Mapping[str, Any]) -> str:
+    return json.dumps(["msg", run_id, str(payload.get("uuid") or ""), str(payload.get("text") or "")],
+                      ensure_ascii=False)
+
+
+def sign_message(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Add `sig` to a message to the host (`inbox/msg-<uuid>.json`)."""
+    key = _key(create=True)
+    payload["sig"] = _mac(key, _message_text(run_id, payload)) if key else ""
+    return payload
+
+
+def message_ok(run_id: str, payload: Mapping[str, Any]) -> bool:
+    """True only for a message signed by this machine's key. Never raises."""
+    try:
+        key = _key()
+        sig = str(payload.get("sig") or "")
+        return bool(key and sig and hmac.compare_digest(sig, _mac(key, _message_text(run_id, payload))))
+    except Exception:
+        return False

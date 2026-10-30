@@ -20,11 +20,14 @@ class Answer:
     host: str = ""
     # "relay" — ответ пришёл с телефона; локальный inbox оставляет "".
     via: str = ""
+    # answer | message | wake — вид записи на ретрансляторе (план 09)
+    kind: str = "answer"
 
 
 class RelayClient(Protocol):
     def push_state(self, state: dict) -> bool: ...
     def fetch_answers(self, question_id: str) -> list[Answer]: ...
+    def fetch_all(self) -> list[Answer]: ...
     def ack(self, uuid: str, reason: str = "") -> bool: ...
     def notify(self, text: str) -> bool: ...
 
@@ -70,6 +73,9 @@ class NoopRelay:
     def fetch_answers(self, question_id: str) -> list[Answer]:
         return []
 
+    def fetch_all(self) -> list[Answer]:
+        return []
+
     def ack(self, uuid: str, reason: str = "") -> bool:
         return False
 
@@ -85,6 +91,8 @@ class FakeRelay:
         self.pushed: list = []
         self.notified: list[str] = []
         self.acked: list[str] = []
+        self.reasons: dict[str, str] = {}
+        self.gets = 0
 
     def push_state(self, state: dict) -> bool:
         self.pushed.append(state)
@@ -93,8 +101,13 @@ class FakeRelay:
     def fetch_answers(self, question_id: str) -> list[Answer]:
         return [a for a in self.answers if a.question_id == question_id]
 
+    def fetch_all(self) -> list[Answer]:
+        self.gets += 1
+        return list(self.answers)
+
     def ack(self, uuid: str, reason: str = "") -> bool:
         self.acked.append(uuid)
+        self.reasons[uuid] = reason
         self.answers = [a for a in self.answers if a.uuid != uuid]
         return True
 

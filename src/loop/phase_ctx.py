@@ -185,6 +185,12 @@ class PhaseContext:
             ensure_pusher(self.run_dir, self.relay)
         except Exception:
             pass
+        try:
+            from src.relay.poller import ensure_poller
+
+            ensure_poller(self.run_dir, self.relay)
+        except Exception:
+            pass
 
     def emit(self, type: str, **fields: Any) -> None:
         fields.setdefault("phase", self.phase.title)

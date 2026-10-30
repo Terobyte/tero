@@ -9,7 +9,7 @@ from pathlib import Path
 
 from src.config import Config, ConfigError, UnknownProviderError, apply_cli_args, resolve_config
 from src.commands import resolve_run_dir
-from src.commands.inbox_cmds import run_answer, run_compact
+from src.commands.inbox_cmds import run_answer, run_compact, run_inbox
 from src.commands.parsers import add_all_parsers
 from src.commands.runs import run_history, run_review, run_stats, run_status, run_wait
 from src.commands.stop_cmd import run_stop
@@ -20,6 +20,7 @@ __all__ = [
     "main",
     "prepare_go_config",
     "run_answer",
+    "run_inbox",
     "run_compact",
     "run_go",
     "run_stop",
@@ -210,6 +211,8 @@ def main():
         sys.exit(run_wait(args))
     elif args.command == "status":
         sys.exit(run_status(args))
+    elif args.command == "inbox":
+        sys.exit(run_inbox(args))
     elif args.command == "answer":
         sys.exit(run_answer(args))
     elif args.command == "stop":

@@ -98,17 +98,17 @@
 - Cron: ответы и сообщения терминальных прогонов старше 7 дней удаляются.
 - `pult.js`: поле «сообщение хозяину» под карточкой, отправка `kind: message`, на отказ — текст отказа.
 
-- [ ] вынос опроса в `src/relay/poller.py`, `inbox.py` не вырос
-- [ ] `schema.test.js` / `fake_d1.js`: колонка `kind`, миграция применяется к базе 05; `routes.test.js`: `/answer` с `kind: message` без `question_id` → 200, без токена PWA → 401/403, текст 2001 символ → обрезан или отказ
-- [ ] `test_poller_single_get_and_take_offline`: ответ пришёл между опросами → `take` берёт из кеша без сети, `ack` → повторный GET → ровно один приём; два GET на 10 с не бывает
-- [ ] `test_poller_acks_stale_answers`: ответ на закрытый вопрос квитирован с причиной, не копится
-- [ ] `test_message_written_signed_not_in_player_prompt`: сообщение → `inbox/msg-<uuid>.json` с подписью; промпт игрока следующего раунда его не содержит
-- [ ] `test_wait_messages_code7_prints_and_renames`: код 7, текст в stdout, файл стал `.read.json`; второй `wait` 7 не даёт; два параллельных `wait` не печатают одно сообщение дважды
-- [ ] `test_unsigned_msg_ignored`: подложенный `inbox/msg-x.json` без подписи — `wait --messages` и `tero inbox` его не печатают, строка в `hud.log`
-- [ ] `test_wait_code_priority`: 8 раньше 7; 3 раньше 7; 7 раньше 5 и 6
-- [ ] `test_tero_inbox_all_keeps_unread`; `test_phone_text_off_rejects_message`
-- [ ] протокол и гайд с кодом 7, тест протокола обновлён
-- [ ] реализовать
+- [x] вынос опроса в `src/relay/poller.py`, `inbox.py` не вырос
+- [x] `schema.test.js` / `fake_d1.js`: колонка `kind`, миграция применяется к базе 05; `routes.test.js`: `/answer` с `kind: message` без `question_id` → 200, без токена PWA → 401/403, текст 2001 символ → обрезан или отказ
+- [x] `test_poller_single_get_and_take_offline`: ответ пришёл между опросами → `take` берёт из кеша без сети, `ack` → повторный GET → ровно один приём; два GET на 10 с не бывает
+- [x] `test_poller_acks_stale_answers`: ответ на закрытый вопрос квитирован с причиной, не копится
+- [x] `test_message_written_signed_not_in_player_prompt`: сообщение → `inbox/msg-<uuid>.json` с подписью; промпт игрока следующего раунда его не содержит
+- [x] `test_wait_messages_code7_prints_and_renames`: код 7, текст в stdout, файл стал `.read.json`; второй `wait` 7 не даёт; два параллельных `wait` не печатают одно сообщение дважды
+- [x] `test_unsigned_msg_ignored`: подложенный `inbox/msg-x.json` без подписи — `wait --messages` и `tero inbox` его не печатают, строка в `hud.log`
+- [x] `test_wait_code_priority`: 8 раньше 7; 3 раньше 7; 7 раньше 5 и 6
+- [x] `test_tero_inbox_all_keeps_unread`; `test_phone_text_off_rejects_message`
+- [x] протокол и гайд с кодом 7, тест протокола обновлён
+- [x] реализовать
 
 **Вне этой фазы:** пробуждение по сообщению, `tero wake`, `wake.py` (фаза 2); `marks` и проверка
 `owner_alive` (фаза 4).

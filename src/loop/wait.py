@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from src.errors import scrub_data
+from src.errors import scrub_data, scrub_secrets
 from src.fsio import read_json_dict
 from src.hud.registry import pid_is_alive
 from src.loop import host_id, lease as lease_mod
@@ -76,24 +76,9 @@ def done_line(status: str, debt: list | None) -> str:
     return hud_done_text(status, n)
 
 
-def find_host(run_path: Path) -> host_id.Host:
-    """The host of this `wait`: by ancestry, never a descendant of the run owner."""
-    host = host_id.detect()
-    if host.known and host_id.under_owner(_read_state(run_path)):
-        return host_id.Host(host.kind, why="запущен из-под прогона")
-    return host
-
-
-def _refresh_lease(run_path: Path, host: host_id.Host, seconds: float) -> bool:
-    """Write the lease for `host` unless a live lease of another host holds it."""
-    if not host.known:
-        return False
-    try:
-        return lease_mod.write(run_path, until=time.time() + seconds, pid=host.pid,
-                               pid_started=host.started, host=host.kind,
-                               session=host.session, if_may_take=True)
-    except Exception:
-        return False
+from src.loop.wait_host import (
+    _refresh_lease, find_host,
+)
 
 
 def _settle_lease(run_path: Path, code: int, host: host_id.Host) -> bool:
@@ -101,10 +86,20 @@ def _settle_lease(run_path: Path, code: int, host: host_id.Host) -> bool:
 
     try:
         timeout = auto.agent_timeout_of(run_path)
-        seconds = float(timeout) if code == NEED_AGENT else 300.0
+        seconds = float(timeout) if code in (NEED_AGENT, MESSAGE) else 300.0
     except Exception:
         seconds = 300.0
     return _refresh_lease(run_path, host, seconds)
+
+
+def _print_messages(run_path: Path, out: Callable[[str], None]) -> bool:
+    """Print (and mark read) the unread signed messages; True when there were any."""
+    from src.loop.messages import take_unread
+
+    texts = take_unread(run_path)
+    for text in texts:
+        out(f"сообщение: {scrub_secrets(text)}")
+    return bool(texts)
 
 
 def host_gone(host: host_id.Host) -> bool:
@@ -122,11 +117,14 @@ def wait_run(
     poll_s: float = 2,
     host: host_id.Host | None = None,
     out: Callable[[str], None] = print,
+    messages: bool = False,
 ) -> int:
     """Block until the agent is needed, the run ends, or it looks dead.
 
     Codes: 0 done, 4 done with debt, 2 stopped, 3 agent needed
     (waiting_agent/judge_pending), 5 dead or hung, 6 timeout expired,
+    7 (only with ``messages``) an unread signed message to the host, printed to
+    ``out`` and marked read; priority 8 > 0/4/2 > 3 > 7 > 5 > 6.
     8 the host of this `wait` is gone (checked before every other code,
     so a dead host never takes messages). Terminal statuses win even when
     the owner process is gone; 5 fires only for unfinished statuses.
@@ -158,7 +156,7 @@ def wait_run(
     def _exit(code: int) -> int:
         if host_gone(host):  # an orphan never extends the lease, whatever it saw
             return NO_HOST
-        if code in (NEED_AGENT, TIMEOUT):
+        if code in (NEED_AGENT, TIMEOUT, MESSAGE):
             _settle_lease(run_path, code, host)
         return code
 
@@ -174,6 +172,8 @@ def wait_run(
             return _exit(STOPPED)
         if status in _AGENT_STATUSES:
             return _exit(NEED_AGENT)
+        if messages and _print_messages(run_path, out):
+            return _exit(MESSAGE)
 
         if pid_is_alive(state.get("pid"), state.get("pid_started")):
             pulse = _read_pulse(run_path)

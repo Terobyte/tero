@@ -406,3 +406,76 @@ test('agent проходит в состояние по вложенному б�
   const { state } = await res.json();
   assert.deepEqual(state.agent, { host: 'claude', alive: true, on_duty: true, pid_started_at: 1.5, lease_until: 2 });
 });
+
+test('kind: message без question_id → 200, виден в GET /answers с kind', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  const res = await handleFetch(
+    request('POST', '/answer', {
+      token: DEVICE_TOKEN,
+      body: { run_id: 'r1', machine_id: 'm1', kind: 'message', text: 'привет' },
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const listed = await (
+    await handleFetch(request('GET', '/answers?run_id=r1&machine_id=m1', { token: WRITE_KEY }), env)
+  ).json();
+  assert.equal(listed.answers.length, 1);
+  assert.equal(listed.answers[0].kind, 'message');
+  assert.equal(listed.answers[0].text, 'привет');
+  const byQuestion = await (
+    await handleFetch(
+      request('GET', '/answers?run_id=r1&machine_id=m1&question_id=q1', { token: WRITE_KEY }),
+      env,
+    )
+  ).json();
+  assert.equal(byQuestion.answers.length, 0);
+});
+
+test('kind: wake без question_id → 200', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  const res = await handleFetch(
+    request('POST', '/answer', {
+      token: DEVICE_TOKEN,
+      body: { run_id: 'r1', machine_id: 'm1', kind: 'wake' },
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+});
+
+test('kind: message без токена PWA → 401, с read-токеном → 403', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  const body = { run_id: 'r1', machine_id: 'm1', kind: 'message', text: 'x' };
+  assert.equal((await handleFetch(request('POST', '/answer', { body }), env)).status, 401);
+  assert.equal((await handleFetch(request('POST', '/answer', { token: READ_TOKEN, body }), env)).status, 403);
+});
+
+test('kind: message длиннее 2000 символов → отказ', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  const res = await handleFetch(
+    request('POST', '/answer', {
+      token: DEVICE_TOKEN,
+      body: { run_id: 'r1', machine_id: 'm1', kind: 'message', text: 'я'.repeat(2001) },
+    }),
+    env,
+  );
+  assert.equal(res.status, 413);
+});
+
+test('phone_text_answers: false отклоняет message и в воркере', async () => {
+  const env = await setupEnv();
+  await postState(env, { phone_text_answers: false });
+  const res = await handleFetch(
+    request('POST', '/answer', {
+      token: DEVICE_TOKEN,
+      body: { run_id: 'r1', machine_id: 'm1', kind: 'message', text: 'привет' },
+    }),
+    env,
+  );
+  assert.equal(res.status, 422);
+});

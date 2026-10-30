@@ -265,7 +265,20 @@ class RelayClient:
             params = f"?question_id={qid}&run_id={rid}&machine_id={mid}"
         except Exception:
             params = f"?question_id={question_id}&run_id={self.run_id}&machine_id={self.machine_id}"
-        got = self._call("GET", f"/answers{params}")
+        return self._answers(self._call("GET", f"/answers{params}"), question_id)
+
+    def fetch_all(self) -> list[Answer]:
+        """Один GET за все виды записей прогона: ответы, сообщения, wake."""
+        if not self._base or not (self._key or self._fetch):
+            return []
+        from urllib.parse import quote as _q
+
+        rid = _q(str(self.run_id or ""), safe="")
+        mid = _q(str(self.machine_id or _machine_id() or ""), safe="")
+        return self._answers(self._call("GET", f"/answers?run_id={rid}&machine_id={mid}"), "")
+
+    @staticmethod
+    def _answers(got: Any, question_id: str) -> list[Answer]:
         if not isinstance(got, dict):
             return []
         rows = got.get("answers") or []
@@ -281,6 +294,7 @@ class RelayClient:
                 why=str(row.get("why") or ""),
                 uuid=str(row.get("uuid") or ""),
                 via="relay",
+                kind=str(row.get("kind") or "answer"),
             ))
         return out
 

@@ -71,6 +71,8 @@ def add_run_parsers(sub: Any) -> None:
     wait_parser.add_argument("--run", type=str, default=None)
     wait_parser.add_argument("--timeout", type=float, default=None)
     wait_parser.add_argument("--agent-pid", type=int, default=None)
+    wait_parser.add_argument("--messages", action="store_true", default=False,
+                             help="код 7, когда есть непрочитанное сообщение хозяину")
 
     status_parser = sub.add_parser("status", help="Show run status")
     status_parser.add_argument("--working-dir", "-w", type=str, default=".")
@@ -91,6 +93,12 @@ def add_answer_parsers(sub: Any) -> None:
     answer_parser.add_argument("--run", type=str, default=None)
     answer_parser.add_argument("--agent-pid", type=int, default=None,
                                help="pid отвечающей сессии агента")
+
+    inbox_parser = sub.add_parser("inbox", help="Print unread messages to the host")
+    inbox_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    inbox_parser.add_argument("--run", type=str, default=None)
+    inbox_parser.add_argument("--all", action="store_true", default=False,
+                              help="вся история, без пометки прочитанным")
 
     stop_parser = sub.add_parser("stop", help="Request the running run to stop")
     stop_parser.add_argument("--working-dir", "-w", type=str, default=".")

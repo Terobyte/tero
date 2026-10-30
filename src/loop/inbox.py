@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import threading
 import time
 from pathlib import Path
@@ -23,11 +22,8 @@ from src.relay.iface import Answer, RelayClient
 
 TEXT_CAP = 2000
 
-_SAFE_UUID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-
-
-def _is_safe_uuid(uid: Any) -> bool:
-    return isinstance(uid, str) and bool(_SAFE_UUID_RE.match(uid))
+# Идентификаторы inbox — в inbox_ids: ими же пользуется поток опроса.
+from src.loop.inbox_ids import _is_safe_uuid
 
 
 def _read_payload(path: Path) -> dict[str, Any] | None:
@@ -115,8 +111,9 @@ class Inbox:
         try:
             return sorted(
                 p for p in inbox.glob("*.json")
-                if p.is_file() and not p.is_symlink()
-                and p.name not in ("compact.json", "stop.json")
+                if p.is_file() and not p.is_symlink() and _is_safe_uuid(p.stem)
+                and not p.name.startswith("msg-")
+                and p.name not in ("compact.json", "stop.json", "wake.json", "resume-answer.json")
             )
         except OSError:
             return []

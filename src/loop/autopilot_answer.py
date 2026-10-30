@@ -15,6 +15,7 @@ from src.loop.autopilot import (
     notify_once,
 )
 from src.loop.inbox import Inbox, write_inbox_file
+from src.relay.poller import adapter_for
 from src.loop.state import RunState
 
 
@@ -86,6 +87,6 @@ def _inbox_autopilot(ctx: Any, step: Any, ans: Any, qid: str) -> Any:
     except Exception:
         pass
     try:
-        return Inbox(ctx.run_dir).take(qid, step.relay) or ans
+        return Inbox(ctx.run_dir).take(qid, adapter_for(ctx.run_dir, step.relay)) or ans
     except Exception:
         return ans

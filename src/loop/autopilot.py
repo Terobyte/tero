@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shlex
 import subprocess
 import time
@@ -14,6 +13,7 @@ from src.hud.registry import current_pid_started, pid_is_alive
 from src.loop import lease as lease_mod
 from src.loop.decision.actions import BUDGET_PER_PHASE, budget_used
 from src.loop.inbox import Inbox
+from src.relay.poller import adapter_for
 from src.loop.state import RunState, Status, owner_lock
 from src.loop.transition import phase_transition
 from src.loop.watchdog import stop_requested
@@ -110,18 +110,7 @@ def extend_from_answer(run_dir: str | Path, agent_timeout_s: float,
                            is_alive=alive or pid_is_alive)
 
 
-def wake_env(host: str = "") -> dict[str, str]:
-    """Environment of a woken agent: no provider keys (except for a Muse host), no
-    identity of the session that started the owner."""
-    from src.loop.host_id import strip_host_env
-    from src.providers.claude_native import _BLOCKED_ENV_VARS
-
-    env = dict(os.environ)
-    strip_host_env(env)
-    if host != "muse":
-        for name in _BLOCKED_ENV_VARS:
-            env.pop(name, None)
-    return env
+from src.loop.autopilot_wake import wake_env  # noqa: F401 — реэкспорт, вынос фазы 1
 
 
 def should_notify(run_dir: str | Path, reason: str, now: float | None = None) -> bool:
@@ -257,7 +246,7 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
         except Exception:
             pass
         try:
-            ans = Inbox(ctx.run_dir).take(qid, step.relay)
+            ans = Inbox(ctx.run_dir).take(qid, adapter_for(ctx.run_dir, step.relay))
         except Exception:
             ans = None
         if ans is not None:

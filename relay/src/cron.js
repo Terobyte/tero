@@ -43,7 +43,20 @@ export async function checkStale(env, nowMs = Date.now(), notifyFn = defaultNoti
     }
     fired.push({ run_id: row.run_id, machine_id: row.machine_id });
   }
+  await purgeAnswers(env, nowMs);
   return fired;
+}
+
+export const ANSWER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Ответы и сообщения терминальных прогонов старше 7 дней удаляются.
+export async function purgeAnswers(env, nowMs = Date.now()) {
+  const cutoff = new Date(nowMs - ANSWER_TTL_MS).toISOString();
+  await env.DB.prepare(
+    'DELETE FROM answers WHERE received_at < ? AND EXISTS (SELECT 1 FROM states s '
+    + "WHERE s.run_id = answers.run_id AND s.machine_id = answers.machine_id "
+    + "AND json_extract(s.payload, '$.status') IN ('done', 'stopped'))",
+  ).bind(cutoff).run();
 }
 
 export async function defaultNotify(env, runId, machineId, payload) {

@@ -195,12 +195,16 @@ async function postAnswer(request, env) {
   if (role !== 'device') return jsonResponse({ error: 'read-only token' }, 403);
   const body = await readJson(request);
   if (!body) return jsonResponse({ error: 'bad json' }, 400);
-  const { question_id: questionId, action, text = '' } = body;
+  const { question_id: rawQuestionId, action: rawAction, text = '', kind = 'answer' } = body;
+  if (!['answer', 'message', 'wake'].includes(kind)) return jsonResponse({ error: 'bad kind' }, 400);
+  if (typeof text !== 'string') return jsonResponse({ error: 'text must be a string' }, 400);
+  if (text.length > 2000) return jsonResponse({ error: 'text too long' }, 413);
+  if (kind !== 'answer') return postOwnerNote(env, body, kind, text);
+  const questionId = rawQuestionId;
+  const action = rawAction;
   if (typeof questionId !== 'string' || !questionId || typeof action !== 'string' || !action) {
     return jsonResponse({ error: 'question_id and action required' }, 400);
   }
-  if (typeof text !== 'string') return jsonResponse({ error: 'text must be a string' }, 400);
-  if (text.length > 2000) return jsonResponse({ error: 'text too long' }, 413);
   // run_id+machine_id обязательны: без сопоставленного состояния и открытого
   // вопроса действие проверить нечем, текст-флаг — только после сопоставления.
   const state = await loadState(env, body.run_id, body.machine_id);
@@ -227,7 +231,29 @@ async function postAnswer(request, env) {
   return jsonResponse({ ok: true, uuid });
 }
 
-const ANSWER_COLS = 'uuid, run_id, machine_id, question_id, action, text, who, received_at';
+// Сообщение хозяину и wake: без вопроса, только токен PWA (проверен выше) и
+// незавершённый прогон. Проверка marks.owner_alive — позже (фаза 4 плана 09).
+async function postOwnerNote(env, body, kind, text) {
+  if (typeof body.run_id !== 'string' || !body.run_id
+    || typeof body.machine_id !== 'string' || !body.machine_id) {
+    return jsonResponse({ error: 'run_id and machine_id required' }, 400);
+  }
+  const state = await loadState(env, body.run_id, body.machine_id);
+  if (!state) return jsonResponse({ error: 'unknown run' }, 422);
+  if (['done', 'stopped'].includes(state.status)) return jsonResponse({ error: 'run finished' }, 422);
+  if (kind === 'message') {
+    if (!text) return jsonResponse({ error: 'text required' }, 400);
+    if (state.phone_text_answers === false) return jsonResponse({ error: 'text answers disabled' }, 422);
+  }
+  const uuid = crypto.randomUUID();
+  await env.DB.prepare(
+    'INSERT INTO answers (uuid, run_id, machine_id, question_id, action, text, who, received_at, kind) '
+    + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).bind(uuid, body.run_id, body.machine_id, '', kind, kind === 'message' ? text : '', 'human', nowIso(), kind).run();
+  return jsonResponse({ ok: true, uuid });
+}
+
+const ANSWER_COLS = 'uuid, run_id, machine_id, question_id, action, text, who, received_at, kind';
 
 async function getAnswers(request, env, url) {
   if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);

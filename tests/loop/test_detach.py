@@ -44,15 +44,16 @@ def _owner_stub(path: Path, *, status: str = "running") -> None:
 
 
 EXPECTED_PROTOCOL = (
-    "1. `tero go --detach`, потом `tero wait` фоновой командой — спать.\n"
+    "1. `tero go --detach`, потом `tero wait --messages` фоновой командой — спать.\n"
     "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; "
     "`3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — "
-    "снова `tero wait`; иначе решить, `tero answer <id> … --why …`, снова `tero wait`; "
-    "`5` → `tero resume`, снова `tero wait`; `2` → отчитаться; `6` → снова `tero wait`; "
-    "`8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова "
-    "`tero wait`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
+    "снова `tero wait --messages`; иначе решить, `tero answer <id> … --why …`, снова `tero wait --messages`; "
+    "`5` → `tero resume`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; "
+    "`7` → текст сообщения уже в выводе; на вопрос отвечай только если статус `waiting_agent`, "
+    "снова `tero wait --messages`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова "
+    "`tero wait --messages`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
     "3. Если сессия закрылась, прогон живёт; новый агент подхватывает его: "
-    "`tero status` + `tero wait`."
+    "`tero status` + `tero wait --messages`."
 )
 
 

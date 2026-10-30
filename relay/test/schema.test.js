@@ -59,3 +59,20 @@ test('batch: WITH … SELECT отдаёт строки, а не meta запис�
   const [res] = await db.batch([db.prepare('WITH x AS (SELECT 7 AS n) SELECT n FROM x')]);
   assert.deepEqual(res.results.map((r) => ({ ...r })), [{ n: 7 }]);
 });
+
+test('answers.kind: по умолчанию answer, миграция 05→06 применяется к базе 05', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { readFileSync } = await import('node:fs');
+  const db = openFakeDb();
+  db.prepare(
+    'INSERT INTO answers (uuid, question_id, action, text, who, received_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind('k1', 'q', 'skip', '', 'human', 'now').run();
+  assert.equal(db.prepare('SELECT kind FROM answers WHERE uuid = ?').bind('k1').first().kind, 'answer');
+  const old = new DatabaseSync(':memory:');
+  old.exec('CREATE TABLE answers (uuid TEXT PRIMARY KEY, run_id TEXT NOT NULL DEFAULT \'\', '
+    + 'machine_id TEXT NOT NULL DEFAULT \'\', question_id TEXT NOT NULL, action TEXT NOT NULL, '
+    + 'text TEXT NOT NULL DEFAULT \'\', who TEXT NOT NULL, received_at TEXT NOT NULL)');
+  old.exec('INSERT INTO answers (uuid, question_id, action, who, received_at) VALUES (\'o\', \'q\', \'skip\', \'human\', \'t\')');
+  old.exec(readFileSync(new URL('../migrate-05-06.sql', import.meta.url), 'utf8'));
+  assert.equal(old.prepare('SELECT kind FROM answers WHERE uuid = \'o\'').get().kind, 'answer');
+});

@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS answers (
   action TEXT NOT NULL,
   text TEXT NOT NULL DEFAULT '',
   who TEXT NOT NULL,
-  received_at TEXT NOT NULL
+  received_at TEXT NOT NULL,
+  -- план 09: answer | message | wake; миграция базы 05 — relay/migrate-05-06.sql
+  kind TEXT NOT NULL DEFAULT 'answer'
 );
 
 CREATE INDEX IF NOT EXISTS idx_answers_question ON answers (question_id);
