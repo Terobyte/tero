@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleFetch, sha256Hex } from '../src/worker.js';
 import {
-  captureDraft, phoneLight, renderBelow, renderPair, renderQuestion, renderTop, restoreDraft,
+  applyHostOnly, captureDraft, phoneLight, renderBelow, renderPair, renderQuestion, renderTop, restoreDraft,
   tokenFromLink, viewOf,
 } from '../public/pult.js';
 import { openFakeDb } from './fake_d1.js';
@@ -13,7 +13,7 @@ import { openFakeDb } from './fake_d1.js';
 function renderPage(state = {}, opts = {}) {
   if (!opts.token) return renderPair(false);
   if (opts.unpaired) return renderPair(true);
-  return renderTop(state) + renderBelow(state, opts);
+  return renderTop(state, opts) + renderBelow(state, opts);
 }
 const SHELL = new URL('../public/pult.js', import.meta.url);
 
@@ -298,7 +298,7 @@ test('F17: опрос каждые 15с не стирает черновик о�
   const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('captureDraft'), 'черновик должен сниматься перед перерисовкой');
   assert.ok(shell.includes('restoreDraft'), 'черновик должен восстанавливаться после перерисовки');
-  const renderAt = shell.indexOf('top.innerHTML = renderTop(state)');
+  const renderAt = shell.indexOf('top.innerHTML = renderTop(state,');
   const captureAt = shell.lastIndexOf('captureDraft(', renderAt);
   assert.ok(captureAt >= 0 && captureAt < renderAt, 'черновик снимается перед заменой innerHTML');
   const wireAt = shell.indexOf('wire(state)');
@@ -591,4 +591,44 @@ test('F15: отключённая кнопка resume — явно серая, �
   const normal = css.match(/html\[data-host="phone"\] button \{([^}]*)\}/);
   assert.ok(normal, 'обычный стиль кнопок на месте');
   assert.notEqual(grey[1].trim(), normal[1].trim(), 'серый вид отличается от обычного');
+});
+
+test('фаза 5: переключатель «только хозяин» над логом рядом с полем сообщения', () => {
+  const top = renderTop(fixture(), { token: 't' });
+  assert.match(top, /<input type="checkbox" id="host-only">/);
+  assert.ok(top.indexOf('id="host-only"') < top.indexOf('name="message"'));
+  // браузер ставит верх до карточки (#log), низ после: фильтр оказывается над логом
+  const page = renderTop(fixture(), { token: 't' }) + '<div id="card"><div id="log"></div></div>'
+    + renderBelow(fixture(), { token: 't' });
+  assert.ok(page.indexOf('id="host-only"') < page.indexOf('id="log"'), 'фильтр над логом');
+  assert.ok(!renderBelow(fixture(), { token: 't' }).includes('host-only'), 'фильтр уехал наверх');
+  const win = { logFilter: '' };
+  applyHostOnly(win, true);
+  assert.equal(win.logFilter, 'host');
+  applyHostOnly(win, false);
+  assert.equal(win.logFilter, '');
+});
+
+test('фаза 5: фильтр хозяина не зависит от телефонных текстовых ответов', () => {
+  const off = renderTop({ ...fixture(), phone_text_answers: false }, { token: 't' });
+  assert.ok(off.includes('id="host-only"'), 'фильтр виден без текстовых ответов');
+  assert.ok(!off.includes('name="message"'), 'поле отправки скрыто параметром');
+  assert.ok(renderTop(fixture(), { token: 't' }).includes('name="message"'), 'поле отправки на месте');
+});
+
+test('фаза 5: опрос не сбрасывает включённый фильтр хозяина', () => {
+  const checked = renderTop(fixture(), { token: 't', hostOnly: true });
+  assert.match(checked, /id="host-only"[^>]*checked/, 'включённый фильтр рисуется включённым');
+  assert.ok(/<input type="checkbox" id="host-only">/.test(renderTop(fixture(), { token: 't' })),
+    'выключенный фильтр без checked');
+  const shell = readFileSync(SHELL, 'utf8');
+  assert.ok(shell.includes("getElementById('host-only')") && shell.includes('logFilter'),
+    'wire синхронизирует чекбокс с window.logFilter после перерисовки');
+});
+
+test('фаза 5: поле привязки — текстовое, под мобильными стилями', () => {
+  assert.match(renderPair(false), /<input type="text" id="pair-code"/,
+    'поле привязки с type="text" попадает под мобильные стили');
+  assert.match(renderPair(true), /<input type="text" id="pair-code"/,
+    'недействительная привязка тоже с type="text"');
 });

@@ -191,6 +191,12 @@ class PhaseContext:
             ensure_poller(self.run_dir, self.relay)
         except Exception:
             pass
+        try:
+            from src.loop.host_tail import ensure_host_tail
+
+            ensure_host_tail(self.run_dir, self.repo)
+        except Exception:
+            pass
 
     def emit(self, type: str, **fields: Any) -> None:
         fields.setdefault("phase", self.phase.title)

@@ -100,6 +100,9 @@ def run_status(args) -> int:
     from src.loop.wait import agent_line
 
     print(agent_line(payload.get("agent")))
+    from src.loop.host_tail import session_line
+
+    print(session_line(run_dir))
     unread = int((payload.get("view") or {}).get("messages_waiting") or 0)
     if unread:
         print(f"непрочитанных: {unread}")

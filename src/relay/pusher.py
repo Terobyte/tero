@@ -46,6 +46,7 @@ class Pusher:
         self._busy = False
         self._sent: tuple[int, int] | None = None
         self._sent_log: tuple[int, int] | None = None
+        self._sent_host: tuple[int, int] | None = None
         self._last = 0.0
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="tero-relay-push")
@@ -74,6 +75,9 @@ class Pusher:
         log_sig = _signature(self.log_path)
         if log_sig is not None and log_sig != self._sent_log and since >= LOG_EVERY_S:
             return True
+        host_sig = _signature(self.run_dir / "host.jsonl")  # the host's lines: like the log
+        if host_sig is not None and host_sig != self._sent_host and since >= LOG_EVERY_S:
+            return True
         return since >= PULSE_EVERY_S
 
     def _loop(self) -> None:
@@ -93,6 +97,7 @@ class Pusher:
     def send_once(self) -> bool:
         sig = _signature(self.state_path)
         self._sent_log = _signature(self.log_path)
+        self._sent_host = _signature(self.run_dir / "host.jsonl")
         state = read_json_dict(self.state_path)
         if state is None:
             self._last = time.monotonic()

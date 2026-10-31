@@ -266,12 +266,12 @@
 - Пушер: изменения только `host.jsonl` — не чаще раза в 15 с, как лог.
 - `pult.js`: переключатель «только хозяин» над логом рядом с полем сообщения.
 
-- [ ] `test_host_tail_whitelist` на фейковом `.jsonl`: текст обрезан до 300, `thinking` нет; `Bash` с `DATABASE_URL=… cmd` → `cmd`, heredoc → `cat`, `/usr/local/bin/run` → `run`; `WebFetch` с URL → только `WebFetch`; `Read` вне репо → имя файла; `sk-…` в тексте замаскирован; `user`-строки и субагенты не берутся
-- [ ] `test_host_session_fallback`: без `CLAUDE_CODE_SESSION_ID` — из `sessions/<pid>.json`; без обоих — роли нет, строка в `status`
-- [ ] `test_doing_age_ignore_host`: `_doing` и `_age` по `stream.jsonl`, свежий `host.jsonl` их не меняет; `log` слит по времени
-- [ ] `test_host_tail_from_end`: старые строки транскрипта при старте не попадают
-- [ ] `dom.test.js` / тест копии `view.html`: роль `host` с цветом; фильтр «только хозяин» в `pult.test.js`
-- [ ] реализовать
+- [x] `test_host_tail_whitelist` на фейковом `.jsonl`: текст обрезан до 300, `thinking` нет; `Bash` с `DATABASE_URL=… cmd` → `cmd`, heredoc → `cat`, `/usr/local/bin/run` → `run`; `WebFetch` с URL → только `WebFetch`; `Read` вне репо → имя файла; `sk-…` в тексте замаскирован; `user`-строки и субагенты не берутся
+- [x] `test_host_session_fallback`: без `CLAUDE_CODE_SESSION_ID` — из `sessions/<pid>.json`; без обоих — роли нет, строка в `status`
+- [x] `test_doing_age_ignore_host`: `_doing` и `_age` по `stream.jsonl`, свежий `host.jsonl` их не меняет; `log` слит по времени
+- [x] `test_host_tail_from_end`: старые строки транскрипта при старте не попадают
+- [x] `dom.test.js` / тест копии `view.html`: роль `host` с цветом; фильтр «только хозяин» в `pult.test.js`
+- [x] реализовать
 
 ---
 

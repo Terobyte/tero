@@ -90,9 +90,30 @@ def build_from_files(run_dir: str | Path, now: float, *, log_limit: int,
     except Exception:
         waiting = 0
     resume = state.get("resume") if isinstance(state, dict) and isinstance(state.get("resume"), dict) else None
-    return build_view(state if isinstance(state, dict) else None, events, now,
+    view = build_view(state if isinstance(state, dict) else None, events, now,
                       lambda s: not is_dead(s), agent=agent, log_limit=log_limit,
                       messages_waiting=waiting, resume=resume)
+    try:
+        view["log"] = _with_host(view.get("log") or [], run_path, log_limit)
+    except Exception:
+        pass
+    return view
+
+
+def _with_host(log: list[dict], run_path: Path, limit: int) -> list[dict]:
+    """`host.jsonl` joins the log by time only; `doing`, age and the turn never see it."""
+    from src.hud.model_parts import _parse_ts
+    from src.loop.host_tail import read_host_events
+
+    if not limit:
+        return log
+    rows = [{"ts": e.get("ts"), "role": "host", "type": str(e.get("type") or ""),
+             "text": str(e.get("text") or "")[:LOG_TEXT_LIMIT]}
+            for e in read_host_events(run_path, int(limit))]
+    if not rows:
+        return log
+    merged = sorted(log + rows, key=lambda r: _parse_ts(r.get("ts")) or 0.0)
+    return merged[-int(limit):]
 
 
 def _pick(value: Any, fields: tuple[str, ...]) -> Any:

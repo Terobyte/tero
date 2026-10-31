@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { applyHostOnly } from '../public/pult.js';
 
 const HTML = readFileSync(new URL('../../src/hud/view.html', import.meta.url), 'utf8');
 
@@ -59,7 +60,7 @@ function fakeDocument() {
   };
 }
 
-function load(view, nowS, teroSource = null) {
+function load(view, nowS, teroSource = null, before = null) {
   const document = fakeDocument();
   const ctx = {
     document,
@@ -76,6 +77,7 @@ function load(view, nowS, teroSource = null) {
   ctx.window.teroSource = teroSource;
   vm.createContext(ctx);
   vm.runInContext(renderScript(), ctx);
+  if (before) before(ctx);
   vm.runInContext('render(__view)', Object.assign(ctx, { __view: view }));
   return document.byId;
 }
@@ -139,6 +141,14 @@ test('свежий вердикт, стоп и ready перекрывают пл
   assert.equal(ready.foot.className, 'good');
 });
 
+test('телефон: чекбокс фильтра — компактный, текстовые поля — во всю ширину', () => {
+  const style = HTML.slice(HTML.indexOf('<style>'), HTML.indexOf('</style>'));
+  assert.ok(style.includes('input[type="text"]'), 'текстовые поля отдельно');
+  assert.ok(style.includes('input[type="checkbox"]'), 'у чекбокса свой компактный стиль');
+  assert.ok(!style.includes('select, html[data-host="phone"] input {'),
+    'голый input без типа не красится во всю ширину');
+});
+
 test('телефон: с window.teroSource крестик не показывается даже при ready; render(null) ничего не трогает', () => {
   const source = { view: () => null, set: () => {} };
   const ready = load({ ...VIEW, light: 'ready', light_text: 'сдано', done_text: '✓ сдано', verdict: {}, verdict_at: null }, VIEW.built_at, source);
@@ -151,4 +161,24 @@ test('телефон: с window.teroSource крестик не показыва�
   assert.equal(grey.light.className, 'grey');
   assert.equal(grey.status.textContent, 'нет данных');
   assert.equal(grey.doing.textContent, 'нет данных');
+});
+
+test('роль хозяина: строки r-host окрашены тёплым песочным цветом', () => {
+  const style = HTML.slice(HTML.indexOf('<style>'), HTML.indexOf('</style>'));
+  const rule = style.match(/#log \.r-host\s*\{([^}]*)\}/);
+  assert.ok(rule, 'правило #log .r-host есть');
+  const color = rule[1].match(/color:\s*var\((--[a-z-]+)\)/);
+  assert.ok(color, 'у строк хозяина свой цвет');
+  const hex = style.match(new RegExp(`${color[1]}:\\s*#([0-9a-fA-F]{6})`));
+  assert.ok(hex, 'переменная цвета хозяина задана');
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16));
+  assert.ok(r > g && g > b && r - b >= 60 && r >= 0xc0, `тёплый песочный, а не #${hex[1]}`);
+});
+
+test('фильтр «только хозяин»: включение оставляет в логе только host, выключение возвращает всех', () => {
+  // in the browser window is the global: the checkbox's applyHostOnly(window, …) drives render()
+  const on = load(VIEW, VIEW.built_at, null, (g) => applyHostOnly(g, true));
+  assert.deepEqual(on.log.children.map((c) => c.className), ['r-host']);
+  const off = load(VIEW, VIEW.built_at, null, (g) => { applyHostOnly(g, true); applyHostOnly(g, false); });
+  assert.deepEqual(off.log.children.map((c) => c.className), ['r-player', 'r-judge tool', 'r-host']);
 });

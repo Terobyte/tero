@@ -140,8 +140,9 @@ def detect(env: Mapping[str, str] | None = None,
     why = _reject(kind, candidate)
     if why:
         return Host(kind, why=why)
-    return Host(kind, candidate.pid, candidate.started,
-                str(e.get("CLAUDE_CODE_SESSION_ID") or ""))
+    from src.loop.host_tail import session_of  # env first, then sessions/<pid>.json
+
+    return Host(kind, candidate.pid, candidate.started, session_of(e, candidate.pid))
 
 
 def _woken_pids(state: Mapping[str, Any] | None) -> set[int]:

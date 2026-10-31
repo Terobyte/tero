@@ -24,7 +24,7 @@ from src.errors import scrub_secrets
 from src.fsio import append_text, atomic_write_json, read_json_dict
 from src.hud import registry, single
 from src.hud.model import TAB_LIMIT, build_view
-from src.hud.model_view import messages_waiting
+from src.hud.model_view import _with_host, messages_waiting
 from src.hud.registry import is_dead
 from src.hud.tail import Tail
 from src.loop.lease import agent_view
@@ -180,6 +180,11 @@ class Bridge:
             waiting = 0
         data = build_view(self._state, self._events, now, lambda s: not is_dead(s), agent=agent,
                           log_limit=TAB_LIMIT, messages_waiting=waiting)
+        try:
+            # host.jsonl joins the log by time only, like the phone projection
+            data["log"] = _with_host(data.get("log") or [], self.run_dir, TAB_LIMIT)
+        except Exception:
+            pass
         # mac-only: how many other live runs there are; `visible` is added in view()
         try:
             others = len(self._others())

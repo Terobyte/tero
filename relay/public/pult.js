@@ -115,19 +115,36 @@ export function renderPair(unpaired) {
     ? '<h1>привязка недействительна</h1><p>токен отозван — введите новый код с экрана <code>tero pair</code></p>'
     : '<h1>привязка телефона</h1><p>введите код с экрана <code>tero pair</code></p>';
   return `<section id="${unpaired ? 'unpaired' : 'pair'}">${head}`
-    + '<input id="pair-code" maxlength="16"><button id="pair-btn">привязать</button></section>';
+    + '<input type="text" id="pair-code" maxlength="16"><button id="pair-btn">привязать</button></section>';
 }
 
-// Над карточкой: открытый вопрос первым (тап по пушу ведёт сюда), иначе итог.
-export function renderTop(state = {}) {
+// Над карточкой: открытый вопрос первым (тап по пушу ведёт сюда), иначе итог,
+// затем сообщение хозяину с фильтром «только хозяин» — всё это выше #log.
+export function renderTop(state = {}, opts = {}) {
   const st = state && typeof state === 'object' ? state : {};
   const phoneText = st.phone_text_answers !== false;
   // Моделей judge в списке выбора нет: judge — не игрок. Роль выбора — player.
   const models = Array.isArray(st.models)
     ? st.models.map((m) => String(m).replace(/^(player|tester)\s+/, '')).filter((m) => m !== 'judge')
     : [];
-  if (st.question && st.question.id) return renderQuestion(st.question, phoneText, models);
-  return '<section id="idle"><p>нет открытого вопроса</p></section>';
+  const head = st.question && st.question.id
+    ? renderQuestion(st.question, phoneText, models)
+    : '<section id="idle"><p>нет открытого вопроса</p></section>';
+  return head + renderMessage(st, opts);
+}
+
+// Фильтр лога хозяина живёт рядом с полем сообщения, но не зависит от него:
+// phone_text_answers прячет только отправку текста, не фильтрацию (F4).
+function renderMessage(st, opts = {}) {
+  const checked = opts.hostOnly ? ' checked' : '';
+  const filter = '<label class="host-filter"><input type="checkbox" id="host-only"'
+    + `${checked}> только хозяин</label>`;
+  if (st.phone_text_answers === false) {
+    return `<section id="message"><h2>сообщение хозяину</h2>${filter}</section>`;
+  }
+  return `<section id="message"><h2>сообщение хозяину</h2>${filter}`
+    + '<input type="text" name="message" maxlength="2000">'
+    + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>';
 }
 
 // Под карточкой по спеку: «уже отвечено», статус и лимиты, прогоны, решения, долг, пуши
@@ -168,15 +185,17 @@ export function renderBelow(state = {}, opts = {}) {
     + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
     + wakeBtn
     + renderResume(opts.resume)
-    + (st.phone_text_answers === false ? '' : '<section id="message"><h2>сообщение хозяину</h2>'
-      + '<input type="text" name="message" maxlength="2000">'
-      + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>')
     + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
     + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
     + stoppedHtml
     + `<section id="decisions"><h2>решения</h2>${decisionsHtml}</section>`
     + `<section id="debt"><h2>долг и история фазы</h2>${debtsHtml}${historyHtml}</section>`
     + '<section id="push"><button id="push-btn">Включить пуши</button></section>';
+}
+
+/* the phone's «только хозяин»: view.html's render() reads the global logFilter once a second */
+export function applyHostOnly(win, on) {
+  win.logFilter = on ? 'host' : '';
 }
 
 export const STALE_AFTER_S = 600;
@@ -394,7 +413,7 @@ if (inBrowser) {
     card.style.display = '';
     window.teroSource.set(viewOf(body, Date.now() / 1000));
     const draft = captureDraft(document);
-    top.innerHTML = renderTop(state);
+    top.innerHTML = renderTop(state, { hostOnly: window.logFilter === 'host' });
     below.innerHTML = renderBelow(state, { runs, resume: resumeButton({ ...(body || {}), updated_at: state.updated_at,
       view: state.view }, Date.now() / 1000) });
     wire(state);
@@ -470,6 +489,13 @@ if (inBrowser) {
     }
     const pushBtn = document.getElementById('push-btn');
     if (pushBtn) pushBtn.onclick = enablePush;
+    const hostOnly = document.getElementById('host-only');
+    if (hostOnly) {
+      // опрос заменяет innerHTML целиком: вернуть чекбоксу состояние фильтра,
+      // иначе включённый фильтр выглядит выключенным
+      hostOnly.checked = window.logFilter === 'host';
+      hostOnly.onchange = () => applyHostOnly(window, hostOnly.checked);
+    }
     const msgBtn = document.getElementById('msg-btn');
     if (msgBtn) msgBtn.onclick = () => sendMessage(state);
     const wakeBtn = document.getElementById('wake-btn');
