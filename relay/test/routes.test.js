@@ -269,6 +269,19 @@ test('GET /runs — только активные прогоны', async () => {
   assert.equal(runs[0].run_id, 'r1');
 });
 
+test('GET /runs: status — из колонки, по которой фильтруем, а не из payload', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  // колонка и payload разошлись: в списке активных статус должен быть активным
+  await env.DB.prepare('UPDATE states SET payload = ? WHERE run_id = ?')
+    .bind(JSON.stringify({ status: 'done' }), 'r1').run();
+  const { runs } = await (
+    await handleFetch(request('GET', '/runs', { token: DEVICE_TOKEN }), env)
+  ).json();
+  assert.equal(runs.length, 1);
+  assert.notEqual(runs[0].status, 'done');
+});
+
 test('GET /runs?all=1 — терминальные за 7 дней со status, view.resume, updated_at', async () => {
   const env = await setupEnv();
   await postState(env);

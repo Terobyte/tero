@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { handleFetch, sha256Hex } from '../src/worker.js';
 import {
   applyHostOnly, captureDraft, phoneLight, renderBelow, renderPair, renderQuestion, renderTop, restoreDraft,
-  tokenFromLink, viewOf,
+  tokenFromLink, viewOf, wireHostOnly,
 } from '../public/pult.js';
 import { openFakeDb } from './fake_d1.js';
 
@@ -577,9 +577,20 @@ test('F17: итог resume pending → done/failed/lost переживает п�
   el.textContent = '';
   assert.match(applyCommandResult(doc, { status: 'lost' }), /lost/);
   assert.match(el.textContent, /lost/);
-  // renderResume даёт узел, в который refresh кладёт итог после каждой перерисовки
-  const html = renderResume({ show: true, disabled: false, field: false, text: 'resume', hint: '' });
-  assert.ok(html.includes('id="resume-result"'), 'без узла итогу некуда лечь');
+  // узел итога живёт вне секции resume: кнопка спрятана (прогон ожил), итог виден
+  const hidden = resumeButton({ marks: { machine_last_seen: 1, owner_checked_at: 1, resume_w: { mode: 'refused' } },
+    updated_at: '1970-01-01T00:00:00Z' }, 2);
+  assert.equal(hidden.show, false);
+  const page = renderBelow({ ...fixture(), status: 'running' }, { resume: hidden });
+  assert.ok(!page.includes('id="resume-btn"'), 'кнопки нет');
+  assert.ok(page.includes('id="resume-result"'), 'итогу есть куда лечь и без кнопки');
+  for (const [cmd, re] of [[{ status: 'pending' }, /ожидает/], [{ status: 'done', result_text: 'поднят' }, /поднят/],
+    [{ status: 'failed', code: 3 }, /3/], [{ status: 'lost' }, /lost/]]) {
+    const node = { textContent: '' };
+    applyCommandResult({ getElementById: (id) => (page.includes(`id="${id}"`) && id === 'resume-result' ? node : null) },
+      cmd);
+    assert.match(node.textContent, re);
+  }
 });
 
 test('F15: отключённая кнопка resume — явно серая, не как обычная', () => {
@@ -622,8 +633,31 @@ test('фаза 5: опрос не сбрасывает включённый фи
   assert.ok(/<input type="checkbox" id="host-only">/.test(renderTop(fixture(), { token: 't' })),
     'выключенный фильтр без checked');
   const shell = readFileSync(SHELL, 'utf8');
-  assert.ok(shell.includes("getElementById('host-only')") && shell.includes('logFilter'),
-    'wire синхронизирует чекбокс с window.logFilter после перерисовки');
+  assert.ok(shell.includes('wireHostOnly(document, window)'), 'wire привязывает чекбокс через wireHostOnly');
+});
+
+test('фаза 5: чекбокс «только хозяин» фильтрует лог через настоящий onchange', () => {
+  const box = { checked: false, onchange: null };
+  const doc = { getElementById: (id) => (id === 'host-only' ? box : null) };
+  const win = { logFilter: '' };
+  assert.equal(wireHostOnly(doc, win), box);
+  assert.equal(typeof box.onchange, 'function', 'onchange привязан');
+  // тот же фильтр, что render() в view.html/index.html
+  const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.ok(page.includes('if (logFilter) items = items.filter(function (it) { return it.role === logFilter; });'));
+  const log = [{ role: 'host', text: 'a' }, { role: 'player', text: 'b' }, { role: 'judge', text: 'c' }];
+  const shown = () => (win.logFilter ? log.filter((it) => it.role === win.logFilter) : log);
+  box.checked = true;
+  box.onchange();
+  assert.deepEqual(shown().map((it) => it.role), ['host']);
+  box.checked = false;
+  box.onchange();
+  assert.equal(shown().length, 3, 'выключили — вернулись все роли');
+  // перерисовка: новый узел получает включённое состояние из window.logFilter
+  win.logFilter = 'host';
+  const fresh = { checked: false, onchange: null };
+  wireHostOnly({ getElementById: () => fresh }, win);
+  assert.equal(fresh.checked, true);
 });
 
 test('фаза 5: поле привязки — текстовое, под мобильными стилями', () => {

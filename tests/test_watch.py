@@ -24,21 +24,42 @@ STOPPED_USER = {
 class FakeRelay:
     """In-memory /commands/* with TTL: take → (no result) → lost."""
 
-    def __init__(self, clock, ttl=600):
+    def __init__(self, clock, ttl=600, path=None):
         self.clock, self.ttl = clock, ttl
         self.polls, self.results, self.cmds = [], [], {}
+        # path: состояние команд в файле — общее с отдельным процессом вотчера
+        self.path = path
+
+    def _load(self):
+        if self.path and Path(self.path).exists():
+            self.cmds = json.loads(Path(self.path).read_text())
+
+    def _save(self):
+        if self.path:
+            Path(self.path).write_text(json.dumps(self.cmds))
 
     def add(self, cid, run_id, text=""):
+        self._load()
         self.cmds[cid] = {"id": cid, "run_id": run_id, "text": text, "status": "pending",
                           "at": self.clock()}
+        self._save()
 
     def lost(self):
+        self._load()
         for c in self.cmds.values():
             if c["status"] == "taken" and self.clock() - c["at"] > self.ttl:
                 c["status"] = "lost"
+        self._save()
         return [c["id"] for c in self.cmds.values() if c["status"] == "lost"]
 
     def post(self, path, body):
+        self._load()
+        try:
+            return self._post(path, body)
+        finally:
+            self._save()
+
+    def _post(self, path, body):
         if path == "/commands/poll":
             self.polls.append(body)
             return {"pending": [{"id": c["id"], "run_id": c["run_id"]}
@@ -110,48 +131,36 @@ def test_watch_marks_owner_alive_without_run_lock(world, monkeypatch):
 
 def test_watch_take_crash_lost(world, tmp_path):
     """F16: падает именно вотчер между take и result: отдельный процесс берёт
-    команду через Watcher.cycle и умирает (os._exit) до /commands/result."""
+    команду через Watcher.cycle у того же ретранслятора и умирает (os._exit)
+    до /commands/result — именно эта команда после TTL становится lost."""
     import subprocess as _sp
 
     repo, run_dir = world
     put_state(run_dir, **STOPPED_USER)
-    took = tmp_path / "took"
-    result_marker = tmp_path / "result-sent"
+    now = {"t": 1000.0}
+    relay = FakeRelay(lambda: now["t"], path=tmp_path / "relay.json")
+    relay.add("c1", RUN_ID)
     root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    env["WATCHER_TOOK"] = str(took)
-    env["WATCHER_RESULT"] = str(result_marker)
-    env["WATCHER_RUN_ID"] = RUN_ID
+    env["RELAY_STATE"] = str(relay.path)
     script = (
         "import os\n"
         "from src.watch.service import Watcher\n"
-        "took = os.environ['WATCHER_TOOK']\n"
-        "res = os.environ['WATCHER_RESULT']\n"
-        "run_id = os.environ['WATCHER_RUN_ID']\n"
+        "from tests.test_watch import FakeRelay\n"
+        "relay = FakeRelay(lambda: 1000.0, path=os.environ['RELAY_STATE'])\n"
         "def post(path, body):\n"
-        "    if path == '/commands/poll':\n"
-        "        return {'pending': [{'id': 'c1', 'run_id': run_id}]}\n"
+        "    out = relay.post(path, body)\n"
         "    if path == '/commands/take':\n"
-        "        open(took, 'w').write('taken')\n"
-        "        os._exit(1)\n"
-        "    if path == '/commands/result':\n"
-        "        open(res, 'w').write('sent')\n"
-        "        return {'ok': True}\n"
-        "    return None\n"
+        "        os._exit(1)  # взял — и умер до /commands/result\n"
+        "    return out\n"
         "w = Watcher(post, machine_id='m1', clock=lambda: 1000.0, sleep=lambda s: None)\n"
         "w.cycle()\n"
     )
     proc = _sp.Popen([sys.executable, "-c", script], env=env, cwd=str(root))
     assert proc.wait(timeout=10) != 0  # процесс вотчера погиб между take и result
-    assert took.exists()  # take успел
-    assert not result_marker.exists()  # а result отправить было некому
-    # сторона ретранслятора: взятая без result команда после TTL — lost
-    now = {"t": 1000.0}
-    w, relay = make(world, clock=lambda: now["t"], runner=lambda argv, **k: (0, ""))
-    relay.clock = lambda: now["t"]
-    relay.add("c1", RUN_ID)
-    relay.post("/commands/take", {"id": "c1"})  # вотчер взял команду и умер
+    # та же команда: взята погибшим вотчером, результата нет
+    assert json.loads(relay.path.read_text())["c1"]["status"] == "taken"
     assert relay.results == [] and relay.lost() == []
     now["t"] += 601
     assert relay.lost() == ["c1"]

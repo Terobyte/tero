@@ -185,6 +185,9 @@ export function renderBelow(state = {}, opts = {}) {
     + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
     + wakeBtn
     + renderResume(opts.resume)
+    // итог команды сторожа — вне секции resume: кнопка прячется, когда прогон ожил,
+    // а итог (done/failed/lost) должен остаться виден
+    + '<p id="resume-result"></p>'
     + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
     + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
     + stoppedHtml
@@ -196,6 +199,16 @@ export function renderBelow(state = {}, opts = {}) {
 /* the phone's «только хозяин»: view.html's render() reads the global logFilter once a second */
 export function applyHostOnly(win, on) {
   win.logFilter = on ? 'host' : '';
+}
+
+// Привязка чекбокса «только хозяин»: опрос заменяет innerHTML целиком — вернуть
+// чекбоксу состояние фильтра, иначе включённый фильтр выглядит выключенным.
+export function wireHostOnly(doc, win) {
+  const box = doc.getElementById('host-only');
+  if (!box) return null;
+  box.checked = win.logFilter === 'host';
+  box.onchange = () => applyHostOnly(win, box.checked);
+  return box;
 }
 
 export const STALE_AFTER_S = 600;
@@ -255,7 +268,7 @@ export function renderResume(btn) {
   return '<section id="resume">'
     + (btn.field ? `<p>${escapeHtml(btn.why)}</p><input type="text" name="resume-text" maxlength="2000">` : '')
     + `<button id="resume-btn"${btn.disabled ? ' disabled class="grey"' : ''}>${escapeHtml(btn.text)}</button>`
-    + '<p id="resume-error"></p><p id="resume-result"></p></section>';
+    + '<p id="resume-error"></p></section>';
 }
 
 // Итог последней команды сторожа (GET /commands/last): после отправки resume
@@ -489,13 +502,7 @@ if (inBrowser) {
     }
     const pushBtn = document.getElementById('push-btn');
     if (pushBtn) pushBtn.onclick = enablePush;
-    const hostOnly = document.getElementById('host-only');
-    if (hostOnly) {
-      // опрос заменяет innerHTML целиком: вернуть чекбоксу состояние фильтра,
-      // иначе включённый фильтр выглядит выключенным
-      hostOnly.checked = window.logFilter === 'host';
-      hostOnly.onchange = () => applyHostOnly(window, hostOnly.checked);
-    }
+    wireHostOnly(document, window);
     const msgBtn = document.getElementById('msg-btn');
     if (msgBtn) msgBtn.onclick = () => sendMessage(state);
     const wakeBtn = document.getElementById('wake-btn');

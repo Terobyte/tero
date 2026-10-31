@@ -222,7 +222,7 @@ async function getRuns(request, env) {
     const entry = {
       run_id: sanitizeId(row.run_id),
       machine_id: sanitizeId(row.machine_id),
-      status: payload.status ?? null,
+      status: row.status ?? payload.status ?? null,
       phase: payload.phase ?? null,
       round: payload.round ?? null,
       updated_at: row.updated_at,
