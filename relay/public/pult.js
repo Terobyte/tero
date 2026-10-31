@@ -167,6 +167,7 @@ export function renderBelow(state = {}, opts = {}) {
     + `<p>${escapeHtml(st.status)} · фаза ${escapeHtml(st.phase)} · раунд ${escapeHtml(st.round)} · `
     + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
     + wakeBtn
+    + renderResume(opts.resume)
     + (st.phone_text_answers === false ? '' : '<section id="message"><h2>сообщение хозяину</h2>'
       + '<input type="text" name="message" maxlength="2000">'
       + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>')
@@ -210,6 +211,58 @@ export function phoneLight(view, marks, now) {
   return { light: v.light || 'grey', light_text: v.light_text || '' };
 }
 
+// Кнопка resume (спек п. 7): режим берётся из marks.resume_w, если отметка сторожа
+// позже updated_at, иначе из view.resume. Серая — машина молчит > 2 мин;
+// скрыта (с подсказкой) — по машине нет ни одной отметки.
+export function resumeButton(body, now) {
+  const b = body || {};
+  const m = b.marks || {};
+  const nowS = Number.isFinite(Number(now)) ? Number(now) : Date.now() / 1000;
+  const hasMark = m.machine_last_seen != null || m.owner_checked_at != null || m.resume_w != null;
+  if (!hasMark) return { show: false, hint: 'tero watch --install' };
+  const updated = b.updated_at ? Date.parse(b.updated_at) / 1000 : NaN;
+  const fresh = m.owner_checked_at != null && Number.isFinite(updated) && Number(m.owner_checked_at) > updated;
+  const src = fresh ? m.resume_w : (b.view && b.view.resume);
+  const mode = src && src.mode;
+  if (mode !== 'ok' && mode !== 'needs_text') return { show: false, hint: '' };
+  const silent = m.machine_last_seen == null || nowS - Number(m.machine_last_seen) > 120;
+  return { show: true, disabled: silent, field: mode === 'needs_text', why: (src && src.why) || '',
+    text: silent ? 'машина не на связи' : 'resume', hint: '' };
+}
+
+export function renderResume(btn) {
+  if (!btn) return '';
+  if (!btn.show) return btn.hint ? `<p id="resume-hint">resume: <code>${escapeHtml(btn.hint)}</code></p>` : '';
+  return '<section id="resume">'
+    + (btn.field ? `<p>${escapeHtml(btn.why)}</p><input type="text" name="resume-text" maxlength="2000">` : '')
+    + `<button id="resume-btn"${btn.disabled ? ' disabled class="grey"' : ''}>${escapeHtml(btn.text)}</button>`
+    + '<p id="resume-error"></p><p id="resume-result"></p></section>';
+}
+
+// Итог последней команды сторожа (GET /commands/last): после отправки resume
+// страница показывает код и текст результата, а не только «отправлено».
+export function commandResultText(cmd) {
+  if (!cmd) return '';
+  const tail = cmd.result_text ? ` — ${cmd.result_text}` : '';
+  if (cmd.status === 'pending') return 'отправлено сторожу: ожидает';
+  if (cmd.status === 'taken') return 'сторож выполняет…';
+  if (cmd.status === 'done') return `сторож: готово${tail}`;
+  if (cmd.status === 'failed') return `сторож: код ${cmd.code ?? '?'}${tail}`;
+  if (cmd.status === 'expired') return 'команда истекла — отправь ещё раз';
+  if (cmd.status === 'lost') return 'сторож не ответил (lost) — попробуй ещё раз';
+  return `сторож: ${cmd.status}`;
+}
+
+// Кладет итог команды сторожа в #resume-result; вызывается и сразу после
+// отправки, и после каждой перерисовки опроса — иначе перерисовка стирает итог.
+export function applyCommandResult(doc, cmd) {
+  const el = doc && doc.getElementById ? doc.getElementById('resume-result') : null;
+  if (!el) return '';
+  const text = commandResultText(cmd);
+  if (text) el.textContent = text;
+  return text;
+}
+// мак-понятия (plus, visible) пустые. Без view (старый ретранслятор) — серая карточка.
 // view для карточки из ответа GET /state: модель как есть плюс подмены лампочки;
 // мак-понятия (plus, visible) пустые. Без view (старый ретранслятор) — серая карточка.
 export function viewOf(body, now) {
@@ -242,6 +295,26 @@ if (inBrowser) {
   } catch { token = token || ''; }
   let runs = [];
   let runsAt = 0;
+  // Цель отправленного resume: итог (done/failed/lost) обычно готов позже отправки —
+  // каждый опрос дотягивает его через /commands/last и кладёт в #resume-result.
+  let lastResume = null;
+
+  // Итог последней команды сторожа: вызывается и сразу после отправки, и после
+  // каждой перерисовки опроса — перерисовка below.innerHTML иначе стирает итог.
+  async function refreshResumeResult(state) {
+    const t = (state && state.run_id && state.machine_id) ? state : lastResume;
+    if (!t || !t.run_id || !t.machine_id) return;
+    const resEl = document.getElementById('resume-result');
+    if (!resEl) return;
+    try {
+      const last = await fetch(`/commands/last?run_id=${encodeURIComponent(t.run_id)}`
+        + `&machine_id=${encodeURIComponent(t.machine_id)}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!last.ok) return;
+      applyCommandResult(document, (await last.json().catch(() => ({}))).command);
+    } catch { /* следующий тик опроса попробует снова */ }
+  }
 
   function currentCode() {
     const fromQuery = new URLSearchParams(location.search).get('code');
@@ -322,9 +395,11 @@ if (inBrowser) {
     window.teroSource.set(viewOf(body, Date.now() / 1000));
     const draft = captureDraft(document);
     top.innerHTML = renderTop(state);
-    below.innerHTML = renderBelow(state, { runs });
+    below.innerHTML = renderBelow(state, { runs, resume: resumeButton({ ...(body || {}), updated_at: state.updated_at,
+      view: state.view }, Date.now() / 1000) });
     wire(state);
     restoreDraft(document, draft);
+    refreshResumeResult(state);
   }
 
   async function pair(presetCode = '', auto = false) {
@@ -399,6 +474,26 @@ if (inBrowser) {
     if (msgBtn) msgBtn.onclick = () => sendMessage(state);
     const wakeBtn = document.getElementById('wake-btn');
     if (wakeBtn) wakeBtn.onclick = () => sendWake(state);
+    const resumeBtn = document.getElementById('resume-btn');
+    if (resumeBtn) resumeBtn.onclick = () => sendResume(state);
+  }
+
+  async function sendResume(state) {
+    const errEl = document.getElementById('resume-error');
+    const field = document.querySelector('#resume input[name="resume-text"]');
+    const res = await fetch('/commands', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ command: 'resume', run_id: state.run_id, machine_id: state.machine_id,
+        text: field ? field.value : '' }),
+    });
+    if (!res.ok) {
+      if (errEl) errEl.textContent = String((await res.json().catch(() => ({}))).error || `отказ: ${res.status}`);
+      return;
+    }
+    if (errEl) errEl.textContent = 'отправлено сторожу';
+    lastResume = { run_id: state.run_id, machine_id: state.machine_id };
+    await refreshResumeResult(state);
   }
 
   async function sendWake(state) {

@@ -217,5 +217,10 @@ def detach_go(
     run_id = state_path.parent.name
     print(f"прогон: {run_id}")
     print(f"state: {state_path}")
+    if not resuming:
+        from src.watch.install import installed
+
+        if not installed():
+            print("сторожа нет: `tero watch --install` (без него оборванный прогон с телефона не поднять)")
     print(AGENT_PROTOCOL)
     return 0

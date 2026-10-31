@@ -501,3 +501,109 @@ test('phone_text_answers: false отклоняет message и в воркере'
   );
   assert.equal(res.status, 422);
 });
+
+// ---- план 09, фаза 4: команды сторожа и отметки
+const post = (env, path, token, body) => handleFetch(request('POST', path, { token, body }), env);
+
+async function withRun(status = 'stopped') {
+  const env = await setupEnv();
+  await postState(env, { status });
+  return env;
+}
+
+test('commands: poll → пульс и отметки, take, result; POST /state отметок не трогает', async () => {
+  const env = await withRun();
+  const mark = { run_id: 'r1', owner_alive: false, host_alive: false, checked_at: 1700000000,
+    resume: { mode: 'ok', why: '' } };
+  assert.equal((await post(env, '/commands/poll', DEVICE_TOKEN, { machine_id: 'm1' })).status, 401);
+  const polled = await post(env, '/commands/poll', WRITE_KEY, { machine_id: 'm1', marks: [mark] });
+  assert.equal(polled.status, 200);
+  await postState(env, { status: 'stopped' }); // владелец пишет состояние: колонки не сбрасываются
+  const got = await (await handleFetch(request('GET', '/state?run_id=r1&machine_id=m1', { token: READ_TOKEN }), env)).json();
+  assert.equal(got.marks.owner_alive, false);
+  assert.equal(got.marks.owner_checked_at, 1700000000);
+  assert.deepEqual(got.marks.resume_w, { mode: 'ok', why: '' });
+  assert.ok(got.marks.machine_last_seen > 1700000000);
+  const runs = await (await handleFetch(request('GET', '/runs?all=1', { token: READ_TOKEN }), env)).json();
+  assert.equal(runs.runs[0].marks.owner_alive, false);
+
+  assert.equal((await post(env, '/commands', READ_TOKEN, { run_id: 'r1', machine_id: 'm1' })).status, 403);
+  const made = await (await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1', text: 'привет' })).json();
+  assert.equal((await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' })).status, 409);
+  assert.equal((await post(env, '/commands', DEVICE_TOKEN, { run_id: '../x', machine_id: 'm1' })).status, 400);
+  const again = await (await post(env, '/commands/poll', WRITE_KEY, { machine_id: 'm1', marks: [] })).json();
+  assert.deepEqual(again.pending, [{ id: made.id, run_id: 'r1' }]);
+  const taken = await (await post(env, '/commands/take', WRITE_KEY, { id: made.id, machine_id: 'm1' })).json();
+  assert.equal(taken.text, 'привет');
+  assert.equal((await post(env, '/commands/take', WRITE_KEY, { id: made.id, machine_id: 'm1' })).status, 409);
+  assert.equal((await post(env, '/commands/result', WRITE_KEY, { id: made.id, machine_id: 'm1', code: 0, text: 'ok' })).status, 200);
+  const row = env.DB._raw.prepare('SELECT status, code FROM commands').get();
+  assert.deepEqual({ ...row }, { status: 'done', code: 0 });
+});
+
+test('commands: take без result дольше TTL → lost, потом можно новую', async () => {
+  const env = await withRun();
+  const made = await (await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' })).json();
+  await post(env, '/commands/take', WRITE_KEY, { id: made.id, machine_id: 'm1' });
+  env.DB._raw.prepare('UPDATE commands SET taken_at = taken_at - 601').run();
+  assert.equal((await post(env, '/commands/result', WRITE_KEY, { id: made.id, machine_id: 'm1', code: 0 })).status, 409);
+  assert.equal(env.DB._raw.prepare('SELECT status FROM commands').get().status, 'lost');
+  assert.equal((await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' })).status, 200);
+});
+
+test('commands: ожидающая старше TTL истекает', async () => {
+  const env = await withRun();
+  await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' });
+  env.DB._raw.prepare('UPDATE commands SET created_at = created_at - 601').run();
+  const polled = await (await post(env, '/commands/poll', WRITE_KEY, { machine_id: 'm1' })).json();
+  assert.deepEqual(polled.pending, []);
+});
+
+test('commands: параллельные POST — ровно один 200, второй 409, одна активная', async () => {
+  const env = await withRun();
+  const payload = { run_id: 'r1', machine_id: 'm1', text: 'а' };
+  const [a, b] = await Promise.all([
+    post(env, '/commands', DEVICE_TOKEN, payload),
+    post(env, '/commands', DEVICE_TOKEN, payload),
+  ]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+  const n = env.DB._raw.prepare(
+    "SELECT COUNT(*) AS n FROM commands WHERE run_id = 'r1' AND status IN ('pending', 'taken')",
+  ).get().n;
+  assert.equal(n, 1);
+});
+
+test('commands/last: телефон видит итог последней команды (done/failed/lost)', async () => {
+  const env = await withRun();
+  const get = (tok) => handleFetch(
+    request('GET', '/commands/last?run_id=r1&machine_id=m1', { token: tok }), env);
+  assert.equal((await get('')).status, 401);
+  assert.equal((await get(READ_TOKEN)).status, 200);
+  assert.equal((await (await get(DEVICE_TOKEN)).json()).command, null);
+  const made = await (await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' })).json();
+  assert.equal((await (await get(DEVICE_TOKEN)).json()).command.status, 'pending');
+  await post(env, '/commands/take', WRITE_KEY, { id: made.id, machine_id: 'm1' });
+  await post(env, '/commands/result', WRITE_KEY, { id: made.id, machine_id: 'm1', code: 3, text: 'упал' });
+  const done = (await (await get(DEVICE_TOKEN)).json()).command;
+  assert.deepEqual([done.status, done.code, done.result_text], ['failed', 3, 'упал']);
+  const made2 = await (await post(env, '/commands', DEVICE_TOKEN, { run_id: 'r1', machine_id: 'm1' })).json();
+  await post(env, '/commands/take', WRITE_KEY, { id: made2.id, machine_id: 'm1' });
+  env.DB._raw.prepare('UPDATE commands SET taken_at = taken_at - 601').run();
+  assert.equal((await (await get(DEVICE_TOKEN)).json()).command.status, 'lost');
+});
+
+test('/answer при owner_alive=false и stopped → сначала resume', async () => {
+  const env = await withRun('running');
+  const send = (kind) => post(env, '/answer', DEVICE_TOKEN, { kind, run_id: 'r1', machine_id: 'm1', text: 'привет' });
+  assert.equal((await send('message')).status, 200);
+  await post(env, '/commands/poll', WRITE_KEY, { machine_id: 'm1', marks: [{ run_id: 'r1', owner_alive: false }] });
+  for (const kind of ['message', 'wake']) {
+    const res = await send(kind);
+    assert.equal(res.status, 422);
+    assert.match((await res.json()).error, /сначала resume/);
+  }
+  await postState(env, { status: 'stopped' });
+  const res = await send('message');
+  assert.equal(res.status, 422);
+  assert.match((await res.json()).error, /сначала resume/);
+});

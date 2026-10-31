@@ -232,14 +232,14 @@
   скрыта без единой отметки по машине с подсказкой `tero watch --install`; при `needs_text` — с полем.
 - `tero go --detach` без установленного сторожа печатает одну строку «сторожа нет: `tero watch --install`…».
 
-- [ ] `test_watch_single_instance_flock` (второй `watch` выходит)
-- [ ] `test_watch_marks_owner_alive_without_run_lock`: живость по pid/`pid_started`, `run.lock` не берётся (идущий `go` его не теряет); смена `owner_alive` → отметка в том же цикле
-- [ ] `test_watch_take_crash_lost` на фейковом ретрансляторе: `take` → падение → после TTL `lost`
-- [ ] `test_watch_resume_argv_no_phone_text`: argv список с полными путями, текста нет; `needs_text` → подписанный `resume-answer.json`; код 9 → 3 повтора
-- [ ] `test_watch_install_files` в `tmp_path`-`HOME`: plist / unit с `PATH`, `HOME`, `AbandonProcessGroup` / `KillMode=process`; `--uninstall` убирает
-- [ ] `routes.test.js` / `schema.test.js`: `/commands/poll|take|result`, TTL, одна ожидающая на прогон, `last_seen`, колонки отметок не заполняются из `POST /state`, `marks` в `GET /state`; `/answer` message при `owner_alive=false` → отказ
-- [ ] `pult.test.js` / `dom.test.js`: `phoneLight` подмена 2; кнопка `resume` серая / скрыта / с полем по таблице
-- [ ] реализовать
+- [x] `test_watch_single_instance_flock` (второй `watch` выходит)
+- [x] `test_watch_marks_owner_alive_without_run_lock`: живость по pid/`pid_started`, `run.lock` не берётся (идущий `go` его не теряет); смена `owner_alive` → отметка в том же цикле
+- [x] `test_watch_take_crash_lost` на фейковом ретрансляторе: `take` → падение → после TTL `lost`
+- [x] `test_watch_resume_argv_no_phone_text`: argv список с полными путями, текста нет; `needs_text` → подписанный `resume-answer.json`; код 9 → 3 повтора
+- [x] `test_watch_install_files` в `tmp_path`-`HOME`: plist / unit с `PATH`, `HOME`, `AbandonProcessGroup` / `KillMode=process`; `--uninstall` убирает
+- [x] `routes.test.js` / `schema.test.js`: `/commands/poll|take|result`, TTL, одна ожидающая на прогон, `last_seen`, колонки отметок не заполняются из `POST /state`, `marks` в `GET /state`; `/answer` message при `owner_alive=false` → отказ
+- [x] `pult.test.js` / `dom.test.js`: `phoneLight` подмена 2; кнопка `resume` серая / скрыта / с полем по таблице
+- [x] реализовать
 
 **Вне этой фазы:** транскрипт хозяина (фаза 5).
 

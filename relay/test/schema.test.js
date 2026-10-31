@@ -87,3 +87,16 @@ test('states.status: миграция 06→07 применяется к базе
   old.exec(readFileSync(new URL('../migrate-06-07.sql', import.meta.url), 'utf8'));
   assert.equal(old.prepare('SELECT status FROM states').get().status, 'stopped');
 });
+
+test('миграция 07→08: колонки отметок, machines и commands', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { readFileSync } = await import('node:fs');
+  const old = new DatabaseSync(':memory:');
+  old.exec('CREATE TABLE states (run_id TEXT NOT NULL, machine_id TEXT NOT NULL, payload TEXT NOT NULL, '
+    + "updated_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', PRIMARY KEY (run_id, machine_id))");
+  old.exec(readFileSync(new URL('../migrate-07-08.sql', import.meta.url), 'utf8'));
+  const cols = old.prepare('PRAGMA table_info(states)').all().map((c) => c.name);
+  for (const want of ['owner_alive', 'host_alive', 'owner_checked_at', 'resume_w']) assert.ok(cols.includes(want), want);
+  old.prepare('INSERT INTO machines VALUES (?, ?)').run('m', 1);
+  old.prepare("INSERT INTO commands (id, run_id, machine_id, created_at) VALUES ('c', 'r', 'm', 1)").run();
+});

@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS states (
   payload TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT '',
+  -- план 09, фаза 4: отметки сторожа (relay/migrate-07-08.sql); POST /state их не трогает
+  owner_alive INTEGER,
+  host_alive INTEGER,
+  owner_checked_at INTEGER,
+  resume_w TEXT,
   PRIMARY KEY (run_id, machine_id)
 );
 
@@ -89,3 +94,27 @@ CREATE TABLE IF NOT EXISTS push_claims (
   at INTEGER NOT NULL,
   PRIMARY KEY (run_id, reason)
 );
+
+-- План 09, фаза 4: пульс сторожа и команды с телефона (только `resume <run_id>`).
+CREATE TABLE IF NOT EXISTS machines (
+  machine_id TEXT PRIMARY KEY,
+  last_seen INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS commands (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  machine_id TEXT NOT NULL,
+  text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',  -- pending | taken | done | failed | expired | lost
+  created_at INTEGER NOT NULL,
+  taken_at INTEGER,
+  code INTEGER,
+  result_text TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_commands_machine ON commands (machine_id, status);
+CREATE INDEX IF NOT EXISTS idx_commands_run ON commands (run_id, machine_id, status);
+-- Одна ожидающая/взятая команда на прогон: гонку двух POST режет сам индекс (409).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_commands_active ON commands (run_id, machine_id)
+  WHERE status IN ('pending', 'taken');

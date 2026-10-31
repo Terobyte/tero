@@ -56,6 +56,39 @@ def atomic_write_text(
         raise
 
 
+def atomic_write_bytes(
+    path: str | Path,
+    data: bytes,
+    *,
+    mode: int | None = None,
+) -> None:
+    """Write ``data`` to ``path`` via a temp file in the same dir + rename.
+
+    Byte twin of :func:`atomic_write_text` (for plists): on error the temp
+    file is removed, so an interrupted write never leaves a partial file.
+    """
+    target = Path(path)
+    if mode is None:
+        try:
+            mode = target.stat().st_mode & 0o7777
+        except FileNotFoundError:
+            mode = 0o666 & ~_UMASK
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp_name, mode)
+        Path(tmp_name).replace(target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def atomic_write_json(
     path: str | Path,
     data: Any,

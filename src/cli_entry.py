@@ -179,7 +179,7 @@ async def run_resume(args) -> int:
 
 
 # commands that outlive edits to the checkout they run from
-PRELOAD_COMMANDS = frozenset({"go", "resume", "wait", "hud"})
+PRELOAD_COMMANDS = frozenset({"go", "resume", "wait", "hud", "watch"})
 
 
 def main():
@@ -242,6 +242,10 @@ def main():
         from src.commands.guide_cmds import run_wake
 
         sys.exit(run_wake(args))
+    elif args.command == "watch":
+        from src.commands.watch_cmd import run_watch
+
+        sys.exit(run_watch(args))
     elif args.command == "guide":
         from src.commands.guide_cmds import run_guide
 

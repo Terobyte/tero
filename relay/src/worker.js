@@ -105,6 +105,38 @@ async function loadState(env, runId, machineId) {
   }
 }
 
+const COMMAND_TTL_S = 600;
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
+const nowS = () => Math.floor(Date.now() / 1000);
+const flag = (v) => (v === null || v === undefined ? null : v === 1);
+
+// Отметки сторожа (колонки states) + пульс машины; без единой отметки — null.
+async function loadMarks(env, runId, machineId) {
+  const row = await env.DB.prepare(
+    'SELECT s.owner_alive, s.host_alive, s.owner_checked_at, s.resume_w, m.last_seen '
+    + 'FROM states s LEFT JOIN machines m ON m.machine_id = s.machine_id '
+    + 'WHERE s.run_id = ? AND s.machine_id = ?',
+  ).bind(runId, machineId).first();
+  return marksOf(row);
+}
+
+function marksOf(row) {
+  if (!row) return null;
+  let resumeW = null;
+  try {
+    resumeW = row.resume_w ? JSON.parse(row.resume_w) : null;
+  } catch {
+    resumeW = null;
+  }
+  return {
+    owner_alive: flag(row.owner_alive),
+    host_alive: flag(row.host_alive),
+    owner_checked_at: row.owner_checked_at ?? null,
+    resume_w: resumeW,
+    machine_last_seen: row.last_seen ?? null,
+  };
+}
+
 async function postState(request, env) {
   if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
   const body = await readJson(request);
@@ -157,7 +189,8 @@ async function getState(request, env, url) {
   if (denied) return denied;
   const state = await loadState(env, url.searchParams.get('run_id'), url.searchParams.get('machine_id'));
   if (!state) return jsonResponse({ error: 'not found' }, 404);
-  return jsonResponse({ state });
+  const marks = await loadMarks(env, url.searchParams.get('run_id'), url.searchParams.get('machine_id'));
+  return jsonResponse({ state, marks });
 }
 
 async function getRuns(request, env) {
@@ -169,12 +202,14 @@ async function getRuns(request, env) {
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const rows = await (all
     ? env.DB.prepare(
-      "SELECT run_id, machine_id, payload, updated_at, status FROM states WHERE status NOT IN ('done', 'stopped') "
-      + 'OR updated_at >= ? ORDER BY updated_at DESC',
+      'SELECT s.run_id, s.machine_id, s.payload, s.updated_at, s.status, s.owner_alive, s.host_alive, '
+      + 's.owner_checked_at, s.resume_w, m.last_seen FROM states s LEFT JOIN machines m ON m.machine_id = s.machine_id '
+      + "WHERE s.status NOT IN ('done', 'stopped') OR s.updated_at >= ? ORDER BY s.updated_at DESC",
     ).bind(cutoff)
     : env.DB.prepare(
-      "SELECT run_id, machine_id, payload, updated_at, status FROM states WHERE status NOT IN ('done', 'stopped') "
-      + 'ORDER BY updated_at DESC',
+      'SELECT s.run_id, s.machine_id, s.payload, s.updated_at, s.status, s.owner_alive, s.host_alive, '
+      + 's.owner_checked_at, s.resume_w, m.last_seen FROM states s LEFT JOIN machines m ON m.machine_id = s.machine_id '
+      + "WHERE s.status NOT IN ('done', 'stopped') ORDER BY s.updated_at DESC",
     )).all();
   const runs = [];
   for (const row of rows.results || []) {
@@ -192,7 +227,10 @@ async function getRuns(request, env) {
       round: payload.round ?? null,
       updated_at: row.updated_at,
     };
-    if (all) entry.view = { resume: (payload.view && payload.view.resume) ?? null };
+    if (all) {
+      entry.view = { resume: (payload.view && payload.view.resume) ?? null };
+      entry.marks = marksOf(row);
+    }
     runs.push(entry);
   }
   return jsonResponse({ runs });
@@ -242,7 +280,7 @@ async function postAnswer(request, env) {
 }
 
 // Сообщение хозяину и wake: без вопроса, только токен PWA (проверен выше) и
-// незавершённый прогон. Проверка marks.owner_alive — позже (фаза 4 плана 09).
+// незавершённый прогон; при marks.owner_alive === false — отказ «сначала resume».
 async function postOwnerNote(env, body, kind, text) {
   if (typeof body.run_id !== 'string' || !body.run_id
     || typeof body.machine_id !== 'string' || !body.machine_id) {
@@ -250,7 +288,10 @@ async function postOwnerNote(env, body, kind, text) {
   }
   const state = await loadState(env, body.run_id, body.machine_id);
   if (!state) return jsonResponse({ error: 'unknown run' }, 422);
-  if (['done', 'stopped'].includes(state.status)) return jsonResponse({ error: 'run finished' }, 422);
+  if (state.status === 'stopped') return jsonResponse({ error: 'прогон не идёт, сначала resume' }, 422);
+  if (['done'].includes(state.status)) return jsonResponse({ error: 'run finished' }, 422);
+  const marks = await loadMarks(env, body.run_id, body.machine_id);
+  if (marks && marks.owner_alive === false) return jsonResponse({ error: 'прогон не идёт, сначала resume' }, 422);
   if (kind === 'message') {
     if (!text) return jsonResponse({ error: 'text required' }, 400);
     if (state.phone_text_answers === false) return jsonResponse({ error: 'text answers disabled' }, 422);
@@ -261,6 +302,130 @@ async function postOwnerNote(env, body, kind, text) {
     + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).bind(uuid, body.run_id, body.machine_id, '', kind, kind === 'message' ? text : '', 'human', nowIso(), kind).run();
   return jsonResponse({ ok: true, uuid });
+}
+
+// ---- команды с телефона (фаза 4 плана 09): только `resume <run_id>`
+async function expireCommands(env, now) {
+  await env.DB.prepare("UPDATE commands SET status = 'lost' WHERE status = 'taken' AND taken_at < ?")
+    .bind(now - COMMAND_TTL_S).run();
+  await env.DB.prepare("UPDATE commands SET status = 'expired' WHERE status = 'pending' AND created_at < ?")
+    .bind(now - COMMAND_TTL_S).run();
+}
+
+async function postCommand(request, env) {
+  const role = await deviceRole(request, env);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
+  if (role !== 'device') return jsonResponse({ error: 'read-only token' }, 403);
+  const body = await readJson(request);
+  if (!body) return jsonResponse({ error: 'bad json' }, 400);
+  const { run_id: runId, machine_id: machineId, text = '' } = body;
+  if (body.command !== undefined && body.command !== 'resume') return jsonResponse({ error: 'bad command' }, 400);
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId) || typeof machineId !== 'string' || !machineId) {
+    return jsonResponse({ error: 'bad run_id' }, 400);
+  }
+  if (typeof text !== 'string') return jsonResponse({ error: 'text must be a string' }, 400);
+  if (text.length > 2000) return jsonResponse({ error: 'text too long' }, 413);
+  if (!(await loadState(env, runId, machineId))) return jsonResponse({ error: 'unknown run' }, 422);
+  const now = nowS();
+  await expireCommands(env, now);
+  const busy = await env.DB.prepare(
+    "SELECT id FROM commands WHERE run_id = ? AND machine_id = ? AND status IN ('pending', 'taken')",
+  ).bind(runId, machineId).first();
+  if (busy) return jsonResponse({ error: 'already pending' }, 409);
+  const id = crypto.randomUUID();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO commands (id, run_id, machine_id, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(id, runId, machineId, text, 'pending', now).run();
+  } catch {
+    // Гонка двух POST: частичный индекс idx_commands_active пропустил только одного.
+    const clash = await env.DB.prepare(
+      "SELECT id FROM commands WHERE run_id = ? AND machine_id = ? AND status IN ('pending', 'taken')",
+    ).bind(runId, machineId).first();
+    if (clash) return jsonResponse({ error: 'already pending' }, 409);
+    throw new Error('command insert failed');
+  }
+  return jsonResponse({ ok: true, id });
+}
+
+async function postCommandsPoll(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  const machineId = body && body.machine_id;
+  if (typeof machineId !== 'string' || !machineId || sanitizeId(machineId) !== machineId) {
+    return jsonResponse({ error: 'machine_id required' }, 400);
+  }
+  const now = nowS();
+  await env.DB.prepare(
+    'INSERT INTO machines (machine_id, last_seen) VALUES (?, ?) '
+    + 'ON CONFLICT (machine_id) DO UPDATE SET last_seen = excluded.last_seen',
+  ).bind(machineId, now).run();
+  for (const mark of Array.isArray(body.marks) ? body.marks.slice(0, 200) : []) {
+    if (!mark || typeof mark.run_id !== 'string' || !RUN_ID_RE.test(mark.run_id)) continue;
+    const bit = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : null);
+    const checked = Number.isFinite(Number(mark.checked_at)) ? Math.floor(Number(mark.checked_at)) : now;
+    await env.DB.prepare(
+      'UPDATE states SET owner_alive = ?, host_alive = ?, owner_checked_at = ?, resume_w = ? '
+      + 'WHERE run_id = ? AND machine_id = ?',
+    ).bind(bit(mark.owner_alive), bit(mark.host_alive), checked,
+      JSON.stringify(mark.resume && typeof mark.resume === 'object' ? mark.resume : null),
+      mark.run_id, machineId).run();
+  }
+  await expireCommands(env, now);
+  const rows = await env.DB.prepare(
+    "SELECT id, run_id FROM commands WHERE machine_id = ? AND status = 'pending' ORDER BY created_at",
+  ).bind(machineId).all();
+  return jsonResponse({ ok: true, pending: rows.results || [] });
+}
+
+async function postCommandsTake(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.id !== 'string' || typeof body.machine_id !== 'string') {
+    return jsonResponse({ error: 'id and machine_id required' }, 400);
+  }
+  const now = nowS();
+  await expireCommands(env, now);
+  const done = await env.DB.prepare(
+    "UPDATE commands SET status = 'taken', taken_at = ? WHERE id = ? AND machine_id = ? AND status = 'pending'",
+  ).bind(now, body.id, body.machine_id).run();
+  if (!done.meta || Number(done.meta.changes) !== 1) return jsonResponse({ error: 'not pending' }, 409);
+  const row = await env.DB.prepare('SELECT id, run_id, text FROM commands WHERE id = ?').bind(body.id).first();
+  return jsonResponse({ ok: true, ...row });
+}
+
+async function postCommandsResult(request, env) {
+  if (!hasWriteKey(request, env)) return jsonResponse({ error: 'unauthorized' }, 401);
+  const body = await readJson(request);
+  if (!body || typeof body.id !== 'string' || typeof body.machine_id !== 'string') {
+    return jsonResponse({ error: 'id and machine_id required' }, 400);
+  }
+  const code = Number.isFinite(Number(body.code)) ? Math.floor(Number(body.code)) : 1;
+  const text = typeof body.text === 'string' ? body.text.slice(0, 500) : '';
+  await expireCommands(env, nowS());
+  const done = await env.DB.prepare(
+    "UPDATE commands SET status = ?, code = ?, result_text = ? WHERE id = ? AND machine_id = ? AND status = 'taken'",
+  ).bind(code === 0 ? 'done' : 'failed', code, text, body.id, body.machine_id).run();
+  if (!done.meta || Number(done.meta.changes) !== 1) return jsonResponse({ error: 'not taken' }, 409);
+  return jsonResponse({ ok: true });
+}
+
+// Итог последней команды сторожа для телефона (фаза 4 плана 09): читают
+// и PWA, и read-токен; протухшие take помечаем lost перед чтением.
+async function getLastCommand(request, env, url) {
+  const role = await deviceRole(request, env);
+  const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
+  if (denied) return denied;
+  const runId = url.searchParams.get('run_id');
+  const machineId = url.searchParams.get('machine_id');
+  if (!runId || !machineId) return jsonResponse({ error: 'run_id and machine_id required' }, 400);
+  await expireCommands(env, nowS());
+  const row = await env.DB.prepare(
+    'SELECT id, run_id, status, code, result_text, created_at, taken_at FROM commands '
+    + 'WHERE run_id = ? AND machine_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+  ).bind(runId, machineId).first();
+  return jsonResponse({ command: row ? { ...row } : null });
 }
 
 const ANSWER_COLS = 'uuid, run_id, machine_id, question_id, action, text, who, received_at, kind';
@@ -441,6 +606,11 @@ export async function handleFetch(request, env) {
   if (method === 'POST' && pathname === '/answer') return postAnswer(request, env);
   if (method === 'GET' && pathname === '/answers') return getAnswers(request, env, url);
   if (method === 'POST' && pathname === '/answers/ack') return ackAnswer(request, env);
+  if (method === 'POST' && pathname === '/commands') return postCommand(request, env);
+  if (method === 'GET' && pathname === '/commands/last') return getLastCommand(request, env, url);
+  if (method === 'POST' && pathname === '/commands/poll') return postCommandsPoll(request, env);
+  if (method === 'POST' && pathname === '/commands/take') return postCommandsTake(request, env);
+  if (method === 'POST' && pathname === '/commands/result') return postCommandsResult(request, env);
   if (method === 'POST' && pathname === '/notify') return postNotify(request, env);
   if (method === 'POST' && pathname === '/pair/code') return postPairCode(request, env);
   if (method === 'POST' && pathname === '/pair/exchange') return postPairExchange(request, env);

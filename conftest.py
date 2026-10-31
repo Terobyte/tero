@@ -33,6 +33,10 @@ def _isolated_home(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     # golden по умолчанию включает jev и claude-эскалацию; тесты живут без пресета
     monkeypatch.setenv("TERO_PRESET", "none")
+    # индекс прогонов тоже в tmp, вне ~/.tero: иначе он укажет в настоящий домашний
+    from src.loop.runs_index import TEST_INDEX_ENV
+
+    monkeypatch.setenv(TEST_INDEX_ENV, str(home / "runs-index.json"))
     return home
 
 

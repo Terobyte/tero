@@ -509,3 +509,86 @@ test('renderQuestion экранирует текст вопроса', () => {
   assert.ok(!html.includes('<img'));
   assert.ok(html.includes('&lt;img'));
 });
+
+import { applyCommandResult, commandResultText, renderResume, resumeButton } from '../public/pult.js';
+
+test('resumeButton: по таблице — marks.resume_w свежее state, иначе view.resume', () => {
+  const NOW = 1_800_000_000;
+  const iso = (s) => new Date(s * 1000).toISOString();
+  const base = { view: { resume: { mode: 'ok', why: '' } }, updated_at: iso(NOW - 1000) };
+  // без единой отметки по машине — скрыта с подсказкой
+  const none = resumeButton({ ...base, marks: { owner_alive: null, host_alive: null, owner_checked_at: null,
+    resume_w: null, machine_last_seen: null } }, NOW);
+  assert.deepEqual([none.show, none.hint], [false, 'tero watch --install']);
+  // отметка позже updated_at — верим resume_w (needs_text → поле)
+  const fresh = resumeButton({ ...base, marks: { owner_checked_at: NOW - 10, machine_last_seen: NOW - 5,
+    resume_w: { mode: 'needs_text', why: 'вопрос?' } } }, NOW);
+  assert.deepEqual([fresh.show, fresh.disabled, fresh.field], [true, false, true]);
+  // отметка старее updated_at — верим view.resume
+  const stale = resumeButton({ ...base, marks: { owner_checked_at: NOW - 5000, machine_last_seen: NOW - 5,
+    resume_w: { mode: 'needs_text', why: '' } } }, NOW);
+  assert.deepEqual([stale.show, stale.field], [true, false]);
+  // refused — кнопки нет
+  assert.equal(resumeButton({ ...base, view: { resume: { mode: 'refused', why: 'x' } },
+    marks: { owner_checked_at: NOW - 5000, machine_last_seen: NOW - 5 } }, NOW).show, false);
+  // машина молчит > 2 мин — серая
+  const grey = resumeButton({ ...base, marks: { owner_checked_at: NOW - 5000, machine_last_seen: NOW - 121 } }, NOW);
+  assert.deepEqual([grey.show, grey.disabled, grey.text], [true, true, 'машина не на связи']);
+});
+
+test('commandResultText: после отправки виден итог — успех, код, lost', () => {
+  assert.equal(commandResultText(null), '');
+  assert.equal(commandResultText({ status: 'pending' }), 'отправлено сторожу: ожидает');
+  assert.match(commandResultText({ status: 'done', code: 0, result_text: 'прогон поднят' }), /прогон поднят/);
+  const failed = commandResultText({ status: 'failed', code: 3, result_text: 'упал' });
+  assert.match(failed, /3/);
+  assert.match(failed, /упал/);
+  assert.match(commandResultText({ status: 'lost' }), /lost/);
+});
+
+test('resume: итог дотягивается после отправки и переживает перерисовки опроса', () => {
+  const shell = readFileSync(SHELL, 'utf8');
+  // цель отправленного resume хранится — отложенные done/failed/lost подтянутся позже
+  assert.ok(/lastResume|lastCommand|resumeTarget/.test(shell), 'цель resume хранится для опроса');
+  // каждый опрос после перерисовки обновляет #resume-result, а не только sendResume один раз
+  const loadAt = shell.indexOf('async function load(');
+  const pairAt = shell.indexOf('async function pair(');
+  assert.ok(loadAt >= 0 && pairAt > loadAt, 'каркас load/pair на месте');
+  const loadBody = shell.slice(loadAt, pairAt);
+  assert.ok(loadBody.includes('resume-result') || loadBody.includes('refreshResume'),
+    'load обновляет итог resume после каждой перерисовки');
+});
+
+test('F17: итог resume pending → done/failed/lost переживает перерисовку', () => {
+  // узел #resume-result: перерисовка опроса его пересоздаёт, refresh дотягивает
+  // итог через /commands/last заново — моделируем сброс узла между итогами
+  const el = { textContent: '' };
+  const doc = { getElementById: (id) => (id === 'resume-result' ? el : null) };
+  assert.match(applyCommandResult(doc, { status: 'pending' }), /ожидает/);
+  assert.match(el.textContent, /ожидает/);
+  el.textContent = ''; // перерисовка стёрла узел
+  assert.match(applyCommandResult(doc, { status: 'done', code: 0, result_text: 'прогон поднят' }),
+    /прогон поднят/);
+  assert.match(el.textContent, /прогон поднят/);
+  el.textContent = '';
+  const failed = applyCommandResult(doc, { status: 'failed', code: 3, result_text: 'упал' });
+  assert.match(failed, /3/);
+  assert.match(el.textContent, /упал/);
+  el.textContent = '';
+  assert.match(applyCommandResult(doc, { status: 'lost' }), /lost/);
+  assert.match(el.textContent, /lost/);
+  // renderResume даёт узел, в который refresh кладёт итог после каждой перерисовки
+  const html = renderResume({ show: true, disabled: false, field: false, text: 'resume', hint: '' });
+  assert.ok(html.includes('id="resume-result"'), 'без узла итогу некуда лечь');
+});
+
+test('F15: отключённая кнопка resume — явно серая, не как обычная', () => {
+  const css = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const grey = css.match(/button\.grey[^{]*\{([^}]*)\}/);
+  assert.ok(grey, 'явный стиль button.grey');
+  assert.ok(/color\s*:/.test(grey[1]), 'серой кнопке задан свой цвет');
+  assert.ok(/background\s*:/.test(grey[1]), 'серой кнопке задан свой фон');
+  const normal = css.match(/html\[data-host="phone"\] button \{([^}]*)\}/);
+  assert.ok(normal, 'обычный стиль кнопок на месте');
+  assert.notEqual(grey[1].trim(), normal[1].trim(), 'серый вид отличается от обычного');
+});
