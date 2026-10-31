@@ -189,14 +189,14 @@
 - `/runs?all=1` отдаёт терминальные прогоны за 7 дней с `status`, `view.resume`, `updated_at`; без `all`
   — как раньше. `/runs` и cron фильтруют по колонке `status`, не парсят payload. `pult.js`: список «остановлены».
 
-- [ ] `test_resume_detach_ready_by_new_pid`: старый `state.json` со старым pid не считается готовностью
-- [ ] `test_resume_detach_passes_code9`
-- [ ] `test_answer_from_inbox_phone_not_judge`: текст из подписанного `resume-answer.json` попал в промпт игрока в `answer_block`, в промпте судьи (по ledger) его нет, файл удалён; неподписанный — игнор
-- [ ] `test_resume_mode`: `stopped` по `user` с вопросом → `needs_text`; при `phone_text_answers: false` → `refused`; по `secrets` → `refused` с причиной; другой прогон в репо → `refused`
-- [ ] `test_runs_index_written_and_pruned`
-- [ ] `routes.test.js`: `/runs?all=1` с терминальными, без `all` — прежний ответ
-- [ ] `test_detach_prints_protocol_and_returns` обновлён (5 → `resume --detach`)
-- [ ] реализовать
+- [x] `test_resume_detach_ready_by_new_pid`: старый `state.json` со старым pid не считается готовностью
+- [x] `test_resume_detach_passes_code9`
+- [x] `test_answer_from_inbox_phone_not_judge`: текст из подписанного `resume-answer.json` попал в промпт игрока в `answer_block`, в промпте судьи (по ledger) его нет, файл удалён; неподписанный — игнор
+- [x] `test_resume_mode`: `stopped` по `user` с вопросом → `needs_text`; при `phone_text_answers: false` → `refused`; по `secrets` → `refused` с причиной; другой прогон в репо → `refused`
+- [x] `test_runs_index_written_and_pruned`
+- [x] `routes.test.js`: `/runs?all=1` с терминальными, без `all` — прежний ответ
+- [x] `test_detach_prints_protocol_and_returns` обновлён (5 → `resume --detach`)
+- [x] реализовать
 
 **Вне этой фазы:** `tero watch`, `/commands`, `marks`, кнопка `resume` на странице (фаза 4).
 

@@ -33,6 +33,7 @@ from src.loop.session import (
     _update,
     run_phases,
 )
+from src.loop.start_fail import fail_start
 from src.loop.resume.step import _restore_resume_tree, _stopped_phases
 from src.loop.run_ledger import _start_ledger
 from src.loop.state import RunState, Status
@@ -95,15 +96,7 @@ async def run(
     with session:
 
         def _fail_start(reason: str, doing: str = "", status: str = "error") -> RunOutcome:
-            _update(
-                state,
-                status=Status.STOPPED.value,
-                reason=reason,
-                text=reason,
-                doing=doing or "стоп",
-            )
-            session.release()
-            return RunOutcome(status=status, exit_code=1, reason=reason)
+            return fail_start(state, run_dir, session, reason, doing=doing, status=status)
 
         failed = start_checks(
             cfg, repo, state,
@@ -176,6 +169,7 @@ async def resume(
     agents: AgentRunner,
     answer: str = "",
     force: bool = False,
+    answer_from_inbox: bool = False,
 ) -> RunOutcome:
     """Continue a stopped run from its state.json. Only judge_pending yet."""
     from src.loop.stream import Stream
@@ -184,6 +178,11 @@ async def resume(
     run_path = Path(run_dir).expanduser().resolve()
     state = RunState.read(run_path / "state.json") or {}
     status = state.get("status") or ""
+    had_answer = bool((answer or "").strip())
+    if answer_from_inbox and not had_answer:
+        from src.loop.resume.phone_answer import pre_lock_answer
+
+        answer = pre_lock_answer(run_path) or answer
     cfg, refusal = _resume_config(state, answer, force)
     if cfg is None:
         return _refuse(run_path, refusal)
@@ -207,6 +206,10 @@ async def resume(
 
     done_io = RunState(run_path / "state.json")
     stream = Stream(run_path / "stream.jsonl")
+    if answer_from_inbox:
+        from src.loop.resume.phone_answer import owner_answer
+
+        answer = owner_answer(run_path, done_io, answer, had_answer)
     try:
         saved_hang = state.get("hang_after_s")
         if not isinstance(saved_hang, (int, float)):

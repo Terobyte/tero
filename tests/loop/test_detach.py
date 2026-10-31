@@ -48,7 +48,7 @@ EXPECTED_PROTOCOL = (
     "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; "
     "`3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — "
     "снова `tero wait --messages`; иначе решить, `tero answer <id> … --why …`, снова `tero wait --messages`; "
-    "`5` → `tero resume`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; "
+    "`5` → `tero resume --detach`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; "
     "`7` → текст сообщения уже в выводе; на вопрос отвечай только если статус `waiting_agent`, "
     "снова `tero wait --messages`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова "
     "`tero wait --messages`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
@@ -292,3 +292,53 @@ def test_owner_argv_passes_no_tester(tmp_path):
     argv = detach_mod.owner_argv(_go_args(tmp_path, no_tester=True))
     assert "--no-tester" in argv
     assert "--no-tester" not in detach_mod.owner_argv(_go_args(tmp_path))
+
+
+def _resume_args(repo: Path, **overrides):
+    base = {"working_dir": str(repo), "detach": True, "run": None, "answer": "",
+            "force": False, "answer_from_inbox": False}
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_resume_detach_ready_by_new_pid(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    old = repo / ".tero" / "runs" / "20200101-000000-old"
+    old.mkdir(parents=True)
+    # the stopped run's old state.json: another (dead) pid, ready-looking status
+    (old / "state.json").write_text(json.dumps({"status": "stopped", "pid": 1}))
+    assert detach_mod._find_ready_state(repo, 4242, any_status=True) is None
+    (old / "state.json").write_text(json.dumps({"status": "stopped", "pid": 4242}))
+    assert detach_mod._find_ready_state(repo, 4242, any_status=True) == old / "state.json"
+    # `go` still requires a live status
+    assert detach_mod._find_ready_state(repo, 4242) is None
+
+    seen = {}
+
+    def popen(argv, **kwargs):
+        seen.setdefault("argv", argv)  # the second popen is caffeinate
+        return _Proc(4242)
+
+    clock = iter(range(0, 1000))
+    code = detach_mod.detach_go(
+        _resume_args(repo, answer_from_inbox=True), command="resume", popen=popen,
+        clock=lambda: float(next(clock)), sleep=lambda s: None, poll_s=0.01, ready_s=5)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert seen["argv"][3] == "resume" and "--answer-from-inbox" in seen["argv"]
+    assert "--detach" not in seen["argv"]
+    assert "20200101-000000-old" in out
+
+
+def test_resume_detach_passes_code9(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    code = detach_mod.detach_go(
+        _resume_args(repo), command="resume", popen=lambda argv, **kw: _Proc(4243, code=9),
+        sleep=lambda s: None, poll_s=0.01, ready_s=5)
+    assert code == 9
+    # `go` keeps mapping an early owner exit to 1
+    code = detach_mod.detach_go(
+        _go_args(repo), popen=lambda argv, **kw: _Proc(4244, code=9),
+        sleep=lambda s: None, poll_s=0.01, ready_s=5)
+    assert code == 1

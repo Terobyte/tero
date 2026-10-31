@@ -13,8 +13,9 @@ async function setupEnv(rows) {
   const DB = openFakeDb();
   for (const row of rows) {
     await DB.prepare(
-      'INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?)',
-    ).bind(row.run_id, row.machine_id, row.payload, row.updated_at).run();
+      'INSERT INTO states (run_id, machine_id, payload, updated_at, status) VALUES (?, ?, ?, ?, ?)',
+    ).bind(row.run_id, row.machine_id, row.payload, row.updated_at,
+      String(JSON.parse(row.payload).status ?? '')).run();
   }
   return { DB };
 }
@@ -116,8 +117,8 @@ test('purgeAnswers: терминальный прогон старше 7 дне�
   const now = Date.now();
   const old = new Date(now - 8 * 86400000).toISOString();
   for (const [rid, status] of [['done1', 'done'], ['live1', 'running']]) {
-    await DB.prepare('INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?)')
-      .bind(rid, 'm', JSON.stringify({ status }), old).run();
+    await DB.prepare('INSERT INTO states (run_id, machine_id, payload, updated_at, status) VALUES (?, ?, ?, ?, ?)')
+      .bind(rid, 'm', JSON.stringify({ status }), old, status).run();
     await DB.prepare(
       'INSERT INTO answers (uuid, run_id, machine_id, question_id, action, who, received_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ).bind(`u-${rid}`, rid, 'm', '', 'message', 'human', old, 'message').run();
@@ -125,4 +126,16 @@ test('purgeAnswers: терминальный прогон старше 7 дне�
   await purgeAnswers({ DB }, now);
   const left = (await DB.prepare('SELECT uuid FROM answers').all()).results.map((r) => r.uuid);
   assert.deepEqual(left, ['u-live1']);
+});
+
+test('F12: терминальность — по колонке status, не по payload', async () => {
+  const DB = openFakeDb();
+  const ins = 'INSERT INTO states (run_id, machine_id, payload, updated_at, status) VALUES (?, ?, ?, ?, ?)';
+  await DB.prepare(ins).bind('live', 'm1', JSON.stringify({ status: 'done' }),
+    iso(16 * 60 * 1000), 'running').run();
+  await DB.prepare(ins).bind('fin', 'm1', JSON.stringify({ status: 'running' }),
+    iso(16 * 60 * 1000), 'stopped').run();
+  const seen = [];
+  await checkStale({ DB }, NOW, async (_env, runId) => { seen.push(runId); });
+  assert.deepEqual(seen, ['live']);
 });

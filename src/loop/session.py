@@ -71,6 +71,9 @@ class RunSession:
             )
         except Exception:
             pass
+        from src.loop.runs_index import register_run
+
+        register_run(self.run_dir.name, str(self.run_dir.parent.parent.parent))
 
     def release(self) -> None:
         try:

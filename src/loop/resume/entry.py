@@ -37,8 +37,15 @@ class ResumeStep:
         ctx.st.judge_failures = 0
         if resume_from.answer:
             ctx.st.answer = resume_from.answer
+            # телефонный флаг не сбрасывается: его ставит `--answer-from-inbox` в state.json
             try:
-                ctx.st.answer_from_phone = False
+                from pathlib import Path
+
+                from src.loop.state import RunState
+
+                saved = RunState.read(Path(ctx.run_dir) / "state.json") or {}
+                ctx.st.answer_from_phone = bool(
+                    saved.get("answer_from_phone") and saved.get("answer") == resume_from.answer)
             except Exception:
                 pass
         if not self._gate_entry(resume_from):

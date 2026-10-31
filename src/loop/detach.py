@@ -20,7 +20,7 @@ DETACH_READY_S = 120
 
 AGENT_PROTOCOL = (
     "1. `tero go --detach`, потом `tero wait --messages` фоновой командой — спать.\n"
-    "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; `3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — снова `tero wait --messages`; иначе решить, `tero answer <id> … --why …`, снова `tero wait --messages`; `5` → `tero resume`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; `7` → текст сообщения уже в выводе; на вопрос отвечай только если статус `waiting_agent`, снова `tero wait --messages`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова `tero wait --messages`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
+    "2. `wait` вышел: `0` → отчитаться; `4` → отчитаться и перечислить долг; `3` → `tero status --json`; если открытого вопроса уже нет (ответил человек) — снова `tero wait --messages`; иначе решить, `tero answer <id> … --why …`, снова `tero wait --messages`; `5` → `tero resume --detach`, снова `tero wait --messages`; `2` → отчитаться; `6` → снова `tero wait --messages`; `7` → текст сообщения уже в выводе; на вопрос отвечай только если статус `waiting_agent`, снова `tero wait --messages`; `8` → ты сирота по мнению tero: если ты жив и это читаешь — `tero status`, затем снова `tero wait --messages`; `9` от `tero resume` → владелец занят, подождать 10 с и повторить.\n"
     "3. Если сессия закрылась, прогон живёт; новый агент подхватывает его: `tero status` + `tero wait --messages`."
 )
 
@@ -45,6 +45,21 @@ _OWNER_FLAGS: tuple[tuple[str, str, bool], ...] = (
     ("no_escalation", "--no-escalation", False),
     ("no_tester", "--no-tester", False),
 )
+
+
+def resume_owner_argv(args: Any) -> list[str]:
+    """Owner argv of `resume --detach`: the same flags minus `--detach`."""
+    argv = [sys.executable, "-m", "src.cli_entry", "resume"]
+    argv += ["--working-dir", str(getattr(args, "working_dir", "."))]
+    if getattr(args, "run", None):
+        argv += ["--run", str(args.run)]
+    if getattr(args, "force", False):
+        argv += ["--force"]
+    if getattr(args, "answer_from_inbox", False):
+        argv += ["--answer-from-inbox"]
+    elif getattr(args, "answer", ""):
+        argv += ["--answer", str(args.answer)]
+    return argv
 
 
 def owner_argv(args: Any) -> list[str]:
@@ -93,7 +108,7 @@ def _tail(path: Path, limit: int = 4000) -> str:
     return text
 
 
-def _find_ready_state(repo: Path, owner_pid: Any) -> Path | None:
+def _find_ready_state(repo: Path, owner_pid: Any, *, any_status: bool = False) -> Path | None:
     runs = repo / ".tero" / "runs"
     if not runs.is_dir():
         return None
@@ -107,7 +122,9 @@ def _find_ready_state(repo: Path, owner_pid: Any) -> Path | None:
         data = read_json_dict(run_dir / "state.json")
         if not data:
             continue
-        if data.get("status") in _READY_STATUSES and data.get("pid") == owner_pid:
+        if data.get("pid") != owner_pid:
+            continue
+        if any_status or data.get("status") in _READY_STATUSES:
             return run_dir / "state.json"
     return None
 
@@ -120,8 +137,9 @@ def detach_go(
     sleep: Callable[[float], None] = time.sleep,
     poll_s: float = 0.2,
     ready_s: float = DETACH_READY_S,
+    command: str = "go",
 ) -> int:
-    """Parent side of `tero go --detach`. Returns the process exit code."""
+    """Parent side of `tero go|resume --detach`. Returns the process exit code."""
     import os
 
     repo = Path(getattr(args, "working_dir", ".")).expanduser().resolve()
@@ -133,7 +151,8 @@ def detach_go(
         return 1
     log_path = tero_dir / "detach.log"
 
-    argv = owner_argv(args)
+    resuming = command == "resume"
+    argv = resume_owner_argv(args) if resuming else owner_argv(args)
     try:
         log_fh = open(log_path, "ab")
     except OSError as exc:
@@ -161,7 +180,7 @@ def detach_go(
     owner_pid = getattr(owner, "pid", None)
     deadline = clock() + ready_s
     while True:
-        state_path = _find_ready_state(repo, owner_pid)
+        state_path = _find_ready_state(repo, owner_pid, any_status=resuming)
         if state_path is not None:
             break
         try:
@@ -169,6 +188,9 @@ def detach_go(
         except Exception:
             code = None
         if code is not None:
+            if resuming and code == 9:  # владелец занят: код 9 уходит агенту как есть
+                print(scrub_secrets(_tail(log_path)) or "владелец занят (код 9)")
+                return 9
             tail = scrub_secrets(_tail(log_path))
             if tail:
                 print(tail)

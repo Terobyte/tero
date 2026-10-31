@@ -4,11 +4,12 @@
 import { notify as sendPush } from './push.js';
 
 export const STALE_AFTER_MS = 15 * 60 * 1000;
-const TERMINAL = new Set(['done', 'stopped']);
 
 export async function checkStale(env, nowMs = Date.now(), notifyFn = defaultNotify) {
+  // Терминальность — только по колонке status (SQL-фильтр выше); payload
+  // читается для остальных полей уведомления, не для фильтрации.
   const rows = await env.DB.prepare(
-    'SELECT run_id, machine_id, payload, updated_at FROM states',
+    "SELECT run_id, machine_id, payload, updated_at FROM states WHERE status NOT IN ('done', 'stopped')",
   ).all();
   const fired = [];
   for (const row of rows.results || []) {
@@ -18,7 +19,6 @@ export async function checkStale(env, nowMs = Date.now(), notifyFn = defaultNoti
     } catch {
       continue;
     }
-    if (TERMINAL.has(payload.status)) continue;
     if (payload.stale_notified) continue;
     const updatedAt = Date.parse(row.updated_at || '');
     if (!Number.isFinite(updatedAt)) continue;
@@ -55,7 +55,7 @@ export async function purgeAnswers(env, nowMs = Date.now()) {
   await env.DB.prepare(
     'DELETE FROM answers WHERE received_at < ? AND EXISTS (SELECT 1 FROM states s '
     + "WHERE s.run_id = answers.run_id AND s.machine_id = answers.machine_id "
-    + "AND json_extract(s.payload, '$.status') IN ('done', 'stopped'))",
+    + "AND s.status IN ('done', 'stopped'))",
   ).bind(cutoff).run();
 }
 

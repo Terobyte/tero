@@ -127,13 +127,13 @@ async function postState(request, env) {
   // F1: запоздавший старый state (state_at раньше) upsert не меняет — пуш
   // тогда тоже не шлём, иначе просроченный вопрос придёт поверх done.
   const upsert = await env.DB.prepare(
-    'INSERT INTO states (run_id, machine_id, payload, updated_at) VALUES (?, ?, ?, ?) '
+    'INSERT INTO states (run_id, machine_id, payload, updated_at, status) VALUES (?, ?, ?, ?, ?) '
     + 'ON CONFLICT (run_id, machine_id) DO UPDATE SET '
-    + 'payload = excluded.payload, updated_at = excluded.updated_at '
+    + 'payload = excluded.payload, updated_at = excluded.updated_at, status = excluded.status '
     + "WHERE json_extract(excluded.payload, '$.state_at') IS NULL "
     + "OR json_extract(states.payload, '$.state_at') IS NULL "
     + "OR json_extract(excluded.payload, '$.state_at') >= json_extract(states.payload, '$.state_at')",
-  ).bind(runId, machineId, JSON.stringify(filtered), updatedAt).run();
+  ).bind(runId, machineId, JSON.stringify(filtered), updatedAt, String(filtered.status ?? '')).run();
   const changed = !upsert || !upsert.meta || Number(upsert.meta.changes) !== 0;
   // События «новый вопрос / done / stopped» — пуш сразу: cron добьёт только
   // просроченный пульс, а вопрос/финал хозяин должен увидеть без 5-минутной задержки.
@@ -164,9 +164,18 @@ async function getRuns(request, env) {
   const role = await deviceRole(request, env);
   const denied = revokedResponse(role) || (role ? null : jsonResponse({ error: 'unauthorized' }, 401));
   if (denied) return denied;
-  const rows = await env.DB.prepare(
-    'SELECT run_id, machine_id, payload, updated_at FROM states ORDER BY updated_at DESC',
-  ).all();
+  // ?all=1 — ещё и терминальные за 7 дней (список «остановлены»); фильтр по колонке status.
+  const all = new URL(request.url).searchParams.get('all') === '1';
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await (all
+    ? env.DB.prepare(
+      "SELECT run_id, machine_id, payload, updated_at, status FROM states WHERE status NOT IN ('done', 'stopped') "
+      + 'OR updated_at >= ? ORDER BY updated_at DESC',
+    ).bind(cutoff)
+    : env.DB.prepare(
+      "SELECT run_id, machine_id, payload, updated_at, status FROM states WHERE status NOT IN ('done', 'stopped') "
+      + 'ORDER BY updated_at DESC',
+    )).all();
   const runs = [];
   for (const row of rows.results || []) {
     let payload = {};
@@ -175,15 +184,16 @@ async function getRuns(request, env) {
     } catch {
       payload = {};
     }
-    if (TERMINAL.has(payload.status)) continue;
-    runs.push({
+    const entry = {
       run_id: sanitizeId(row.run_id),
       machine_id: sanitizeId(row.machine_id),
       status: payload.status ?? null,
       phase: payload.phase ?? null,
       round: payload.round ?? null,
       updated_at: row.updated_at,
-    });
+    };
+    if (all) entry.view = { resume: (payload.view && payload.view.resume) ?? null };
+    runs.push(entry);
   }
   return jsonResponse({ runs });
 }

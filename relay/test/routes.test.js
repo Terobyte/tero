@@ -269,6 +269,28 @@ test('GET /runs — только активные прогоны', async () => {
   assert.equal(runs[0].run_id, 'r1');
 });
 
+test('GET /runs?all=1 — терминальные за 7 дней со status, view.resume, updated_at', async () => {
+  const env = await setupEnv();
+  await postState(env);
+  const post = (body) => handleFetch(
+    request('POST', '/state', { token: WRITE_KEY, body: { machine_id: 'm1', ...body } }), env);
+  await post({ run_id: 'r2', status: 'stopped', view: { resume: { mode: 'ok', why: '' } } });
+  await post({ run_id: 'r3', status: 'done' });
+  // старше 7 дней — в списке нет
+  await env.DB.prepare('UPDATE states SET updated_at = ? WHERE run_id = ?')
+    .bind(new Date(Date.now() - 8 * 86400000).toISOString(), 'r3').run();
+  const plain = await (await handleFetch(request('GET', '/runs', { token: DEVICE_TOKEN }), env)).json();
+  assert.deepEqual(plain.runs.map((r) => r.run_id), ['r1']);
+  assert.equal(Object.hasOwn(plain.runs[0], 'view'), false);
+  const all = await (await handleFetch(request('GET', '/runs?all=1', { token: DEVICE_TOKEN }), env)).json();
+  const byId = Object.fromEntries(all.runs.map((r) => [r.run_id, r]));
+  assert.deepEqual(Object.keys(byId).sort(), ['r1', 'r2']);
+  assert.equal(byId.r2.status, 'stopped');
+  assert.deepEqual(byId.r2.view.resume, { mode: 'ok', why: '' });
+  assert.ok(byId.r2.updated_at);
+  assert.equal((await handleFetch(request('GET', '/runs?all=1'), env)).status, 401);
+});
+
 test('секретоподобный run_id/machine_id не хранится ключом D1 → 400', async () => {
   const env = await setupEnv();
   const res = await handleFetch(

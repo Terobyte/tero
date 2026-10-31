@@ -135,9 +135,15 @@ export function renderTop(state = {}) {
 export function renderBelow(state = {}, opts = {}) {
   const st = state && typeof state === 'object' ? state : {};
   const runs = Array.isArray(opts.runs) ? opts.runs : [];
-  const runsHtml = renderList(runs, (r) => `<a href="?run_id=${escapeHtml(r.run_id)}`
+  const isStoppedRun = (r) => r && (String(r.status) === 'done' || String(r.status) === 'stopped');
+  const runLink = (r, extra = '') => `<a href="?run_id=${escapeHtml(r.run_id)}`
     + `&amp;machine_id=${escapeHtml(r.machine_id)}" data-run="${escapeHtml(r.run_id)}">`
-    + `${escapeHtml(r.run_id)} · ${escapeHtml(r.status)}</a>`);
+    + `${escapeHtml(r.run_id)} · ${escapeHtml(r.status)}${extra}</a>`;
+  const runsHtml = renderList(runs.filter((r) => !isStoppedRun(r)), runLink);
+  const stopped = runs.filter(isStoppedRun);
+  const stoppedHtml = stopped.length ? `<section id="stopped"><h2>остановлены</h2>`
+    + renderList(stopped, (r) => runLink(r, r.updated_at ? ` · ${escapeHtml(r.updated_at)}` : ''))
+    + `</section>` : '';
   const decisionsHtml = renderList(st.decisions, (d) => (d.kind === 'wake'
     ? `${escapeHtml(d.at || '')} — wake (${escapeHtml(d.reason)}): ${escapeHtml(d.result)}`
     : `${escapeHtml(d.at || d.ts || '')} — ${escapeHtml(d.who)}: `
@@ -166,6 +172,7 @@ export function renderBelow(state = {}, opts = {}) {
       + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>')
     + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
     + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
+    + stoppedHtml
     + `<section id="decisions"><h2>решения</h2>${decisionsHtml}</section>`
     + `<section id="debt"><h2>долг и история фазы</h2>${debtsHtml}${historyHtml}</section>`
     + '<section id="push"><button id="push-btn">Включить пуши</button></section>';
@@ -293,14 +300,16 @@ if (inBrowser) {
     const runId = params.get('run_id');
     const machineId = params.get('machine_id');
     if (Date.now() - runsAt > 60000) {
-      const runsRes = await get('/runs');
+      const runsRes = await get('/runs?all=1');
       if (unpaired(runsRes)) { showPair(true); return; }
       runs = (runsRes.body && runsRes.body.runs) || [];
       runsAt = Date.now();
     }
+    const firstLive = runs.find((r) => r
+      && String(r.status) !== 'done' && String(r.status) !== 'stopped') || runs[0] || {};
     const target = (runId && machineId)
       ? { run_id: runId, machine_id: machineId }
-      : { run_id: runs[0] && runs[0].run_id, machine_id: runs[0] && runs[0].machine_id };
+      : { run_id: firstLive.run_id, machine_id: firstLive.machine_id };
     let body = null;
     if (target.run_id && target.machine_id) {
       const st = await get(`/state?run_id=${encodeURIComponent(target.run_id)}`

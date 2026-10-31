@@ -7,6 +7,7 @@ handling) and stay separate here; unifying them is not this plan.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Callable
 
 from src.loop.ledger import Ledger
@@ -17,6 +18,15 @@ from src.relay.pusher import poke, push_final
 
 
 _UNSET: Any = object()
+
+
+def _resume_field(run_dir: Any, fields: dict) -> dict | None:
+    """`resume` of the model: counted when the run goes to `stopped`, cleared otherwise."""
+    if fields.get("status") != Status.STOPPED.value:
+        return None
+    from src.loop.resume.mode import stopped_resume
+
+    return stopped_resume(run_dir, fields)
 
 
 def phase_transition(
@@ -48,6 +58,7 @@ def phase_transition(
         if value is not _UNSET:
             state_fields[name] = value
     state_fields.update(extra or {})
+    state_fields["resume"] = _resume_field(ctx.run_dir, state_fields)
     try:  # запись события не роняет прогон и не отменяет переход
         ctx.ledger.event(
             kind, status=status, reason=reason, ref=ref, text=text,
@@ -77,6 +88,49 @@ def phase_transition(
     poke(ctx.run_dir)
 
 
+def start_fail_transition(
+    state: RunState,
+    run_dir: Any,
+    *,
+    reason: str,
+    doing: str = "",
+) -> None:
+    """Start-gate refusal via transition: state.json + stream.jsonl + ledger.
+
+    Same `stopped` + counted `resume` as the run path, so the stop event
+    carries phase, round and role in both journals. No network here: the
+    owner still holds its lock.
+    """
+    from src.loop.stream import Stream
+
+    fields = {"status": Status.STOPPED.value, "reason": reason, "text": reason}
+    try:
+        saved = RunState.read(Path(run_dir) / "state.json") or {}
+        round_no = saved.get("round", 0) or 0
+    except Exception:
+        round_no = 0
+    state.update(
+        status=Status.STOPPED.value, reason=reason, text=reason,
+        doing=doing or "стоп",
+        resume=_resume_field(run_dir, fields),
+    )
+    try:
+        Stream(Path(run_dir) / "stream.jsonl").emit(
+            "stop", status=Status.STOPPED.value, reason=reason,
+            phase="", round=round_no, role="judge", text=reason,
+        )
+    except Exception:
+        pass
+    try:
+        Ledger(run_dir).event(
+            "stop",
+            status=Status.STOPPED.value, reason=reason, text=reason,
+            phase="", round=round_no, role="judge",
+        )
+    except Exception:
+        pass
+
+
 def resume_transition(
     done_io: RunState,
     stream: Stream,
@@ -102,6 +156,7 @@ def resume_transition(
         doing="стоп" if status != Status.RUNNING.value else "resume",
         pid=os.getpid(),
         pid_started=pid_started,
+        resume=_resume_field(done_io.path.parent, {"status": status, "reason": reason, "text": text}),
         **fields,
     )
     if status in (Status.DONE.value, Status.STOPPED.value):

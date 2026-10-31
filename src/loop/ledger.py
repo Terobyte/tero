@@ -75,6 +75,10 @@ def history(repo: str | Path, limit: int = 20) -> list[dict[str, Any]]:
                 start = event
             elif event.get("kind") == "run_end":
                 end = event
+        if not start:
+            # Несостоявшийся старт (fail_start пишет только stop): HUD видит
+            # state.json=stopped, а в историю прогон не попадает.
+            continue
         parts = directory.name.split("-", 2)
         if len(parts) < 3:
             continue

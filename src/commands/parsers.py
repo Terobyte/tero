@@ -50,6 +50,10 @@ def add_run_parsers(sub: Any) -> None:
     resume_parser.add_argument("--run", type=str, default=None)
     resume_parser.add_argument("--answer", type=str, default="")
     resume_parser.add_argument("--force", action="store_true", default=False)
+    resume_parser.add_argument("--detach", action="store_true", default=False,
+                               help="как go --detach: владелец в фоне, команда возвращается")
+    resume_parser.add_argument("--answer-from-inbox", action="store_true", default=False,
+                               help="ответ из подписанного inbox/resume-answer.json")
 
     sub.add_parser("hud", help="Open the HUD window for a run").add_argument(
         "--run", type=str, default=None

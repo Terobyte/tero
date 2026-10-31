@@ -149,6 +149,17 @@ async def run_resume(args) -> int:
         return 1
     state = RunState.read(run_dir / "state.json") or {}
     answer = getattr(args, "answer", "") or ""
+    answer_from_inbox = bool(getattr(args, "answer_from_inbox", False))
+    if answer_from_inbox and not answer:
+        # Pre-lock peek only: no delete, no state.json write, so a contender
+        # refused with code 9 leaves the inbox file for the real owner.
+        # Saved phone answer covers a crash between persist and resume start.
+        from src.loop.resume.phone_answer import peek_or_saved_answer
+
+        try:
+            answer = peek_or_saved_answer(run_dir) or answer
+        except Exception:
+            pass
     force = bool(getattr(args, "force", False))
     refusal = resume_refusal(state, answer, force)
     if refusal:
@@ -158,7 +169,8 @@ async def run_resume(args) -> int:
     cfg_fields = cfg_state.get("fields") if isinstance(cfg_state.get("fields"), dict) else cfg_state
     working_dir = cfg_fields.get("working_dir") or str(repo)
     agents = LiveAgents(working_dir, verbose=bool(cfg_fields.get("verbose", False)))
-    outcome = await resume_run(repo, run_dir, agents=agents, answer=answer, force=force)
+    outcome = await resume_run(repo, run_dir, agents=agents, answer=answer, force=force,
+                               answer_from_inbox=answer_from_inbox)
     if outcome.reason:
         print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
     if outcome.run_dir:
@@ -211,6 +223,10 @@ def main():
     elif args.command == "compact":
         sys.exit(run_compact(args))
     elif args.command == "resume":
+        if getattr(args, "detach", False):
+            from src.loop.detach import detach_go
+
+            sys.exit(detach_go(args, command="resume"))
         sys.exit(asyncio.run(run_resume(args)))
     elif args.command == "wait":
         sys.exit(run_wait(args))

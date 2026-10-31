@@ -76,3 +76,14 @@ test('answers.kind: по умолчанию answer, миграция 05→06 п�
   old.exec(readFileSync(new URL('../migrate-05-06.sql', import.meta.url), 'utf8'));
   assert.equal(old.prepare('SELECT kind FROM answers WHERE uuid = \'o\'').get().kind, 'answer');
 });
+
+test('states.status: миграция 06→07 применяется к базе 06 и заполняет колонку', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { readFileSync } = await import('node:fs');
+  const old = new DatabaseSync(':memory:');
+  old.exec('CREATE TABLE states (run_id TEXT NOT NULL, machine_id TEXT NOT NULL, payload TEXT NOT NULL, '
+    + 'updated_at TEXT NOT NULL, PRIMARY KEY (run_id, machine_id))');
+  old.exec('INSERT INTO states VALUES (\'r\', \'m\', \'{"status":"stopped"}\', \'t\')');
+  old.exec(readFileSync(new URL('../migrate-06-07.sql', import.meta.url), 'utf8'));
+  assert.equal(old.prepare('SELECT status FROM states').get().status, 'stopped');
+});

@@ -6,8 +6,11 @@ CREATE TABLE IF NOT EXISTS states (
   machine_id TEXT NOT NULL,
   payload TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (run_id, machine_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_states_status ON states (status, updated_at);
 
 CREATE TABLE IF NOT EXISTS devices (
   token_hash TEXT PRIMARY KEY,
