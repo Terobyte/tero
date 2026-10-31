@@ -154,33 +154,99 @@ body {
 /* the host (Claude Code over the run) in the log: warm sand, not a run role */
 #log .r-host { color: var(--host); text-shadow: 0 0 6px rgba(232,196,138,0.45); }
 /* phone (source.js sets data-host="phone"): the page scrolls, the card is a block
-   about half the screen, the log scrolls inside it; mac-only controls are gone */
-html[data-host="phone"], html[data-host="phone"] body { background: #0f1218; overflow: auto; height: auto; }
-html[data-host="phone"] body { -webkit-user-select: text; user-select: text; padding: 10px 10px 40px; }
-html[data-host="phone"] #card { height: 55vh; width: auto; margin: 0 0 10px; }
-html[data-host="phone"] #light { cursor: default; }
+   about half the screen, the log scrolls inside it; mac-only controls are gone.
+   same neon as the mac HUD, sized for a thumb: each block glows in its own colour */
+html[data-host="phone"] { --big: 16px; --small: 13px; --acc: var(--player); color-scheme: dark; }
+html[data-host="phone"], html[data-host="phone"] body { background: #06080d; overflow: auto; height: auto; }
+html[data-host="phone"] body {
+  -webkit-user-select: text; user-select: text; -webkit-tap-highlight-color: transparent;
+  padding: calc(12px + env(safe-area-inset-top)) 14px calc(40px + env(safe-area-inset-bottom));
+}
+/* the night behind the glass: two soft glows that stay put while the page scrolls */
+html[data-host="phone"] body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60% 40% at 0% 0%, rgba(90,200,250,0.16), transparent 70%),
+    radial-gradient(60% 45% at 100% 100%, rgba(195,139,255,0.16), transparent 70%),
+    radial-gradient(50% 30% at 100% 30%, rgba(255,143,200,0.07), transparent 70%);
+}
+/* the card glows in the colour of whoever acts, red/green when a verdict lands */
+html[data-host="phone"] #card {
+  height: 55vh; width: auto; margin: 0 0 14px; padding: 10px 14px; border-radius: 18px;
+  background: rgba(14, 18, 26, 0.82); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border-color: color-mix(in srgb, var(--acc) 45%, transparent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--acc) 22%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: border-color 0.4s, box-shadow 0.4s;
+}
+html[data-host="phone"] #card:has(#foot.r-judge) { --acc: var(--judge); }
+html[data-host="phone"] #card:has(#foot.r-tester) { --acc: var(--tester); }
+html[data-host="phone"] #card:has(#foot.r-gate) { --acc: var(--gate); }
+html[data-host="phone"] #card:has(#foot.bad) { --acc: var(--red); }
+html[data-host="phone"] #card:has(#foot.good) { --acc: var(--green); }
+html[data-host="phone"] #light { cursor: default; width: 11px; height: 11px; }
 html[data-host="phone"] #light:hover { transform: none; }
 html[data-host="phone"] #plus, html[data-host="phone"] #close { display: none !important; }
+html[data-host="phone"] #log { line-height: 1.45; }
 /* the blocks pult.js puts above (#pult-top: question or outcome) and below (#pult)
-   the card share the card's font and two sizes; the question is the big thing */
+   the card: glass panels, each with its own accent */
 html[data-host="phone"] #pult-top, html[data-host="phone"] #pult { color: var(--text); font-size: var(--small); }
-html[data-host="phone"] #pult-top section, html[data-host="phone"] #pult section { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05); }
-html[data-host="phone"] #pult section section { margin: 8px 0 0; padding: 0; background: none; }
-html[data-host="phone"] #pult-top h2, html[data-host="phone"] #pult h2, html[data-host="phone"] #pult-top h1 { font-size: var(--small); font-weight: 600; color: var(--dim); text-transform: lowercase; margin: 0 0 4px; }
-html[data-host="phone"] #question p:first-of-type { font-size: var(--big); line-height: 1.35; }
-html[data-host="phone"] .qid { color: var(--dim); }
-html[data-host="phone"] #pult-top p, html[data-host="phone"] #pult p, html[data-host="phone"] #pult li { margin: 2px 0; line-height: 1.35; }
+html[data-host="phone"] #question { --acc: var(--yellow); }
+html[data-host="phone"] #idle, html[data-host="phone"] #stopped { --acc: var(--grey); }
+html[data-host="phone"] #message { --acc: var(--host); }
+html[data-host="phone"] #answered, html[data-host="phone"] #resume { --acc: var(--green); }
+html[data-host="phone"] #wake, html[data-host="phone"] #debt { --acc: var(--orange); }
+html[data-host="phone"] #decisions { --acc: var(--judge); }
+html[data-host="phone"] #push { --acc: var(--tester); }
+html[data-host="phone"] #pult-top section, html[data-host="phone"] #pult section {
+  margin: 0 0 14px; padding: 14px 16px; border-radius: 16px;
+  background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 60%), rgba(12, 15, 22, 0.78);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in srgb, var(--acc) 30%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--acc) 12%, transparent), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+html[data-host="phone"] #pult section section { margin: 12px 0 0; padding: 0; background: none; border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* an open question is the one thing waiting for you: it breathes like the yellow light */
+html[data-host="phone"] #question { animation: ask 2.4s ease-in-out infinite; }
+@keyframes ask {
+  50% { border-color: color-mix(in srgb, var(--acc) 70%, transparent); box-shadow: 0 0 30px color-mix(in srgb, var(--acc) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.06); }
+}
+html[data-host="phone"] #pult-top h2, html[data-host="phone"] #pult h2, html[data-host="phone"] #pult-top h1 {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--acc); text-shadow: 0 0 8px color-mix(in srgb, var(--acc) 60%, transparent);
+}
+html[data-host="phone"] #pult-top h2::before, html[data-host="phone"] #pult h2::before, html[data-host="phone"] #pult-top h1::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--acc); box-shadow: 0 0 8px var(--acc);
+}
+html[data-host="phone"] #question p:first-of-type { font-size: 18px; font-weight: 600; line-height: 1.35; }
+html[data-host="phone"] .qid { color: var(--dim); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+html[data-host="phone"] #pult-top p, html[data-host="phone"] #pult p, html[data-host="phone"] #pult li { margin: 3px 0; line-height: 1.4; }
+html[data-host="phone"] #pult p:empty { display: none; }
+html[data-host="phone"] #answered p::before { content: "✓ "; color: var(--green); text-shadow: 0 0 8px var(--green); }
 html[data-host="phone"] #pult ul { list-style: none; }
-html[data-host="phone"] #pult a { color: var(--player); text-decoration: none; }
-html[data-host="phone"] button { font: inherit; font-size: var(--big); color: var(--text); background: rgba(255,255,255,0.10); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 14px; margin: 6px 6px 0 0; min-height: 40px; }
-html[data-host="phone"] button[data-action="stop"] { color: var(--red); }
+html[data-host="phone"] #pult li { padding: 7px 0; margin: 0; }
+html[data-host="phone"] #pult li + li { border-top: 1px solid var(--faint); }
+html[data-host="phone"] #pult a { color: var(--player); text-decoration: none; text-shadow: 0 0 8px rgba(90,200,250,0.5); }
+html[data-host="phone"] #pult a::after { content: " ›"; color: var(--dim); text-shadow: none; }
+html[data-host="phone"] code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em; color: var(--ready); background: rgba(255,255,255,0.07); border-radius: 6px; padding: 1px 6px; }
+html[data-host="phone"] button { font: inherit; font-size: var(--big); font-weight: 600; color: color-mix(in srgb, var(--acc) 85%, white); background: color-mix(in srgb, var(--acc) 10%, transparent); border: 1px solid color-mix(in srgb, var(--acc) 50%, transparent); border-radius: 12px; padding: 10px 18px; margin: 10px 8px 0 0; min-height: 46px; text-shadow: 0 0 8px color-mix(in srgb, var(--acc) 55%, transparent); box-shadow: 0 0 12px color-mix(in srgb, var(--acc) 14%, transparent); transition: transform 0.12s, box-shadow 0.2s, background 0.2s; -webkit-appearance: none; appearance: none; }
+html[data-host="phone"] button:active { transform: scale(0.96); background: color-mix(in srgb, var(--acc) 24%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--acc) 45%, transparent); }
+html[data-host="phone"] button[data-action="stop"] { --acc: var(--red); }
+html[data-host="phone"] #push button { width: 100%; margin: 0; }
 /* resume при молчащей машине: явно серая, отлична от обычной кнопки выше */
-html[data-host="phone"] button.grey:disabled, html[data-host="phone"] button.grey[disabled] { color: var(--dim); background: rgba(255,255,255,0.03); border-color: transparent; }
-html[data-host="phone"] textarea, html[data-host="phone"] select, html[data-host="phone"] input[type="text"] { font: inherit; font-size: var(--big); color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--faint); border-radius: 10px; padding: 8px 10px; margin: 8px 0 0; width: 100%; display: block; }
-html[data-host="phone"] textarea { min-height: 72px; resize: vertical; }
-/* the host-only toggle stays a compact inline switch next to its label */
-html[data-host="phone"] #message .host-filter { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 0; }
-html[data-host="phone"] #message input[type="checkbox"] { display: inline-block; width: auto; margin: 0; padding: 0; }
+html[data-host="phone"] button.grey:disabled, html[data-host="phone"] button.grey[disabled] { color: var(--dim); background: rgba(255,255,255,0.03); border-color: var(--faint); text-shadow: none; box-shadow: none; transform: none; }
+html[data-host="phone"] textarea, html[data-host="phone"] select, html[data-host="phone"] input[type="text"] { font: inherit; font-size: var(--big); color: var(--text); background: rgba(0,0,0,0.38); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 11px 13px; margin: 10px 0 0; width: 100%; display: block; outline: none; transition: border-color 0.2s, box-shadow 0.2s; -webkit-appearance: none; appearance: none; }
+html[data-host="phone"] textarea:focus, html[data-host="phone"] select:focus, html[data-host="phone"] input[type="text"]:focus { border-color: color-mix(in srgb, var(--acc) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 18%, transparent), 0 0 16px color-mix(in srgb, var(--acc) 25%, transparent); }
+html[data-host="phone"] textarea { min-height: 84px; resize: vertical; }
+html[data-host="phone"] #pair-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 22px; letter-spacing: 0.3em; text-align: center; }
+/* the host-only toggle: a small neon switch next to its label */
+html[data-host="phone"] #message .host-filter { display: inline-flex; align-items: center; gap: 10px; margin: 2px 0 0; color: var(--dim); }
+html[data-host="phone"] #message input[type="checkbox"] { -webkit-appearance: none; appearance: none; position: relative; display: inline-block; width: 38px; height: 22px; margin: 0; padding: 0; border-radius: 11px; background: rgba(255,255,255,0.10); border: 1px solid var(--faint); transition: background 0.2s, box-shadow 0.2s; }
+html[data-host="phone"] #message input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--dim); transition: transform 0.2s, background 0.2s; }
+html[data-host="phone"] #message input[type="checkbox"]:checked { background: color-mix(in srgb, var(--host) 30%, transparent); border-color: var(--host); box-shadow: 0 0 12px color-mix(in srgb, var(--host) 45%, transparent); }
+html[data-host="phone"] #message input[type="checkbox"]:checked::after { transform: translateX(16px); background: var(--host); box-shadow: 0 0 8px var(--host); }
+@media (prefers-reduced-motion: reduce) { html[data-host="phone"] #question { animation: none; } }
 @media (max-width: 440px) { #age { display: none; } }
 @media (max-width: 380px) { .phase-name { display: none; } #model { max-width: none; } }
 @media (max-width: 320px) { #meta { display: none; } }
