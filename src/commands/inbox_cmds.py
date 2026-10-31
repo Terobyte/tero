@@ -23,7 +23,7 @@ def _answer_poll_s() -> float:
         return 0.2
 
 
-def _trusted_session_pid(want: int) -> int | None:
+def _trusted_session_pid(want: "int | set[int]") -> int | None:
     """Доверенный pid сессии answer при совпадении с разбуженной (F18).
 
     Возвращает `want`, если сам процесс answer — ppid либо потомок
@@ -32,14 +32,16 @@ def _trusted_session_pid(want: int) -> int | None:
     """
     import os as _os
 
-    if want <= 0:
+    wants = {int(want)} if isinstance(want, int) else {int(w) for w in want}
+    wants.discard(0)
+    if not wants:
         return None
     try:
         me = int(_os.getppid())
     except (AttributeError, OSError, TypeError, ValueError):
         return None
-    if me == want:
-        return want
+    if me in wants:
+        return me
     try:
         from psutil import Process as _Proc
     except Exception:
@@ -66,8 +68,8 @@ def _trusted_session_pid(want: int) -> int | None:
                 num = int(getattr(parent, "pid", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            if num == want:
-                return want
+            if num in wants:
+                return num
             if num > 0 and num not in seen:
                 seen.add(num)
                 try:
@@ -118,18 +120,16 @@ def run_answer(args) -> int:
     # state.woken[question_id] означает: отвечает именно разбуженная сессия.
     woken = False
     if who == "agent":
-        try:
-            from src.loop.state import RunState as _RunState
+        import os as _os
 
-            _st = _RunState.read(run_dir / "state.json") or {}
-            _raw = _st.get("woken")
-            want = int((_raw.get(args.question_id) or 0)) if isinstance(_raw, dict) else 0
-        except (AttributeError, OSError, TypeError, ValueError):
-            want = 0
+        from src.loop import wake as _wake
+
+        want = _wake.run_woken_pids(run_dir) | _wake.global_woken_pids()
         trusted = _trusted_session_pid(want)
         if trusted is not None:
             agent_pid = trusted
-            woken = True
+        # TERO_WOKEN=1 сужает права и без совпадения предков (список пробуждений мог устареть).
+        woken = trusted is not None or _os.environ.get("TERO_WOKEN") == "1"
     payload = scrub_data(
         {
             "uuid": uid,

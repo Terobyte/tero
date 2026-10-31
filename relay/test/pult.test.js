@@ -460,6 +460,50 @@ test('renderBelow показывает непрочитанные сообщен
   assert.ok(!renderBelow({ status: 'running', view: { messages_waiting: 0 } }, {}).includes('непрочитанных'));
 });
 
+test('агента нет, сообщение ждёт: без дежурства и с ожидающими', () => {
+  const waiting = renderBelow(
+    { status: 'waiting_human', view: { messages_waiting: 1, agent: { on_duty: false } } }, {});
+  assert.ok(waiting.includes('агента нет, сообщение ждёт'), 'нет агента — сообщение ждёт');
+  assert.ok(!waiting.includes('непрочитанных сообщений хозяину'), 'общего счётчика нет');
+  const duty = renderBelow(
+    { status: 'waiting_human', view: { messages_waiting: 1, agent: { on_duty: true } } }, {});
+  assert.ok(duty.includes('непрочитанных сообщений хозяину: 1'), 'при дежурном — общий счётчик');
+});
+
+test('кнопка wake: видна без дежурства, скрыта при on_duty и в терминальном статусе', () => {
+  const off = renderBelow(
+    { status: 'waiting_human', view: { messages_waiting: 0, agent: { on_duty: false } } }, {});
+  assert.ok(off.includes('id="wake-btn"'), 'кнопка видна без дежурства');
+  const on = renderBelow(
+    { status: 'waiting_human', view: { messages_waiting: 0, agent: { on_duty: true } } }, {});
+  assert.ok(!on.includes('id="wake-btn"'), 'при дежурном кнопки нет');
+  const done = renderBelow(
+    { status: 'done', view: { agent: { on_duty: false } } }, {});
+  assert.ok(!done.includes('id="wake-btn"'), 'в терминальном статусе кнопки нет');
+});
+
+test('кнопка wake скрыта при устаревших данных', () => {
+  const stale = renderBelow(
+    { status: 'waiting_human', updated_at: new Date(Date.now() - 20 * 60000).toISOString(),
+      view: { messages_waiting: 0, agent: { on_duty: false } } }, {});
+  assert.ok(!stale.includes('id="wake-btn"'), 'старое состояние без кнопки');
+});
+
+test('одна запись wake не показывает «уже отвечено»', () => {
+  const html = renderBelow(
+    { status: 'waiting_human', view: { agent: { on_duty: false } },
+      decisions: [{ kind: 'wake', reason: 'manual', result: 'агент запущен (pid 4242)', at: '10:00' }] }, {});
+  assert.ok(!html.includes('id="answered"'), 'wake без ответа — не отвечено');
+});
+
+test('итог пробуждения виден из журнала решений', () => {
+  const html = renderBelow(
+    { status: 'waiting_human', view: { agent: { on_duty: false } },
+      decisions: [{ kind: 'wake', reason: 'manual', result: 'агент запущен (pid 4242)', at: '10:00' }] }, {});
+  assert.ok(html.includes('агент запущен (pid 4242)'), 'результат wake из decisions');
+  assert.ok(html.includes('wake (manual)'), 'видны kind и reason');
+});
+
 test('renderQuestion экранирует текст вопроса', () => {
   const html = renderQuestion({ id: 'q', text: '<img src=x onerror=alert(1)>', actions: ['skip'] }, true, []);
   assert.ok(!html.includes('<img'));

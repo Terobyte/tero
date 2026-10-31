@@ -21,8 +21,9 @@ HOSTS_GUIDE = (
     "разбудить: `claude -p --resume <session-id> \"<текст>\"`; `claude --bg --resume <id>` "
     "продолжает её фоном (`--fork-session` создаёт новый id). Запасной путь — команда "
     "пробуждения:\n"
-    "`claude -p --permission-mode acceptEdits \"Ты мозг tero. Выполни: tero guide; "
-    "tero status --json --run {run_dir}; ответь на вопрос {question_id}\"`.\n"
+    "`claude -p \"Ты мозг tero. Выполни: tero guide --woken; "
+    "tero status --json --run {run_dir}; ответь на вопрос {question_id}\" --tools Bash "
+    "--setting-sources \"\" --permission-mode dontAsk`.\n"
     "\n"
     "opencode\n"
     "Будит ли фоновая команда агента — не замерено; пока не замерено, основной путь — "
@@ -56,9 +57,62 @@ def _preset_text(working_dir: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+WOKEN_GUIDE = (
+    "Ты разбуженный агент tero. Разрешены только команды:\n"
+    "  tero status --json -w <repo> --run <run_dir>   — состояние прогона\n"
+    "  tero inbox -w <repo> --run <run_dir>           — сообщения хозяину\n"
+    "  tero answer <question_id> retry|skip|stop --why \"<причина>\" -w <repo> --run <run_dir>\n"
+    "  tero notify \"<текст>\"                          — написать человеку\n"
+    "Ответы model/more и команды resume, go, relay, pair, watch, wake тебе недоступны. "
+    "Ответь на вопрос или выполни просьбу и завершись.\n"
+)
+
+
+def run_wake(args: Any) -> int:
+    """`tero wake`: подписанный inbox/wake.json, поток владельца подберёт."""
+    from src.commands import resolve_run_dir
+    from src.loop import wake as wake_mod
+    from src.loop.state import RunState
+
+    run_dir = resolve_run_dir(args)
+    if run_dir is None:
+        return 1
+    try:
+        st = RunState.read(run_dir / "state.json") or {}
+        status = str(st.get("status") or "")
+    except Exception:
+        st, status = {}, ""
+    if status in ("done", "stopped", "failed"):
+        print(f"прогон {status}: будить некого, владелец уже ушёл — продолжи через `tero resume`")
+        return 1
+    try:
+        from src.hud.registry import pid_is_alive
+
+        pid, started = st.get("pid"), st.get("pid_started")
+        try:
+            alive = bool(pid and started) and bool(pid_is_alive(pid, started))
+        except Exception:
+            alive = False
+    except Exception:
+        pid, started, alive = st.get("pid"), st.get("pid_started"), False
+    if pid and not alive:
+        print("владелец мёртв, будить некого — продолжи через `tero resume`")
+        return 1
+    if not alive:
+        print("владелец не подтверждён (нет живого pid/pid_started) — будить некого")
+        return 1
+    if not wake_mod.request_wake(run_dir):
+        print("не могу записать inbox/wake.json")
+        return 1
+    print("запрос на пробуждение отправлен владельцу прогона; итог в `tero status` (decisions)")
+    return 0
+
+
 def run_guide(args: Any) -> int:
     """Print AGENT_PROTOCOL and the per-host sleep guide. Always code 0."""
-    _ = args
+    if getattr(args, "woken", False):
+        print(WOKEN_GUIDE)
+        return 0
     print(_preset_text(getattr(args, "working_dir", None) or "."))
     print(AGENT_PROTOCOL)
     print(HOSTS_GUIDE)

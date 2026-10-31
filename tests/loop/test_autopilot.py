@@ -466,48 +466,11 @@ def test_autopilot_not_chain(tmp_path: Path):
     assert any("две фазы подряд" in (n or "") for n in relay.notified)
 
 
-def test_wake_command_once_when_lease_expired(tmp_path: Path):
+def test_woken_answer_restricted_to_retry_skip_stop(tmp_path: Path):
     from src.loop.inbox import Inbox
 
-    repo = _repo(tmp_path, "repo_wake")
     run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "state.json").write_text(json.dumps({"question": {"id": "1-1"}}))
-    calls: list[list[str]] = []
-
-    envs: list = []
-
-    class _Popen:
-        def __init__(self, cmd, **kw):
-            calls.append(cmd)
-            envs.append(kw.get("env"))
-            self.pid = 424242
-
-    pid = auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                          60, popen=_Popen, now=time.time(),
-                          alive=lambda pid, started: False)
-    assert pid == 424242
-    assert isinstance(envs[0], dict) and "CLAUDE_PID" not in envs[0]
-    assert calls and str(run_dir) in " ".join(calls[0])
-    assert "1-1" in " ".join(calls[0])
-    state = json.loads((run_dir / "state.json").read_text())
-    assert state["woken"]["1-1"] == 424242
-    before = len(calls)
-    auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}", 60,
-                    popen=_Popen, now=time.time(), alive=lambda pid, started: False)
-    assert len(calls) == before, "один раз на вопрос"
-    (run_dir / "inbox").mkdir(exist_ok=True)
-    _lease(run_dir, until=time.time() + 600, pid=424242, started=5.0)
-    auto.maybe_wake(run_dir, "2-1", "echo hi", 60, popen=_Popen,
-                    now=time.time(), alive=lambda pid, started: True)
-    assert len(calls) == before, "при живой аренде не запущен"
-    # an unsigned lease planted by the player is no lease: wake goes ahead
-    (run_dir / "lease").write_text(json.dumps({"until": time.time() + 600, "pid": 424242,
-                                               "pid_started": 5.0}))
-    auto.maybe_wake(run_dir, "3-1", "echo hi", 60, popen=_Popen,
-                    now=time.time(), alive=lambda pid, started: True)
-    assert len(calls) == before + 1, "неподписанная аренда не держит пробуждение"
-
+    (run_dir / "inbox").mkdir(parents=True)
     (run_dir / "state.json").write_text(json.dumps({
         "question": {"id": "1-1", "reason": "stuck",
                      "actions": ["retry", "more", "skip", "stop"],
@@ -685,10 +648,24 @@ def test_wake_only_after_waiting_agent(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(auto, "NO_RELAY_GRACE_S", 3600)
     calls: list[list[str]] = []
 
+    import io
+
+    from src.loop import wake as wake_mod
+
+    home = tmp_path / "home_wake_gate"
+    (home / ".tero").mkdir(parents=True)
+    (home / ".tero" / "config.yaml").write_text("defaults:\n  wake_command: echo {run_dir} {question_id}\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(wake_mod, "current_pid_started", lambda pid: 1.0)
+
     class _Popen:
         def __init__(self, cmd, **kw):
             calls.append(cmd)
-            self.pid = 555001
+            self.pid = 555000
+            self.stdout = io.BytesIO(b"555001\n")
+
+        def wait(self, timeout=None):
+            return 0
 
     step._popen = _Popen
     out = {}
@@ -834,72 +811,6 @@ def test_f20_claimed_pid_not_woken(tmp_path: Path):
     assert raw.get("woken") is not True
 
 
-def test_f24_wake_once_on_failure(tmp_path: Path):
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "state.json").write_text(json.dumps({"question": {"id": "1-1"}}))
-    calls: list = []
-
-    def _boom(cmd, **kw):
-        calls.append(cmd)
-        raise RuntimeError("nope")
-
-    assert auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                           60, popen=_boom, now=time.time(),
-                           alive=lambda pid, started: False) is None
-    assert auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                           60, popen=_boom, now=time.time(),
-                           alive=lambda pid, started: False) is None
-    assert len(calls) == 1, f"wake retried after failure: {len(calls)}"
-
-
-def test_f25_run_dir_with_spaces(tmp_path: Path):
-    run_dir = tmp_path / "a b"
-    run_dir.mkdir()
-    (run_dir / "state.json").write_text(json.dumps({"question": {"id": "1-1"}}))
-    calls: list = []
-
-    class _P:
-        def __init__(self, cmd, **kw):
-            calls.append(cmd)
-            self.pid = 424242
-
-    auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                    60, popen=_P, now=time.time(), alive=lambda pid, started: False)
-    assert calls, "wake not launched"
-    assert str(run_dir) in calls[0], f"run_dir split: {calls[0]!r}"
-
-
-def test_f27_wake_not_launched_without_marker(tmp_path: Path, monkeypatch):
-    from src.loop import autopilot as _auto
-
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    (run_dir / "state.json").write_text(json.dumps({"question": {"id": "1-1"}}))
-    calls: list = []
-
-    def _boom(cmd, **kw):
-        calls.append(cmd)
-        raise AssertionError("Popen must not run without persisted marker")
-
-    class _BrokenState:
-        @staticmethod
-        def read(path):
-            return {}
-
-        def __init__(self, path):
-            pass
-
-        def update(self, **fields):
-            return None
-
-    monkeypatch.setattr(_auto, "RunState", _BrokenState)
-    assert _auto.maybe_wake(run_dir, "1-1", "echo {run_dir} {question_id}",
-                            60, popen=_boom, now=time.time(),
-                            alive=lambda pid, started: False) is None
-    assert calls == []
-
-
 def test_f28_resolve_handles_not_chain_outcome(tmp_path: Path):
     from src.loop.phase_ctx import PhaseOutcome as _Outcome
 
@@ -911,43 +822,6 @@ def test_f28_resolve_handles_not_chain_outcome(tmp_path: Path):
     got = step.resolve()
     assert getattr(got, "status", None) == "stop"
     assert "решение не применено" not in (getattr(got, "stop_text", "") or "")
-
-
-def test_f30_wake_marker_update_holds_owner_lock(tmp_path: Path, monkeypatch):
-    from src.loop import autopilot as _auto
-    from src.loop import state as _state
-
-    run_dir = tmp_path / "run_f30"
-    run_dir.mkdir()
-    fp = run_dir / "state.json"
-    fp.write_text(json.dumps({"woken": {}}))
-    lock = _state.owner_lock(fp)
-    real_update = _state.RunState.update
-    held: dict = {}
-
-    def _spy_update(self, **fields):
-        held["owned"] = lock._is_owned()
-        return real_update(self, **fields)
-
-    monkeypatch.setattr(_state.RunState, "update", _spy_update)
-    assert _auto._remember_wake(run_dir, "1-1", 5) is True
-    assert held.get("owned") is True, "чтение-обновление-проверка без общего owner_lock"
-    cur = json.loads(fp.read_text())
-    assert (cur.get("woken") or {}).get("1-1") == 5
-
-
-def test_f29_failed_wake_marker_never_rewrites_state(tmp_path: Path, monkeypatch):
-    from src.loop import autopilot as _auto
-
-    run_dir = tmp_path / "run_f29"
-    run_dir.mkdir()
-    (run_dir / "state.json").write_text(json.dumps({"woken": {}}))
-    monkeypatch.setattr(_auto, "_wake_marker", lambda *a, **k: None)
-    rewrites: list = []
-    monkeypatch.setattr("src.loop.autopilot.atomic_write_text",
-                        lambda p, t, **k: rewrites.append(str(p)), raising=False)
-    assert _auto._remember_wake(run_dir, "1-1", 5) is False
-    assert rewrites == [], "неудачный маркер не восстанавливает state.json целиком"
 
 
 def test_autopilot_judge_pending_retry_then_skip():

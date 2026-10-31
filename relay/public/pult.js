@@ -138,17 +138,29 @@ export function renderBelow(state = {}, opts = {}) {
   const runsHtml = renderList(runs, (r) => `<a href="?run_id=${escapeHtml(r.run_id)}`
     + `&amp;machine_id=${escapeHtml(r.machine_id)}" data-run="${escapeHtml(r.run_id)}">`
     + `${escapeHtml(r.run_id)} · ${escapeHtml(r.status)}</a>`);
-  const decisionsHtml = renderList(st.decisions, (d) => `${escapeHtml(d.at || d.ts || '')} — ${escapeHtml(d.who)}: `
-    + `${escapeHtml(d.what || d.action)}${d.why ? ` (${escapeHtml(d.why)})` : ''}`);
+  const decisionsHtml = renderList(st.decisions, (d) => (d.kind === 'wake'
+    ? `${escapeHtml(d.at || '')} — wake (${escapeHtml(d.reason)}): ${escapeHtml(d.result)}`
+    : `${escapeHtml(d.at || d.ts || '')} — ${escapeHtml(d.who)}: `
+      + `${escapeHtml(d.what || d.action)}${d.why ? ` (${escapeHtml(d.why)})` : ''}`));
   const debtsHtml = renderList(st.debts, (d) => `${escapeHtml(d.phase)} — ${escapeHtml(d.reason)}`);
   const historyHtml = renderList(st.history, (h) => `${escapeHtml(h.phase)} — ${escapeHtml(h.verdict)}`);
-  const waiting = st.view && Number(st.view.messages_waiting) > 0
-    ? `<p>непрочитанных сообщений хозяину: ${Number(st.view.messages_waiting)}</p>` : '';
-  const answered = st.answered || (Array.isArray(st.decisions) && st.decisions.length)
-    ? renderAnswered(st.answered, st.decisions) : '';
+  const agent = st.view && st.view.agent;
+  const live = !['done', 'stopped', 'failed'].includes(String(st.status));
+  const waitingN = st.view ? Number(st.view.messages_waiting) || 0 : 0;
+  const noAgent = live && agent && agent.on_duty === false && waitingN > 0;
+  const waiting = waitingN > 0
+    ? `<p>${noAgent ? 'агента нет, сообщение ждёт' : `непрочитанных сообщений хозяину: ${waitingN}`}</p>` : '';
+  const answeredLast = st.answered
+    || (Array.isArray(st.decisions) ? [...st.decisions].reverse().find((d) => d && (d.action || d.what)) : null);
+  const answered = answeredLast ? renderAnswered(answeredLast, st.decisions) : '';
+  const updatedMs = Date.parse(st.updated_at || '');
+  const stale = Number.isFinite(updatedMs) && (Date.now() - updatedMs > STALE_AFTER_S * 1000);
+  const wakeBtn = live && !stale && agent && agent.on_duty === false
+    ? '<section id="wake"><button id="wake-btn">Разбудить агента</button><p id="wake-error"></p></section>' : '';
   return answered + `<section id="run-status"><h2>статус</h2>`
     + `<p>${escapeHtml(st.status)} · фаза ${escapeHtml(st.phase)} · раунд ${escapeHtml(st.round)} · `
     + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
+    + wakeBtn
     + (st.phone_text_answers === false ? '' : '<section id="message"><h2>сообщение хозяину</h2>'
       + '<input type="text" name="message" maxlength="2000">'
       + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>')
@@ -376,6 +388,19 @@ if (inBrowser) {
     if (pushBtn) pushBtn.onclick = enablePush;
     const msgBtn = document.getElementById('msg-btn');
     if (msgBtn) msgBtn.onclick = () => sendMessage(state);
+    const wakeBtn = document.getElementById('wake-btn');
+    if (wakeBtn) wakeBtn.onclick = () => sendWake(state);
+  }
+
+  async function sendWake(state) {
+    const errEl = document.getElementById('wake-error');
+    const res = await fetch('/answer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ kind: 'wake', run_id: state.run_id, machine_id: state.machine_id }),
+    });
+    if (errEl) errEl.textContent = res.ok ? 'запрошено, итог в журнале решений'
+      : String((await res.json().catch(() => ({}))).error || `отказ: ${res.status}`);
   }
 
   async function sendMessage(state) {

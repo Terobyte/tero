@@ -152,18 +152,18 @@
 - `pult.js`: кнопка `wake` по таблице п. 7 спеки (не показывается при `view.agent.on_duty`), результат из
   журнала решений.
 
-- [ ] вынос в `src/loop/wake.py`, `autopilot.py` не вырос; тесты `test_autopilot.py` из списка спеки перенесены
-- [ ] `test_trampoline_grandchild`: pid внука ≠ pid `sh`, `sh` дождались (не зомби), внук не потомок владельца, его вывод в `wake.log`, `killpg` группы владельца его не убивает
-- [ ] `test_wake_two_concurrent_one_agent`: два одновременных вызова → один запуск, второй — отказ «агент дежурит»
-- [ ] `test_wake_once_per_uuid_including_pid0`: запуск упал (pid 0) → повтор на тот же uuid не запускает
-- [ ] `test_wake_limits_two_counters`: 11-й ручной отклонён, автоматический при этом проходит; чаще раза в 5 мин — отказ
-- [ ] `test_woken_restricted_any_run`: разбуженный (по `woken.json`) — `answer retry` принят, `answer model` отклонён и в своём, и в другом прогоне; `resume` / `wake` отклонены
-- [ ] `test_wake_command_from_repo_ignored`: `wake_command: "sh -c 'touch …'"` в `<repo>/.tero/config.yaml` и в `state.json` → не исполняется
-- [ ] `test_default_wake_argv`: argv по спеке, текста сообщения в argv нет, окружение очищено, `TERO_WOKEN=1`
-- [ ] `test_tero_wake_cli_signed_file`: `tero wake` → подписанный `wake.json` → поток зовёт `wake(manual)`; неподписанный — игнор + `hud.log`
-- [ ] `test_message_wakes_when_not_on_duty` и `test_message_waits_without_command`
-- [ ] `tero guide --woken`, правка `HOSTS_GUIDE`
-- [ ] реализовать
+- [x] вынос в `src/loop/wake.py`, `autopilot.py` не вырос; тесты `test_autopilot.py` из списка спеки перенесены
+- [x] `test_trampoline_grandchild`: pid внука ≠ pid `sh`, `sh` дождались (не зомби), внук не потомок владельца, его вывод в `wake.log`, `killpg` группы владельца его не убивает
+- [x] `test_wake_two_concurrent_one_agent`: два одновременных вызова → один запуск, второй — отказ «агент дежурит»
+- [x] `test_wake_once_per_uuid_including_pid0`: запуск упал (pid 0) → повтор на тот же uuid не запускает
+- [x] `test_wake_limits_two_counters`: 11-й ручной отклонён, автоматический при этом проходит; чаще раза в 5 мин — отказ
+- [x] `test_woken_restricted_any_run`: разбуженный (по `woken.json`) — `answer retry` принят, `answer model` отклонён и в своём, и в другом прогоне; `resume` / `wake` отклонены
+- [x] `test_wake_command_from_repo_ignored`: `wake_command: "sh -c 'touch …'"` в `<repo>/.tero/config.yaml` и в `state.json` → не исполняется
+- [x] `test_default_wake_argv`: argv по спеке, текста сообщения в argv нет, окружение очищено, `TERO_WOKEN=1`
+- [x] `test_tero_wake_cli_signed_file`: `tero wake` → подписанный `wake.json` → поток зовёт `wake(manual)`; неподписанный — игнор + `hud.log`
+- [x] `test_message_wakes_when_not_on_duty` и `test_message_waits_without_command`
+- [x] `tero guide --woken`, правка `HOSTS_GUIDE`
+- [x] реализовать
 
 **Вне этой фазы:** сторож, `resume --detach`, `marks` (фазы 3–4).
 

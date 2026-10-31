@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -14,15 +12,41 @@ from src.loop import lease as lease_mod
 from src.loop.decision.actions import BUDGET_PER_PHASE, budget_used
 from src.loop.inbox import Inbox
 from src.relay.poller import adapter_for
-from src.loop.state import RunState, Status, owner_lock
+from src.loop.state import RunState, Status
 from src.loop.transition import phase_transition
+from src.loop.wake import wake, woken_pid  # noqa: F401 — реэкспорт, вынос фазы 2
 from src.loop.watchdog import stop_requested
 from src.relay.iface import Answer, NoopRelay, RelayClient
 
 __all__ = [
     "autopilot_answer", "_inbox_autopilot", "stop_as_answer",
     "wait_answer", "choose", "lease_valid", "write_lease",
+    "maybe_wake", "format_wake_command",
 ]
+
+
+def format_wake_command(tpl: str, run_dir: str | Path, qid: str) -> str:
+    """Совместимость фазы 1: подстановка `{run_dir}`/`{question_id}` в шаблон."""
+    return str(tpl).replace("{run_dir}", str(run_dir)).replace("{question_id}", str(qid))
+
+
+def maybe_wake(run_dir: str | Path, question_id: str, wake_command: str = "",
+               agent_timeout_s: float = 1800, popen: Any = None,
+               now: float | None = None,
+               alive: Callable[[Any, Any], bool] | None = None,
+               host: str = "") -> int | None:
+    """Совместимость фазы 1: `wake(reason=question)`, pid успеха или None.
+
+    Команда и host читаются из глобального конфига (контракт фазы 2), переданные
+    `wake_command`/`host` игнорируются — оставлены ради старой сигнатуры."""
+    _ = wake_command, host
+    try:
+        res = wake(run_dir, "question", question_id, now=now, alive=alive,
+                   agent_timeout_s=agent_timeout_s, popen=popen)
+    except Exception:
+        return None
+    pid = int(res.get("pid") or 0) if isinstance(res, dict) and res.get("ok") else 0
+    return pid or None
 
 PROVIDER_REASONS = frozenset({"provider_unavailable", "provider_auth", "provider_quota"})
 NO_RELAY_GRACE_S, NOTIFY_COOLDOWN_S = 600, 1800
@@ -158,60 +182,6 @@ def agent_timeout_of(run_dir: str | Path, default: float = 1800) -> float:
         return default
 
 
-def format_wake_command(tpl: str, run_dir: str | Path, qid: str) -> str:
-    return str(tpl).replace("{run_dir}", str(run_dir)).replace("{question_id}", str(qid))
-
-
-def woken_pid(run_dir: str | Path, question_id: str) -> int | None:
-    return int(_wake_marker(run_dir, question_id) or 0) or None
-
-
-def _wake_marker(run_dir: str | Path, question_id: str) -> Any:
-    try:
-        w = (RunState.read(Path(run_dir) / "state.json") or {}).get("woken")
-        return w.get(question_id) if isinstance(w, dict) else None
-    except (AttributeError, OSError, TypeError, ValueError):
-        return None
-
-
-def _remember_wake(run_dir: str | Path, question_id: str, pid: int) -> bool:
-    try:  # F27: False, если маркер не зафиксирован — Popen не запускаем.
-        # F30: чтение-обновление-проверка под общим owner_lock, без отката
-        # всего state.json — чужая запись между update и проверкой не теряется.
-        fp = Path(run_dir) / "state.json"
-        with owner_lock(fp):
-            w = dict((RunState.read(fp) or {}).get("woken") or {})
-            RunState(fp).update(woken={**w, question_id: pid})
-            return _wake_marker(run_dir, question_id) == pid
-    except Exception:
-        return False
-
-
-def maybe_wake(run_dir: str | Path, question_id: str, wake_command: str,
-               agent_timeout_s: float, popen: Any = subprocess.Popen,
-               now: float | None = None,
-               alive: Callable[[Any, Any], bool] | None = None,
-               host: str = "") -> int | None:
-    if ((wake_command or "").strip() and _wake_marker(run_dir, question_id) is None
-            and not lease_valid(run_dir, now=now, alive=alive)):
-        if not _remember_wake(run_dir, question_id, 0):  # F24/F27: метка до Popen
-            return None
-        try:
-            proc = popen([format_wake_command(p, run_dir, question_id)
-                          for p in shlex.split(wake_command)],
-                         start_new_session=True, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, env=wake_env(host))
-            pid = int(getattr(proc, "pid", 0) or 0)
-        except Exception:
-            return None
-        if pid > 0:
-            ts = time.time() if now is None else now
-            write_lease(run_dir, ts + float(agent_timeout_s), pid, host=host)
-            _remember_wake(run_dir, question_id, pid)
-            return pid
-    return None
-
-
 def _cfg_num(cfg: Any, name: str, default: float) -> float:
     try: return float(getattr(cfg, name, default))
     except (TypeError, ValueError): return default
@@ -278,10 +248,8 @@ def wait_answer(step: Any, qid: str, opened_at: float | None = None) -> Any:
         # F14: wake — только в waiting_agent; новую аренду учесть сразу.
         if not leased and status_now == Status.WAITING_AGENT.value:
             try:
-                leased = bool(maybe_wake(ctx.run_dir, qid,
-                    str(getattr(cfg, "wake_command", "") or ""), agent_t,
-                    popen=step._popen or subprocess.Popen, now=now,
-                    host=str(getattr(cfg, "host", "") or "")))
+                leased = bool(wake(ctx.run_dir, "question", qid, now=now, agent_timeout_s=agent_t,
+                                   popen=step._popen)["ok"])
             except Exception:
                 pass
         if is_noop(step.relay) and not leased and now - opened >= NO_RELAY_GRACE_S:

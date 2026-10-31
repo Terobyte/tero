@@ -174,6 +174,11 @@ def main():
     """Package-safe entrypoint used by the installed `tero` script."""
     parser = build_parser()
     args = parser.parse_args()
+    from src.loop.wake import restricted_refusal
+
+    if restricted_refusal(args.command or ""):
+        print(restricted_refusal(args.command))
+        sys.exit(1)
     if args.command in PRELOAD_COMMANDS:
         from src.preload import preload_all
 
@@ -217,6 +222,10 @@ def main():
         sys.exit(run_answer(args))
     elif args.command == "stop":
         sys.exit(run_stop(args))
+    elif args.command == "wake":
+        from src.commands.guide_cmds import run_wake
+
+        sys.exit(run_wake(args))
     elif args.command == "guide":
         from src.commands.guide_cmds import run_guide
 

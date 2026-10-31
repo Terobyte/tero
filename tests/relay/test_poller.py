@@ -64,14 +64,21 @@ def test_message_written_signed_not_in_player_prompt(tmp_path, monkeypatch):
     from src.loop.prompts import player_prompt
 
     run_dir = _run(tmp_path, monkeypatch)
-    before = (run_dir / "state.json").read_text(encoding="utf-8")
+    before = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     relay = FakeRelay([_ans("m1", qid="", kind="message", text="привет хозяин", action="")])
     Poller(run_dir, relay).tick(0.0)
     data = json.loads((run_dir / "inbox" / "msg-m1.json").read_text(encoding="utf-8"))
     assert data["text"] == "привет хозяин" and data["sig"]
     assert "m1" in relay.acked
-    after = (run_dir / "state.json").read_text(encoding="utf-8")
-    assert after == before and "привет хозяин" not in after  # сообщение ни на что не влияет
+    after = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert "привет хозяин" not in json.dumps(after, ensure_ascii=False)
+    stripped_before = {k: v for k, v in before.items() if k not in ("decisions", "updated_at")}
+    stripped_after = {k: v for k, v in after.items() if k not in ("decisions", "updated_at")}
+    assert stripped_after == stripped_before, "сообщение меняет только decisions/updated_at"
+    assert len(after.get("decisions") or []) == len(before.get("decisions") or []) + 1
+    # F2 (план 09, фаза 2): хозяина нет — wake(reason=message) пишет отказ в decisions.
+    wakes = [d for d in (after.get("decisions") or []) if d.get("kind") == "wake"]
+    assert len(wakes) == 1 and wakes[0]["reason"] == "message"
     # F14: промпт игрока следующего раунда собирается из state.answer —
     # сообщение туда не попадает ни через answer, ни напрямую.
     saved = RunState.read(run_dir / "state.json") or {}
@@ -90,14 +97,14 @@ def test_phone_text_off_rejects_message(tmp_path, monkeypatch):
     assert "m1" in relay.acked and relay.reasons["m1"] == "текст с телефона выключен"
 
 
-def test_wake_acked_and_logged_as_stub(tmp_path, monkeypatch):
+def test_wake_acked_and_result_logged(tmp_path, monkeypatch):
     run_dir = _run(tmp_path, monkeypatch)
     relay = FakeRelay([_ans("w1", qid="", kind="wake", action="")])
     Poller(run_dir, relay).tick(0.0)
     assert "w1" in relay.acked
     last = (RunState.read(run_dir / "state.json") or {})["decisions"][-1]
     assert last["kind"] == "wake" and last["reason"] == "manual"
-    assert last["result"] == "нет пробуждения (фаза 2)" and "at" in last
+    assert "host" in last["result"] and "at" in last and last["uuid"] == "w1"  # команды нет → отказ с подсказкой
 
 
 class _FlakyAckRelay(FakeRelay):

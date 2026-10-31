@@ -104,7 +104,12 @@ def add_answer_parsers(sub: Any) -> None:
     stop_parser.add_argument("--working-dir", "-w", type=str, default=".")
     stop_parser.add_argument("--run", type=str, default=None)
 
-    sub.add_parser("guide", help="Print the agent protocol and sleep guide")
+    guide_parser = sub.add_parser("guide", help="Print the agent protocol and sleep guide")
+    guide_parser.add_argument("--woken", action="store_true", default=False,
+                              help="короткий гайд разбуженному агенту")
+    wake_parser = sub.add_parser("wake", help="Wake an agent host for the running run")
+    wake_parser.add_argument("--working-dir", "-w", type=str, default=".")
+    wake_parser.add_argument("--run", type=str, default=None)
     notify_parser = sub.add_parser("notify", help="Send a notification via relay")
     notify_parser.add_argument("text", type=str)
     notify_parser.add_argument("--working-dir", "-w", type=str, default=".")

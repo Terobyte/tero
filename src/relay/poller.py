@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from src.loop.state import RunState, owner_lock
+from src.loop.state import RunState
 from src.relay.iface import Answer, NoopRelay, make_relay
 
 WAIT_EVERY_S = 10.0
@@ -101,6 +101,10 @@ class Poller:
         return True
 
     def _poll(self, state: dict) -> None:
+        from src.loop import wake as wake_mod
+
+        if wake_mod.take_wake_file(self.run_dir) == "ok":
+            wake_mod.wake(self.run_dir, "manual")
         try:
             rows = self.relay.fetch_all() or []
         except Exception:
@@ -156,6 +160,14 @@ class Poller:
         if write_inbox_file(self.run_dir, f"msg-{row.uuid}.json",
                             json.dumps(payload, ensure_ascii=False)):
             self.ack(row.uuid, "")
+            self._wake_for_message(row.uuid)
+
+    def _wake_for_message(self, uuid: str) -> None:
+        """Агента нет — будим один раз на uuid; команды нет — сообщение ждёт."""
+        from src.loop import wake as wake_mod
+
+        if not wake_mod.on_duty(self.run_dir):
+            wake_mod.wake(self.run_dir, "message", uuid)
 
     def _message_done(self, uuid: str) -> bool:
         """Подписанное сообщение уже лежит в inbox (прочитано или нет)."""
@@ -175,18 +187,20 @@ class Poller:
         return False
 
     def _wake(self, row: Answer) -> None:
-        """Заглушка фазы 1: квитировать и записать в decisions; пробуждение — фаза 2."""
-        path = self._state_path
-        with owner_lock(path):
-            state = RunState.read(path) or {}
-            decisions = list(state.get("decisions") or [])
-            # F9: повторный GET после упавшего ack не дублирует запись.
-            if not any(isinstance(d, dict) and d.get("kind") == "wake"
-                       and d.get("uuid") == row.uuid for d in decisions):
-                decisions.append({"kind": "wake", "reason": "manual", "uuid": row.uuid,
-                                  "result": "нет пробуждения (фаза 2)", "at": time.time()})
-                RunState(path).update(decisions=decisions)
-        self.ack(row.uuid, "")
+        """`kind: wake` с телефона: то же пробуждение, что и `tero wake`; результат в decisions."""
+        from src.loop import wake as wake_mod
+
+        try:
+            decisions = (RunState.read(self._state_path) or {}).get("decisions") or []
+            # F9: повторный GET после упавшего ack не будит второй раз.
+            if not any(isinstance(d, dict) and d.get("kind") == "wake" and d.get("uuid") == row.uuid
+                       for d in decisions):
+                try:
+                    wake_mod.wake(self.run_dir, "manual", row.uuid)
+                except Exception:
+                    pass
+        finally:
+            self.ack(row.uuid, "")
 
     def start(self) -> None:
         if self._thread is not None:
