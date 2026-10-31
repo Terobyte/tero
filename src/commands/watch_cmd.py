@@ -14,6 +14,7 @@ def _poster():
     client = RelayClient(machine_id=machine_id())
 
     def _clean(value):
+        from src.errors import scrub_secrets
         from src.relay.redact import redact
 
         try:
@@ -22,10 +23,12 @@ def _poster():
         except Exception:
             paths = []
         if isinstance(value, str):
+            # same cleaning as _redacted_state: env keys/tokens too, not only the relay key
+            cleaned = scrub_secrets(redact(value, paths))
             try:
-                return client._mask_key(redact(value, paths))
+                return client._mask_key(cleaned)
             except Exception:
-                return redact(value, paths)
+                return cleaned
         if isinstance(value, list):
             return [_clean(v) for v in value]
         if isinstance(value, dict):
