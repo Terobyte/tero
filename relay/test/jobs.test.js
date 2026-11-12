@@ -355,3 +355,14 @@ test('contacts in answer labels are refused', async () => {
   }
   assert.deepEqual(await decisions(env), []);
 });
+
+test('a phone sent as a number is refused, except under exempt keys', async () => {
+  const env = await setupEnv();
+  const bare = await putCards(env, [card('job:a', 'job', 'v1', { note: 6175550123 })]);
+  assert.equal(bare.status, 400);
+  assert.deepEqual(bare.body, { error: 'contact' });
+  assert.deepEqual((await storedCards(env)).cards, []);
+  // id должен быть строкой (validCard), поэтому числовое исключение проверяем на url
+  const exempt = await putCards(env, [card('job:a', 'job', 'v1', { url: 6175550123, rank: 2.5 })]);
+  assert.equal(exempt.status, 200);
+});

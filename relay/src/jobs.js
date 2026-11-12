@@ -41,7 +41,7 @@ const PHONE_EXEMPT_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
 // Рекурсия с флагом phone спрятана внутри: `cards.some(cardHasContact)` иначе передал бы индекс как флаг.
 function cardHasContact(card) {
   const walk = (value, phone) => {
-    if (typeof value === 'string') return hasContact(value, { phone });
+    if (['string', 'number', 'bigint'].includes(typeof value)) return hasContact(String(value), { phone });
     if (Array.isArray(value)) return value.some((v) => walk(v, phone));
     if (isPlainObject(value)) {
       // Имена полей (метки в his/drafts) проверяются целиком, исключение для id/url — только для значений.
