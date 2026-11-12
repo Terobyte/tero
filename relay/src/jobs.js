@@ -38,13 +38,17 @@ export function hasContact(text, { phone = true } = {}) {
 // Ключи, у которых не проверяется только телефон: id и ссылки вакансий несут длинные числа.
 const PHONE_EXEMPT_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
 
-function cardHasContact(value, phone = true) {
-  if (typeof value === 'string') return hasContact(value, { phone });
-  if (Array.isArray(value)) return value.some((v) => cardHasContact(v, phone));
-  if (isPlainObject(value)) {
-    return Object.entries(value).some(([key, v]) => cardHasContact(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
-  }
-  return false;
+// Рекурсия с флагом phone спрятана внутри: `cards.some(cardHasContact)` иначе передал бы индекс как флаг.
+function cardHasContact(card) {
+  const walk = (value, phone) => {
+    if (typeof value === 'string') return hasContact(value, { phone });
+    if (Array.isArray(value)) return value.some((v) => walk(v, phone));
+    if (isPlainObject(value)) {
+      return Object.entries(value).some(([key, v]) => walk(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
+    }
+    return false;
+  };
+  return walk(card, true);
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

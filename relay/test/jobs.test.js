@@ -326,3 +326,11 @@ test('exempt keys still refuse an email or an address', async () => {
   assert.equal(c.status, 400);
   assert.deepEqual((await storedCards(env)).cards, []);
 });
+
+test('a phone in the only card is refused too', async () => {
+  const env = await setupEnv();
+  const res = await putCards(env, [card('job:a', 'job', 'v1', { title: 'call 617-555-0123' })]);
+  assert.equal(res.status, 400);
+  assert.deepEqual(res.body, { error: 'contact' });
+  assert.deepEqual((await storedCards(env)).cards, []);
+});
