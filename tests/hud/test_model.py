@@ -32,7 +32,7 @@ def _state(**kw) -> dict:
             {"title": "c", "done": False},
             {"title": "d", "done": False},
         ],
-        "debt": [{"phase": 4, "reason": "x"}],
+        "debt": [{"phase": 3, "reason": "x"}],
         "pid": 123,
         "pid_started": 1.0,
     }

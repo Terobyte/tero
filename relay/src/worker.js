@@ -12,6 +12,7 @@ import {
   releaseAttempt,
   createPairCode,
   exchangePairCode,
+  replaceDevice,
   resetDevices,
   revokeDevice,
 } from './pair.js';
@@ -29,7 +30,7 @@ export async function sha256Hex(text) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-const TERMINAL = new Set(['done', 'stopped']);
+const TERMINAL = new Set(['done', 'stopped', 'failed']);
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -204,12 +205,12 @@ async function getRuns(request, env) {
     ? env.DB.prepare(
       'SELECT s.run_id, s.machine_id, s.payload, s.updated_at, s.status, s.owner_alive, s.host_alive, '
       + 's.owner_checked_at, s.resume_w, m.last_seen FROM states s LEFT JOIN machines m ON m.machine_id = s.machine_id '
-      + "WHERE s.status NOT IN ('done', 'stopped') OR s.updated_at >= ? ORDER BY s.updated_at DESC",
+      + "WHERE s.status NOT IN ('done', 'stopped', 'failed') OR s.updated_at >= ? ORDER BY s.updated_at DESC",
     ).bind(cutoff)
     : env.DB.prepare(
       'SELECT s.run_id, s.machine_id, s.payload, s.updated_at, s.status, s.owner_alive, s.host_alive, '
       + 's.owner_checked_at, s.resume_w, m.last_seen FROM states s LEFT JOIN machines m ON m.machine_id = s.machine_id '
-      + "WHERE s.status NOT IN ('done', 'stopped') ORDER BY s.updated_at DESC",
+      + "WHERE s.status NOT IN ('done', 'stopped', 'failed') ORDER BY s.updated_at DESC",
     )).all();
   const runs = [];
   for (const row of rows.results || []) {
@@ -523,6 +524,8 @@ async function postPairExchange(request, env) {
     return jsonResponse({ error: result.error }, result.status);
   }
   await releaseAttempt(env.DB, attempt);
+  const previous = body && typeof body.previous_token === 'string' ? body.previous_token.slice(0, 200) : '';
+  try { await replaceDevice(env.DB, previous, result.device_id); } catch { /* новая привязка важнее */ }
   return jsonResponse({
     device_token: result.device_token,
     read_token: result.read_token,

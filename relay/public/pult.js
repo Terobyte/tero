@@ -235,7 +235,7 @@ export function pendingStep(pending, ev, now = Date.now()) {
 export function renderPending(pending, now = Date.now()) {
   if (!pending) return '';
   const left = Math.max(0, Math.ceil((pending.deadline - now) / 1000));
-  return `<p id="pending">«${escapeHtml(actionLabel(pending.action))}» через ${left} с`
+  return `<p id="pending"><span id="pending-left">«${escapeHtml(actionLabel(pending.action))}» через ${left} с</span>`
     + ' <button id="pending-cancel" class="grey-on">отменить</button></p>';
 }
 
@@ -345,7 +345,7 @@ function renderMessage(st, opts = {}) {
 export function renderBelow(state = {}, opts = {}) {
   const st = state && typeof state === 'object' ? state : {};
   const runs = Array.isArray(opts.runs) ? opts.runs : [];
-  const isStoppedRun = (r) => r && (String(r.status) === 'done' || String(r.status) === 'stopped');
+  const isStoppedRun = (r) => r && (['done', 'stopped', 'failed'].includes(String(r.status)));
   const runLink = (r, extra = '') => `<a href="?run_id=${escapeHtml(r.run_id)}`
     + `&amp;machine_id=${escapeHtml(r.machine_id)}" data-run="${escapeHtml(r.run_id)}">`
     + `${escapeHtml(runLabel(r.run_id))}${r.run_id === st.run_id ? ' · открыт' : ''}`
@@ -741,6 +741,7 @@ if (inBrowser) {
     card.style.display = '';
     window.teroSource.set(viewOf(body, Date.now() / 1000));
     const draft = captureDraft(document);
+    const draftKey = topKey;  // черновик принадлежит прогону+машине+вопросу, не одному qid
     // поле «написать хозяину» тоже переживает перерисовку раз в 15 с
     const msgEl = document.querySelector('#message input[name="message"]');
     const msgDraft = msgEl ? { value: msgEl.value, focus: document.activeElement === msgEl } : null;
@@ -757,7 +758,7 @@ if (inBrowser) {
     below.innerHTML = renderBelow(state, { runs, resume: resumeButton({ ...(body || {}), updated_at: state.updated_at,
       view: state.view }, Date.now() / 1000) });
     wire(state);
-    restoreDraft(document, draft);
+    if (draftKey === topKey) restoreDraft(document, draft);
     const msgNew = document.querySelector('#message input[name="message"]');
     if (msgNew && msgDraft) {
       msgNew.value = msgDraft.value;
@@ -778,11 +779,18 @@ if (inBrowser) {
     const say = (msg) => { const el = document.getElementById('pair-msg'); if (el) el.textContent = msg; };
     if (!code) { say('введи код'); return; }
     say('проверяю код…');
-    const res = await fetch('/pair/exchange', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: code.trim() }),
-    });
+    let res;
+    try {
+      res = await fetch('/pair/exchange', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // старый токен этого телефона: сервер отзовёт его и передаст подписку на пуши (B09)
+      body: JSON.stringify({ code: code.trim(), previous_token: localStorage.getItem('tero_token') || '' }),
+      });
+    } catch {
+      say('нет сети — код не проверен, попробуй ещё раз');
+      return;
+    }
     const body = await res.json().catch(() => null);
     if (res.ok && body && body.device_token) {
       localStorage.setItem('tero_token', body.device_token);
@@ -824,7 +832,7 @@ if (inBrowser) {
       });
     } catch {
       sending = false;
-      btns.forEach((b) => { b.disabled = false; });
+      applyLocks();  // кнопки живого DOM: старые btns могли смениться опросом
       say('нет сети — ответ не ушёл, нажми ещё раз');
       return;
     }
@@ -832,7 +840,7 @@ if (inBrowser) {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       if (res.status === 401 && body.error === 'unpaired') { showPair(true); return; }
-      btns.forEach((b) => { b.disabled = false; });
+      applyLocks();
       say(answerErrorText(res.status, body.error));
       return;
     }
@@ -878,12 +886,18 @@ if (inBrowser) {
   async function sendResume(state) {
     const errEl = document.getElementById('resume-error');
     const field = document.querySelector('#resume input[name="resume-text"]');
-    const res = await fetch('/commands', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ command: 'resume', run_id: state.run_id, machine_id: state.machine_id,
-        text: field ? field.value : '' }),
-    });
+    let res;
+    try {
+      res = await fetch('/commands', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ command: 'resume', run_id: state.run_id, machine_id: state.machine_id,
+          text: field ? field.value : '' }),
+      });
+    } catch {
+      if (errEl) errEl.textContent = NO_NET;
+      return;
+    }
     if (!res.ok) {
       if (errEl) errEl.textContent = String((await res.json().catch(() => ({}))).error || `отказ: ${res.status}`);
       return;
@@ -895,25 +909,43 @@ if (inBrowser) {
 
   async function sendWake(state) {
     const errEl = document.getElementById('wake-error');
-    const res = await fetch('/answer', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ kind: 'wake', run_id: state.run_id, machine_id: state.machine_id }),
-    });
+    let res;
+    try {
+      res = await fetch('/answer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ kind: 'wake', run_id: state.run_id, machine_id: state.machine_id }),
+      });
+    } catch {
+      if (errEl) errEl.textContent = NO_NET;
+      return;
+    }
     if (errEl) errEl.textContent = res.ok ? 'запрошено, итог в журнале решений'
       : String((await res.json().catch(() => ({}))).error || `отказ: ${res.status}`);
   }
 
+  const NO_NET = 'нет сети — не ушло, нажми ещё раз';
+  let msgBusy = false;  // двойной тап не шлёт два сообщения
   async function sendMessage(state) {
+    if (msgBusy) return;
     const box = document.querySelector('#message input[name="message"]');
     const errEl = document.getElementById('msg-error');
     const text = box ? box.value.trim() : '';
     if (!text) return;
-    const res = await fetch('/answer', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ kind: 'message', text, run_id: state.run_id, machine_id: state.machine_id }),
-    });
+    msgBusy = true;
+    let res;
+    try {
+      res = await fetch('/answer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ kind: 'message', text, run_id: state.run_id, machine_id: state.machine_id }),
+      });
+    } catch {
+      if (errEl) errEl.textContent = NO_NET;
+      return;
+    } finally {
+      msgBusy = false;
+    }
     if (res.ok) {
       if (box) box.value = '';
       if (errEl) errEl.textContent = 'отправлено';
@@ -966,6 +998,8 @@ if (inBrowser) {
       pushMsg('подписываю…');
       const reg = await navigator.serviceWorker.register('/sw.js');
       const vapidRes = await get('/push/vapid');
+      if (!vapidRes.status) { pushMsg('нет связи с релеем — попробуй позже'); return; }
+      if (!vapidRes.ok) { pushMsg(`релей ответил ${vapidRes.status} — пуши не включены`); return; }
       const key = vapidRes.body && vapidRes.body.vapid_public_key;
       if (!key) { pushMsg('на сервере не задан ключ пушей'); return; }
       // Сервер отдаёт публичный ключ JWK-JSON; subscribe нужен несжатый P-256.

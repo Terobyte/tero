@@ -117,6 +117,19 @@ export async function revokeDevice(db, deviceId) {
   return { revoked: n };
 }
 
+// B09: тот же телефон привязан новым кодом и предъявил старый токен —
+// старое устройство отзывается, его подписки на пуши переходят новому.
+// Без старого токена ничего не меняется: чужую живую подписку B17 по-прежнему не отдаёт.
+export async function replaceDevice(db, oldToken, newDeviceId) {
+  if (!oldToken || !newDeviceId) return;
+  const old = await db.prepare(
+    "SELECT device_id FROM devices WHERE token_hash = ? AND kind = 'device' AND revoked = 0",
+  ).bind(await sha256Hex(oldToken)).first();
+  if (!old || !old.device_id || old.device_id === newDeviceId) return;
+  await db.prepare('UPDATE push_subs SET device_id = ? WHERE device_id = ?').bind(newDeviceId, old.device_id).run();
+  await db.prepare('UPDATE devices SET revoked = 1 WHERE device_id = ?').bind(old.device_id).run();
+}
+
 export async function resetDevices(db) {
   const res = await db.prepare('UPDATE devices SET revoked = 1 WHERE revoked = 0').run();
   const n = res && res.meta ? Number(res.meta.changes || 0) : 0;

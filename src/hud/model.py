@@ -212,7 +212,7 @@ def _sectors(state: dict) -> list[dict]:
             color = "yellow"
         else:
             color = "grey"
-        if (i + 1) in debt_nos:
+        if i in debt_nos:  # debt[].phase — 0-based, как phase_index
             color = "orange"
         out.append({"title": info.get("title", ""), "color": color})
     return out
