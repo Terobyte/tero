@@ -4,7 +4,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { handleFetch, sha256Hex } from '../src/worker.js';
 import { hasContact } from '../src/jobs.js';
+import { textFor } from '../src/push.js';
 import { openFakeDb } from './fake_d1.js';
+
+// RFC 8291 Appendix A — валидная пара ключей подписки для push.js encryptPayload.
+const SUB_P256DH = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
+const SUB_AUTH = 'BTBZMqHH6r4Tts7J_aSIgg';
 
 const WRITE_KEY = 'write-key-1';
 const DEVICE = 'device-token-1';
@@ -38,6 +43,21 @@ const decide = (env, card_id, version, action, data, token = DEVICE) => call(env
   token, body: data === undefined ? { card_id, version, action } : { card_id, version, action, data },
 });
 const decisions = async (env) => (await call(env, 'GET', '/jobs/decisions', { token: WRITE_KEY })).body.decisions;
+const settings = (env, body) => call(env, 'POST', '/jobs/settings', { token: DEVICE, body });
+
+async function setupPushEnv() {
+  const env = await setupEnv();
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  env.VAPID_PRIVATE_KEY = JSON.stringify(await crypto.subtle.exportKey('jwk', kp.privateKey));
+  env.VAPID_SUBJECT = 'mailto:test@localhost';
+  env.__fetch = async () => ({ status: 201 });
+  await env.DB.prepare(
+    'INSERT INTO push_subs (endpoint, p256dh, auth, dead, device_id) VALUES (?, ?, ?, 0, ?)',
+  ).bind('https://push.example/sub/1', SUB_P256DH, SUB_AUTH, `${DEVICE}-id`).run();
+  return env;
+}
+
+const pushNotify = (env, body, now = NOW) => call(env, 'POST', '/jobs/notify', { token: WRITE_KEY, body, now });
 
 test('cards need the write key; phone reads them with its device token', async () => {
   const env = await setupEnv();
@@ -97,12 +117,11 @@ test('ack deletes', async () => {
 
 test('cron sweeps old job data', async () => {
   const env = await setupEnv();
-  env.DB.prepare('CREATE TABLE jobs_pushed (card_id TEXT, at INTEGER)').run();
   const ins = (sql, ...args) => env.DB.prepare(sql).bind(...args).run();
   await ins("INSERT INTO jobs_decisions (id, card_id, version, kind, action, at) VALUES ('old', 'a', 'v', 'job', 'yes', ?)", NOW - 8 * DAY);
   await ins("INSERT INTO jobs_decisions (id, card_id, version, kind, action, at) VALUES ('new', 'b', 'v', 'job', 'yes', ?)", NOW - 6 * DAY);
-  await ins("INSERT INTO jobs_pushed (card_id, at) VALUES ('old', ?)", NOW - 31 * DAY);
-  await ins("INSERT INTO jobs_pushed (card_id, at) VALUES ('new', ?)", NOW - 29 * DAY);
+  await ins("INSERT INTO jobs_pushed (key, kind, day, at) VALUES ('old', 'job', 'x', ?)", NOW - 31 * DAY);
+  await ins("INSERT INTO jobs_pushed (key, kind, day, at) VALUES ('new', 'job', 'x', ?)", NOW - 29 * DAY);
   await ins("INSERT INTO push_log (run_id, reason, code, at) VALUES ('', 'jobs:old', 201, ?)", NOW - 31 * DAY);
   await ins("INSERT INTO push_log (run_id, reason, code, at) VALUES ('', 'jobs:new', 201, ?)", NOW - 29 * DAY);
   await ins("INSERT INTO push_log (run_id, reason, code, at) VALUES ('r', 'notify:x', 201, ?)", NOW - 31 * DAY);
@@ -110,7 +129,7 @@ test('cron sweeps old job data', async () => {
   await worker.scheduled({ scheduledTime: NOW }, env, undefined);
   const ids = (sql) => env.DB.prepare(sql).all().results.map((r) => Object.values(r)[0]);
   assert.deepEqual(ids('SELECT id FROM jobs_decisions'), ['new']);
-  assert.deepEqual(ids('SELECT card_id FROM jobs_pushed'), ['new']);
+  assert.deepEqual(ids('SELECT key FROM jobs_pushed'), ['new']);
   assert.deepEqual(ids('SELECT reason FROM push_log ORDER BY reason'), ['jobs:new', 'notify:x']);
 });
 
@@ -257,10 +276,12 @@ test('migration applies on old schema', () => {
   db.exec(migration);
   db.exec(migration);
   const names = db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'jobs_%' OR name LIKE 'idx_jobs_%'").all().map((r) => r.name);
-  for (const n of ['jobs_meta', 'jobs_cards', 'jobs_decisions', 'idx_jobs_decisions_once', 'idx_jobs_decisions_engine']) {
+  for (const n of ['jobs_meta', 'jobs_cards', 'jobs_decisions', 'idx_jobs_decisions_once', 'idx_jobs_decisions_engine', 'jobs_pushed', 'idx_jobs_pushed_kind_day']) {
     assert.ok(names.includes(n), n);
   }
   assert.equal(db.prepare("SELECT value FROM jobs_meta WHERE key = 'push_cap'").get().value, '4');
+  db.prepare('INSERT INTO jobs_pushed (key, kind, day, at) VALUES (?, ?, ?, ?)').run('job:a', 'job', '2026-01-01', 1);
+  assert.equal(db.prepare('SELECT kind FROM jobs_pushed WHERE key = ?').get('job:a').kind, 'job');
 });
 
 const storedCards = async (env, token = DEVICE) => (await call(env, 'GET', '/jobs/cards', { token })).body;
@@ -410,4 +431,82 @@ test('answers: nested values and look-alike digits are refused', async () => {
     assert.ok([400].includes((await decide(env, 'ask:q', 'v1', 'answers', data)).status), JSON.stringify(data));
   }
   assert.deepEqual(await decisions(env), []);
+});
+
+const hotJob = (id, extra = {}) => card(id, 'job', 'v1', { hot: true, path: 'qa', ...extra });
+
+test('job push respects mode, cap and dup', async () => {
+  const env = await setupPushEnv();
+  await settings(env, { mode: 'quiet' });
+  await putCards(env, [hotJob('job:a')]);
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:a', text: 'QA at X' })).body, { sent: false, why: 'quiet' });
+
+  await settings(env, { mode: 'push', push_cap: 2 });
+  await putCards(env, [hotJob('job:b'), hotJob('job:c')]);
+  assert.equal((await pushNotify(env, { card_id: 'job:a', text: 'QA at X' })).body.sent, true);
+  assert.equal((await pushNotify(env, { card_id: 'job:b', text: 't' })).body.sent, true);
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:c', text: 't' })).body, { sent: false, why: 'cap' });
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:a', text: 't' })).body, { sent: false, why: 'dup' });
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:nope', text: 't' })).body, { sent: false, why: 'no-card' });
+  const logged = env.DB.prepare("SELECT reason FROM push_log WHERE run_id = 'jobs' AND code = 201 ORDER BY id").all().results.map((r) => r.reason);
+  assert.deepEqual(logged, ['jobs:job:a', 'jobs:job:b']);
+});
+
+test('job push text is exact and capped at 120 chars', () => {
+  assert.equal(textFor({ job: { card_id: 'job:a', text: 'QA at X' } }), 'работа: QA at X');
+  const long = 'a'.repeat(200);
+  assert.equal(textFor({ job: { card_id: 'job:a', text: long } }).length, 120);
+  assert.equal(textFor({ job: { card_id: 'job:a', text: long } }), `работа: ${'a'.repeat(112)}`);
+});
+
+test('cap resets at Boston midnight', async () => {
+  const env = await setupPushEnv();
+  await settings(env, { push_cap: 2 });
+  await putCards(env, [hotJob('job:a'), hotJob('job:b'), hotJob('job:c')]);
+  // 2026-01-15 — зима, Бостон = UTC-5, без DST.
+  const t1 = Date.UTC(2026, 0, 16, 4, 50, 0); // 23:50 Бостон, 15 января
+  const t2 = Date.UTC(2026, 0, 16, 4, 55, 0); // 23:55 Бостон, тот же день
+  const t3 = Date.UTC(2026, 0, 16, 5, 10, 0); // 00:10 Бостон, 16 января — новые сутки
+  assert.equal((await pushNotify(env, { card_id: 'job:a', text: 't' }, t1)).body.sent, true);
+  assert.equal((await pushNotify(env, { card_id: 'job:b', text: 't' }, t2)).body.sent, true);
+  assert.equal((await pushNotify(env, { card_id: 'job:c', text: 't' }, t3)).body.sent, true);
+});
+
+test('captcha push ignores cap and quiet', async () => {
+  const env = await setupPushEnv();
+  await settings(env, { mode: 'quiet', push_cap: 1 });
+  await putCards(env, [card('captcha:x', 'captcha', '1')]);
+  assert.equal((await pushNotify(env, { card_id: 'captcha:x', text: 'капча' })).body.sent, true);
+  assert.deepEqual((await pushNotify(env, { card_id: 'captcha:x', text: 'капча' })).body, { sent: false, why: 'dup' });
+  await putCards(env, [card('captcha:x', 'captcha', '2')]);
+  assert.equal((await pushNotify(env, { card_id: 'captcha:x', text: 'капча' })).body.sent, true);
+  const logged = env.DB.prepare("SELECT reason FROM push_log WHERE run_id = 'jobs' AND code = 201 ORDER BY id").all().results.map((r) => r.reason);
+  assert.deepEqual(logged, ['jobs:captcha:x#1', 'jobs:captcha:x#2']);
+});
+
+test('failed delivery gives the slot back', async () => {
+  const env = await setupPushEnv();
+  env.__fetch = async () => ({ status: 500 });
+  await putCards(env, [hotJob('job:a')]);
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:a', text: 't' })).body, { sent: false, why: 'error' });
+  const row = await env.DB.prepare('SELECT * FROM jobs_pushed WHERE key = ?').bind('job:a').first();
+  assert.equal(row, null);
+  env.__fetch = async () => ({ status: 201 });
+  assert.equal((await pushNotify(env, { card_id: 'job:a', text: 't' })).body.sent, true);
+});
+
+test('only hot first-path jobs are pushed', async () => {
+  const env = await setupPushEnv();
+  await putCards(env, [
+    card('job:cold', 'job', 'v1', { hot: false, path: 'qa' }),
+    card('job:other-path', 'job', 'v1', { hot: true, path: 'retail' }),
+  ]);
+  assert.equal((await pushNotify(env, { card_id: 'job:cold', text: 't' })).status, 400, 'cold job stays in batch');
+  assert.equal((await pushNotify(env, { card_id: 'job:other-path', text: 't' })).status, 400, 'out-of-path job stays in batch');
+  assert.deepEqual(env.DB.prepare('SELECT key FROM jobs_pushed').all().results, [], 'no slot reserved');
+});
+
+test('old pult notify unchanged', () => {
+  assert.equal(textFor({ status: 'done' }), 'tero: прогон закончен — подробно — в пульте');
+  assert.equal(textFor({ notify: 'hi' }), 'tero: hi');
 });

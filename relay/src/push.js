@@ -136,6 +136,7 @@ function reasonFor(payload) {
   // `POST /notify` (tero notify, «агента нет, решу сам»): кулдаун по тексту,
   // чтобы два разных уведомления за 30 мин не глушили друг друга.
   if (payload && typeof payload.notify === 'string') return `notify:${textHash(payload.notify)}`;
+  if (payload && payload.job && typeof payload.job.card_id === 'string') return `jobs:${payload.job.card_id}`;
   const stale = payload && payload.stale === true ? ':stale' : '';
   const q = payload && payload.question;
   if (q && typeof q === 'object' && typeof q.id === 'string' && q.id) return `question:${q.id}${stale}`;
@@ -148,6 +149,9 @@ export function textFor(payload) {
   if (payload && typeof payload.notify === 'string') {
     const room = PUSH_MAX - 'tero: '.length;
     return `tero: ${[...payload.notify].slice(0, Math.max(room, 0)).join('')}`;
+  }
+  if (payload && payload.job && typeof payload.job.text === 'string') {
+    return [...`работа: ${payload.job.text}`].slice(0, 120).join('');
   }
   // F2: stale-пуш cron'а — это потеря связи, а не старый вопрос/статус.
   if (payload && payload.stale === true) {

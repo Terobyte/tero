@@ -2,6 +2,7 @@
 // Телефон присылает только фиксированный набор действий (JOB_ACTIONS); любое другое — 400.
 
 import { deviceRole, hasWriteKey, jsonResponse } from './worker.js';
+import { notify as sendPush } from './push.js';
 
 export const JOB_ACTIONS = {
   job: ['yes', 'no', 'engine'],
@@ -14,6 +15,7 @@ export const JOB_ACTIONS = {
 
 const READ_KINDS = ['job', 'status'];
 const ENGINES = ['chrome', 'browser-act'];
+const FIRST_PATH = ['qa', 'software'];
 const MODES = ['push', 'quiet', 'autopilot'];
 const MAX_CARDS = 500;
 const MAX_ANSWERS = 40;
@@ -289,12 +291,72 @@ async function ackDecisions(request, env) {
   return jsonResponse({ ok: true });
 }
 
+function bostonDay(nowMs) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(nowMs));
+}
+
+// Пуш вакансии (`job`) считается в суточный push_cap и молчит в режиме quiet.
+// Пуш паузы капчи идёт всегда, вне потолка — без него задание висит.
+async function postJobsNotify(request, env, now) {
+  if (!hasWriteKey(request, env)) return bad('unauthorized', 401);
+  const body = await readBody(request);
+  const cardId = body && typeof body.card_id === 'string' ? body.card_id : '';
+  const text = body && typeof body.text === 'string' ? body.text : '';
+  if (!cardId || !text) return bad('card_id and text required');
+  const db = env.DB;
+  const cardRow = await db.prepare('SELECT kind, version, hot, payload FROM jobs_cards WHERE id = ?').bind(cardId).first();
+  if (!cardRow) return jsonResponse({ sent: false, why: 'no-card' });
+  const isCaptcha = cardRow.kind === 'captcha';
+  if (!isCaptcha) {
+    if (cardRow.kind !== 'job') return jsonResponse({ sent: false, why: 'no-card' });
+    let path;
+    try {
+      path = JSON.parse(cardRow.payload).path;
+    } catch {
+      path = undefined;
+    }
+    // Пуш только горячей вакансии первого пути — остальные остаются в пачке без пуша.
+    if (!cardRow.hot || !FIRST_PATH.includes(path)) return bad('ineligible');
+    const { mode } = await getSettings(env);
+    if (mode === 'quiet') return jsonResponse({ sent: false, why: 'quiet' });
+  }
+  const key = isCaptcha ? `${cardId}#${cardRow.version}` : cardId;
+  let reserved;
+  if (isCaptcha) {
+    reserved = await db.prepare(
+      'INSERT INTO jobs_pushed (key, kind, day, at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO NOTHING',
+    ).bind(key, 'captcha', bostonDay(now), now).run();
+  } else {
+    const { push_cap: cap } = await getSettings(env);
+    reserved = await db.prepare(
+      'INSERT INTO jobs_pushed (key, kind, day, at) '
+      + "SELECT ?, 'job', ?, ? WHERE (SELECT COUNT(*) FROM jobs_pushed WHERE kind = 'job' AND day = ?) < ? "
+      + 'ON CONFLICT (key) DO NOTHING',
+    ).bind(key, bostonDay(now), now, bostonDay(now), cap).run();
+  }
+  if (reserved.meta.changes === 0) {
+    const existing = await db.prepare('SELECT 1 FROM jobs_pushed WHERE key = ?').bind(key).first();
+    return jsonResponse({ sent: false, why: existing ? 'dup' : 'cap' });
+  }
+  let result;
+  try {
+    result = await sendPush(env, 'jobs', '', { job: { card_id: key, text } }, now);
+  } catch {
+    result = { error: true };
+  }
+  if (result && result.sent) return jsonResponse({ sent: true, why: 'ok' });
+  await db.prepare('DELETE FROM jobs_pushed WHERE key = ?').bind(key).run();
+  if (result && result.skipped === 'no-subscription') return jsonResponse({ sent: false, why: 'no-sub' });
+  return jsonResponse({ sent: false, why: 'error' });
+}
+
 export async function handleJobs(request, env, url, now = Date.now()) {
   const method = request.method.toUpperCase();
   const { pathname } = url;
   if (method === 'POST' && pathname === '/jobs/cards') return putCards(request, env, now);
   if (method === 'GET' && pathname === '/jobs/cards') return listCards(request, env, now);
   if (method === 'POST' && pathname === '/jobs/decide') return decide(request, env, now);
+  if (method === 'POST' && pathname === '/jobs/notify') return postJobsNotify(request, env, now);
   if (method === 'POST' && pathname === '/jobs/settings') return postSettings(request, env);
   if (method === 'GET' && pathname === '/jobs/settings') return laptopSettings(request, env, now);
   if (method === 'GET' && pathname === '/jobs/decisions') return laptopDecisions(request, env, now);

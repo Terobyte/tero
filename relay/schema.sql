@@ -156,3 +156,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_decisions_once ON jobs_decisions (car
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_decisions_engine ON jobs_decisions (card_id)
   WHERE kind = 'job' AND action = 'engine';
 CREATE INDEX IF NOT EXISTS idx_jobs_decisions_at ON jobs_decisions (at);
+
+-- Слот пуша вакансии/капчи: key = card_id (job) или card_id#version (captcha).
+-- Потолок считает только kind='job' за бостонские сутки (day). Строка живёт,
+-- пока её не удалит cron (30 дней) или неудачная доставка не вернёт слот.
+CREATE TABLE IF NOT EXISTS jobs_pushed (
+  key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  day TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_pushed_kind_day ON jobs_pushed (kind, day);
