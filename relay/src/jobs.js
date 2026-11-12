@@ -44,7 +44,9 @@ function cardHasContact(card) {
     if (typeof value === 'string') return hasContact(value, { phone });
     if (Array.isArray(value)) return value.some((v) => walk(v, phone));
     if (isPlainObject(value)) {
-      return Object.entries(value).some(([key, v]) => walk(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
+      // Имена полей (метки в his/drafts) проверяются целиком, исключение для id/url — только для значений.
+      return Object.entries(value).some(([key, v]) => hasContact(key)
+        || walk(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
     }
     return false;
   };

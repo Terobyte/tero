@@ -334,3 +334,24 @@ test('a phone in the only card is refused too', async () => {
   assert.deepEqual(res.body, { error: 'contact' });
   assert.deepEqual((await storedCards(env)).cards, []);
 });
+
+test('contacts in field names are refused', async () => {
+  const env = await setupEnv();
+  for (const key of ['me@example.com', 'call 617-555-0123']) {
+    const res = await putCards(env, [card('job:a', 'job', 'v1', { his: { [key]: 'ok' } })]);
+    assert.equal(res.status, 400, key);
+    assert.deepEqual(res.body, { error: 'contact' });
+  }
+  assert.deepEqual((await storedCards(env)).cards, []);
+});
+
+test('contacts in answer labels are refused', async () => {
+  const env = await setupEnv();
+  await putCards(env, [card('ask:q', 'ask')]);
+  for (const key of ['me@example.com', 'call 617-555-0123']) {
+    const res = await decide(env, 'ask:q', 'v1', 'answers', { [key]: 'ok' });
+    assert.equal(res.status, 400, key);
+    assert.deepEqual(res.body, { error: 'contact' });
+  }
+  assert.deepEqual(await decisions(env), []);
+});
