@@ -33,6 +33,18 @@ export function hasContact(text) {
   return CONTACT_PATTERNS.some((re) => re.test(String(text)));
 }
 
+// Ключи, чьи значения не проверяются: id и ссылки вакансий несут длинные числа, похожие на телефон.
+const CONTACT_SKIP_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
+
+function cardHasContact(value) {
+  if (typeof value === 'string') return hasContact(value);
+  if (Array.isArray(value)) return value.some(cardHasContact);
+  if (isPlainObject(value)) {
+    return Object.entries(value).some(([key, v]) => !CONTACT_SKIP_KEYS.has(key) && cardHasContact(v));
+  }
+  return false;
+}
+
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const bad = (error, status = 400) => jsonResponse({ error }, status);
 
@@ -91,6 +103,8 @@ async function putCards(request, env, now) {
   if (!Array.isArray(drop) || drop.length > MAX_CARDS || !drop.every((id) => typeof id === 'string')) {
     return bad('bad drop');
   }
+  // Защита вторым рубежом: релей не хранит контакты, даже если ноут их не вычистил.
+  if (cards.some(cardHasContact)) return bad('contact');
   const db = env.DB;
   const batch = [];
   for (const card of cards) {
@@ -256,6 +270,7 @@ async function ackDecisions(request, env) {
     || !body.ids.every((id) => typeof id === 'string')) {
     return bad('ids required');
   }
+  if (body.ids.length === 0) return jsonResponse({ ok: true });
   await env.DB.batch(body.ids.map((id) => env.DB.prepare('DELETE FROM jobs_decisions WHERE id = ?').bind(id)));
   return jsonResponse({ ok: true });
 }

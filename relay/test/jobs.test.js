@@ -262,3 +262,55 @@ test('migration applies on old schema', () => {
   }
   assert.equal(db.prepare("SELECT value FROM jobs_meta WHERE key = 'push_cap'").get().value, '4');
 });
+
+const storedCards = async (env, token = DEVICE) => (await call(env, 'GET', '/jobs/cards', { token })).body;
+
+test('card with email in a text field is refused and nothing is stored', async () => {
+  const env = await setupEnv();
+  const res = await putCards(env, [card('job:a', 'job', 'v1', { why: 'write to me@example.com' })]);
+  assert.equal(res.status, 400);
+  assert.deepEqual(res.body, { error: 'contact' });
+  const got = await storedCards(env);
+  assert.deepEqual(got.cards, []);
+  assert.equal(got.laptop_seen, 0);
+});
+
+test('status card with an address in a nested array is refused', async () => {
+  const env = await setupEnv();
+  const res = await putCards(env, [card('status:s', 'status', 'v1', { lines: [{ note: ['ok', 'lives at 12 Main St'] }] })]);
+  assert.equal(res.status, 400);
+  assert.deepEqual(res.body, { error: 'contact' });
+  assert.deepEqual((await storedCards(env)).cards, []);
+});
+
+test('urls and ids with long digit runs are accepted', async () => {
+  const env = await setupEnv();
+  const res = await putCards(env, [card('job:12345678901234', 'job', 'v1', {
+    url: 'https://boards.example.com/jobs/4567891234',
+    form_url: 'https://boards.example.com/apply/4567891234567',
+    filled_hash: '1234567890123456',
+    title: 'Backend dev',
+    salary: 150000,
+  })]);
+  assert.equal(res.status, 200);
+  assert.equal((await storedCards(env)).cards.length, 1);
+});
+
+test('dirty second card refuses the whole batch', async () => {
+  const env = await setupEnv();
+  const res = await putCards(env, [
+    card('job:a', 'job'),
+    card('job:b', 'job', 'v1', { text: 'call 617 555 0123' }),
+  ]);
+  assert.equal(res.status, 400);
+  assert.equal(JSON.stringify(res.body).includes('555'), false);
+  assert.deepEqual((await storedCards(env)).cards, []);
+});
+
+test('ack with no ids does not touch the batch', async () => {
+  const env = await setupEnv();
+  env.DB.batch = () => { throw new Error('batch called'); };
+  const res = await call(env, 'POST', '/jobs/decisions/ack', { token: WRITE_KEY, body: { ids: [] } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { ok: true });
+});
