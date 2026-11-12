@@ -23,24 +23,26 @@ const PUSHED_TTL_MS = 30 * 86400000;
 
 // Общие шаблоны контактов: релей не хранит почту, телефон и адрес, даже если страницу обошли.
 // Страница (задача 3) берёт те же источники.
+const PHONE_PATTERN = /\+?\d(?:[\s().-]*\d){9,14}/;
 export const CONTACT_PATTERNS = [
   /[^\s@]+@[^\s@]+\.[^\s@]+/,
-  /\+?\d(?:[\s().-]*\d){9,14}/,
+  PHONE_PATTERN,
   /\d+ \w+ (?:St|Street|Ave|Avenue|Rd|Road|Blvd|Way|Dr|Drive)\b/i,
 ];
 
-export function hasContact(text) {
-  return CONTACT_PATTERNS.some((re) => re.test(String(text)));
+// phone: false — для id и ссылок: длинные числа там не телефон, почта и адрес всё равно ловятся.
+export function hasContact(text, { phone = true } = {}) {
+  return CONTACT_PATTERNS.some((re) => (phone || re !== PHONE_PATTERN) && re.test(String(text)));
 }
 
-// Ключи, чьи значения не проверяются: id и ссылки вакансий несут длинные числа, похожие на телефон.
-const CONTACT_SKIP_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
+// Ключи, у которых не проверяется только телефон: id и ссылки вакансий несут длинные числа.
+const PHONE_EXEMPT_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
 
-function cardHasContact(value) {
-  if (typeof value === 'string') return hasContact(value);
-  if (Array.isArray(value)) return value.some(cardHasContact);
+function cardHasContact(value, phone = true) {
+  if (typeof value === 'string') return hasContact(value, { phone });
+  if (Array.isArray(value)) return value.some((v) => cardHasContact(v, phone));
   if (isPlainObject(value)) {
-    return Object.entries(value).some(([key, v]) => !CONTACT_SKIP_KEYS.has(key) && cardHasContact(v));
+    return Object.entries(value).some(([key, v]) => cardHasContact(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
   }
   return false;
 }

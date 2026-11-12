@@ -314,3 +314,15 @@ test('ack with no ids does not touch the batch', async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { ok: true });
 });
+
+test('exempt keys still refuse an email or an address', async () => {
+  const env = await setupEnv();
+  const a = await putCards(env, [card('person@example.com', 'job', 'v1', { title: 'Dev' })]);
+  assert.equal(a.status, 400);
+  assert.deepEqual(a.body, { error: 'contact' });
+  const b = await putCards(env, [card('job:a', 'job', 'v1', { form_url: 'https://x.com/apply?ref=12 Main St' })]);
+  assert.equal(b.status, 400);
+  const c = await putCards(env, [card('job:a', 'job', 'v1', { filled_hash: 'me@example.com', url: 'a@b.co' })]);
+  assert.equal(c.status, 400);
+  assert.deepEqual((await storedCards(env)).cards, []);
+});
