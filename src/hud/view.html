@@ -59,6 +59,7 @@ body {
 #close { display: none; }
 #phases { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; color: var(--dim); cursor: pointer; }
 #phases:hover { color: var(--text); }
+.phase-count { margin-left: 3px; font-size: var(--small); color: var(--dim); white-space: nowrap; }
 /* the plan slides down over the log on a click on the phases */
 #plan {
   position: absolute; left: 8px; right: 8px; top: 34px; z-index: 5;
@@ -179,6 +180,35 @@ html[data-host="phone"] #card:has(#foot.r-tester) { --acc: var(--tester); }
 html[data-host="phone"] #card:has(#foot.r-gate) { --acc: var(--gate); }
 html[data-host="phone"] #card:has(#foot.bad) { --acc: var(--red); }
 html[data-host="phone"] #card:has(#foot.good) { --acc: var(--green); }
+/* phone header: light, status, model and round on the first line; all the phase
+   dots on their own full-width line below, big enough for a thumb, wrapping
+   instead of running out under the model name */
+html[data-host="phone"] #top { flex-wrap: wrap; row-gap: 2px; white-space: normal; }
+html[data-host="phone"] #phases {
+  order: 10; flex: 1 0 100%; flex-wrap: wrap; gap: 6px; row-gap: 6px;
+  padding: 8px 0 6px; min-height: 30px; color: var(--dim);
+}
+html[data-host="phone"] #phases .dot { width: 9px; height: 9px; }
+/* no link to the relay: a red strip over the card, the card itself dims */
+html[data-host="phone"] #offline { margin: 8px 0; padding: 8px 12px; border-radius: 10px; font-size: var(--small);
+  color: var(--red); background: rgba(255, 90, 90, 0.1); border: 1px solid rgba(255, 90, 90, 0.35); }
+html[data-host="phone"] body.stale #card { opacity: 0.55; }
+html[data-host="phone"] .age.warn { color: var(--yellow); }
+html[data-host="phone"] .age.bad { color: var(--red); }
+/* answer countdown: «пропустить фазу» через 4 с · отменить */
+html[data-host="phone"] #pending { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--yellow); margin: 8px 0; }
+/* a locked button must look locked: countdown, answer in flight, no link */
+html[data-host="phone"] #question button:disabled { opacity: 0.35; filter: saturate(0.3); cursor: default; }
+/* "7/23" leads the dots on the phone: it never drops to a line of its own */
+html[data-host="phone"] .phase-count { order: -1; margin: 0 4px 0 0; }
+/* the current phase gets a ring: one yellow dot among 23 is easy to miss */
+html[data-host="phone"] #phases .dot.yellow { box-shadow: 0 0 0 3px rgba(240, 200, 80, 0.3); }
+html[data-host="phone"] .phase-name { display: block !important; flex-basis: 100%; margin: 2px 0 0; white-space: nowrap; }
+html[data-host="phone"] #model { max-width: none; flex: 1 1 auto; text-align: right; }
+html[data-host="phone"] #plan { left: 6px; right: 6px; max-height: calc(55vh - 70px); }
+html[data-host="phone"] .step .t { font-size: var(--small); }
+/* tool calls: one dim line each, the agent's own words keep full height */
+html[data-host="phone"] #log .tool { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 html[data-host="phone"] #light { cursor: default; width: 11px; height: 11px; }
 html[data-host="phone"] #light:hover { transform: none; }
 html[data-host="phone"] #plus, html[data-host="phone"] #close { display: none !important; }
@@ -242,6 +272,26 @@ html[data-host="phone"] #message input[type="checkbox"] { -webkit-appearance: no
 html[data-host="phone"] #message input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--dim); transition: transform 0.2s, background 0.2s; }
 html[data-host="phone"] #message input[type="checkbox"]:checked { background: color-mix(in srgb, var(--host) 30%, transparent); border-color: var(--host); box-shadow: 0 0 12px color-mix(in srgb, var(--host) 45%, transparent); }
 html[data-host="phone"] #message input[type="checkbox"]:checked::after { transform: translateX(16px); background: var(--host); box-shadow: 0 0 8px var(--host); }
+/* the question id is for the draft keeper, not for eyes */
+html[data-host="phone"] .qid { display: none; }
+html[data-host="phone"] #question button { margin: 0 6px 8px 0; }
+html[data-host="phone"] label.field { display: block; margin: 8px 0 0; color: var(--dim); }
+html[data-host="phone"] label.field select { margin-top: 4px; }
+html[data-host="phone"] ::placeholder { color: rgba(255,255,255,0.32); }
+html[data-host="phone"] #pult .when { color: var(--dim); font-variant-numeric: tabular-nums; }
+html[data-host="phone"] #pult .times { color: var(--orange); font-weight: 700; }
+html[data-host="phone"] #pult .limits { color: var(--dim); margin-top: 8px; }
+html[data-host="phone"] #pult .lim { color: var(--text); white-space: nowrap; }
+html[data-host="phone"] #pult .lim.dim { color: var(--dim); }
+html[data-host="phone"] #pult .lim.bad { color: var(--red); }
+html[data-host="phone"] #pult .warn { color: var(--yellow); }
+html[data-host="phone"] #pult details > summary { cursor: pointer; color: var(--dim); padding: 6px 0; list-style: none; }
+html[data-host="phone"] #pult details > summary::before { content: "▸ "; }
+html[data-host="phone"] #pult details[open] > summary::before { content: "▾ "; }
+html[data-host="phone"] #pult li details > summary { color: var(--text); padding: 0; }
+html[data-host="phone"] #pult .findings li { color: var(--dim); font-size: var(--small); padding: 6px 0 0 14px; border: 0; }
+html[data-host="phone"] #push-msg { color: var(--dim); margin-top: 8px; }
+html[data-host="phone"] #push button.grey-on { color: var(--dim); }
 @media (prefers-reduced-motion: reduce) { html[data-host="phone"] #question { animation: none; } }
 @media (max-width: 440px) { #age { display: none; } }
 @media (max-width: 380px) { .phase-name { display: none; } #model { max-width: none; } }
@@ -292,8 +342,14 @@ function doingOf(d) {
   return d.doing || "";
 }
 // [who, text, class]: a stop, a fresh verdict or "done" win over the acting role's newest line
+// "user_stop, работа в `refs/tero/<run>/phase-07-round01`" → words, not a git ref
+function humanStop(t) {
+  return String(t || "")
+    .replace(/^user_stop\b/, "остановлен вручную")
+    .replace(/`?refs\/tero\/[^`\s]*\/phase-0*(\d+)-round0*(\d+)`?/g, "снимке фазы $1, раунд $2");
+}
 function footOf(d, acting) {
-  if (d.stop_text) return ["", d.stop_text, "bad"];
+  if (d.stop_text) return ["", humanStop(d.stop_text), "bad"];
   var v = d.verdict || {};
   var vAge = since(d, d.verdict_at);
   var fresh = vAge != null && vAge < VERDICT_SHOW_S;
@@ -355,7 +411,35 @@ function renderPlan(secs, d) {
 function ago(s) {
   return s < 60 ? s + " с" : Math.floor(s / 60) + " мин";
 }
-var logFilter = "";  // "" all roles, "host" only the host (the phone's «только хозяин»)
+var logFilter = "";  // "" all roles, "host" only the host (the phone's «only the host»)
+var phasesKey = "";
+function stripMark(s) { return String(s || "").replace(/^[\s✓⚠✕]+/, ""); }
+// a log line as a person reads it: the judge's raw verdict JSON becomes one
+// sentence, lines that only repeat it (verdict, ship, stop) are dropped (null)
+function logText(it, prev) {
+  var t = String(it.text || "");
+  if (it.type === "verdict" && prev && prev.verdictJson) return null;
+  if (it.type === "stop" && /^(ship|debt)$/.test(t)) return null;
+  if (it.type === "ship") return "✓ фаза сдана";
+  if (it.type === "snapshot" || it.type === "stop") return humanStop(t);
+  var s = t.replace(/^\s+/, "");
+  if (s.charAt(0) === "{") {
+    try {
+      var j = JSON.parse(s);
+      if (j && j.verdict) {
+        var parts = ["вердикт " + j.verdict];
+        var closed = (j.previous || []).filter(function (p) { return p && p.state === "resolved"; })
+          .map(function (p) { return p.id; });
+        if (closed.length) parts.push("закрыто: " + closed.join(", "));
+        var f = j.findings || [];
+        parts.push(f.length ? "находок " + f.length : "новых находок нет");
+        if (j.user_question) parts.push("вопрос: " + j.user_question);
+        return {text: parts.join(" · "), verdictJson: true};
+      }
+    } catch (e) {}
+  }
+  return t || it.type || "";
+}
 function render(d) {
   if (!d) return;
   var light = d.light || "grey";
@@ -368,24 +452,40 @@ function render(d) {
   var acting = ROLE_NAMES[d.role] && (d.light === "green" || d.light === "yellow") ? d.role : "";
 
   var secs = d.sectors || [];
-  var ph = document.getElementById("phases");
-  ph.innerHTML = "";
-  var curTitle = null;
-  for (var j = 0; j < secs.length; j++) {
-    var dot = document.createElement("span");
-    dot.className = "dot " + (secs[j].color || "grey");
-    dot.title = (j + 1) + ". " + (secs[j].title || "");
-    ph.appendChild(dot);
-    if (secs[j].color === "yellow") curTitle = secs[j].title || "";
+  // rebuild the dots only when they change: a dot swapped out under a finger
+  // turns the tap into a click on nothing and the plan never opens
+  // "7/23": where we are in the plan without counting dots
+  var total = Number(d.total_phases) || secs.length;
+  var at = Math.min(total, (Number(d.phase_index) || 0) + 1);
+  var count = secs.length && total ? at + "/" + total : "";
+  var phKey = JSON.stringify(secs) + "|" + count;
+  if (phKey !== phasesKey) {
+    phasesKey = phKey;
+    var ph = document.getElementById("phases");
+    ph.innerHTML = "";
+    var curTitle = null;
+    for (var j = 0; j < secs.length; j++) {
+      var dot = document.createElement("span");
+      dot.className = "dot " + (secs[j].color || "grey");
+      dot.title = (j + 1) + ". " + (secs[j].title || "");
+      ph.appendChild(dot);
+      if (secs[j].color === "yellow") curTitle = secs[j].title || "";
+    }
+    if (count) {
+      var cnt = document.createElement("span");
+      cnt.className = "phase-count";
+      cnt.textContent = count;
+      ph.appendChild(cnt);
+    }
+    if (curTitle !== null) {
+      var label = document.createElement("span");
+      label.className = "phase-name";
+      label.textContent = curTitle;
+      label.title = curTitle;
+      ph.appendChild(label);
+    }
   }
   renderPlan(secs, d);
-  if (curTitle !== null) {
-    var label = document.createElement("span");
-    label.className = "phase-name";
-    label.textContent = curTitle;
-    label.title = curTitle;
-    ph.appendChild(label);
-  }
 
   // "player · opus": the role is on the bottom chip, the model gets its own place
   var model = document.getElementById("model");
@@ -394,7 +494,9 @@ function render(d) {
   // "р1 · 22:07": round and time in the phase; the phase itself is in the dots
   var meta = [];
   if (d.round) meta.push("р" + d.round);
-  if (d.phase_started_at != null) meta.push(mmss(nowS(d) - d.phase_started_at));
+  // a stopped or finished run has no running phase clock
+  var over = !!(d.stop_text || d.done_text) || light === "ready";
+  if (d.phase_started_at != null && !over) meta.push(mmss(nowS(d) - d.phase_started_at));
   document.getElementById("meta").textContent = meta.join(" · ");
   var age = document.getElementById("age");
   var lastAge = since(d, d.last_event_at);
@@ -403,6 +505,8 @@ function render(d) {
   age.className = "age-" + ageColor(lastAge);
 
   var f = footOf(d, acting);
+  // the bottom chip already says it ("⚠ сдано с долгом 3"): no second copy up top
+  if (st.textContent && stripMark(f[1]) === stripMark(st.textContent)) st.textContent = "";
   var who = document.getElementById("who");
   who.textContent = f[0];
   who.className = acting ? "r-" + acting : "";
@@ -419,12 +523,16 @@ function render(d) {
   var log = document.getElementById("log");
   var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   var frag = document.createDocumentFragment();
+  var prev = null;
   for (var m = Math.max(0, items.length - LOG_SHOW); m < items.length; m++) {
+    var shown = logText(items[m], prev);
+    if (shown === null) continue;
+    prev = typeof shown === "object" ? shown : null;
     var line = document.createElement("div");
     var r = items[m].role;
     // agent speech glows in its role color, tool calls stay dim
     line.className = (ROLE_NAMES[r] ? "r-" + r : "") + (items[m].type === "tool" ? " tool" : "");
-    line.textContent = items[m].text || items[m].type || "";
+    line.textContent = typeof shown === "object" ? shown.text : shown;
     frag.appendChild(line);
   }
   log.innerHTML = "";
@@ -474,7 +582,12 @@ document.getElementById("close").onclick = function () { call("close"); };
 document.addEventListener("click", function (e) {
   var plan = document.getElementById("plan");
   var onPhases = document.getElementById("phases").contains(e.target);
-  if (onPhases) plan.classList.toggle("open");
+  if (onPhases) {
+    // the plan drops right under the header, however many lines it wrapped into
+    var top = document.getElementById("top");
+    plan.style.top = (top.offsetTop + top.offsetHeight + 4) + "px";
+    plan.classList.toggle("open");
+  }
   else if (!plan.contains(e.target)) plan.classList.remove("open");
 });
 setInterval(poll, 1000);

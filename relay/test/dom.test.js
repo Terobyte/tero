@@ -98,8 +98,9 @@ test('render(view) при now = built_at: лампочка, статус, фаз
   const el = load(VIEW, VIEW.built_at);
   assert.equal(el.light.className, 'yellow');
   assert.equal(el.status.textContent, 'ждёт тебя');
-  assert.equal(el.phases.children.length, 4, 'три точки и имя текущей фазы');
-  assert.equal(el.phases.children[3].textContent, 'b');
+  assert.equal(el.phases.children.length, 5, 'три точки, счётчик и имя текущей фазы');
+  assert.match(el.phases.children[3].textContent, /^[1-3]\/3$/, 'счётчик «N/M»');
+  assert.equal(el.phases.children[4].textContent, 'b');
   assert.equal(el.model.textContent, 'gpt-5');
   assert.equal(el.model.className, 'r-judge');
   assert.equal(el.meta.textContent, 'р2 · 02:05');
@@ -159,7 +160,8 @@ test('телефон: с window.teroSource крестик не показыва�
   assert.equal(empty.log.children.length, 0);
   const grey = load({ light: 'grey', light_text: 'нет данных', doing: 'нет данных', sectors: [], log: [] }, 5, source);
   assert.equal(grey.light.className, 'grey');
-  assert.equal(grey.status.textContent, 'нет данных');
+  // плашка внизу уже говорит «нет данных» — вверху второй копии нет
+  assert.equal(grey.status.textContent, '');
   assert.equal(grey.doing.textContent, 'нет данных');
 });
 
@@ -181,4 +183,13 @@ test('фильтр «только хозяин»: включение остав�
   assert.deepEqual(on.log.children.map((c) => c.className), ['r-host']);
   const off = load(VIEW, VIEW.built_at, null, (g) => { applyHostOnly(g, true); applyHostOnly(g, false); });
   assert.deepEqual(off.log.children.map((c) => c.className), ['r-player', 'r-judge tool', 'r-host']);
+});
+
+test('счётчик фаз «N/M» на маке (без teroSource) и обновляется при тех же секторах', () => {
+  let ctx = null;
+  const el = load(VIEW, VIEW.built_at, null, (c) => { ctx = c; });
+  assert.equal(el.phases.children[3].textContent, '2/3', 'Mac HUD: счётчик виден');
+  // фаза сдана, секторы те же — ключ phasesKey обязан включать счётчик
+  vm.runInContext('render(__view)', Object.assign(ctx, { __view: { ...VIEW, phase_index: 2 } }));
+  assert.equal(el.phases.children[3].textContent, '3/3');
 });

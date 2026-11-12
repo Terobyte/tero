@@ -38,6 +38,8 @@ export function captureDraft(doc) {
     text: textEl ? textEl.value : '',
     model: modelEl ? modelEl.value : '',
     focus: active && section.contains(active) ? active.getAttribute('name') : '',
+    // курсор: опрос раз в 4 с при открытом вопросе иначе кидал бы его в конец
+    sel: textEl && active === textEl ? [textEl.selectionStart, textEl.selectionEnd] : null,
   };
 }
 
@@ -51,7 +53,10 @@ export function restoreDraft(doc, draft) {
   const modelEl = section.querySelector('select[name="model"]');
   if (textEl && draft.text) textEl.value = draft.text;
   if (modelEl && draft.model) modelEl.value = draft.model;
-  if (draft.focus === 'text' && textEl) textEl.focus();
+  if (draft.focus === 'text' && textEl) {
+    textEl.focus();
+    if (draft.sel && typeof textEl.setSelectionRange === 'function') textEl.setSelectionRange(draft.sel[0], draft.sel[1]);
+  }
   if (draft.focus === 'model' && modelEl) modelEl.focus();
 }
 
@@ -66,13 +71,14 @@ export function renderQuestion(question, phoneText, models) {
     ? rawActions.filter((a) => SAFE_SILENT.has(String(a)))
     : rawActions;
   const buttons = actions.map((a) => escapeHtml(String(a))).filter(Boolean)
-    .map((action) => (action === 'stop'
-      ? '<button data-action="stop" onclick="return confirm(\'Остановить прогон?\')">stop</button>'
-      : `<button data-action="${action}">${action}</button>`)).join('\n');
-  const text = phoneText === false ? '' : '<textarea name="text" maxlength="2000"></textarea>';
+    // «стоп» без confirm: нативный диалог в PWA неудобен — его заменяют 5 с на «отменить»
+    .map((action) => `<button data-action="${action}">${escapeHtml(actionLabel(action))}</button>`).join('\n');
+  const text = phoneText === false ? ''
+    : '<textarea name="text" maxlength="2000" placeholder="пояснение к ответу (можно пусто)"></textarea>';
   const wantsModel = actions.includes('model');
   const modelSel = wantsModel && Array.isArray(models) && models.length
-    ? `<select name="model" aria-label="model">${models.map((m) => `<option>${escapeHtml(m)}</option>`).join('')}</select>`
+    ? '<label class="field">модель для «сменить модель»'
+      + `<select name="model" aria-label="model">${models.map((m) => `<option>${escapeHtml(m)}</option>`).join('')}</select></label>`
     : '';
   if (!buttons) {
     return '<section id="question"><h2>вопрос</h2>'
@@ -83,31 +89,215 @@ export function renderQuestion(question, phoneText, models) {
   return '<section id="question"><h2>вопрос</h2>'
     + `<p>${escapeHtml(question.text)}</p>`
     + `<p class="qid">${escapeHtml(question.id)}</p>`
-    + buttons + text + modelSel + '</section>';
+    + buttons + text + modelSel + '<p id="answer-msg"></p></section>';
+}
+
+// Отказы Worker человеческим языком: раньше кнопка на любой отказ, кроме 401, молчала.
+const ANSWER_ERRORS = {
+  'read-only token': 'этот телефон привязан только на чтение — привяжи заново кодом с `tero pair`',
+  'no open question': 'вопрос уже закрыт (ответили с другого места или автопилот)',
+  'action not allowed': 'это действие сейчас недоступно',
+  'text answers disabled': 'текстовые ответы с телефона выключены в конфиге',
+  'text required': 'нужен текст',
+  'text too long': 'слишком длинный текст (до 2000 символов)',
+  'run finished': 'прогон уже закончен',
+};
+export function answerErrorText(status, error) {
+  if (error && ANSWER_ERRORS[error]) return ANSWER_ERRORS[error];
+  if (error) return String(error);
+  return `отказ сервера: ${status}`;
+}
+
+// Кнопки и журнал говорят по-русски; data-action остаётся командой для Worker.
+const ACTION_LABELS = {
+  more: 'ещё раунд', skip: 'пропустить фазу', retry: 'заново', stop: 'стоп', model: 'сменить модель',
+  answer: 'ответить', allow: 'разрешить', ship: 'сдать', debt: 'сдать с долгом',
+};
+export function actionLabel(action) {
+  return ACTION_LABELS[String(action)] || String(action || '');
+}
+const WHO_LABELS = { human: 'ты', autopilot: 'автопилот', agent: 'агент', host: 'хозяин' };
+const REASON_LABELS = { fuse: 'предохранитель', skip: 'пропущена', question: 'вопрос', manual: 'вручную' };
+const STATUS_LABELS = {
+  running: 'идёт', waiting_human: 'ждёт тебя', done: 'готово', stopped: 'остановлен', failed: 'упал',
+};
+
+// Время из state приходит то unix-секундами, то ISO, то готовым «10:00»:
+// человеку — «14:08», не сегодня — «27.10 14:08».
+export function fmtWhen(value, now = Date.now()) {
+  if (value == null || value === '') return '';
+  let ms = NaN;
+  if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(String(value))) ms = Number(value) * 1000;
+  else if (/^\d{4}-\d\d-\d\d/.test(String(value))) ms = Date.parse(String(value));
+  if (!Number.isFinite(ms)) return String(value);
+  const d = new Date(ms);
+  const p = (n) => ('0' + n).slice(-2);
+  const t = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return new Date(now).toDateString() === d.toDateString() ? t : `${p(d.getDate())}.${p(d.getMonth() + 1)} ${t}`;
+}
+
+// «20261101-234135637839-2026-11-01-engine-worlds» → «engine-worlds · 01.11 23:41».
+export function runLabel(runId) {
+  const id = String(runId || '');
+  const m = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)\d*-(.+)$/.exec(id);
+  if (!m) return id;
+  const name = m[6].replace(/^\d{4}-\d\d-\d\d-/, '');
+  return `${name} · ${m[3]}.${m[2]} ${m[4]}:${m[5]}`;
+}
+
+// Возраст данных словами — без арифметики «сейчас минус 14:08».
+export function ageText(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  if (s < 5) return 'обновлено только что';
+  if (s < 60) return `обновлено ${s} с назад`;
+  if (s < 3600) return `обновлено ${Math.floor(s / 60)} мин назад`;
+  if (s < 86400) return `обновлено ${Math.floor(s / 3600)} ч назад`;
+  return `обновлено ${Math.floor(s / 86400)} дн назад`;
+}
+export function ageClass(sec) {
+  const s = Number(sec) || 0;
+  return s <= 60 ? '' : s <= 300 ? 'warn' : 'bad';
+}
+
+// Плашка связи: одна неудача — ещё не обрыв (медленная сеть), две подряд — показываем.
+export function connText(fails, lastOkMs, now = Date.now(), status = 0) {
+  if (!(fails >= 2)) return '';
+  const base = status >= 400 && status < 500 ? `релей ответил ${status}` : 'нет связи с релеем';
+  return lastOkMs ? `${base} · с ${fmtWhen(lastOkMs / 1000, now)}` : base;
+}
+
+const TERMINAL = new Set(['done', 'stopped', 'failed']);
+
+// Без run_id в адресе: прогон, который ждёт ответа (пуш почти всегда о нём), затем живой.
+export function pickRun(runs) {
+  const list = Array.isArray(runs) ? runs.filter((r) => r && r.run_id) : [];
+  return list.find((r) => String(r.status) === 'waiting_human')
+    || list.find((r) => !TERMINAL.has(String(r.status)))
+    || list[0] || {};
+}
+
+// Итог законченного прогона одной строкой; числа — только из секторов карточки.
+export function runSummary(state) {
+  const st = state && typeof state === 'object' ? state : {};
+  const status = String(st.status || '');
+  if (!TERMINAL.has(status)) return '';
+  const view = st.view && typeof st.view === 'object' ? st.view : {};
+  const secs = Array.isArray(view.sectors) ? view.sectors : [];
+  const parts = [];
+  if (secs.length) {
+    const shipped = secs.filter((s) => s && s.color === 'green').length;
+    const debt = secs.filter((s) => s && s.color === 'orange').length;
+    parts.push(`сдано ${shipped} из ${secs.length}`);
+    if (debt) parts.push(`долг ${debt}`);
+  } else if (Array.isArray(st.debts) && st.debts.length) {
+    parts.push(`долг ${st.debts.length}`);
+  }
+  const stop = String(view.stop_text || '');
+  if (status === 'failed') parts.push('упал');
+  else if (/^user_stop\b/.test(stop)) parts.push('остановлен вручную');
+  else if (status === 'stopped') parts.push('остановлен');
+  else parts.push(STATUS_LABELS.done);
+  return parts.join(' · ');
+}
+
+// Ответ уходит не сразу: 5 с на «отменить». Чистая машина состояний — браузер
+// только исполняет `send`. Один переход pending → send|отмена: send отдаётся
+// ровно один раз, и pending в этот же шаг обнуляется.
+export const ANSWER_DELAY_MS = 5000;
+export function questionKey(state) {
+  const st = state && typeof state === 'object' ? state : {};
+  const q = st.question;
+  if (!q || !q.id) return '';
+  return JSON.stringify([st.run_id || '', st.machine_id || '', q.id, q.text || '',
+    Array.isArray(q.actions) ? q.actions : []]);
+}
+export function pendingStep(pending, ev, now = Date.now()) {
+  const e = ev || {};
+  if (e.type === 'tap') {
+    if (pending || !e.key) return { pending };
+    return { pending: { action: e.action, text: e.text || '', key: e.key, target: e.target,
+      deadline: now + ANSWER_DELAY_MS } };
+  }
+  if (!pending) return { pending: null };
+  if (e.type === 'cancel') return { pending: null, note: 'отменено — ничего не отправлено' };
+  if (e.type === 'state' && e.key !== pending.key) {
+    return { pending: null, note: 'вопрос уже закрыт или сменился — ответ не отправлен' };
+  }
+  if (e.type === 'tick' && now >= pending.deadline) {
+    // свёрнутая вкладка или телефон проспал дедлайн — без глаз хозяина не отправляем
+    if (e.hidden || now > pending.deadline + 3000) {
+      return { pending: null, note: 'страница была свёрнута — ответ не отправлен, нажми ещё раз' };
+    }
+    return { pending: null, send: pending };
+  }
+  return { pending };
+}
+export function renderPending(pending, now = Date.now()) {
+  if (!pending) return '';
+  const left = Math.max(0, Math.ceil((pending.deadline - now) / 1000));
+  return `<p id="pending">«${escapeHtml(actionLabel(pending.action))}» через ${left} с`
+    + ' <button id="pending-cancel" class="grey-on">отменить</button></p>';
 }
 
 function renderAnswered(answered, decisions) {
   const last = answered || (Array.isArray(decisions) && decisions[decisions.length - 1]) || null;
-  const what = last && (last.action || last.what)
-    ? ` — ${escapeHtml(last.action || last.what)} (${escapeHtml(last.by || last.who || '')})`
-    : '';
+  const act = last && (last.action || last.what);
+  const who = last && (last.by || last.who);
+  const what = act ? ` — ${escapeHtml(actionLabel(act))}${who ? ` (${escapeHtml(WHO_LABELS[who] || who)})` : ''}` : '';
   return `<section id="answered"><p>уже отвечено${what}</p></section>`;
 }
 
-function renderList(items, render) {
-  if (!Array.isArray(items) || !items.length) return '<p>—</p>';
-  return `<ul>${items.map((item) => `<li>${render(item)}</li>`).join('')}</ul>`;
+// Длинные списки: первые `head` видны, остальное под «ещё N».
+function renderList(items, render, head = 0) {
+  if (!Array.isArray(items) || !items.length) return '';
+  const li = (item) => `<li>${render(item)}</li>`;
+  if (!head || items.length <= head) return `<ul>${items.map(li).join('')}</ul>`;
+  return `<ul>${items.slice(0, head).map(li).join('')}</ul>`
+    + `<details><summary>ещё ${items.length - head}</summary><ul>${items.slice(head).map(li).join('')}</ul></details>`;
 }
 
+// «токены 174663» — размер контекста последнего хода (src/providers/limits.py).
 function renderLimits(limits) {
-  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
-    return '<p>лимиты: неизвестно</p>';
-  }
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) return '';
   const rows = Object.entries(limits)
     .filter(([, v]) => typeof v === 'string' && v)
-    .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`);
-  if (!rows.length) return '<p>лимиты: неизвестно</p>';
-  return `<ul>${rows.map((r) => `<li>${r}</li>`).join('')}</ul>`;
+    .map(([k, v]) => {
+      const n = /^токены (\d+)$/.exec(v);
+      const val = n ? `${Math.round(Number(n[1]) / 1000)}k` : v;
+      const bad = v === 'квота' || v === 'нужен вход';
+      return `<span class="lim${bad ? ' bad' : ''}${v === 'неизвестно' ? ' dim' : ''}">${escapeHtml(k)} ${escapeHtml(val)}</span>`;
+    });
+  if (!rows.length) return '';
+  return `<p class="limits">контекст: ${rows.join(' · ')}</p>`;
+}
+
+// Подряд одинаковые решения (тот же wake каждые 10 мин) — одной строкой «×N»;
+// свежие сверху.
+export function decisionRows(decisions) {
+  const text = (d) => {
+    if (!d || typeof d !== 'object') return '';
+    if (d.kind === 'wake') {
+      return `пробуждение (${REASON_LABELS[d.reason] || d.reason || ''}): ${d.result || ''}`;
+    }
+    const who = WHO_LABELS[d.who] || d.who || '';
+    const why = d.why ? REASON_LABELS[d.why] || d.why : '';
+    return `${who}: ${actionLabel(d.what || d.action)}${why ? ` (${why})` : ''}`;
+  };
+  // одинаковые строки (тот же wake каждые 10 мин вперемешку со skip) — одна строка
+  // с последним временем и «×N»; порядок — по последнему появлению, свежие сверху
+  const byText = new Map();
+  let seq = 0;
+  for (const d of Array.isArray(decisions) ? decisions : []) {
+    const t = text(d);
+    if (!t) continue;
+    const when = fmtWhen(d.at ?? d.ts);
+    const row = byText.get(t) || { text: t, when, n: 0 };
+    row.n += 1;
+    row.when = when || row.when;
+    row.seq = seq++;
+    byText.set(t, row);
+  }
+  return [...byText.values()].sort((x, y) => y.seq - x.seq).map(({ text: t, when, n }) => ({ text: t, when, n }));
 }
 
 export function renderPair(unpaired) {
@@ -115,7 +305,8 @@ export function renderPair(unpaired) {
     ? '<h1>привязка недействительна</h1><p>токен отозван — введите новый код с экрана <code>tero pair</code></p>'
     : '<h1>привязка телефона</h1><p>введите код с экрана <code>tero pair</code></p>';
   return `<section id="${unpaired ? 'unpaired' : 'pair'}">${head}`
-    + '<input type="text" id="pair-code" maxlength="16"><button id="pair-btn">привязать</button></section>';
+    + '<input type="text" id="pair-code" maxlength="16" placeholder="код из 8 букв" autocapitalize="characters"'
+    + ' autocomplete="one-time-code"><button id="pair-btn">привязать</button><p id="pair-msg"></p></section>';
 }
 
 // Над карточкой: открытый вопрос первым (тап по пушу ведёт сюда), иначе итог,
@@ -129,7 +320,7 @@ export function renderTop(state = {}, opts = {}) {
     : [];
   const head = st.question && st.question.id
     ? renderQuestion(st.question, phoneText, models)
-    : '<section id="idle"><p>нет открытого вопроса</p></section>';
+    : '';
   return head + renderMessage(st, opts);
 }
 
@@ -139,11 +330,13 @@ function renderMessage(st, opts = {}) {
   const checked = opts.hostOnly ? ' checked' : '';
   const filter = '<label class="host-filter"><input type="checkbox" id="host-only"'
     + `${checked}> только хозяин</label>`;
-  if (st.phone_text_answers === false) {
-    return `<section id="message"><h2>сообщение хозяину</h2>${filter}</section>`;
+  // законченному прогону писать некому: Worker ответит 422 — поле не показываем
+  const over = ['done', 'stopped', 'failed'].includes(String(st.status));
+  if (st.phone_text_answers === false || over) {
+    return `<section id="message"><h2>${over ? 'лог' : 'сообщение хозяину'}</h2>${filter}</section>`;
   }
   return `<section id="message"><h2>сообщение хозяину</h2>${filter}`
-    + '<input type="text" name="message" maxlength="2000">'
+    + '<input type="text" name="message" maxlength="2000" placeholder="написать хозяину…">'
     + '<button id="msg-btn">Отправить</button><p id="msg-error"></p></section>';
 }
 
@@ -155,18 +348,32 @@ export function renderBelow(state = {}, opts = {}) {
   const isStoppedRun = (r) => r && (String(r.status) === 'done' || String(r.status) === 'stopped');
   const runLink = (r, extra = '') => `<a href="?run_id=${escapeHtml(r.run_id)}`
     + `&amp;machine_id=${escapeHtml(r.machine_id)}" data-run="${escapeHtml(r.run_id)}">`
-    + `${escapeHtml(r.run_id)} · ${escapeHtml(r.status)}${extra}</a>`;
-  const runsHtml = renderList(runs.filter((r) => !isStoppedRun(r)), runLink);
+    + `${escapeHtml(runLabel(r.run_id))}${r.run_id === st.run_id ? ' · открыт' : ''}`
+    + ` · ${escapeHtml(STATUS_LABELS[r.status] || r.status)}${extra}</a>`;
+  const liveRuns = runs.filter((r) => !isStoppedRun(r));
+  const runsHtml = liveRuns.length
+    ? `<section id="runs"><h2>прогоны</h2>${renderList(liveRuns, (r) => runLink(r))}</section>` : '';
   const stopped = runs.filter(isStoppedRun);
-  const stoppedHtml = stopped.length ? `<section id="stopped"><h2>остановлены</h2>`
-    + renderList(stopped, (r) => runLink(r, r.updated_at ? ` · ${escapeHtml(r.updated_at)}` : ''))
+  const stoppedHtml = stopped.length ? `<section id="stopped"><h2>закончены</h2>`
+    + renderList(stopped, (r) => runLink(r, r.updated_at ? ` · ${escapeHtml(fmtWhen(r.updated_at))}` : ''), 3)
     + `</section>` : '';
-  const decisionsHtml = renderList(st.decisions, (d) => (d.kind === 'wake'
-    ? `${escapeHtml(d.at || '')} — wake (${escapeHtml(d.reason)}): ${escapeHtml(d.result)}`
-    : `${escapeHtml(d.at || d.ts || '')} — ${escapeHtml(d.who)}: `
-      + `${escapeHtml(d.what || d.action)}${d.why ? ` (${escapeHtml(d.why)})` : ''}`));
-  const debtsHtml = renderList(st.debts, (d) => `${escapeHtml(d.phase)} — ${escapeHtml(d.reason)}`);
-  const historyHtml = renderList(st.history, (h) => `${escapeHtml(h.phase)} — ${escapeHtml(h.verdict)}`);
+  const decisions = decisionRows(st.decisions);
+  const decisionsHtml = decisions.length ? `<section id="decisions"><h2>решения</h2>`
+    + renderList(decisions, (d) => `${d.when ? `<span class="when">${escapeHtml(d.when)}</span> ` : ''}`
+      + `${escapeHtml(d.text)}${d.n > 1 ? ` <span class="times">×${d.n}</span>` : ''}`, 5)
+    + '</section>' : '';
+  const debtRow = (d) => {
+    const findings = Array.isArray(d.findings) ? d.findings : [];
+    const head = `фаза ${escapeHtml(d.phase)} — ${escapeHtml(REASON_LABELS[d.reason] || d.reason)}`
+      + (findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'находка' : 'находок'}` : '');
+    if (!findings.length) return head;
+    return `<details><summary>${head}</summary><ul class="findings">`
+      + findings.map((f) => `<li>${escapeHtml(String(f).split(' → ')[0])}</li>`).join('') + '</ul></details>';
+  };
+  const debtsHtml = renderList(st.debts, debtRow);
+  const historyHtml = renderList(st.history, (h) => `фаза ${escapeHtml(h.phase)} — ${escapeHtml(h.verdict)}`);
+  const debtSection = debtsHtml || historyHtml
+    ? `<section id="debt"><h2>долг и история фаз</h2>${debtsHtml}${historyHtml}</section>` : '';
   const agent = st.view && st.view.agent;
   const live = !['done', 'stopped', 'failed'].includes(String(st.status));
   const waitingN = st.view ? Number(st.view.messages_waiting) || 0 : 0;
@@ -175,25 +382,32 @@ export function renderBelow(state = {}, opts = {}) {
     ? `<p>${noAgent ? 'агента нет, сообщение ждёт' : `непрочитанных сообщений хозяину: ${waitingN}`}</p>` : '';
   const answeredLast = st.answered
     || (Array.isArray(st.decisions) ? [...st.decisions].reverse().find((d) => d && (d.action || d.what)) : null);
-  const answered = answeredLast ? renderAnswered(answeredLast, st.decisions) : '';
+  // после конца прогона «уже отвечено» — шум: то же есть в решениях
+  const answered = answeredLast && live ? renderAnswered(answeredLast, st.decisions) : '';
   const updatedMs = Date.parse(st.updated_at || '');
   const stale = Number.isFinite(updatedMs) && (Date.now() - updatedMs > STALE_AFTER_S * 1000);
   const wakeBtn = live && !stale && agent && agent.on_duty === false
     ? '<section id="wake"><button id="wake-btn">Разбудить агента</button><p id="wake-error"></p></section>' : '';
+  // фаза, раунд, роль и модель уже в шапке карточки — здесь только то, чего там нет
+  const statusWord = runSummary(st) || STATUS_LABELS[st.status] || st.status || '';
+  // возраст данных тикает сам (data-at), без запроса; цвет — только у живого прогона
+  const ageS = (Date.now() - updatedMs) / 1000;
+  const fresh = Number.isFinite(updatedMs)
+    ? ` · <span id="data-age" class="age ${live ? ageClass(ageS) : ''}" data-at="${updatedMs}"`
+      + ` data-live="${live ? 1 : 0}">${escapeHtml(ageText(ageS))}</span>` : '';
   return answered + `<section id="run-status"><h2>статус</h2>`
-    + `<p>${escapeHtml(st.status)} · фаза ${escapeHtml(st.phase)} · раунд ${escapeHtml(st.round)} · `
-    + `${escapeHtml(st.role)} · ${escapeHtml(st.model)}</p>${waiting}`
+    + `<p>${escapeHtml(statusWord)}${fresh}${stale && live ? ' · <b class="warn">ноут молчит</b>' : ''}</p>${waiting}`
     + wakeBtn
     + renderResume(opts.resume)
     // итог команды сторожа — вне секции resume: кнопка прячется, когда прогон ожил,
     // а итог (done/failed/lost) должен остаться виден
     + '<p id="resume-result"></p>'
-    + `<section id="limits"><h2>лимиты</h2>${renderLimits(st.limits)}</section></section>`
-    + `<section id="runs"><h2>прогоны</h2>${runsHtml}</section>`
+    + renderLimits(st.limits) + '</section>'
+    + runsHtml
     + stoppedHtml
-    + `<section id="decisions"><h2>решения</h2>${decisionsHtml}</section>`
-    + `<section id="debt"><h2>долг и история фазы</h2>${debtsHtml}${historyHtml}</section>`
-    + '<section id="push"><button id="push-btn">Включить пуши</button></section>';
+    + decisionsHtml
+    + debtSection
+    + '<section id="push"><button id="push-btn">Включить пуши</button><p id="push-msg"></p></section>';
 }
 
 /* the phone's «только хозяин»: view.html's render() reads the global logFilter once a second */
@@ -264,7 +478,8 @@ export function resumeButton(body, now) {
 
 export function renderResume(btn) {
   if (!btn) return '';
-  if (!btn.show) return btn.hint ? `<p id="resume-hint">resume: <code>${escapeHtml(btn.hint)}</code></p>` : '';
+  // подсказка `tero watch --install` — для ноута; на телефоне кнопки просто нет
+  if (!btn.show) return '';
   return '<section id="resume">'
     + (btn.field ? `<p>${escapeHtml(btn.why)}</p><input type="text" name="resume-text" maxlength="2000">` : '')
     + `<button id="resume-btn"${btn.disabled ? ' disabled class="grey"' : ''}>${escapeHtml(btn.text)}</button>`
@@ -319,6 +534,11 @@ if (inBrowser) {
   top.id = 'pult-top';
   const below = document.createElement('div');
   below.id = 'pult';
+  // плашка «нет связи» — отдельно от #pult-top: её не стирает перерисовка
+  const conn = document.createElement('div');
+  conn.id = 'offline';
+  conn.hidden = true;
+  card.parentNode.insertBefore(conn, card);
   card.parentNode.insertBefore(top, card);
   card.parentNode.insertBefore(below, card.nextSibling);
   let token = localStorage.getItem('tero_token') || '';
@@ -330,6 +550,19 @@ if (inBrowser) {
   // Цель отправленного resume: итог (done/failed/lost) обычно готов позже отправки —
   // каждый опрос дотягивает его через /commands/last и кладёт в #resume-result.
   let lastResume = null;
+  let answerNote = null;
+  // связь: подряд идущие неудачи загрузки и время последней удачной
+  let fails = 0;
+  let lastFailStatus = 0;
+  let lastOkMs = 0;
+  let lastState = {};
+  // ответ в отсчёте (pendingStep) и ответ в полёте — кнопки заперты
+  let pending = null;
+  let pendingTimer = null;
+  let sending = false;
+  // #pult-top не перерисовываем, пока хозяин печатает (не дольше 30 с подряд)
+  let topKey = null;
+  let frozenSince = 0;
 
   // Итог последней команды сторожа: вызывается и сразу после отправки, и после
   // каждой перерисовки опроса — перерисовка below.innerHTML иначе стирает итог.
@@ -362,16 +595,77 @@ if (inBrowser) {
     if (link) link.href = `/manifest.webmanifest?code=${encodeURIComponent(code)}`;
   })();
 
-  function unpaired(res) {
-    return res.status === 401 && res.body && res.body.error === 'unpaired';
-  }
-
+  // Никогда не бросает: сеть упала → status 0. ok — только 2xx с JSON.
   async function get(path) {
     const headers = token ? { authorization: `Bearer ${token}` } : {};
-    const res = await fetch(path, { headers });
+    let res;
+    try { res = await fetch(path, { headers }); } catch { return { status: 0, body: null, ok: false }; }
     let body = null;
     try { body = await res.json(); } catch { body = null; }
-    return { status: res.status, body };
+    return { status: res.status, body, ok: res.ok && body !== null };
+  }
+
+  function showConn() {
+    const text = connText(fails, lastOkMs, Date.now(), lastFailStatus);
+    conn.textContent = text;
+    conn.hidden = !text;
+    document.body.classList.toggle('stale', !!text);
+    applyLocks();
+  }
+
+  function failed(status) {
+    fails += 1;
+    lastFailStatus = status;
+    showConn();
+    return 'fail';
+  }
+
+  function applyLocks() {
+    const lock = !!pending || sending || fails >= 2;
+    document.querySelectorAll('#question button[data-action]').forEach((b) => { b.disabled = lock; });
+    const textEl = document.querySelector('#question textarea[name="text"]');
+    if (textEl) textEl.readOnly = !!pending;
+  }
+
+  function drawPending() {
+    const old = document.getElementById('pending');
+    if (!pending) {
+      if (old) old.remove();
+    } else if (old) {
+      const left = document.getElementById('pending-left');
+      const fresh = document.createElement('div');
+      fresh.innerHTML = renderPending(pending);
+      const newLeft = fresh.querySelector('#pending-left');
+      if (left && newLeft) left.textContent = newLeft.textContent;
+    } else {
+      // сразу под кнопками — там, куда смотрит палец, а не под полем и моделью
+      const btns = document.querySelectorAll('#question button[data-action]');
+      const last = btns.length ? btns[btns.length - 1] : document.getElementById('answer-msg');
+      if (last) {
+        last.insertAdjacentHTML(btns.length ? 'afterend' : 'beforebegin', renderPending(pending));
+        const cancel = document.getElementById('pending-cancel');
+        if (cancel) cancel.onclick = () => stepPending({ type: 'cancel' });
+      }
+    }
+    applyLocks();
+  }
+
+  function stepPending(ev) {
+    const r = pendingStep(pending, ev, Date.now());
+    pending = r.pending;
+    if (pending && !pendingTimer) {
+      pendingTimer = setInterval(() => stepPending({ type: 'tick',
+        hidden: document.visibilityState !== 'visible' }), 250);
+    }
+    if (!pending && pendingTimer) { clearInterval(pendingTimer); pendingTimer = null; }
+    if (r.note) {
+      const q = lastState && lastState.question;
+      answerNote = { qid: q ? q.id : '', text: r.note };
+      const el = document.getElementById('answer-msg');
+      if (el) el.textContent = r.note;
+    }
+    drawPending();
+    if (r.send) answer(r.send.action, r.send.text, r.send.target);
   }
 
   function isPwaLaunch() {
@@ -389,55 +683,101 @@ if (inBrowser) {
     document.getElementById('pair-btn').onclick = () => pair();
   }
 
-  async function load() {
+  // Одна загрузка за раз: вызов во время загрузки ставит «ещё раз», а не второй
+  // параллельный запрос (ответы приходили бы в разном порядке и перерисовывали назад).
+  let loading = null;
+  let again = false;
+  function load() {
+    if (loading) { again = true; return loading; }
+    loading = (async () => {
+      try {
+        do { again = false; await loadOnce(); } while (again);
+      } finally { loading = null; }
+    })();
+    return loading;
+  }
+
+  async function loadOnce() {
     if (!token) {
       // PWA после «добавить на экран Домой» стартует с чистым хранилищем —
       // код из start_url меняем только здесь. Safari держит код в адресной строке (F14).
       const code = currentCode();
       if (code && isPwaLaunch()) {
-        await pair(code, true);
-        return;
+        // не ждём: pair() сам вызовет load(), а ждать его отсюда — ждать самих себя
+        pair(code, true);
+        return 'ok';
       }
       showPair(false);
-      return;
+      return 'ok';
     }
     const params = new URLSearchParams(location.search);
     const runId = params.get('run_id');
     const machineId = params.get('machine_id');
     if (Date.now() - runsAt > 60000) {
       const runsRes = await get('/runs?all=1');
-      if (unpaired(runsRes)) { showPair(true); return; }
+      if (runsRes.status === 401) { showPair(true); return 'unpaired'; }
+      if (!runsRes.ok) return failed(runsRes.status);
       runs = (runsRes.body && runsRes.body.runs) || [];
       runsAt = Date.now();
     }
-    const firstLive = runs.find((r) => r
-      && String(r.status) !== 'done' && String(r.status) !== 'stopped') || runs[0] || {};
+    const picked = pickRun(runs);
     const target = (runId && machineId)
       ? { run_id: runId, machine_id: machineId }
-      : { run_id: firstLive.run_id, machine_id: firstLive.machine_id };
+      : { run_id: picked.run_id, machine_id: picked.machine_id };
     let body = null;
     if (target.run_id && target.machine_id) {
       const st = await get(`/state?run_id=${encodeURIComponent(target.run_id)}`
         + `&machine_id=${encodeURIComponent(target.machine_id)}`);
-      if (unpaired(st)) { showPair(true); return; }
+      if (st.status === 401) { showPair(true); return 'unpaired'; }
+      if (!st.ok) return failed(st.status);
       body = st.body || null;
     }
+    fails = 0;
+    lastOkMs = Date.now();
     const state = (body && body.state) || {};
+    lastState = state;
+    const qkey = questionKey(state);
+    stepPending({ type: 'state', key: qkey });
     card.style.display = '';
     window.teroSource.set(viewOf(body, Date.now() / 1000));
     const draft = captureDraft(document);
-    top.innerHTML = renderTop(state, { hostOnly: window.logFilter === 'host' });
+    // поле «написать хозяину» тоже переживает перерисовку раз в 15 с
+    const msgEl = document.querySelector('#message input[name="message"]');
+    const msgDraft = msgEl ? { value: msgEl.value, focus: document.activeElement === msgEl } : null;
+    const act = document.activeElement;
+    const typing = !!act && top.contains(act) && /^(INPUT|TEXTAREA|SELECT)$/.test(act.tagName);
+    const now = Date.now();
+    if (typing && qkey === topKey) { if (!frozenSince) frozenSince = now; } else frozenSince = 0;
+    const freeze = !!frozenSince && now - frozenSince < 30000;
+    if (!freeze) {
+      frozenSince = 0;
+      top.innerHTML = renderTop(state, { hostOnly: window.logFilter === 'host' });
+      topKey = qkey;
+    }
     below.innerHTML = renderBelow(state, { runs, resume: resumeButton({ ...(body || {}), updated_at: state.updated_at,
       view: state.view }, Date.now() / 1000) });
     wire(state);
     restoreDraft(document, draft);
+    const msgNew = document.querySelector('#message input[name="message"]');
+    if (msgNew && msgDraft) {
+      msgNew.value = msgDraft.value;
+      if (msgDraft.focus) msgNew.focus();
+    }
+    const note = document.getElementById('answer-msg');
+    if (note && answerNote && state.question && answerNote.qid === state.question.id) note.textContent = answerNote.text;
+    drawPending();
+    showConn();
+    showPushState();
     refreshResumeResult(state);
+    return 'ok';
   }
 
   async function pair(presetCode = '', auto = false) {
     const code = String(presetCode
       || (document.getElementById('pair-code') || {}).value || '').trim();
-    if (!code) return;
+    const say = (msg) => { const el = document.getElementById('pair-msg'); if (el) el.textContent = msg; };
+    if (!code) { say('введи код'); return; }
+    say('проверяю код…');
     const res = await fetch('/pair/exchange', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -453,21 +793,51 @@ if (inBrowser) {
       return;
     }
     if (auto) showPair(false);
+    const why = {
+      410: 'код истёк или уже использован — запусти `tero pair` ещё раз',
+      429: 'слишком много неверных попыток — подожди и попробуй снова',
+      404: 'такого кода нет — проверь буквы',
+    }[res.status];
+    say(why || (body && body.error) || `не вышло: ${res.status}`);
   }
 
   async function answer(action, text, target) {
     const payload = { question_id: target.id, action, text: text || '' };
     if (target.run_id) payload.run_id = target.run_id;
     if (target.machine_id) payload.machine_id = target.machine_id;
-    const res = await fetch('/answer', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-    });
-    if (res.status === 401) {
-      const body = await res.json().catch(() => ({}));
-      if (body.error === 'unpaired') { showPair(true); return; }
+    // итог ответа (и отказ тоже) запоминается в answerNote: опрос раз в 4 с иначе стирал его
+    const say = (msg) => {
+      answerNote = { qid: target.id, text: msg };
+      const el = document.getElementById('answer-msg');
+      if (el) el.textContent = msg;
+    };
+    const btns = document.querySelectorAll('#question button[data-action]');
+    btns.forEach((b) => { b.disabled = true; });
+    say(`отправляю «${actionLabel(action)}»…`);
+    sending = true;
+    let res;
+    try {
+      res = await fetch('/answer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      sending = false;
+      btns.forEach((b) => { b.disabled = false; });
+      say('нет сети — ответ не ушёл, нажми ещё раз');
+      return;
     }
+    sending = false;
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 401 && body.error === 'unpaired') { showPair(true); return; }
+      btns.forEach((b) => { b.disabled = false; });
+      say(answerErrorText(res.status, body.error));
+      return;
+    }
+    // перерисовка каждые 15 с стёрла бы это — load() кладёт его обратно, пока вопрос тот же
+    say(`«${actionLabel(action)}» отправлено — ноут заберёт ответ`);
     await load();
   }
 
@@ -476,28 +846,22 @@ if (inBrowser) {
     const section = document.getElementById('question');
     if (section) {
       const target = { id: q.id, run_id: state.run_id, machine_id: state.machine_id };
+      const key = questionKey(state);
+      // любое действие (и «стоп») — сначала 5 с с кнопкой «отменить», потом POST
       section.querySelectorAll('button[data-action]').forEach((btn) => {
-        if (btn.dataset.action === 'stop') {
-          btn.onclick = () => {
-            if (typeof confirm === 'function' && !confirm('Остановить прогон?')) return;
-            answer('stop', '', target);
-          };
-        } else if (btn.dataset.action === 'model') {
-          btn.onclick = () => {
+        btn.onclick = () => {
+          const action = btn.dataset.action;
+          const textEl = section.querySelector('textarea[name="text"]');
+          let text = action === 'stop' ? '' : (textEl ? textEl.value : '');
+          if (action === 'model') {
             const modelEl = section.querySelector('select[name="model"]');
             const model = modelEl ? String(modelEl.value || '').trim() : '';
-            const textEl = section.querySelector('textarea[name="text"]');
-            const text = textEl ? textEl.value : '';
             // Без текстового поля нет честного model: пустой текст дал бы 422.
             if (!textEl && !model) { load(); return; }
-            answer('model', model ? `player ${model}` : text, target);
-          };
-        } else {
-          btn.onclick = () => {
-            const textEl = section.querySelector('textarea[name="text"]');
-            answer(btn.dataset.action, textEl ? textEl.value : '', target);
-          };
-        }
+            text = model ? `player ${model}` : text;
+          }
+          stepPending({ type: 'tap', action, text, key, target });
+        };
       });
     }
     const pushBtn = document.getElementById('push-btn');
@@ -550,34 +914,79 @@ if (inBrowser) {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ kind: 'message', text, run_id: state.run_id, machine_id: state.machine_id }),
     });
-    if (res.ok) { if (box) box.value = ''; if (errEl) errEl.textContent = 'отправлено'; return; }
+    if (res.ok) {
+      if (box) box.value = '';
+      if (errEl) errEl.textContent = 'отправлено';
+      if (box) box.blur();
+      load();  // сообщение попадает в лог — показать сразу
+      return;
+    }
     const body = await res.json().catch(() => ({}));
     if (errEl) errEl.textContent = String(body.error || `отказ: ${res.status}`);
   }
 
-  async function enablePush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    // iOS молча отказывает без явного запроса из жеста: только по кнопке.
-    if (window.Notification && Notification.requestPermission) {
-      if (Notification.permission === 'denied') return;
-      if (Notification.permission !== 'granted' && await Notification.requestPermission() !== 'granted') return;
+  // Пуши уже включены — кнопка не врёт «Включить»; иначе раньше она молчала на любой отказ.
+  let pushOn = false;
+  async function showPushState() {
+    const btn = document.getElementById('push-btn');
+    if (!btn) return;
+    if (!pushOn && 'serviceWorker' in navigator && 'PushManager' in window) {
+      try {
+        const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+        pushOn = !!(reg && await reg.pushManager.getSubscription());
+      } catch { pushOn = false; }
     }
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    const vapidRes = await get('/push/vapid');
-    const key = vapidRes.body && vapidRes.body.vapid_public_key;
-    if (!key) return;
-    // Сервер отдаёт публичный ключ JWK-JSON; subscribe нужен несжатый P-256.
-    const appKey = jwkToU8(key) || urlToU8(key);
-    if (!appKey) return;
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey.buffer });
-    const p256dh = u8ToB64(new Uint8Array(sub.getKey('p256dh')));
-    const auth = u8ToB64(new Uint8Array(sub.getKey('auth')));
-    if (!p256dh || !auth) return;
-    await fetch('/push/subscribe', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ endpoint: sub.endpoint, p256dh, auth }),
-    });
+    const el = document.getElementById('push-btn');
+    if (el && pushOn) { el.textContent = 'Пуши включены ✓ (переподписать)'; el.classList.add('grey-on'); }
+  }
+
+  function pushMsg(text) {
+    const el = document.getElementById('push-msg');
+    if (el) el.textContent = text;
+  }
+
+  async function enablePush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      pushMsg(isPwaLaunch() ? 'этот браузер не умеет пуши'
+        : 'пуши на айфоне только из иконки на экране «Домой»: Поделиться → На экран «Домой»');
+      return;
+    }
+    try {
+      // iOS молча отказывает без явного запроса из жеста: только по кнопке.
+      if (window.Notification && Notification.requestPermission) {
+        if (Notification.permission === 'denied') {
+          pushMsg('уведомления запрещены: Настройки → Уведомления → теро-пульт');
+          return;
+        }
+        if (Notification.permission !== 'granted' && await Notification.requestPermission() !== 'granted') {
+          pushMsg('уведомления не разрешены');
+          return;
+        }
+      }
+      pushMsg('подписываю…');
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      const vapidRes = await get('/push/vapid');
+      const key = vapidRes.body && vapidRes.body.vapid_public_key;
+      if (!key) { pushMsg('на сервере не задан ключ пушей'); return; }
+      // Сервер отдаёт публичный ключ JWK-JSON; subscribe нужен несжатый P-256.
+      const appKey = jwkToU8(key) || urlToU8(key);
+      if (!appKey) { pushMsg('ключ пушей на сервере битый'); return; }
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey.buffer });
+      const p256dh = u8ToB64(new Uint8Array(sub.getKey('p256dh')));
+      const auth = u8ToB64(new Uint8Array(sub.getKey('auth')));
+      if (!p256dh || !auth) { pushMsg('браузер не отдал ключи подписки'); return; }
+      const res = await fetch('/push/subscribe', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ endpoint: sub.endpoint, p256dh, auth }),
+      });
+      if (!res.ok) { pushMsg(`сервер не принял подписку: ${res.status}`); return; }
+      pushOn = true;
+      pushMsg('готово, пуши включены');
+      showPushState();
+    } catch (e) {
+      pushMsg(`не вышло: ${e && e.message ? e.message : e}`);
+    }
   }
 
   function jwkToU8(key) {
@@ -618,10 +1027,29 @@ if (inBrowser) {
     }
   }
 
-  // раз в 15 с, только пока вкладка видна; возврат на вкладку — сразу
-  // сеть упала — карточка остаётся на последнем view, следующий тик попробует снова
-  const tick = () => load().catch((e) => console.warn('pult:', e));
-  setInterval(() => { if (document.visibilityState === 'visible') tick(); }, 15000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') tick(); });
+  // Опрос: 4 с, пока открыт вопрос (ответ мог уйти с Мака), иначе 15 с; только при
+  // видимой вкладке. Сеть упала — карточка остаётся на последнем view, плашка после 2 неудач.
+  let pollTimer = null;
+  function schedule() {
+    clearTimeout(pollTimer);
+    if (document.visibilityState !== 'visible') return;
+    const open = lastState && lastState.question && lastState.question.id;
+    pollTimer = setTimeout(tick, open ? 4000 : 15000);
+  }
+  const tick = () => load().catch((e) => console.warn('pult:', e)).finally(schedule);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      runsAt = 0;  // вернулись из пуша — список прогонов мог смениться
+      tick();
+    } else clearTimeout(pollTimer);
+  });
+  // «обновлено N назад» тикает само, без запроса
+  setInterval(() => {
+    const el = document.getElementById('data-age');
+    if (!el) return;
+    const sec = (Date.now() - Number(el.dataset.at)) / 1000;
+    el.textContent = ageText(sec);
+    el.className = `age ${el.dataset.live === '1' ? ageClass(sec) : ''}`;
+  }, 5000);
   tick();
 }

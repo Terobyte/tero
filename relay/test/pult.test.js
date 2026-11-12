@@ -41,7 +41,7 @@ const fixture = () => ({
 test('открытый вопрос раньше статуса', () => {
   const html = renderPage(fixture(), { token: 't' });
   const q = html.indexOf('идём дальше?');
-  const s = html.indexOf('waiting_human');
+  const s = html.indexOf('ждёт тебя');
   assert.ok(q >= 0 && s >= 0 && q < s, 'вопрос должен идти раньше статуса');
 });
 
@@ -68,9 +68,9 @@ test('phone_text_answers: false → кнопки без текста', () => {
   }
 });
 
-test('stop — с подтверждением', () => {
+test('stop — без нативного confirm (его заменяет отсчёт с «отменить»)', () => {
   const html = renderPage(fixture(), { token: 't' });
-  assert.ok(html.includes('confirm'), 'stop спрашивает подтверждение');
+  assert.ok(html.includes('data-action="stop"') && !html.includes('confirm'));
 });
 
 test('кнопка пушей есть; requestPermission только по ней', () => {
@@ -214,9 +214,10 @@ test('F2: действие model — с выбором не-judge моделей
   assert.ok(!html.includes('judge'), 'judge нельзя выбирать через model');
 });
 
-test('F3: wire спрашивает подтверждение перед stop', () => {
+test('F3: любое действие, и stop тоже, идёт через отсчёт pendingStep, без confirm(', () => {
   const shell = readFileSync(SHELL, 'utf8');
-  assert.ok(shell.includes('confirm('), 'stop спрашивает подтверждение в обработчике');
+  assert.ok(!shell.includes('confirm('), 'нативный диалог убран');
+  assert.ok(shell.includes("type: 'tap'"), 'кнопки ставят ответ в отсчёт');
 });
 
 test('F4: подписка без exportKey, ключ — из JWK', () => {
@@ -309,7 +310,7 @@ test('F17: опрос каждые 15с не стирает черновик о�
 test('F14: код обменивается только в PWA, Safari код бережёт', () => {
   const shell = readFileSync(SHELL, 'utf8');
   assert.ok(shell.includes('display-mode') || shell.includes('standalone'), 'PWA-режим определяется');
-  const loadAt = shell.indexOf('async function load(');
+  const loadAt = shell.indexOf('async function loadOnce(');
   const pairAt = shell.indexOf('/pair/exchange');
   assert.ok(loadAt >= 0 && pairAt > loadAt, 'обмен — из загрузки');
 });
@@ -501,7 +502,7 @@ test('итог пробуждения виден из журнала решен�
     { status: 'waiting_human', view: { agent: { on_duty: false } },
       decisions: [{ kind: 'wake', reason: 'manual', result: 'агент запущен (pid 4242)', at: '10:00' }] }, {});
   assert.ok(html.includes('агент запущен (pid 4242)'), 'результат wake из decisions');
-  assert.ok(html.includes('wake (manual)'), 'видны kind и reason');
+  assert.ok(html.includes('пробуждение (вручную)'), 'видны kind и reason');
 });
 
 test('renderQuestion экранирует текст вопроса', () => {
@@ -551,7 +552,7 @@ test('resume: итог дотягивается после отправки и �
   // цель отправленного resume хранится — отложенные done/failed/lost подтянутся позже
   assert.ok(/lastResume|lastCommand|resumeTarget/.test(shell), 'цель resume хранится для опроса');
   // каждый опрос после перерисовки обновляет #resume-result, а не только sendResume один раз
-  const loadAt = shell.indexOf('async function load(');
+  const loadAt = shell.indexOf('async function loadOnce(');
   const pairAt = shell.indexOf('async function pair(');
   assert.ok(loadAt >= 0 && pairAt > loadAt, 'каркас load/pair на месте');
   const loadBody = shell.slice(loadAt, pairAt);
