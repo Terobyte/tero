@@ -366,3 +366,48 @@ test('a phone sent as a number is refused, except under exempt keys', async () =
   const exempt = await putCards(env, [card('job:a', 'job', 'v1', { url: 6175550123, rank: 2.5 })]);
   assert.equal(exempt.status, 200);
 });
+
+test('phone exemption covers only plain values under exempt keys', async () => {
+  const env = await setupEnv();
+  for (const extra of [
+    { url: { note: 6175550123 } },
+    { form_url: ['call 617-555-0123'] },
+    { filled_hash: { deep: { x: ['6175550123'] } } },
+  ]) {
+    const res = await putCards(env, [card('job:a', 'job', 'v1', extra)]);
+    assert.equal(res.status, 400, JSON.stringify(extra));
+    assert.deepEqual(res.body, { error: 'contact' });
+  }
+  assert.deepEqual((await storedCards(env)).cards, []);
+  assert.equal((await putCards(env, [card('job:a', 'job', 'v1', { url: 'https://x/jobs/6175550123' })])).status, 200);
+});
+
+test('contact check covers every JSON type, depth and look-alike digits', async () => {
+  const env = await setupEnv();
+  const dirty = [
+    { a: [[{ b: ['x', { c: 'me@example.com' }] }]] },
+    { a: { b: { 'me@example.com': 1 } } },
+    { a: ['x', 6175550123] },
+    { note: '６１７－５５５－０１２３' },
+    { note: 'me＠example.com' },
+  ];
+  for (const extra of dirty) {
+    assert.equal((await putCards(env, [card('job:a', 'job', 'v1', extra)])).status, 400, JSON.stringify(extra));
+  }
+  const clean = { a: null, b: true, c: false, d: [1, 2.5, null], e: { f: 'ok' } };
+  assert.equal((await putCards(env, [card('job:a', 'job', 'v1', clean)])).status, 200);
+});
+
+test('answers: nested values and look-alike digits are refused', async () => {
+  const env = await setupEnv();
+  await putCards(env, [card('ask:q', 'ask')]);
+  for (const data of [
+    { why: { nested: 'me@example.com' } },
+    { why: ['6175550123'] },
+    { why: 6175550123 },
+    { why: '６１７５５５０１２３' },
+  ]) {
+    assert.ok([400].includes((await decide(env, 'ask:q', 'v1', 'answers', data)).status), JSON.stringify(data));
+  }
+  assert.deepEqual(await decisions(env), []);
+});

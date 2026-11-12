@@ -32,25 +32,31 @@ export const CONTACT_PATTERNS = [
 
 // phone: false — для id и ссылок: длинные числа там не телефон, почта и адрес всё равно ловятся.
 export function hasContact(text, { phone = true } = {}) {
-  return CONTACT_PATTERNS.some((re) => (phone || re !== PHONE_PATTERN) && re.test(String(text)));
+  // NFKC: полноширинные цифры и «＠» не должны обходить шаблоны.
+  const flat = String(text).normalize('NFKC');
+  return CONTACT_PATTERNS.some((re) => (phone || re !== PHONE_PATTERN) && re.test(flat));
 }
 
 // Ключи, у которых не проверяется только телефон: id и ссылки вакансий несут длинные числа.
 const PHONE_EXEMPT_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
 
-// Рекурсия с флагом phone спрятана внутри: `cards.some(cardHasContact)` иначе передал бы индекс как флаг.
+// Исключение для телефона — только у простого значения прямо под id/url/form_url/filled_hash;
+// массивы и объекты под этими ключами проверяются целиком. Флага в рекурсии нет:
+// `cards.some(cardHasContact)` иначе передал бы индекс как флаг.
 function cardHasContact(card) {
-  const walk = (value, phone) => {
-    if (['string', 'number', 'bigint'].includes(typeof value)) return hasContact(String(value), { phone });
-    if (Array.isArray(value)) return value.some((v) => walk(v, phone));
+  const walk = (value) => {
+    if (['string', 'number', 'bigint'].includes(typeof value)) return hasContact(String(value));
+    if (Array.isArray(value)) return value.some((v) => walk(v));
     if (isPlainObject(value)) {
-      // Имена полей (метки в his/drafts) проверяются целиком, исключение для id/url — только для значений.
-      return Object.entries(value).some(([key, v]) => hasContact(key)
-        || walk(v, phone && !PHONE_EXEMPT_KEYS.has(key)));
+      // Имена полей (метки в his/drafts) проверяются целиком.
+      return Object.entries(value).some(([key, v]) => hasContact(key) || (
+        PHONE_EXEMPT_KEYS.has(key) && ['string', 'number', 'bigint'].includes(typeof v)
+          ? hasContact(String(v), { phone: false })
+          : walk(v)));
     }
     return false;
   };
-  return walk(card, true);
+  return walk(card);
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
