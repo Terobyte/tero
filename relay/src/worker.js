@@ -2,6 +2,7 @@
 // Только встроенное API Worker'а (crypto.subtle, fetch, Response).
 
 import { checkStale } from './cron.js';
+import { handleJobs, sweepJobs } from './jobs.js';
 import { filterState, redactSecrets, stripCodeAndDiffs } from './filter.js';
 import { COOLDOWN_MS, PUSH_MAX } from './push.js';
 
@@ -32,7 +33,7 @@ export async function sha256Hex(text) {
 
 const TERMINAL = new Set(['done', 'stopped', 'failed']);
 
-function jsonResponse(data, status = 200) {
+export function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
@@ -52,7 +53,7 @@ function sameSecret(left, right) {
   return diff === 0;
 }
 
-function hasWriteKey(request, env) {
+export function hasWriteKey(request, env) {
   const key = env.RELAY_WRITE_KEY || '';
   return key !== '' && sameSecret(bearerToken(request), key);
 }
@@ -66,7 +67,7 @@ async function deviceRow(request, env) {
   ).bind(hash).first();
 }
 
-async function deviceRole(request, env) {
+export async function deviceRole(request, env) {
   const row = await deviceRow(request, env);
   if (!row) return null;
   if (row.revoked) return 'revoked';
@@ -598,10 +599,14 @@ async function getManifest(url) {
   return jsonResponse(manifest, 200);
 }
 
-export async function handleFetch(request, env) {
+export async function handleFetch(request, env, now = Date.now()) {
   const url = new URL(request.url);
   const { pathname } = url;
   const method = request.method.toUpperCase();
+
+  if (pathname.startsWith('/jobs/')) {
+    return (await handleJobs(request, env, url, now)) ?? jsonResponse({ error: 'not found' }, 404);
+  }
 
   if (method === 'POST' && pathname === '/state') return postState(request, env);
   if (method === 'GET' && pathname === '/state') return getState(request, env, url);
@@ -638,9 +643,10 @@ export default {
       ? event.scheduledTime
       : Date.now();
     if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(checkStale(env, nowMs));
+      ctx.waitUntil(checkStale(env, nowMs).finally(() => sweepJobs(env, nowMs)));
     } else {
       await checkStale(env, nowMs);
+      await sweepJobs(env, nowMs);
     }
   },
 };
