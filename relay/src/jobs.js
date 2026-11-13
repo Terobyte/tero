@@ -39,26 +39,70 @@ export function hasContact(text, { phone = true } = {}) {
   return CONTACT_PATTERNS.some((re) => (phone || re !== PHONE_PATTERN) && re.test(flat));
 }
 
-// Ключи, у которых не проверяется только телефон: id и ссылки вакансий несут длинные числа.
-const PHONE_EXEMPT_KEYS = new Set(['id', 'url', 'form_url', 'filled_hash']);
+// Ключи, у которых не проверяется только телефон: id, хэши и метки времени несут длинные числа.
+const PHONE_EXEMPT_KEYS = new Set(['id', 'filled_hash', 'finished_at']);
+// Ссылки: длинный id вакансии в пути — не телефон, но в запросе и якоре телефон ловится.
+const URL_KEYS = new Set(['url', 'form_url', 'assist_url']);
+// Служебные поля карточки верхнего уровня: версия — хэш (sha1/sha256) или номер паузы.
+const MACHINE_KEYS = new Set(['id', 'kind', 'version', 'hot', 'rank']);
 
-// Исключение для телефона — только у простого значения прямо под id/url/form_url/filled_hash;
-// массивы и объекты под этими ключами проверяются целиком. Флага в рекурсии нет:
+const isPlain = (v) => ['string', 'number', 'bigint'].includes(typeof v);
+
+// Телефон в запросе ссылки: отдельный токен (не кусок uuid или хэша), 10+ цифр,
+// с ведущим «+» или разбитый на группы не длиннее 4 цифр. Голое длинное число — id.
+const PHONE_RUN = /[+(]?\d[\d\s().\-+/]*\d/g;
+const ALNUM = /[\p{L}\p{N}]/u;
+function hasShapedPhone(text) {
+  for (const m of text.matchAll(PHONE_RUN)) {
+    const run = m[0];
+    const groups = run.match(/\d+/g);
+    if (groups.join('').length < 10) continue;
+    const before = text[m.index - 1] || '';
+    const after = text[m.index + run.length] || '';
+    if (ALNUM.test(before) || ALNUM.test(after)) continue;
+    if (run.startsWith('+') || (groups.length > 1 && groups.every((g) => g.length <= 4))) return true;
+  }
+  return false;
+}
+
+export function urlHasContact(value) {
+  const raw = String(value).normalize('NFKC');
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw.replace(/\+/g, '%20')).normalize('NFKC');
+  } catch {
+    decoded = raw;
+  }
+  if (hasContact(raw, { phone: false }) || hasContact(decoded, { phone: false })) return true;
+  const cut = decoded.search(/[?#]/);
+  return cut >= 0 && hasShapedPhone(decoded.slice(cut));
+}
+
+// Проверка простого значения под ключом: ссылки по своим правилам, служебные числа без телефона.
+function plainHasContact(key, v) {
+  if (URL_KEYS.has(key)) return urlHasContact(v);
+  if (PHONE_EXEMPT_KEYS.has(key)) return hasContact(String(v), { phone: false });
+  return hasContact(String(v));
+}
+
+// Исключения — только у простого значения прямо под своим ключом; массивы и объекты
+// под этими ключами проверяются целиком. Флага в рекурсии нет:
 // `cards.some(cardHasContact)` иначе передал бы индекс как флаг.
 function cardHasContact(card) {
   const walk = (value) => {
-    if (['string', 'number', 'bigint'].includes(typeof value)) return hasContact(String(value));
+    if (isPlain(value)) return hasContact(String(value));
     if (Array.isArray(value)) return value.some((v) => walk(v));
     if (isPlainObject(value)) {
       // Имена полей (метки в his/drafts) проверяются целиком.
       return Object.entries(value).some(([key, v]) => hasContact(key) || (
-        PHONE_EXEMPT_KEYS.has(key) && ['string', 'number', 'bigint'].includes(typeof v)
-          ? hasContact(String(v), { phone: false })
-          : walk(v)));
+        isPlain(v) ? plainHasContact(key, v) : walk(v)));
     }
     return false;
   };
-  return walk(card);
+  // Верхний уровень: служебные поля без проверки телефона (почта и адрес ловятся),
+  // всё остальное — payload и любые прочие поля — как текст.
+  return Object.entries(card).some(([key, v]) => (
+    MACHINE_KEYS.has(key) && isPlain(v) ? hasContact(String(v), { phone: false }) : walk({ [key]: v })));
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -153,7 +197,10 @@ async function listCards(request, env, now) {
   for (const row of rows.results || []) {
     if (role === 'read' && !READ_KINDS.includes(row.kind)) continue;
     try {
-      cards.push(JSON.parse(row.payload));
+      const card = JSON.parse(row.payload);
+      // Готовые ответы горячей — его личные ответы из базы: токену read они не положены.
+      if (role === 'read' && isPlainObject(card.payload)) delete card.payload.prepared;
+      cards.push(card);
     } catch {
       // битая строка не должна ронять список
     }
@@ -311,7 +358,8 @@ async function postJobsNotify(request, env, now) {
     if (cardRow.kind !== 'job') return jsonResponse({ sent: false, why: 'no-card' });
     let path;
     try {
-      path = JSON.parse(cardRow.payload).path;
+      // В строке лежит карточка целиком (asdict(Card) ноута): путь — в её payload.
+      path = JSON.parse(cardRow.payload).payload?.path;
     } catch {
       path = undefined;
     }

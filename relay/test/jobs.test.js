@@ -433,7 +433,8 @@ test('answers: nested values and look-alike digits are refused', async () => {
   assert.deepEqual(await decisions(env), []);
 });
 
-const hotJob = (id, extra = {}) => card(id, 'job', 'v1', { hot: true, path: 'qa', ...extra });
+// Путь лежит в payload, как у карточки ноута.
+const hotJob = (id, extra = {}) => card(id, 'job', 'v1', { hot: true, payload: { path: 'qa' }, ...extra });
 
 test('job push respects mode, cap and dup', async () => {
   const env = await setupPushEnv();
@@ -498,15 +499,87 @@ test('failed delivery gives the slot back', async () => {
 test('only hot first-path jobs are pushed', async () => {
   const env = await setupPushEnv();
   await putCards(env, [
-    card('job:cold', 'job', 'v1', { hot: false, path: 'qa' }),
-    card('job:other-path', 'job', 'v1', { hot: true, path: 'retail' }),
+    card('job:cold', 'job', 'v1', { hot: false, payload: { path: 'qa' } }),
+    card('job:other-path', 'job', 'v1', { hot: true, payload: { path: 'retail' } }),
+    card('job:top-path', 'job', 'v1', { hot: true, path: 'qa' }),
   ]);
   assert.equal((await pushNotify(env, { card_id: 'job:cold', text: 't' })).status, 400, 'cold job stays in batch');
   assert.equal((await pushNotify(env, { card_id: 'job:other-path', text: 't' })).status, 400, 'out-of-path job stays in batch');
+  assert.equal((await pushNotify(env, { card_id: 'job:top-path', text: 't' })).status, 400, 'path outside payload is not the contract');
   assert.deepEqual(env.DB.prepare('SELECT key FROM jobs_pushed').all().results, [], 'no slot reserved');
 });
 
 test('old pult notify unchanged', () => {
   assert.equal(textFor({ status: 'done' }), 'tero: прогон закончен — подробно — в пульте');
   assert.equal(textFor({ notify: 'hi' }), 'tero: hi');
+});
+
+// --- Карточки ровно в той форме, в какой их кладёт EMPLOYED (asdict(Card)): данные в payload. ---
+
+const employedJob = (id, payload = {}) => ({
+  id, kind: 'job', version: '1', hot: true, rank: 0,
+  payload: { title: 'QA', company: 'Acme', location: 'Boston', salary: '', why: 'fits', path: 'qa',
+    url: 'https://jobs.lever.co/acme/x', engine: 'chrome', ...payload },
+});
+
+test('employed-shaped hot job is pushed: path is read from the payload', async () => {
+  const env = await setupPushEnv();
+  assert.equal((await putCards(env, [employedJob('job:acme-qa')])).status, 200);
+  assert.deepEqual((await pushNotify(env, { card_id: 'job:acme-qa', text: 'QA · Acme' })).body, { sent: true, why: 'ok' });
+  await putCards(env, [employedJob('job:retail', { path: 'retail' })]);
+  assert.equal((await pushNotify(env, { card_id: 'job:retail', text: 't' })).status, 400, 'out-of-path job stays in batch');
+});
+
+test('card version and kind are machine fields: a hash with a long digit run passes', async () => {
+  const env = await setupEnv();
+  const approve = { id: 'approve:acme-qa', kind: 'approve', version: `3a${'1234567890'}bcdef${'0'.repeat(47)}`, hot: false, rank: 0,
+    payload: { title: 'QA', company: 'Acme', resume_html: '<h3>Skills</h3>', filled: [], his: {}, drafts: {} } };
+  const ask = { id: 'ask:acme-qa', kind: 'ask', version: 'ab0123456789012cdef0123456789abcdef01234', hot: false, rank: 0,
+    payload: { title: 'QA', company: 'Acme', items: [] } };
+  assert.equal((await putCards(env, [approve, ask])).status, 200);
+  // почта и адрес в версии всё равно не проходят
+  const dirty = await putCards(env, [{ ...ask, version: 'me@example.com' }]);
+  assert.deepEqual(dirty.body, { error: 'contact' });
+});
+
+test('status finished_at is a timestamp, not a phone; other numbers are still checked', async () => {
+  const env = await setupEnv();
+  const status = { id: 'status:acme-qa', kind: 'status', version: '1', hot: false, rank: 0,
+    payload: { title: 'QA', company: 'Acme', url: 'https://x.example/job', stage: 'отправлено', finished_at: 1763051234.56 } };
+  assert.equal((await putCards(env, [status])).status, 200);
+  const dirty = await putCards(env, [{ ...status, payload: { ...status.payload, note: 1763051234 } }]);
+  assert.deepEqual(dirty.body, { error: 'contact' });
+});
+
+test('job links keep their ids, a contact hidden in the query is refused', async () => {
+  const env = await setupEnv();
+  for (const url of [
+    'https://boards.greenhouse.io/acme/jobs/4512345007',
+    'https://job-boards.greenhouse.io/acme/jobs/7012345',
+    'https://jobs.lever.co/acme/12345678-1234-4abc-9def-123456789012',
+    'https://www.acme.com/careers?gh_jid=4512345007',
+    'https://jobs.example.com/x?id=a1b2c3d4-5678-9012-3456-7890abcdef12',
+  ]) {
+    assert.equal((await putCards(env, [employedJob('job:a', { url })])).status, 200, url);
+  }
+  for (const url of [
+    'https://x.example/apply?phone=617-555-0123',
+    'https://x.example/apply?phone=%2B1%20617%20555%200123',
+    'https://x.example/apply#tel=(617) 555-0123',
+    'https://x.example/apply?ref=me%40example.com',
+  ]) {
+    const res = await putCards(env, [employedJob('job:a', { url })]);
+    assert.deepEqual(res.body, { error: 'contact' }, url);
+  }
+});
+
+test('read token does not see the prepared answers on a hot card', async () => {
+  const env = await setupEnv();
+  await putCards(env, [employedJob('job:a', { prepared: { known: [{ label: 'Sponsorship?', value: 'No' }], ask: [] } })]);
+  const read = (await storedCards(env, READ)).cards;
+  assert.equal(read.length, 1);
+  assert.equal(read[0].payload.title, 'QA');
+  assert.equal('prepared' in read[0].payload, false);
+  const device = (await storedCards(env, DEVICE)).cards;
+  assert.deepEqual(device[0].payload.prepared.known, [{ label: 'Sponsorship?', value: 'No' }]);
 });
