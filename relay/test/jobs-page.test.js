@@ -16,6 +16,24 @@ test('renderCard escapes everything but marks', () => {
   assert.ok(approve.includes('&lt;script&gt;'));
 });
 
+test('job card shows prepared answers', () => {
+  const html = renderCard({ id: 'job:a', kind: 'job', version: 'v1', hot: true,
+    payload: { title: 't', company: 'c', location: '', salary: '', why: '', path: 'qa', url: '', engine: 'chrome',
+      prepared: {
+        known: [{ label: '<img onerror=alert(1)>', value: 'yes' }, { label: 'b', value: '<img src=x onerror=alert(2)>' }],
+        ask: [{ label: 'why us', kind: 'text', options: [], required: true, draft: '<script>x</script>' }],
+      } } });
+  assert.ok(html.includes('готово из базы: 2'));
+  assert.ok(html.includes('к тебе: 1 вопрос'));
+  assert.ok(!html.includes('<img'));
+  assert.ok(!html.includes('<script>x</script>'));
+  assert.ok(html.includes('&lt;img'));
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(html.includes('&lt;img src=x'));
+  assert.ok(html.includes('<ul class="drafts">'));
+  assert.match(html, /<ul class="drafts">.*&lt;script&gt;.*<\/ul>/s);
+});
+
 test('laptopText', () => {
   assert.equal(laptopText(0, 299000), '');
   assert.ok(laptopText(0, 301000).startsWith('ноут молчит с'));

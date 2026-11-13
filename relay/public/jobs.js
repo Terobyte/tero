@@ -89,12 +89,27 @@ function engineToggle(current, locked) {
     + (locked ? ' <small>ещё не собран</small>' : '') + '</button></div>';
 }
 
+function renderPrepared(prepared) {
+  if (!prepared) return '';
+  const known = prepared.known || [];
+  const ask = prepared.ask || [];
+  const knownList = known.map((item) => `<li>${escapeHtml(item.label)}: ${escapeHtml(item.value)}</li>`).join('');
+  const drafts = ask.filter((item) => item.draft)
+    .map((item) => `<li>${escapeHtml(item.label)}: ${escapeHtml(item.draft)}</li>`).join('');
+  return `<div class="prepared"><p>готово из базы: ${known.length}</p>`
+    + (knownList ? `<ul class="known">${knownList}</ul>` : '')
+    + `<p>к тебе: ${ask.length} вопрос${ask.length === 1 ? '' : 'а'}</p>`
+    + (drafts ? `<ul class="drafts">${drafts}</ul>` : '')
+    + '</div>';
+}
+
 function renderJob(id, version, p) {
   return `<section class="card" data-card-id="${escapeHtml(id)}" data-version="${escapeHtml(version)}">`
     + `<h3>${escapeHtml(p.title)}</h3><p class="company">${escapeHtml(p.company)} · ${escapeHtml(p.location || '')}</p>`
     + (p.salary ? `<p class="salary">${escapeHtml(p.salary)}</p>` : '')
     + (p.why ? `<p class="why">${escapeHtml(p.why)}</p>` : '')
     + linkOrText(p.url, 'ссылка на вакансию')
+    + renderPrepared(p.prepared)
     + engineToggle(p.engine, true)
     + '<div class="actions"><button data-action="yes">да</button><button data-action="no">нет</button></div>'
     + '<p class="card-msg"></p></section>';
