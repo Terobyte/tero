@@ -567,6 +567,8 @@ test('job links keep their ids, a contact hidden in the query is refused', async
     'https://x.example/apply?phone=%2B1%20617%20555%200123',
     'https://x.example/apply#tel=(617) 555-0123',
     'https://x.example/apply?ref=me%40example.com',
+    'https://x.example/apply?phone=6175550123',
+    'https://x.example/apply?mobilePhone=617%20555%200123',
   ]) {
     const res = await putCards(env, [employedJob('job:a', { url })]);
     assert.deepEqual(res.body, { error: 'contact' }, url);

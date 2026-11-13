@@ -75,7 +75,18 @@ export function urlHasContact(value) {
   }
   if (hasContact(raw, { phone: false }) || hasContact(decoded, { phone: false })) return true;
   const cut = decoded.search(/[?#]/);
-  return cut >= 0 && hasShapedPhone(decoded.slice(cut));
+  return cut >= 0 && (hasShapedPhone(decoded.slice(cut)) || hasPhoneParam(decoded.slice(cut + 1)));
+}
+
+// Параметр, названный телефоном (`phone=6175550123`): голое число под таким именем — не id.
+const PHONE_PARAMS = new Set(['phone', 'tel', 'telephone', 'mobile', 'cell', 'sms', 'whatsapp']);
+function hasPhoneParam(query) {
+  return query.split(/[&;#]/).some((part) => {
+    const eq = part.indexOf('=');
+    const name = (eq < 0 ? part : part.slice(0, eq)).toLowerCase().replace(/[^a-z]/g, '');
+    const value = eq < 0 ? '' : part.slice(eq + 1);
+    return (PHONE_PARAMS.has(name) || name.endsWith('phone')) && value.replace(/\D/g, '').length >= 7;
+  });
 }
 
 // Проверка простого значения под ключом: ссылки по своим правилам, служебные числа без телефона.
