@@ -82,7 +82,7 @@ def test_ask_card_sends_all_answers_at_once(page, base_url):
     send = page.locator('[data-card-id="ask:a"] [data-action="answers"]')
     assert send.is_disabled()
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     assert not send.is_disabled()
     posts = []
     page.on("request", lambda r: posts.append(r.post_data) if r.method == "POST" else None)
@@ -178,7 +178,7 @@ def test_ask_card_locks_textarea_while_sending(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
 
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
@@ -195,13 +195,13 @@ def test_decide_pending_survives_visibilitychange(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
 
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
     page.click('[data-card-id="ask:a"] [data-action="answers"]')
     page.wait_for_timeout(50)
-    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     assert choice.is_disabled()
 
     page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
@@ -219,7 +219,7 @@ def test_poll_preserves_unsent_answers(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'черновик ответа')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     send = page.locator('[data-card-id="ask:a"] [data-action="answers"]')
     assert not send.is_disabled()
 
@@ -245,7 +245,7 @@ def test_offline_disables_choice_buttons_and_restores(page, base_url):
     mock.Handler.jobs_cards = [ASK_CARD]
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
-    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     assert not choice.is_disabled()
     urllib.request.urlopen(base_url + "/__mock/offline?on=1").read()
     try:
@@ -306,9 +306,9 @@ def test_choice_selection_is_marked(page, base_url):
     mock.Handler.jobs_cards = [ASK_CARD]
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
-    yes = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
-    no = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="нет"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
+    yes = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
+    no = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="No"]')
     assert yes.get_attribute("aria-pressed") == "true"
     assert "on" in (yes.get_attribute("class") or "")
     assert no.get_attribute("aria-pressed") == "false"
@@ -320,7 +320,7 @@ def test_pending_post_survives_offline_lock(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
     page.click('[data-card-id="ask:a"] [data-action="answers"]')
@@ -334,7 +334,7 @@ def test_pending_post_survives_offline_lock(page, base_url):
         held["route"].fulfill(status=503, body="{}")
         page.wait_for_timeout(400)
         assert page.locator('[data-card-id="ask:a"] [data-action="answers"]').is_disabled()
-        assert page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]').is_disabled()
+        assert page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]').is_disabled()
     finally:
         urllib.request.urlopen(base_url + "/__mock/offline?on=0").read()
     page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
@@ -382,13 +382,13 @@ def test_offline_unlock_keeps_pending_card_locked(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
 
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
     page.click('[data-card-id="ask:a"] [data-action="answers"]')
     page.wait_for_timeout(50)
-    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     send = page.locator('[data-card-id="ask:a"] [data-action="answers"]')
     assert choice.is_disabled()
 
@@ -412,7 +412,7 @@ def test_offline_unlock_keeps_pending_stop_card_locked(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     send = page.locator('[data-card-id="ask:a"] [data-action="answers"]')
     assert not send.is_disabled()
 
@@ -474,7 +474,7 @@ def test_pending_post_blocks_new_version_card(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
 
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
@@ -492,7 +492,7 @@ def test_pending_post_blocks_new_version_card(page, base_url):
     node = page.locator('[data-card-id="ask:a"]')
     assert node.get_attribute("data-version") == "sha1"
     assert page.locator('[data-card-id="ask:a"] textarea[name="Почему вы?"]').is_disabled()
-    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    choice = page.locator('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
     assert choice.is_disabled(), "v2 включилась раньше ответа на POST v1"
 
     held["route"].fulfill(status=200, body='{"ok": true}')
@@ -512,7 +512,7 @@ def test_pending_post_blocks_card_after_empty_poll(page, base_url):
     page.goto(base_url + "/jobs.html")
     page.wait_for_selector('[data-card-id="ask:a"]')
     page.fill('[data-card-id="ask:a"] textarea[name="Почему вы?"]', 'потому что круто')
-    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="да"]')
+    page.click('[data-card-id="ask:a"] button[data-label="Готовы к офферу?"][data-option="Yes"]')
 
     held = {}
     page.route("**/jobs/decide", lambda route: held.setdefault("route", route))
