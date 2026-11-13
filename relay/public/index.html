@@ -103,6 +103,11 @@ body {
 }
 .btn:hover { background: rgba(255,255,255,0.22); color: var(--text); }
 #plus { display: none; width: auto; padding: 0 6px; font-size: var(--small); }
+#jobs-link { display: none; }
+html[data-host="phone"] #jobs-link {
+  display: inline-block; order: 1; color: var(--player); cursor: pointer;
+  text-shadow: 0 0 6px rgba(90,200,250,0.5);
+}
 /* the log of the fight takes all the room there is */
 #detail {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
@@ -314,6 +319,7 @@ html[data-host="phone"] #push button.grey-on { color: var(--dim); }
     <span id="model"></span>
     <span id="meta"></span>
     <span id="age"></span>
+    <span id="jobs-link" title="работа">работа</span>
     <span id="plus" class="btn" title="другой прогон"></span>
   </div>
   <div id="plan"></div>
@@ -580,6 +586,7 @@ document.getElementById("plus").onclick = function () {
   if (!a) return;
   try { after(a.switch(""), poll); } catch (e) {}
 };
+document.getElementById("jobs-link").onclick = function () { location.href = "/jobs.html"; };
 document.getElementById("light").onclick = function () { if (!window.teroSource) call("toggle_visible"); };
 document.getElementById("close").onclick = function () { call("close"); };
 // a click on the phases opens the plan, any other click closes it
