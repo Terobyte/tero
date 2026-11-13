@@ -80,12 +80,14 @@ export function decisionBody(card, action, form) {
   return { card_id: card.id, version: card.version, action, data: {} };
 }
 
-function engineToggle(current, locked) {
-  const disabled = locked ? ' disabled data-perm-disabled="1"' : '';
+// keepOff: на карточке капчи «сменить» на тот же движок — не выбор, кнопка текущего выключена.
+function engineToggle(current, locked, keepOff = false) {
+  const perm = ' disabled data-perm-disabled="1"';
+  const off = (e) => ((e === 'browser-act' && locked) || (keepOff && e === current) ? perm : '');
   const mark = (e) => (e === current ? ' class="on"' : '');
   return '<div class="engine">'
-    + `<button data-action="engine" data-engine="chrome"${mark('chrome')}>chrome</button>`
-    + `<button data-action="engine" data-engine="browser-act"${disabled}${mark('browser-act')}>browser-act`
+    + `<button data-action="engine" data-engine="chrome"${off('chrome')}${mark('chrome')}>chrome</button>`
+    + `<button data-action="engine" data-engine="browser-act"${off('browser-act')}${mark('browser-act')}>browser-act`
     + (locked ? ' <small>ещё не собран</small>' : '') + '</button></div>';
 }
 
@@ -121,7 +123,9 @@ function renderAskItem(item) {
     return `<label class="q">${label}<textarea name="${label}" data-required="${item.required ? 1 : 0}">`
       + `${escapeHtml(item.draft || '')}</textarea></label>`;
   }
-  const options = item.kind === 'yesno' ? ['да', 'нет'] : (item.options || []);
+  // Кнопки — сами варианты формы: ноут принимает ответ, только если он совпал с одним из них.
+  const own = item.options || [];
+  const options = item.kind === 'yesno' && own.length === 0 ? ['Yes', 'No'] : own;
   const buttons = options.map((o) => `<button type="button" data-label="${label}" data-option="${escapeHtml(o)}" aria-pressed="false">${escapeHtml(o)}</button>`).join('');
   return `<div class="q" data-required="${item.required ? 1 : 0}" data-label="${label}"><p>${label}</p>${buttons}</div>`;
 }
@@ -148,7 +152,7 @@ function renderCaptcha(id, version, p) {
   return `<section class="card" data-card-id="${escapeHtml(id)}" data-version="${escapeHtml(version)}">`
     + `<h3>${escapeHtml(p.title)}</h3><p class="company">${escapeHtml(p.company)}</p><p>${escapeHtml(p.hint)}</p>`
     + (p.assist_url ? linkOrText(p.assist_url, 'remote-assist') : '')
-    + engineToggle(p.engine, true)
+    + engineToggle(p.engine, true, true)
     + '<div class="actions"><button data-action="captcha_done">прошёл</button><button data-action="stop">стоп</button></div>'
     + '<p class="card-msg"></p></section>';
 }

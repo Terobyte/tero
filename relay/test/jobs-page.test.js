@@ -99,3 +99,24 @@ test('answers with his contacts are refused on the phone', () => {
   const html = renderCard(card);
   assert.ok(html.includes('это ноут знает сам'));
 });
+
+test('yes/no question offers the form options, so the answer matches one', () => {
+  const ask = (options) => renderCard({ id: 'ask:a', kind: 'ask', version: 'sha1', payload: { title: 't', company: 'c',
+    items: [{ label: 'Relocate?', kind: 'yesno', options, required: true }] } });
+  const own = ask(['Yes, I can', 'No']);
+  assert.ok(own.includes('data-option="Yes, I can"'));
+  assert.ok(own.includes('data-option="No"'));
+  assert.ok(!own.includes('data-option="да"'));
+  const bare = ask([]);
+  assert.ok(bare.includes('data-option="Yes"'));
+  assert.ok(bare.includes('data-option="No"'));
+});
+
+test('captcha card does not offer a switch to the engine it is already on', () => {
+  const html = renderCard({ id: 'captcha:a', kind: 'captcha', version: '1',
+    payload: { title: 't', company: 'c', engine: 'chrome', assist_url: '', hint: 'h' } });
+  assert.match(html, /<button data-action="engine" data-engine="chrome" disabled data-perm-disabled="1"/);
+  const job = renderCard({ id: 'job:a', kind: 'job', version: '1',
+    payload: { title: 't', company: 'c', location: '', salary: '', why: '', path: 'qa', url: '', engine: 'chrome' } });
+  assert.match(job, /<button data-action="engine" data-engine="chrome" class="on">/);
+});
