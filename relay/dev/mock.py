@@ -80,6 +80,7 @@ class Handler(SimpleHTTPRequestHandler):
     offline = False
     jobs_cards: list[dict] = []
     jobs_decisions: list[dict] = []
+    jobs_decision_counter = 0
     jobs_settings = {"mode": "push", "push_cap": 4, "laptop_seen": 0.0}
     jobs_laptop_quiet = False
 
@@ -142,13 +143,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"error": "unknown card"}, 404)
             if card.get("version") != version:
                 return self._json({"error": "stale"}, 409)
+            is_engine = card.get("kind") == "job" and action == "engine"
             prior = next((d for d in Handler.jobs_decisions if d["card_id"] == card_id
-                          and d["version"] == version), None)
+                          and d["version"] == version
+                          and not (card.get("kind") == "job" and d["action"] == "engine")), None)
             if prior is not None:
                 if prior["action"] == action:
                     return self._json({"ok": True})
                 return self._json({"error": "decided", "action": prior["action"]}, 409)
-            Handler.jobs_decisions.append({"id": str(len(Handler.jobs_decisions) + 1), "card_id": card_id,
+            if is_engine:
+                Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions
+                                             if d["card_id"] != card_id or d["action"] != "engine"]
+            Handler.jobs_decision_counter += 1
+            Handler.jobs_decisions.append({"id": str(Handler.jobs_decision_counter), "card_id": card_id,
                                             "version": version, "action": action, "data": payload.get("data") or {}})
             return self._json({"ok": True})
         if u.path == "/jobs/cards":   # как воркер: упсёрт по id, решения старой версии гибнут, drop снимает

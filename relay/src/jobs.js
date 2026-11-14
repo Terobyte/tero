@@ -280,7 +280,7 @@ async function decide(request, env, now) {
       `${insert} AND NOT EXISTS (SELECT 1 FROM jobs_decisions WHERE card_id = ? AND version = ? `
       + "AND action IN ('yes', 'no')) "
       + "ON CONFLICT (card_id) WHERE kind = 'job' AND action = 'engine' DO UPDATE SET "
-      + 'data = excluded.data, at = excluded.at, version = excluded.version',
+      + 'id = excluded.id, data = excluded.data, at = excluded.at, version = excluded.version',
     ).bind(...args, cardId, version).run();
   } else {
     res = await db.prepare(`${insert} ON CONFLICT DO NOTHING`).bind(...args).run();

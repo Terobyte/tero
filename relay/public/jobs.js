@@ -1,6 +1,6 @@
 // relay/public/jobs.js — страница /jobs.html: карточки job/ask/approve/captcha/stopped/status.
 // Чистые функции до браузерного блока (гонка в node: relay/test/jobs-page.test.js), по образцу pult.js.
-// Весь текст с ноута — данные: экранируется; исключение — resume_html, где допускается только <mark>.
+// Весь текст с ноута — данные: экранируется; resume_html допускает только простые теги резюме и HTML-сущности.
 
 export function escapeHtml(value) {
   return String(value ?? '')
@@ -10,10 +10,12 @@ export function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-// resume_html из ноута: <mark> проходит как есть, остальные теги экранируются целиком.
+// resume_html: только голые h3/p/b/ul/li/mark и уже экранированные сущности проходят как есть.
+// Сущность в innerHTML всегда становится текстом, тегом она стать не может; всё прочее экранируется.
+const RESUME_SAFE = /<\/?(?:h3|p|b|ul|li|mark)>|&(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][\da-fA-F]+);|[&<>"']/g;
+const RESUME_ESCAPE = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
 export function safeMarks(html) {
-  const s = String(html ?? '');
-  return s.split(/(<\/?mark>)/).map((part) => (part === '<mark>' || part === '</mark>' ? part : escapeHtml(part))).join('');
+  return String(html ?? '').replace(RESUME_SAFE, (part) => RESUME_ESCAPE[part] ?? part);
 }
 
 // Те же общие шаблоны, что relay/src/jobs.js scrub (шаг 2): почта, телефон, адрес.
@@ -64,11 +66,12 @@ export function decisionBody(card, action, form) {
     const items = (card.payload && card.payload.items) || [];
     const entries = [];
     for (const item of items) {
-      const value = form && Object.hasOwn(form, item.label) ? String(form[item.label]) : '';
-      if (hasContact(item.label) || hasContact(value)) {
+      const key = typeof item.key === 'string' ? item.key : item.label;
+      const value = form && Object.hasOwn(form, key) ? String(form[key]) : '';
+      if (hasContact(item.label) || hasContact(key) || hasContact(value)) {
         throw new Error('contact');
       }
-      entries.push([item.label, value]);
+      entries.push([key, value]);
     }
     // Object.fromEntries определяет свойства напрямую, не через присваивание —
     // метка "__proto__" не попадёт в сеттер прототипа и не потеряется (F: jobs.js:71).
@@ -392,14 +395,15 @@ if (inBrowser) {
   function collectAskForm(section, card) {
     const form = Object.create(null);
     for (const item of (card.payload.items || [])) {
+      const key = typeof item.key === 'string' ? item.key : item.label;
       if (item.kind === 'text') {
         const t = section.querySelector(`textarea[name="${CSS.escape(item.label)}"]`);
-        form[item.label] = t ? t.value : '';
+        form[key] = t ? t.value : '';
       } else {
         const q = section.querySelector(`.q[data-label="${CSS.escape(item.label)}"]`);
-        form[item.label] = (q && q.dataset.value) || '';
+        form[key] = (q && q.dataset.value) || '';
       }
-      if (hasContact(form[item.label])) {
+      if (hasContact(form[key])) {
         const msg = section.querySelector('.card-msg');
         if (msg) msg.textContent = 'это ноут знает сам — убери контакты из ответа';
         return null;
@@ -452,7 +456,7 @@ if (inBrowser) {
   function restoreAsk(section, card, snap) {
     for (const item of (card.payload.items || [])) {
       const value = snap[item.label];
-      if (!value) continue;
+      if (value === undefined) continue;
       if (item.kind === 'text') {
         const t = section.querySelector(`textarea[name="${CSS.escape(item.label)}"]`);
         if (t && document.activeElement !== t) t.value = value;
