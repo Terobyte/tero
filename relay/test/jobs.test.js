@@ -218,7 +218,7 @@ test('engine data is checked', async () => {
   assert.deepEqual(await decisions(env), []);
 });
 
-test('answers are capped, truncated and refused with contacts', async () => {
+test('answers are capped, refused when too long and refused with contacts', async () => {
   const env = await setupEnv();
   await putCards(env, [card('ask:q', 'ask')]);
   const many = Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`k${i}`, 'v']));
@@ -228,8 +228,9 @@ test('answers are capped, truncated and refused with contacts', async () => {
     assert.equal(res.status, 400, value);
     assert.deepEqual(res.body, { error: 'contact' });
   }
-  assert.equal((await decide(env, 'ask:q', 'v1', 'answers', { why: 'x'.repeat(3000) })).status, 200);
-  assert.equal((await decisions(env))[0].data.why.length, 2000);
+  const long = await decide(env, 'ask:q', 'v1', 'answers', { why: 'x'.repeat(3000) });
+  assert.equal(long.status, 400);
+  assert.deepEqual(long.body, { error: 'too long' });
   assert.equal(hasContact('5 years of Python'), false);
 });
 

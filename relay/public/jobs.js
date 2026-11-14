@@ -120,7 +120,7 @@ function renderJob(id, version, p) {
 function renderAskItem(item) {
   const label = escapeHtml(item.label);
   if (item.kind === 'text') {
-    return `<label class="q">${label}<textarea name="${label}" data-required="${item.required ? 1 : 0}">`
+    return `<label class="q">${label}<textarea name="${label}" maxlength="2000" data-required="${item.required ? 1 : 0}">`
       + `${escapeHtml(item.draft || '')}</textarea></label>`;
   }
   // Кнопки — сами варианты формы: ноут принимает ответ, только если он совпал с одним из них.
@@ -535,9 +535,12 @@ if (inBrowser) {
     }
   }
 
+  let loadSeq = 0;
   async function load() {
     if (!token) return;
+    const seq = ++loadSeq;
     const res = await get('/jobs/cards');
+    if (seq !== loadSeq) return;   // пришёл ответ старого опроса: новый уже показан или в пути
     if (!res.ok) {
       fails += 1;
       offline.textContent = fails >= 2 ? 'нет связи с релеем' : '';

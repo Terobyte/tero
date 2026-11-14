@@ -233,12 +233,14 @@ function checkData(action, data) {
   }
   if (action === 'answers') {
     if (keys.length > MAX_ANSWERS) return { error: 'bad data' };
-    const out = {};
+    // Без прототипа: ярлык формы «__proto__» — обычный ключ, а не сеттер.
+    const out = Object.create(null);
     for (const key of keys) {
       const value = data[key];
       if (typeof value !== 'string') return { error: 'bad data' };
+      if (value.length > MAX_VALUE) return { error: 'too long' };   // не режем молча: ноут получил бы обрывок
       if (hasContact(key) || hasContact(value)) return { error: 'contact' };
-      out[key] = value.slice(0, MAX_VALUE);
+      out[key] = value;
     }
     return { data: out };
   }

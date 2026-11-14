@@ -151,6 +151,19 @@ class Handler(SimpleHTTPRequestHandler):
             Handler.jobs_decisions.append({"id": str(len(Handler.jobs_decisions) + 1), "card_id": card_id,
                                             "version": version, "action": action, "data": payload.get("data") or {}})
             return self._json({"ok": True})
+        if u.path == "/jobs/cards":   # как воркер: упсёрт по id, решения старой версии гибнут, drop снимает
+            payload = json.loads(raw) if raw else {}
+            for card in payload.get("cards") or []:
+                Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions
+                                             if d["card_id"] != card["id"] or d["version"] == card["version"]]
+                Handler.jobs_cards[:] = [c for c in Handler.jobs_cards if c["id"] != card["id"]] + [card]
+            drop = set(payload.get("drop") or [])
+            Handler.jobs_cards[:] = [c for c in Handler.jobs_cards if c["id"] not in drop]
+            return self._json({"ok": True})
+        if u.path == "/jobs/decisions/ack":
+            ids = set((json.loads(raw) if raw else {}).get("ids") or [])
+            Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions if d["id"] not in ids]
+            return self._json({"ok": True})
         if u.path == "/jobs/settings":
             payload = json.loads(raw) if raw else {}
             if "mode" in payload:
