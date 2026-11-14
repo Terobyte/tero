@@ -15,3 +15,11 @@ def _hud_home(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(single, "target_path", lambda: home / "hud-target")
     monkeypatch.setattr(registry, "registry_dir", lambda: home / "registry")
     return home
+
+
+@pytest.fixture(autouse=True)
+def _no_hard_exit(monkeypatch):
+    # _open_window ends in os._exit(0); a fake webview.start must not kill pytest
+    import os
+
+    monkeypatch.setattr(os, "_exit", lambda code=0: None)

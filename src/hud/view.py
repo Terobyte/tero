@@ -300,6 +300,9 @@ def _open_window(run_dir: str | Path) -> None:
     except Exception:
         pass
     webview.start(_tray_loop, (bridge, window, run_dir), http_server=False)
+    # the window is gone and the run loop stopped: nothing may keep this
+    # process alive, or its last frame hangs on screen as a dead window
+    os._exit(0)
 
 
 def _on_screen(x, y, screens) -> bool:
@@ -335,13 +338,20 @@ def _tray_loop(bridge: Bridge, window, run_dir: str | Path) -> None:
         bridge._tray = tray
         tray.call(tray.build)
         pos: tuple = ()
-        while True:
+        while not _closed(window):
             data = bridge.view()
             tray.call(tray.update, data, bridge._visible)
             pos = _save_moved(bridge, window, pos)
             time.sleep(TRAY_EVERY_S)
     except Exception as exc:
         _log_failure(run_dir, exc)
+
+
+def _closed(window) -> bool:
+    try:
+        return window.events.closed.is_set()
+    except Exception:
+        return False
 
 
 def _log_failure(run_dir: str | Path, exc: Exception) -> None:
