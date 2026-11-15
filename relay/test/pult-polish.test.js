@@ -153,4 +153,43 @@ test('sw: текстовый пуш как раньше; тап поднимае
   await waited;
   assert.deepEqual(focused, [1], 'фокус только своего окна');
   assert.equal(sw2.calls.length, 0, 'новое окно не открывается');
+
+  const jobsFocused = [];
+  const jobsWin = { url: 'https://relay.example/jobs.html', focus: async () => jobsFocused.push(1) };
+  const sw3 = runSw([jobsWin]);
+  sw3.handlers.notificationclick({ notification: { close() {} }, waitUntil: (p) => { waited = p; } });
+  await waited;
+  assert.deepEqual(jobsFocused, [1], 'обычный пуш поднимает любое своё окно, даже /jobs.html');
+  assert.equal(sw3.calls.length, 0);
+});
+
+test('sw: job push opens the jobs page', async () => {
+  const { handlers, calls } = runSw([]);
+  let waited;
+  handlers.notificationclick({
+    notification: { body: 'работа: QA at X', close() {} },
+    waitUntil: (p) => { waited = p; },
+  });
+  await waited;
+  assert.deepEqual(calls[0], ['open', '/jobs.html']);
+
+  const pult = { url: 'https://relay.example/', focus: async () => {} };
+  const sw2 = runSw([pult]);
+  sw2.handlers.notificationclick({
+    notification: { body: 'работа: QA at X', close() {} },
+    waitUntil: (p) => { waited = p; },
+  });
+  await waited;
+  assert.deepEqual(sw2.calls[0], ['open', '/jobs.html'], 'открытый пульт на / не считается');
+
+  const focused = [];
+  const jobsWin = { url: 'https://relay.example/jobs.html', focus: async () => focused.push(1) };
+  const sw3 = runSw([jobsWin]);
+  sw3.handlers.notificationclick({
+    notification: { body: 'работа: QA at X', close() {} },
+    waitUntil: (p) => { waited = p; },
+  });
+  await waited;
+  assert.deepEqual(focused, [1]);
+  assert.equal(sw3.calls.length, 0);
 });

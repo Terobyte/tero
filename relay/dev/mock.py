@@ -78,6 +78,11 @@ def states(now: float) -> dict[str, dict]:
 
 class Handler(SimpleHTTPRequestHandler):
     offline = False
+    jobs_cards: list[dict] = []
+    jobs_decisions: list[dict] = []
+    jobs_decision_counter = 0
+    jobs_settings = {"mode": "push", "push_cap": 4, "laptop_seen": 0.0}
+    jobs_laptop_quiet = False
 
     def __init__(self, *a, **k):
         super().__init__(*a, directory=str(PUBLIC), **k)
@@ -96,10 +101,20 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == "/__mock/offline":
             Handler.offline = q.get("on", ["1"])[0] == "1"
             return self._json({"offline": Handler.offline})
+        if u.path == "/__mock/jobs":
+            Handler.jobs_laptop_quiet = q.get("laptop_quiet", ["0"])[0] == "1"
+            return self._json({"ok": True})
         if u.path.endswith((".html", ".js")) or u.path == "/":
             return super().do_GET()
         if Handler.offline:
             return self._json({"error": "mock offline"}, 503)
+        if u.path == "/jobs/cards":
+            laptop_seen = 0.0 if Handler.jobs_laptop_quiet else time.time() * 1000
+            return self._json({"cards": Handler.jobs_cards, "mode": Handler.jobs_settings["mode"],
+                                "push_cap": Handler.jobs_settings["push_cap"], "laptop_seen": laptop_seen,
+                                "now": time.time() * 1000})
+        if u.path == "/jobs/decisions":
+            return self._json({"decisions": Handler.jobs_decisions})
         st = states(time.time())
         if u.path == "/runs":
             return self._json({"runs": [{"run_id": k, "machine_id": MACHINE, "status": v["status"],
@@ -114,10 +129,56 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("content-length") or 0)
-        body = self.rfile.read(n).decode() if n else ""
+        raw = self.rfile.read(n).decode() if n else ""
         if Handler.offline:
             return self._json({"error": "mock offline"}, 503)
-        if '"skip"' in body:
+        u = urlparse(self.path)
+        if u.path == "/jobs/decide":
+            payload = json.loads(raw) if raw else {}
+            card_id = payload.get("card_id")
+            version = payload.get("version")
+            action = payload.get("action")
+            card = next((c for c in Handler.jobs_cards if c["id"] == card_id), None)
+            if card is None:
+                return self._json({"error": "unknown card"}, 404)
+            if card.get("version") != version:
+                return self._json({"error": "stale"}, 409)
+            is_engine = card.get("kind") == "job" and action == "engine"
+            prior = next((d for d in Handler.jobs_decisions if d["card_id"] == card_id
+                          and d["version"] == version
+                          and not (card.get("kind") == "job" and d["action"] == "engine")), None)
+            if prior is not None:
+                if prior["action"] == action:
+                    return self._json({"ok": True})
+                return self._json({"error": "decided", "action": prior["action"]}, 409)
+            if is_engine:
+                Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions
+                                             if d["card_id"] != card_id or d["action"] != "engine"]
+            Handler.jobs_decision_counter += 1
+            Handler.jobs_decisions.append({"id": str(Handler.jobs_decision_counter), "card_id": card_id,
+                                            "version": version, "action": action, "data": payload.get("data") or {}})
+            return self._json({"ok": True})
+        if u.path == "/jobs/cards":   # как воркер: упсёрт по id, решения старой версии гибнут, drop снимает
+            payload = json.loads(raw) if raw else {}
+            for card in payload.get("cards") or []:
+                Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions
+                                             if d["card_id"] != card["id"] or d["version"] == card["version"]]
+                Handler.jobs_cards[:] = [c for c in Handler.jobs_cards if c["id"] != card["id"]] + [card]
+            drop = set(payload.get("drop") or [])
+            Handler.jobs_cards[:] = [c for c in Handler.jobs_cards if c["id"] not in drop]
+            return self._json({"ok": True})
+        if u.path == "/jobs/decisions/ack":
+            ids = set((json.loads(raw) if raw else {}).get("ids") or [])
+            Handler.jobs_decisions[:] = [d for d in Handler.jobs_decisions if d["id"] not in ids]
+            return self._json({"ok": True})
+        if u.path == "/jobs/settings":
+            payload = json.loads(raw) if raw else {}
+            if "mode" in payload:
+                Handler.jobs_settings["mode"] = payload["mode"]
+            if "push_cap" in payload:
+                Handler.jobs_settings["push_cap"] = payload["push_cap"]
+            return self._json({"ok": True})
+        if '"skip"' in raw:
             return self._json({"error": "no open question"}, 422)
         return self._json({"ok": True})
 
