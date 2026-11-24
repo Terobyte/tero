@@ -170,6 +170,7 @@ async def resume(
     answer: str = "",
     force: bool = False,
     answer_from_inbox: bool = False,
+    no_hud: bool = False,
 ) -> RunOutcome:
     """Continue a stopped run from its state.json. Only judge_pending yet."""
     from src.loop.stream import Stream
@@ -186,6 +187,9 @@ async def resume(
     cfg, refusal = _resume_config(state, answer, force)
     if cfg is None:
         return _refuse(run_path, refusal)
+    # HUD — окно, а не настройка прогона: `go --no-hud` не наследуется resume.
+    import dataclasses as _dc
+    cfg = _dc.replace(cfg, hud=not no_hud)
     ref = state.get("snapshot_ref") or ""
     base = state.get("base") or ""
     phase_title = state.get("phase") or ""

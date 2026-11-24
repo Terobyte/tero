@@ -55,6 +55,8 @@ def resume_owner_argv(args: Any) -> list[str]:
         argv += ["--run", str(args.run)]
     if getattr(args, "force", False):
         argv += ["--force"]
+    if getattr(args, "no_hud", False):
+        argv += ["--no-hud"]
     if getattr(args, "answer_from_inbox", False):
         argv += ["--answer-from-inbox"]
     elif getattr(args, "answer", ""):

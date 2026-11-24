@@ -170,7 +170,8 @@ async def run_resume(args) -> int:
     working_dir = cfg_fields.get("working_dir") or str(repo)
     agents = LiveAgents(working_dir, verbose=bool(cfg_fields.get("verbose", False)))
     outcome = await resume_run(repo, run_dir, agents=agents, answer=answer, force=force,
-                               answer_from_inbox=answer_from_inbox)
+                               answer_from_inbox=answer_from_inbox,
+                               no_hud=bool(getattr(args, "no_hud", False)))
     if outcome.reason:
         print(f"стоп: {outcome.reason} (код {outcome.exit_code})", flush=True)
     if outcome.run_dir:
